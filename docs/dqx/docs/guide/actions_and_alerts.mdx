@@ -1,12 +1,20 @@
 ---
 sidebar_position: 311
+title: Actions and Alerting
+sidebar_label: Actions and Alerting
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Actions and Alerting
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.16.0" heading={false} />
+  <FeatureLifecycleStage stage="beta" heading={false} />
+</FeatureTags>
 
 DQX **actions** let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected.
 
@@ -585,7 +593,7 @@ unique: registering a *different* class under a `type` already taken by another 
 `DQSlackAlertDestination` posts a Block Kit message to a Slack incoming webhook. Delivery is restricted to `hooks.slack.com`.
 
 <Admonition type="note" title="Use a Slack App webhook">
-Create the webhook via a **Slack App** (add the *Incoming Webhooks* feature to an app in your workspace) rather than the older *legacy custom integration*, which Slack has deprecated. Both produce a `hooks.slack.com/services/…` URL that works with DQX; the app-based one is the supported, future-proof path. The URL carries its own token, so no additional authentication is required.
+Create the webhook via a **Slack App** (add the *Incoming Webhooks* feature to an app in your workspace) rather than the older *legacy custom integration*, which Slack has deprecated. See Slack's [Sending messages using incoming webhooks](https://api.slack.com/messaging/webhooks) guide for step-by-step instructions. Both produce a `hooks.slack.com/services/…` URL that works with DQX; the app-based one is the supported, future-proof path. The URL carries its own token, so no additional authentication is required.
 </Admonition>
 
 <Tabs>
@@ -630,7 +638,7 @@ alert = DQAlert(
 `DQTeamsAlertDestination` posts a MessageCard to a Microsoft Teams channel via a **Power Automate Workflows** webhook. Delivery is restricted to the Workflows webhook hosts `logic.azure.com` and `environment.api.powerplatform.com`.
 
 <Admonition type="note" title="Use a Workflows webhook — Office 365 Connectors are retired">
-Microsoft **retired the legacy Office 365 Connector incoming webhooks** (`webhook.office.com`) in May 2026. Create a **Workflows** webhook instead: in Teams, use the *Workflows* app → template **"Post to a channel when a webhook request is received"**, and use the generated URL as `webhook_url`. Workflows renders the MessageCard text and facts, but **not interactive buttons**.
+Microsoft **retired the legacy Office 365 Connector incoming webhooks** (`webhook.office.com`) in May 2026. Create a **Workflows** webhook instead: in Teams, use the *Workflows* app → template **"Post to a channel when a webhook request is received"**, and use the generated URL as `webhook_url`. See Microsoft's [Post a workflow when a webhook request is received](https://support.microsoft.com/en-us/office/create-incoming-webhooks-with-workflows-for-microsoft-teams-8ae491c7-0394-4861-ba59-055e33f75498) guide for step-by-step instructions. Workflows renders the MessageCard text and facts, but **not interactive buttons**.
 
 Anonymous Workflows URLs on `logic.azure.com` carry their authorization in the URL (a signature query parameter), so DQX can POST to them directly. Newer `environment.api.powerplatform.com` endpoints may require an Entra bearer token, which this destination does not send — those are not currently supported.
 </Admonition>

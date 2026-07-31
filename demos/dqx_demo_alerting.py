@@ -106,7 +106,7 @@ if slack_webhook_url:
 actions = [
     DQAction(
         condition="error_row_count > 0",
-        action=DQAlert(destinations=destinations),
+        action=DQAlert(name="alert_on_errors", destinations=destinations),
     )
 ]
 
@@ -208,11 +208,14 @@ for result in custom_results:
 # MAGIC
 # MAGIC We also pass an `action_events_config` so DQX keeps a durable **alert history**: one row per action evaluation (including evaluations that did *not* fire) is appended to an events table, giving a complete audit log of what was checked, what fired, where it was delivered, and what failed.
 # MAGIC
+# MAGIC The alert here uses `notify_on=NotifyOn.STATUS_CHANGE`, so it notifies only on the transition *into* an unhealthy state. On this first run against a fresh events table that transition happens, so the alert fires; because state is persisted to the events table, re-running the cell while the data stays unhealthy suppresses the repeat notification (the evaluation is still recorded in history with `fired=false`).
+# MAGIC
 # MAGIC This step writes to `{demo_catalog}.{demo_schema}` (see the widgets at the top). Look again for the `[DQX alert]` and `DQX-demo:` lines in the driver log — this time DQX fired them without an explicit call.
 
 # COMMAND ----------
 
 from databricks.labs.dqx.config import ActionEventsConfig, InputConfig, OutputConfig
+from databricks.labs.dqx.actions import NotifyOn
 
 # Persist the demo data to an input table so the save method can read it.
 input_table = f"{demo_catalog_name}.{demo_schema_name}.dqx_alerting_demo_input"
@@ -228,8 +231,14 @@ e2e_engine = DQEngine(
     WorkspaceClient(),
     observer=e2e_observer,
     actions=[
-        DQAction(condition="error_row_count > 0", action=DQAlert(destinations=destinations)),
-        DQAction(condition="error_row_count > 0", action=LogErrorCount()),
+        DQAction(
+            condition="error_row_count > 0",
+            action=DQAlert(name="alert_on_errors", destinations=destinations, notify_on=NotifyOn.STATUS_CHANGE),
+        ),
+        DQAction(
+            condition="error_row_count > 0",
+            action=LogErrorCount(name="log_error_count"), # notify_on not configured, so it will notify on every evaluation
+        ),
     ],
     action_events_config=ActionEventsConfig(location=events_table),
 )
