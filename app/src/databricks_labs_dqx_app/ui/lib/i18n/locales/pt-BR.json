@@ -96,7 +96,8 @@
     "rulesRegistry": "Regras",
     "monitoredTables": "Tabelas",
     "importRules": "Importar Regras",
-    "results": "Resultados"
+    "results": "Resultados",
+    "marketplace": "Marketplace"
   },
   "userMenu": {
     "profile": "Perfil",
