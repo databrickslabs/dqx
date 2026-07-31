@@ -127,6 +127,10 @@ describe("checkDictToPreviewRule", () => {
     expect(preview).toBeDefined();
     expect(preview?.rule_id).toBe("standard-checks:must-not-be-null");
     expect(preview?.definition).toBeDefined();
+    expect(preview?.status).toBe("draft");
+    expect(preview?.version).toBe(1);
+    expect(preview?.is_builtin).toBe(false);
+    expect(preview?.display_status).toBe("draft");
   });
 
   it("returns undefined for an unrecognised function", () => {

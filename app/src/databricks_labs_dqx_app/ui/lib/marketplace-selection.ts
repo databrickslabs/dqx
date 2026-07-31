@@ -1,4 +1,4 @@
-import type { CheckFunctionDef, MarketplacePackOut, MarketplaceRuleOut, RegistryRuleOut } from "@/lib/api";
+import type { CheckFunctionDef, MarketplacePackOut, MarketplaceRuleOut, RegistryRuleOut, RuleDefinition } from "@/lib/api";
 import { parseDqxCheckJson } from "@/lib/registry-rule-conversion";
 
 /**
@@ -88,13 +88,16 @@ export function selectedCheckDicts(
 // Marketplace preview helper
 // ---------------------------------------------------------------------------
 
-const EMPTY_DEFINITION = { body: {}, slots: [], parameters: [] };
+const EMPTY_DEFINITION: RuleDefinition = { body: {}, slots: [], parameters: [] };
 
 /**
  * Build a minimal {@link RegistryRuleOut}-shaped object from a marketplace
  * rule's normalized check dict so the existing {@link RuleLogicDisclosure}
- * component can render it without modification. Returns `undefined` if the
- * check dict cannot be parsed (e.g. references an unknown function).
+ * component can render it without modification.
+ *
+ * Returns `undefined` if the check function cannot be resolved. Callers MUST
+ * pass a fully-loaded *checkFunctions* list — an empty or not-yet-loaded list
+ * causes every lookup to fail and always yields `undefined` → blank preview.
  */
 export function checkDictToPreviewRule(
   rule: MarketplaceRuleOut,
@@ -104,7 +107,7 @@ export function checkDictToPreviewRule(
   try {
     const parsed = parseDqxCheckJson(
       JSON.stringify(rule.check),
-      EMPTY_DEFINITION as never,
+      EMPTY_DEFINITION,
       {},
       checkFunctions,
       t,
