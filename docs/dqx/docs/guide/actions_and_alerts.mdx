@@ -742,6 +742,10 @@ alert = DQAlert(
   </TabItem>
 </Tabs>
 
+<Admonition type="note" title="The log destination is a notification target, not an audit log">
+`LogDQAlertDestination` is a *destination of* `DQAlert`, so it is subject to the alert's suppression: with `alert_frequency` set to `hourly` / `daily`, or `notify_on: status_change`, the log line is throttled or skipped along with every other destination. That is intended for a notification (it keeps Slack and the log in sync), but it means the log is **not** a per-run record. If you want to record *every* evaluation regardless of suppression, use [`action_events_config`](#recording-action-event-history) (a durable table with one row per evaluation, including non-fired ones), or write a [custom action](#registering-a-custom-action) that logs unconditionally on its `condition`.
+</Admonition>
+
 ### In-process callback
 
 `CallbackDQAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations hold a live Python callable, so they have **no metadata form** — they can only be configured in code, and they are skipped when actions are saved to storage.
