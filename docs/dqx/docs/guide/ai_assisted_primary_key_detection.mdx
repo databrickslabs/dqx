@@ -1,12 +1,18 @@
 ---
+title: AI-Assisted Primary Key Detection
 sidebar_position: 303
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # AI-Assisted Primary Key Detection
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.11.0" heading={false} />
+</FeatureTags>
 
 DQX provides AI-assisted primary key detection that automatically identifies primary key columns in your tables using Large Language Models (LLMs).
 This feature analyzes table schemas and metadata to intelligently detect single or composite primary keys, and performs validation by checking for duplicate values.

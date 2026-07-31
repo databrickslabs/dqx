@@ -794,9 +794,27 @@ button {
   animation: bvFactSlideUp 0.5s ease-out forwards;
 }
 
-/* ── Feature-status badge: brand red (matches the DQX logo, #ff3621) ── */
-.badge--beta {
-  background-color: #ff3621;
-  border-color: #ff3621;
-  color: #fff;
+/* ── DQX feature tags (lifecycle stage + version) ──────────────────────────
+   The FeatureTags components (src/components/FeatureTags.tsx) render these.
+   Geometry is pinned explicitly here rather than inherited from Infima's base
+   `.badge`, so every DQX tag is identical in size and immune to upstream badge
+   changes. Each badge gets `.dqx-badge` (geometry) plus one color modifier. ── */
+.dqx-badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  font-size: 75%;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
+
+/* Color modifiers. Each sets the border to match its background so the border
+   stays the same color as the badge (not inherited from the surrounding link
+   text). */
+.dqx-badge--experimental { background-color: #eab308; border-color: #eab308; color: #1b1b1d; }  /* amber  — Experimental */
+.dqx-badge--beta         { background-color: #ff3621; border-color: #ff3621; color: #fff; }      /* brand red — Beta */
+.dqx-badge--deprecated   { background-color: #6b7280; border-color: #6b7280; color: #fff; }      /* gray   — Deprecated */
+.dqx-badge--version      { background-color: #1b3139; border-color: #1b3139; color: #fff; }      /* navy   — version tag */

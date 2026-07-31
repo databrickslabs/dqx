@@ -1989,6 +1989,41 @@
     },
     {
       "group": null,
+      "name": "test_benchmark_has_no_gaps_per_time_window",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_no_gaps_per_time_window",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2767303999999058,
+        "max": 0.32986151199929736,
+        "mean": 0.2998396965997017,
+        "stddev": 0.022821122801370355,
+        "rounds": 5,
+        "median": 0.2975983409996843,
+        "iqr": 0.03994592750018455,
+        "q1": 0.27897911149966603,
+        "q3": 0.3189250389998506,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.2767303999999058,
+        "hd15iqr": 0.32986151199929736,
+        "ops": 3.3351154344817826,
+        "total": 1.4991984829985086,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
       "name": "test_benchmark_has_no_outliers",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_no_outliers",
       "params": null,
@@ -2089,6 +2124,174 @@
         "hd15iqr": 0.18108114100004968,
         "ops": 5.811305622147457,
         "total": 1.0324702210004943,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_has_valid_string_case lower",
+      "name": "test_benchmark_has_valid_string_case[lower]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_valid_string_case[lower]",
+      "params": {
+        "case": "lower",
+        "generated_string_df": {
+          "n_rows": 100000000,
+          "n_columns": 1,
+          "template": "valid lower case"
+        }
+      },
+      "param": "lower",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2624519639994105,
+        "max": 0.2949672869999631,
+        "mean": 0.27657387939980255,
+        "stddev": 0.012838719732535994,
+        "rounds": 5,
+        "median": 0.27623274399957154,
+        "iqr": 0.01944089625021661,
+        "q1": 0.2659134839998387,
+        "q3": 0.28535438025005533,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.2624519639994105,
+        "hd15iqr": 0.2949672869999631,
+        "ops": 3.6156704391973538,
+        "total": 1.3828693969990127,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_has_valid_string_case sentence",
+      "name": "test_benchmark_has_valid_string_case[sentence]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_valid_string_case[sentence]",
+      "params": {
+        "case": "sentence",
+        "generated_string_df": {
+          "n_rows": 100000000,
+          "n_columns": 1,
+          "template": "First segment. Second segment."
+        }
+      },
+      "param": "sentence",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2586309810003513,
+        "max": 0.3053958189993864,
+        "mean": 0.28090056240034755,
+        "stddev": 0.021938011935275628,
+        "rounds": 5,
+        "median": 0.2787898350006799,
+        "iqr": 0.04215066324991312,
+        "q1": 0.2600603347505057,
+        "q3": 0.30221099800041884,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.2586309810003513,
+        "hd15iqr": 0.3053958189993864,
+        "ops": 3.559978632491206,
+        "total": 1.4045028120017378,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_has_valid_string_case title",
+      "name": "test_benchmark_has_valid_string_case[title]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_valid_string_case[title]",
+      "params": {
+        "case": "title",
+        "generated_string_df": {
+          "n_rows": 100000000,
+          "n_columns": 1,
+          "template": "Notes From IEEE Meeting"
+        }
+      },
+      "param": "title",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.24126468200029194,
+        "max": 0.3156536339993181,
+        "mean": 0.2688588808001441,
+        "stddev": 0.029329195234594433,
+        "rounds": 5,
+        "median": 0.2658567150001545,
+        "iqr": 0.038423673249326384,
+        "q1": 0.24597271775064655,
+        "q3": 0.28439639099997294,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.24126468200029194,
+        "hd15iqr": 0.3156536339993181,
+        "ops": 3.7194233533366106,
+        "total": 1.3442944040007205,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_has_valid_string_case upper",
+      "name": "test_benchmark_has_valid_string_case[upper]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_valid_string_case[upper]",
+      "params": {
+        "case": "upper",
+        "generated_string_df": {
+          "n_rows": 100000000,
+          "n_columns": 1,
+          "template": "VALID UPPER CASE"
+        }
+      },
+      "param": "upper",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.270809286000258,
+        "max": 0.3212079619997894,
+        "mean": 0.30311659580002015,
+        "stddev": 0.018974708094121526,
+        "rounds": 5,
+        "median": 0.30820606399993267,
+        "iqr": 0.013919936750198758,
+        "q1": 0.2978020627499518,
+        "q3": 0.31172199950015056,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.30679965499984974,
+        "hd15iqr": 0.3212079619997894,
+        "ops": 3.299060539264388,
+        "total": 1.5155829790001007,
         "iterations": 1
       }
     },
@@ -6287,6 +6490,154 @@
         "hd15iqr": 0.25929505500005234,
         "ops": 4.022305511798174,
         "total": 1.2430681820001155,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_country_code col1_country_code",
+      "name": "test_benchmark_is_valid_country_code[col1_country_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_country_code[col1_country_code]",
+      "params": {
+        "column": "col1_country_code"
+      },
+      "param": "col1_country_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2693861879997712,
+        "max": 0.2936891850004031,
+        "mean": 0.28014938519991117,
+        "stddev": 0.010863548604189784,
+        "rounds": 5,
+        "median": 0.27885259300001053,
+        "iqr": 0.01990984724966438,
+        "q1": 0.2699866079999538,
+        "q3": 0.28989645524961816,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.2693861879997712,
+        "hd15iqr": 0.2936891850004031,
+        "ops": 3.5695241639970483,
+        "total": 1.400746925999556,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_country_code col2_country_code",
+      "name": "test_benchmark_is_valid_country_code[col2_country_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_country_code[col2_country_code]",
+      "params": {
+        "column": "col2_country_code"
+      },
+      "param": "col2_country_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.25962760699985665,
+        "max": 0.3152944989997195,
+        "mean": 0.2853737264000301,
+        "stddev": 0.02242378968433474,
+        "rounds": 5,
+        "median": 0.2871209450004244,
+        "iqr": 0.03597751174970654,
+        "q1": 0.26568610025015005,
+        "q3": 0.3016636119998566,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.25962760699985665,
+        "hd15iqr": 0.3152944989997195,
+        "ops": 3.5041768302041363,
+        "total": 1.4268686320001507,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_currency_code col1_currency_code",
+      "name": "test_benchmark_is_valid_currency_code[col1_currency_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_currency_code[col1_currency_code]",
+      "params": {
+        "column": "col1_currency_code"
+      },
+      "param": "col1_currency_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.2633974290001788,
+        "max": 0.33136700999966706,
+        "mean": 0.29403042859994455,
+        "stddev": 0.02926467693365973,
+        "rounds": 5,
+        "median": 0.2862440779999815,
+        "iqr": 0.0510670147507426,
+        "q1": 0.2697409072495702,
+        "q3": 0.32080792200031283,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.2633974290001788,
+        "hd15iqr": 0.33136700999966706,
+        "ops": 3.4010085444611993,
+        "total": 1.4701521429997229,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_currency_code col2_currency_code",
+      "name": "test_benchmark_is_valid_currency_code[col2_currency_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_currency_code[col2_currency_code]",
+      "params": {
+        "column": "col2_currency_code"
+      },
+      "param": "col2_currency_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.26607417200011696,
+        "max": 0.3190226510005232,
+        "mean": 0.28908052340011636,
+        "stddev": 0.02303551352771342,
+        "rounds": 5,
+        "median": 0.2798469879999175,
+        "iqr": 0.039408107249983004,
+        "q1": 0.2711051015000976,
+        "q3": 0.3105132087500806,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.26607417200011696,
+        "hd15iqr": 0.3190226510005232,
+        "ops": 3.459243771383034,
+        "total": 1.4454026170005818,
         "iterations": 1
       }
     },
