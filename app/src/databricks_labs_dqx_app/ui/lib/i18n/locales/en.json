@@ -2064,6 +2064,8 @@
     "ruleLogicLabel": "Rule logic",
     "ruleLogicUnavailable": "No logic details available for this rule.",
     "ruleLogicCustomSql": "Custom SQL check",
+    "ruleLogicThenPasses": "THEN THE RULE PASSES",
+    "ruleLogicThenFails": "THEN THE RULE FAILS",
     "mappingCheckCount_one": "→ {{count}} check",
     "mappingCheckCount_other": "→ {{count}} checks",
     "noColumnMapped": "No column mapped",

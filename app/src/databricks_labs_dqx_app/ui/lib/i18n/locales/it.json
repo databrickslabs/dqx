@@ -2064,6 +2064,8 @@
     "ruleLogicLabel": "Logica della regola",
     "ruleLogicUnavailable": "Nessun dettaglio di logica disponibile per questa regola.",
     "ruleLogicCustomSql": "Controllo SQL personalizzato",
+    "ruleLogicThenPasses": "ALLORA LA REGOLA PASSA",
+    "ruleLogicThenFails": "ALLORA LA REGOLA FALLISCE",
     "mappingCheckCount_one": "→ {{count}} controllo",
     "mappingCheckCount_other": "→ {{count}} controlli",
     "noColumnMapped": "Nessuna colonna associata",

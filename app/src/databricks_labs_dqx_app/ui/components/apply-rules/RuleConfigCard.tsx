@@ -25,6 +25,7 @@ import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RegistryRuleVersionOut
 import { useListCheckFunctions, useListRegistryRuleVersions } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
+import { polarityLineKey } from "@/lib/marketplace-selection";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
@@ -158,6 +159,17 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   );
 }
 
+function PolarityLine({ registryRule }: { registryRule: RegistryRuleOut }) {
+  const { t } = useTranslation();
+  const key = polarityLineKey(registryRule.polarity);
+  if (!key) return null;
+  return (
+    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+      {t(key)}
+    </div>
+  );
+}
+
 function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
@@ -174,11 +186,21 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
     : undefined;
 
   if (registryRule.mode === "lowcode") {
-    return <LowcodeLogicBody registryRule={registryRule} />;
+    return (
+      <div className="space-y-3">
+        <LowcodeLogicBody registryRule={registryRule} />
+        <PolarityLine registryRule={registryRule} />
+      </div>
+    );
   }
 
   if (!fn && !sql && !predicate) {
-    return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
+    return (
+      <div className="space-y-3">
+        <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
+        <PolarityLine registryRule={registryRule} />
+      </div>
+    );
   }
 
   // For DQX-native (function-based) checks, show just the friendly function
@@ -197,6 +219,7 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
       {/* Non-column parameters only apply to DQX-native (function-based)
           checks — SQL/predicate rules have no declared `parameters`. */}
       {fn && <RuleParametersView parameters={parameters} />}
+      <PolarityLine registryRule={registryRule} />
     </div>
   );
 }

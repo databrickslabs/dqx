@@ -2064,6 +2064,8 @@
     "ruleLogicLabel": "Lógica da regra",
     "ruleLogicUnavailable": "Nenhum detalhe de lógica disponível para esta regra.",
     "ruleLogicCustomSql": "Verificação SQL personalizada",
+    "ruleLogicThenPasses": "ENTÃO A REGRA PASSA",
+    "ruleLogicThenFails": "ENTÃO A REGRA FALHA",
     "mappingCheckCount_one": "→ {{count}} verificação",
     "mappingCheckCount_other": "→ {{count}} verificações",
     "noColumnMapped": "Nenhuma coluna mapeada",
