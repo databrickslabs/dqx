@@ -1,5 +1,6 @@
 ---
 sidebar_position: 315
+title: DQX Studio (No-Code UI)
 ---
 
 import Admonition from '@theme/Admonition';
@@ -7,8 +8,14 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { AvailableSinceVersion, FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
 
 # DQX Studio (No-Code UI)
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+  <FeatureLifecycleStage stage="experimental" heading={false} />
+</FeatureTags>
 
 **DQX Studio** is the web application for authoring, reviewing, running, and monitoring data quality rules without writing code.
 It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) inside your workspace and exposes all the core DQX capabilities — profiling, rule authoring, approval workflows, scheduled runs, and results tracking — through a browser.
