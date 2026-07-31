@@ -23,7 +23,7 @@ router = APIRouter(dependencies=[require_role(UserRole.ADMIN)])
 
 @router.get("/packs", response_model=MarketplacePacksOut, operation_id="listMarketplacePacks")
 def list_marketplace_packs(
-    validate_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
+    validate_fn: Annotated[Callable[[list[dict[str, Any]]], ChecksValidationStatus], Depends(get_check_validator)],
 ) -> MarketplacePacksOut:
     """Return the full marketplace pack catalogue (admin only)."""
     return MarketplacePacksOut(packs=loader.load_packs(validate_fn))
