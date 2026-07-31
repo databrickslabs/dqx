@@ -21,7 +21,6 @@ import {
   togglePack,
   selectedCheckDicts,
   formatTagLabel,
-  regionTier,
 } from "@/lib/marketplace-selection";
 import { importChecksAsRegistryDrafts } from "@/lib/import-registry-rules";
 import { Input } from "@/components/ui/input";
@@ -243,22 +242,17 @@ function MarketplaceContent() {
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.regionLabel")}
               </span>
+              {/* Regions stay tier-ORDERED (global → macro → country) but with
+                  no divider lines — those read as stray artifacts. */}
               <div className="dq-scroll-auto flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
-                {regions.map((reg, i) => {
-                  // Vertical divider whenever the tier changes (global | macro |
-                  // country) so the tiered grouping reads — never before the first.
-                  const showDivider = i > 0 && regionTier(reg) !== regionTier(regions[i - 1]);
-                  return (
-                    <div key={reg} className="flex shrink-0 items-center gap-2">
-                      {showDivider && <div className="h-5 w-px bg-border" aria-hidden />}
-                      <FilterChip
-                        label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
-                        active={filters.region === reg}
-                        onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
-                      />
-                    </div>
-                  );
-                })}
+                {regions.map((reg) => (
+                  <FilterChip
+                    key={reg}
+                    label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
+                    active={filters.region === reg}
+                    onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
+                  />
+                ))}
               </div>
             </div>
           )}
