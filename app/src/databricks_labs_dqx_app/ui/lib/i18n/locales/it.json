@@ -2841,6 +2841,7 @@
     "packSelectedCount": "{{selected}} / {{total}} selezionati",
     "selectedLabel": "selezionate",
     "tryIt": "Provala",
-    "tryItTitle": "Provala — {{name}}"
+    "tryItTitle": "Provala — {{name}}",
+    "contribute": "Contribuisci su GitHub"
   }
 }

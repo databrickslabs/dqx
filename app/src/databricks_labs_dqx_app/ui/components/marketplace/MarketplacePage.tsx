@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Search } from "lucide-react";
+import { Search, Github } from "lucide-react";
+
+// Deep-link to the pack YAML directory on GitHub so a contributor lands
+// exactly where new content packs live.
+const MARKETPLACE_PACKS_REPO_URL =
+  "https://github.com/databrickslabs/dqx/tree/main/app/src/databricks_labs_dqx_app/backend/marketplace/packs";
 import { toast } from "sonner";
 import { useListMarketplacePacksSuspense, useListCheckFunctions } from "@/lib/api";
 import type { MarketplacePackOut, MarketplacePacksOut } from "@/lib/api";
@@ -177,7 +182,18 @@ function MarketplaceContent() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t("marketplace.title")}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t("marketplace.subtitle")}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("marketplace.subtitle")}{" "}
+            <a
+              href={MARKETPLACE_PACKS_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-foreground underline-offset-2 hover:underline"
+            >
+              {t("marketplace.contribute")}
+              <Github className="h-3.5 w-3.5" aria-hidden />
+            </a>
+          </p>
         </div>
         <Button
           className="shrink-0"
@@ -221,9 +237,6 @@ function MarketplaceContent() {
                 ))}
               </div>
             </div>
-          )}
-          {industries.length > 1 && regions.length > 1 && (
-            <div className="h-6 w-px shrink-0 bg-border" aria-hidden />
           )}
           {regions.length > 1 && (
             <div className="flex min-w-0 max-w-[55%] items-center gap-2">

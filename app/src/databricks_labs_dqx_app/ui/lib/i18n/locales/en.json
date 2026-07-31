@@ -2841,6 +2841,7 @@
     "packSelectedCount": "{{selected}} / {{total}} selected",
     "selectedLabel": "selected",
     "tryIt": "Try it out",
-    "tryItTitle": "Try it out — {{name}}"
+    "tryItTitle": "Try it out — {{name}}",
+    "contribute": "Contribute on GitHub"
   }
 }

@@ -236,15 +236,22 @@
  * transparent→visible thumb transition.
  * ------------------------------------------------------------------- */
 .dq-scroll-auto {
-  scrollbar-width: none; /* Firefox: hidden until hover below */
+  /* The scrollbar TRACK is always present (Firefox `thin`, WebKit fixed
+     height) so hovering never toggles the box's size and reflows the chips.
+     Only the THUMB fades in — invisible at rest, visible on hover/scroll. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
 }
 .dq-scroll-auto:hover,
 .dq-scroll-auto:focus-within {
-  scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
 .dq-scroll-auto::-webkit-scrollbar {
   height: 6px;
+}
+.dq-scroll-auto::-webkit-scrollbar-track {
+  background: transparent;
 }
 .dq-scroll-auto::-webkit-scrollbar-thumb {
   background-color: transparent;

@@ -67,7 +67,13 @@ export function PackGroup({
           type="button"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
-          className="flex flex-1 items-center gap-3 px-3 py-3 text-left"
+          className={cn(
+            "flex flex-1 items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted",
+            // Match the card's rounding so the hover tint doesn't spill past
+            // the corners — top-right always, bottom-right only when collapsed.
+            "rounded-tr-lg",
+            !expanded && "rounded-br-lg",
+          )}
         >
           <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
           <span className="text-sm font-semibold">{pack.title}</span>
