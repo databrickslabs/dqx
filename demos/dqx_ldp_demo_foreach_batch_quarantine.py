@@ -12,7 +12,7 @@ from pyspark import pipelines as dp
 # MAGIC table using a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch).
 # MAGIC The metrics table contains **per-batch summary metrics** about the input data quality.
 # MAGIC
-# MAGIC **When to use this a foreachBatch sink:**
+# MAGIC **When to use a foreachBatch sink:**
 # MAGIC Use a foreachBatch sink when you want summary metrics computed **incrementally per micro-batch** and
 # MAGIC appended as a history with one set of rows per batch, rather than a cumulative full-table snapshot. This
 # MAGIC may be **more performant for large or growing tables**. While a materialized view re-aggregates over the
@@ -53,7 +53,7 @@ output_schema = spark.conf.get("demo_schema", "dqx_ldp_demo_foreach_batch_quaran
 
 # MAGIC %md
 # MAGIC ## Define Data Quality checks
-# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table of file.
+# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table or file.
 
 # COMMAND ----------
 
@@ -138,7 +138,7 @@ def bronze():
 # MAGIC %md
 # MAGIC ## foreachBatch Sink
 # MAGIC Define a foreachBatch sink that applies quality checks using `dq_engine.apply_checks_by_metadata_and_split`,
-# MAGIC splits each micro-batch into valid and quarantine rows and appends them to `silver` and `quarantine` tables,
+# MAGIC splits each micro-batch into valid and quarantine rows and appends them to the `silver` and `quarantine` tables,
 # MAGIC computes the quality metrics for the incremental batch, and appends the computed metrics to a metrics table.
 # MAGIC
 # MAGIC Computing metrics with a foreachBatch sink creates a per-batch history (unlike a materialized view

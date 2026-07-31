@@ -50,7 +50,7 @@ dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver(), extra_para
 
 # MAGIC %md
 # MAGIC ## Define Data Quality checks
-# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table of file.
+# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table or file.
 
 # COMMAND ----------
 

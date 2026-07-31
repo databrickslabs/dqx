@@ -50,7 +50,7 @@ dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver(), extra_para
 
 # MAGIC %md
 # MAGIC ## Define Data Quality checks
-# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table of file.
+# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table or file.
 
 # COMMAND ----------
 
@@ -135,7 +135,7 @@ def bronze():
 # MAGIC ## Silver Layer
 # MAGIC Stream the `bronze data and apply quality checks using `dq_engine.apply_checks_by_metadata`. Pass the
 # MAGIC streaming DataFrame and the checks. Issues are reported in additional metadata columns `_warnings` and
-# MAGIC `_errors`. The output data is written to a 'silver` table.
+# MAGIC `_errors`. The output data is written to a silver-layer table.
 
 # COMMAND ----------
 
