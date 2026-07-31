@@ -7,33 +7,65 @@ from io import StringIO
 from collections.abc import Callable
 from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError
 
 
 logger = logging.getLogger(__name__)
+
+# Bound the control-plane ping so a workspace brownout cannot stall the caller. The SDK's default
+# retry window is 300s; on repeated 503s it blocks for that long and then raises TimeoutError. A few
+# seconds is ample for a healthy workspace, and telemetry is best-effort so giving up early is fine.
+_TELEMETRY_TIMEOUT_SECONDS = 5
+
+# Telemetry is a user-agent adoption signal (which features/checks/streaming/DLT are used), not an
+# invocation counter, so each (key, value) only needs to be sent once per process. Caching the pairs
+# already sent means the ping fires at most once per signal instead of once per check per micro-batch
+# — bounding both the load on the control plane and the number of times a brownout can stall a caller.
+#
+# No lock: set membership/add are atomic under the GIL and add is idempotent, so the cache can never be
+# corrupted. The only thing a lock would add is preventing a rare check-then-add race under concurrent
+# callers (e.g. overlapping foreachBatch micro-batches) from firing one duplicate ping — harmless for a
+# best-effort, timeout-bounded call, so it isn't worth the extra machinery.
+_sent_telemetry: set[tuple[str, str]] = set()
 
 
 def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
     """
     Trace specific telemetry information in the Databricks workspace by setting user agent extra info.
 
+    Best-effort: telemetry must never affect the data path. Each *(key, value)* is sent at most once
+    per process, the control-plane call is bounded by a short timeout, and any failure is swallowed
+    (logged at debug) so telemetry can never block for long or propagate an exception into user code.
+
     Args:
         ws: WorkspaceClient
         key: telemetry key to log
         value: telemetry value to log
     """
-    new_config = ws.config.copy().with_user_agent_extra(key, value)
-    logger.debug(f"Added User-Agent extra {key}={value}")
-
-    # Recreate the WorkspaceClient from the same type to preserve type information
-    ws = type(ws)(config=new_config)
+    # Deduplicate per process: skip if this signal was already sent (or attempted). Marking on attempt
+    # (not only on success) means at most one control-plane call per signal per process, so a brownout
+    # cannot re-stall the caller on every subsequent micro-batch.
+    if (key, value) in _sent_telemetry:
+        return
+    _sent_telemetry.add((key, value))
 
     try:
+        new_config = ws.config.copy().with_user_agent_extra(key, value)
+        # Cap the retry window (default 300s) and per-request time so a control-plane brownout gives
+        # up in seconds instead of stalling the caller for minutes.
+        new_config.retry_timeout_seconds = _TELEMETRY_TIMEOUT_SECONDS
+        new_config.http_timeout_seconds = _TELEMETRY_TIMEOUT_SECONDS
+        logger.debug(f"Added User-Agent extra {key}={value}")
+
+        # Recreate the WorkspaceClient from the same type to preserve type information
+        ws = type(ws)(config=new_config)
+
         # use api that works on all workspaces and clusters including group assigned clusters
         ws.clusters.select_spark_version()
-    except DatabricksError as e:
-        # support local execution
-        logger.debug(f"Databricks workspace is not available: {e}")
+    except Exception as e:
+        # Broad on purpose: telemetry is best-effort and must never propagate into the data path.
+        # Covers workspace unavailability (local execution), SDK retry-exhaustion TimeoutError, and any
+        # other failure.
+        logger.debug(f"Telemetry not sent for {key}={value}: {e}")
 
 
 def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") -> Callable:
@@ -89,6 +121,18 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     Returns:
         None
     """
+    # Wrap the whole body: telemetry must never propagate into user code. log_telemetry and the plan
+    # helpers are individually guarded, but df.isStreaming can itself raise (see issue #1001), so the
+    # outer guard honors the "never throw" contract regardless of which step fails.
+    try:
+        _log_dataframe_telemetry(ws, spark, df)
+    except Exception as e:
+        # Best-effort: log and continue so a telemetry failure never breaks the data path.
+        logger.debug(f"DataFrame telemetry not logged: {e}")
+
+
+def _log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFrame) -> None:
+    """Unguarded body of *log_dataframe_telemetry*; the caller wraps it so it can never throw."""
     log_telemetry(ws, "streaming", str(df.isStreaming).lower())
     log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
 

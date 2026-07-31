@@ -1,8 +1,15 @@
+from unittest.mock import Mock, PropertyMock
+
+import pytest
+
+import databricks.labs.dqx.telemetry as telemetry_module
 from databricks.labs.dqx.telemetry import (
     is_dlt_pipeline,
     get_tables_from_spark_plan,
     get_paths_from_spark_plan,
     get_spark_plan_as_string,
+    log_telemetry,
+    log_dataframe_telemetry,
 )
 
 
@@ -285,3 +292,132 @@ def test_get_paths_with_unicode_paths():
     # Should handle gracefully
     paths = get_paths_from_spark_plan(plan_with_unicode_paths)
     assert isinstance(paths, set), "Expected set return type with unicode paths"
+
+
+# --- log_telemetry: best-effort, non-blocking, deduplicated ------------------------------------
+
+
+class _FakeConfig:
+    """Minimal stand-in for databricks.sdk.config.Config supporting the calls log_telemetry makes."""
+
+    def __init__(self):
+        self.user_agent_extra: list[tuple[str, str]] = []
+        self.retry_timeout_seconds = None
+        self.http_timeout_seconds = None
+
+    def copy(self) -> "_FakeConfig":
+        clone = _FakeConfig()
+        clone.user_agent_extra = list(self.user_agent_extra)
+        return clone
+
+    def with_user_agent_extra(self, key: str, value: str) -> "_FakeConfig":
+        self.user_agent_extra.append((key, value))
+        return self
+
+
+class _FakeClusters:
+    def __init__(self, on_call):
+        self._on_call = on_call
+
+    def select_spark_version(self):
+        self._on_call()
+
+
+class _FakeWorkspaceClient:
+    """Re-instantiable fake so `type(ws)(config=new_config)` in log_telemetry works without a network."""
+
+    call_count = 0
+    raise_exc: BaseException | None = None
+    last_config: _FakeConfig | None = None
+
+    def __init__(self, config: _FakeConfig | None = None):
+        self.config = config or _FakeConfig()
+
+    @property
+    def clusters(self) -> _FakeClusters:
+        return _FakeClusters(self._record_call)
+
+    def _record_call(self):
+        type(self).call_count += 1
+        type(self).last_config = self.config
+        exc = type(self).raise_exc
+        if exc is not None:
+            raise exc
+
+
+@pytest.fixture(autouse=True)
+def _reset_telemetry_state():
+    """Reset the process-level dedup cache and fake-client state around each test."""
+    telemetry_module._sent_telemetry.clear()
+    _FakeWorkspaceClient.call_count = 0
+    _FakeWorkspaceClient.raise_exc = None
+    _FakeWorkspaceClient.last_config = None
+    yield
+    telemetry_module._sent_telemetry.clear()
+
+
+def test_log_telemetry_sends_once_and_sets_bounded_timeouts():
+    log_telemetry(_FakeWorkspaceClient(), "check", "is_not_null")
+
+    assert _FakeWorkspaceClient.call_count == 1
+    cfg = _FakeWorkspaceClient.last_config
+    assert ("check", "is_not_null") in cfg.user_agent_extra
+    # The control-plane ping must be bounded so a brownout cannot stall the caller for minutes.
+    assert cfg.retry_timeout_seconds == telemetry_module._TELEMETRY_TIMEOUT_SECONDS
+    assert cfg.http_timeout_seconds == telemetry_module._TELEMETRY_TIMEOUT_SECONDS
+
+
+def test_log_telemetry_deduplicates_same_key_value():
+    ws = _FakeWorkspaceClient()
+    for _ in range(5):
+        log_telemetry(ws, "check", "is_not_null")
+
+    # Same (key, value) sent five times -> control plane pinged at most once per process.
+    assert _FakeWorkspaceClient.call_count == 1
+
+
+def test_log_telemetry_distinct_keys_each_send_once():
+    ws = _FakeWorkspaceClient()
+    log_telemetry(ws, "check", "is_not_null")
+    log_telemetry(ws, "check", "is_in_range")
+    log_telemetry(ws, "streaming", "true")
+    log_telemetry(ws, "check", "is_not_null")  # duplicate of the first
+
+    assert _FakeWorkspaceClient.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("Timed out after 0:05:00"),  # the exact SDK retry-exhaustion case from issue #1355
+        RuntimeError("boom"),
+        ValueError("unexpected"),
+    ],
+)
+def test_log_telemetry_never_propagates_exceptions(exc):
+    _FakeWorkspaceClient.raise_exc = exc
+    # Must not raise: telemetry is best-effort and must never reach the data path.
+    log_telemetry(_FakeWorkspaceClient(), "check", "is_not_null")
+    assert _FakeWorkspaceClient.call_count == 1
+
+
+def test_log_telemetry_failed_send_is_not_retried():
+    _FakeWorkspaceClient.raise_exc = TimeoutError("Timed out")
+    ws = _FakeWorkspaceClient()
+    for _ in range(3):
+        log_telemetry(ws, "check", "is_not_null")
+
+    # Marked sent on attempt (not only on success), so a brownout cannot re-stall every micro-batch.
+    assert _FakeWorkspaceClient.call_count == 1
+
+
+def test_log_dataframe_telemetry_never_throws_when_is_streaming_raises():
+    """log_dataframe_telemetry must honor its 'never throw' contract even if df.isStreaming raises
+    (the failure mode from issue #1001) — the outer guard must swallow it and continue."""
+    df = Mock()
+    type(df).isStreaming = PropertyMock(side_effect=RuntimeError("Spark Connect: isStreaming unavailable"))
+
+    spark = DummySparkSession(DummySparkConf(value=None))
+    # Must not raise, and must not reach the control-plane ping (it fails before any log_telemetry send).
+    log_dataframe_telemetry(_FakeWorkspaceClient(), spark, df)
+    assert _FakeWorkspaceClient.call_count == 0
