@@ -531,18 +531,18 @@ def _make_min_max_profile_without_outlier_removal(
         agg_df = df.agg(F.min(col).alias("min_value"), F.max(col).alias("max_value"))
         if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
             agg_df = agg_df.select(
-                F.date_format("min_value", "yyyy-MM-dd HH:mm:ss").alias("min_value"),
-                F.date_format("max_value", "yyyy-MM-dd HH:mm:ss").alias("max_value"),
+                F.date_format("min_value", "yyyy-MM-dd HH:mm:ss.SSSSSS").alias("min_value"),
+                F.date_format("max_value", "yyyy-MM-dd HH:mm:ss.SSSSSS").alias("max_value"),
             )
         aggregates = agg_df.collect()[0].asDict()
         if not aggregates or aggregates.get("min_value") is None:
             logger.info(f"Can't get min/max for field {column_name}")
             return None
         if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
-            min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S").replace(
+            min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S.%f").replace(
                 tzinfo=datetime.timezone.utc
             )
-            max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S").replace(
+            max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S.%f").replace(
                 tzinfo=datetime.timezone.utc
             )
         else:

@@ -140,25 +140,32 @@ def test_profiler_is_in_large_table_few_distinct_values(spark, ws):
     assert set(is_in_profiles[0].parameters["in"]) == {"active", "inactive", "pending"}
 
 
-def test_profiler_timestamp_ntz_column(spark, ws):
-    # Verifies that TimestampNTZType is included in _supports_min_max and produces a min_max profile.
-    schema = T.StructType([T.StructField("created_at", T.TimestampNTZType())])
+@pytest.mark.parametrize(
+    "timestamp_type",
+    [T.TimestampType(), T.TimestampNTZType()],
+    ids=["timestamp", "timestamp_ntz"],
+)
+def test_profiler_preserves_timestamp_precision_when_rounding_disabled(spark, ws, timestamp_type):
+    schema = T.StructType([T.StructField("created_at", timestamp_type)])
     input_df = spark.createDataFrame(
         [
-            [datetime(2024, 1, 1, 0, 0, 0)],
-            [datetime(2024, 6, 15, 12, 0, 0)],
-            [datetime(2024, 12, 31, 23, 59, 59)],
+            [datetime(2024, 1, 1, 0, 0, 0, 123456)],
+            [datetime(2024, 12, 31, 23, 59, 59, 654321)],
         ],
         schema=schema,
     )
 
     profiler = DQProfiler(ws)
-    _, profiles = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    _, profiles = profiler.profile(
+        input_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "round": False}
+    )
 
     min_max_profiles = [p for p in profiles if p.name == "min_max" and p.column == "created_at"]
     assert len(min_max_profiles) == 1
-    assert min_max_profiles[0].parameters["min"] is not None
-    assert min_max_profiles[0].parameters["max"] is not None
+    assert min_max_profiles[0].parameters == {
+        "min": datetime(2024, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc),
+        "max": datetime(2024, 12, 31, 23, 59, 59, 654321, tzinfo=timezone.utc),
+    }
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws):
