@@ -23,7 +23,8 @@ publish). No new import/validation logic is introduced.
   **domain** (Pricing & Money, Contacts & People, Standard checks, …).
 - Rule-level selection: tick individual rules across any packs, then one
   **"Import N selected"** action.
-- **Industry** is a per-rule tag and the sole list filter.
+- **Industry** and **Region** are per-rule tags, surfaced as the two list
+  filters.
 - Imported rules are **reusable templates** that publish immediately (dedup skips
   already-imported rules).
 - Relocate the demo-content deployer into the Marketplace as its first row.
@@ -62,10 +63,16 @@ New sidebar item **"Marketplace"** in the bottom-pinned group in
    packs; auto-expands packs with hits) + **"Import N selected"** button
    (disabled with 0 selected; label shows the live count, e.g. "Import 3
    selected").
-2. **Industry filter** — chip row (`All`, `Banking`, `Retail`, `Healthcare`,
-   `Telco`, `Insurance`, `Logistics`, …). Selecting an industry narrows visible
-   rules to those tagged with it; rules tagged `general` (or untagged) always
-   show. This is the only filter (no dimension filter).
+2. **Filters** — two chip rows, labelled **Industry** and **Region**:
+   - **Industry** (`All`, `Banking`, `Retail`, `Healthcare`, `Telco`,
+     `Insurance`, `Logistics`, …). Selecting an industry narrows visible rules to
+     those tagged with it; rules tagged `general` (or untagged) always show.
+   - **Region** (`All`, `Global`, `US`, `UK`, `EU`, `Canada`, `Australia`, …).
+     Selecting a region narrows to rules tagged with it; rules tagged `global`
+     (or untagged) always show — e.g. UK-postcode is `uk`, US-state is `us`,
+     ISO-country is `global`.
+   Both filters combine with AND (a rule shows only if it satisfies the active
+   industry **and** region selection). No dimension filter.
 3. **Deploy demo content** — the first row, in a distinct amber-tinted box.
    Clicking the row opens the demo **confirm modal** (wipe-first checkbox,
    existing `useDeployDemoContent` flow). No separate "Deploy" button — the row
@@ -75,7 +82,8 @@ New sidebar item **"Marketplace"** in the bottom-pinned group in
      selected" count, chevron.
    - Rules: each rule row has a **checkbox** (toggles selection), the **rule
      name**, its **dimension** and **severity** badges beside the name, the
-     **industry tag(s)**, and the **description** beneath the name.
+     **industry tag(s)** and **region tag(s)**, and the **description** beneath
+     the name.
 
 ### Interactions
 
@@ -165,6 +173,7 @@ rules:
   - name: Valid credit card (Luhn)
     description: Card number passes the Luhn checksum after non-digits are removed.
     industries: [banking]        # [] / omitted => general (always shown)
+    regions: [global]            # [] / omitted => global (always shown)
     criticality: error           # DQX execution field
     user_metadata:
       dimension: Validity
@@ -196,8 +205,8 @@ than failing startup.
 
 - `GET /api/v1/marketplace/packs` → list of packs, each with `id`, `title`,
   `icon`, `description`, and its rules. Each rule carries: stable `rule_key`
-  (pack id + slug), `name`, `description`, `industries[]`, `dimension`,
-  `severity`, and the **normalised check dict** (same shape
+  (pack id + slug), `name`, `description`, `industries[]`, `regions[]`,
+  `dimension`, `severity`, and the **normalised check dict** (same shape
   `normalizeImportedCheck` produces) so the UI can both preview (via
   `RuleLogicDisclosure`) and import (via `importChecksAsRegistryDrafts`) without
   a second round-trip.
@@ -209,10 +218,11 @@ calls the existing `batch-import` path. Filtering/search are client-side.
 
 - New route `routes/_sidebar/marketplace.tsx` (admin-gated; redirect otherwise).
 - New components under `components/marketplace/`:
-  - `MarketplacePage` — toolbar, industry filter, demo row, pack list.
+  - `MarketplacePage` — toolbar, industry + region filters, demo row, pack list.
   - `PackGroup` — collapsible pack with tri-state header checkbox.
   - `MarketplaceRuleRow` — checkbox + name + dimension/severity badges +
-    industry tags + description + inline `RuleLogicDisclosure` (accordion).
+    industry & region tags + description + inline `RuleLogicDisclosure`
+    (accordion).
   - `DeployDemoRow` — the amber demo row + confirm dialog.
 - Extract the existing `DeployDemoCard` logic (`settings.tsx` ~L3023) into a
   reusable hook/component so both the (removed) settings entry and the new demo
@@ -235,35 +245,42 @@ industry note are `general`.
 6. Cost cannot exceed price — Consistency / Medium — sql `{{cost}} <= {{price}}` (retail)
 7. Margin not extreme — Accuracy / Medium — sql margin bounds (retail)
 8. Valid credit card (Luhn) — Validity / High — sql `luhn_check(regexp_replace({{card_number}}, '[^0-9]', ''))` (banking)
-9. Valid IBAN format — Validity / Medium — `regex_match({{iban}}, '^[A-Za-z]{2}\d{2}[A-Za-z0-9]{1,30}$')` (banking)
+9. Valid IBAN format — Validity / Medium — `regex_match({{iban}}, '^[A-Za-z]{2}\d{2}[A-Za-z0-9]{1,30}$')` (banking) [eu]
 
 ### Contacts & People  *(icon: User)*
 1. Valid email — Validity / High — `is_valid_email({{email}})`
 2. Valid phone (E.164) — Validity / High — `regex_match({{phone}}, '^\+[1-9]\d{1,14}$')`
 3. Phone must include country code — Validity / Medium — sql leading `+` and 1–3 digit code
-4. Valid US phone (NANP) — Validity / Low — `regex_match` NANP
+4. Valid US phone (NANP) — Validity / Low — `regex_match` NANP [us]
 5. Full name must be present — Completeness / Medium — `is_not_null_and_not_empty` over `{{first_name}}`,`{{last_name}}` (for_each)
 6. Valid MSISDN — Validity / Medium — `regex_match({{msisdn}}, '^\+?[1-9]\d{1,14}$')` (telco)
 7. Valid IMSI — Validity / Medium — `regex_match({{imsi}}, '^\d{15}$')` (telco)
 
-### Addresses & Geo  *(icon: MapPin)*
-1. Valid UK postcode — Validity / Medium — regex (GDS)
-2. Valid Canadian postal code — Validity / Low — regex
-3. Valid Netherlands postcode — Validity / Low — regex
-4. Valid German postcode — Validity / Low — `^\d{5}$`
-5. Valid French postcode — Validity / Low — `^\d{5}$`
-6. Valid Australian postcode — Validity / Low — `^\d{4}$`
-7. Valid postcode (generic) — Validity / Low — permissive regex
-8. Valid ISO-2 country code — Validity / Medium — `^[A-Za-z]{2}$`
-9. Valid ISO-3 country code — Validity / Medium — `^[A-Za-z]{3}$`
-10. Valid latitude — Validity / Medium — `is_in_range({{lat}}, -90, 90)`
-11. Valid longitude — Validity / Medium — `is_in_range({{lon}}, -180, 180)`
+Region tags in [brackets]; rules with no region note are `global`.
+1. Valid UK postcode — Validity / Medium — regex (GDS) [uk]
+2. Valid Canadian postal code — Validity / Low — regex [canada]
+3. Valid Netherlands postcode — Validity / Low — regex [eu]
+4. Valid German postcode — Validity / Low — `^\d{5}$` [eu]
+5. Valid French postcode — Validity / Low — `^\d{5}$` [eu]
+6. Valid Australian postcode — Validity / Low — `^\d{4}$` [australia]
+7. Valid postcode (generic) — Validity / Low — permissive regex [global]
+8. Valid ISO-2 country code — Validity / Medium — `^[A-Za-z]{2}$` [global]
+9. Valid ISO-3 country code — Validity / Medium — `^[A-Za-z]{3}$` [global]
+10. Valid latitude — Validity / Medium — `is_in_range({{lat}}, -90, 90)` [global]
+11. Valid longitude — Validity / Medium — `is_in_range({{lon}}, -180, 180)` [global]
+12. Valid US state code — Validity / Medium — `is_in_list({{state}}, [AL,AK,…,WY,DC + PR,GU,VI,AS,MP])` [us]
+13. Valid Canadian province code — Validity / Medium — `is_in_list({{province}}, [AB,BC,MB,NB,NL,NS,NT,NU,ON,PE,QC,SK,YT])` [canada]
+14. Valid Australian state code — Validity / Medium — `is_in_list({{state}}, [NSW,VIC,QLD,SA,WA,TAS,NT,ACT])` [australia]
+15. Valid ISO-639 language code — Validity / Low — `regex_match({{language}}, '^[a-z]{2}$')` [global]
+16. Valid continent code — Validity / Low — `is_in_list({{continent}}, [AF,AN,AS,EU,NA,OC,SA])` [global]
 
 ### Dates & Freshness  *(icon: CalendarClock)*
 1. Must not be in the future — Validity / Medium — `is_not_in_future({{ts}})`
 2. End must not precede start — Consistency / High — sql `{{end_ts}} >= {{start_ts}}`
 3. Must be fresh (within SLA) — Timeliness / Medium — `is_data_fresh({{ts}}, {{max_age_minutes}})`
 4. Admission before discharge — Consistency / High — sql `{{admission_ts}} <= {{discharge_ts}}` (healthcare)
+5. Valid day-of-week name — Validity / Low — `is_in_list({{day}}, [Monday,…,Sunday])`
+6. Valid month name — Validity / Low — `is_in_list({{month}}, [January,…,December])`
 
 ### Standard checks  *(icon: SquareCheck)*  (merged Identifiers + Completeness Basics)
 1. Must not be null — Completeness / High — `is_not_null({{column}})`
@@ -278,6 +295,7 @@ industry note are `general`.
 2. Valid CPT code — Validity / Medium — regex (healthcare)
 3. Valid FHIR administrative gender — Validity / Medium — `is_in_list({{gender}}, [male,female,other,unknown])` (healthcare)
 4. Valid hex colour — Validity / Low — `regex_match({{hex}}, '^#[0-9A-Fa-f]{6}$')` (retail)
+5. Valid blood type — Validity / Medium — `is_in_list({{blood_type}}, [A+,A-,B+,B-,AB+,AB-,O+,O-])` (healthcare)
 
 ### Transactions & Amounts  *(icon: ShieldAlert)*  (banking)
 1. Round-amount structuring — Validity / High — sql round-number pattern
@@ -286,9 +304,18 @@ industry note are `general`.
 4. Debit must be negative — Consistency / High — sql sign-vs-type
 5. Duplicate transaction — Uniqueness / High — `is_unique([{{account}}, {{amount}}, {{reference}}])`
 
-**Totals:** 7 packs, ~48 rules. Exact regexes/thresholds are drafts validated
+**Totals:** 7 packs, ~59 rules. Exact regexes/thresholds are drafts validated
 against sourced research; final values live in the pack YAML and are covered by
 tests.
+
+### Tag taxonomies
+
+- **Industry** (per rule, 0+): `banking`, `retail`, `healthcare`, `telco`,
+  `insurance`, `logistics`. No industry ⇒ `general` (always shown).
+- **Region** (per rule, 0+): `global`, `us`, `uk`, `eu`, `canada`, `australia`.
+  No region ⇒ `global` (always shown). The UI derives each filter's chip set
+  from the union of tags actually present across the loaded catalogue, so adding
+  a new tag in a pack YAML surfaces a new chip with no UI change.
 
 ### Reusability principle (why some rules were cut)
 
@@ -312,8 +339,9 @@ generic rules (date ordering, non-negativity) live in Dates/Standard.
   - `GET /marketplace/packs` returns the catalogue; route rejects non-admin
     (403) via `require_role`.
 - **Frontend unit** (vitest):
-  - Client filtering: industry chip narrows rules; `general` rules always show;
-    search matches name/description.
+  - Client filtering: industry chip narrows rules (`general` always shows);
+    region chip narrows rules (`global` always shows); industry + region combine
+    with AND; search matches name/description.
   - Tri-state pack-header checkbox logic (none/some/all) and select/deselect.
   - "Import N selected" disabled at 0; count reflects selection.
   - `RuleLogicDisclosure` polarity line renders "THEN THE RULE PASSES/FAILS" for
