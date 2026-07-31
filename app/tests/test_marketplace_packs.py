@@ -53,8 +53,10 @@ def test_name_and_description_conventions():
     for r in rules:
         assert r.name and len(r.name) <= 80, f"{r.rule_key}: name empty or >80"
         assert r.name.split()[0].lower() not in {"a", "an", "the"}, f"{r.rule_key}: article"
-        assert r.description.endswith("."), f"{r.rule_key}: description not one sentence"
-        assert r.description.count(".") == 1, f"{r.rule_key}: >1 sentence"
+        desc = r.description.strip()
+        assert desc, f"{r.rule_key}: description must not be empty"
+        assert desc.endswith("."), f"{r.rule_key}: description must end with a period"
+        assert ". " not in desc, f"{r.rule_key}: description must be a single sentence"
 
 
 def test_tag_values_are_from_taxonomy():

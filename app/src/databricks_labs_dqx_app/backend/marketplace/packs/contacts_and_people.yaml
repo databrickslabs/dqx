@@ -14,7 +14,7 @@ rules:
       arguments:
         column: "{{email}}"
   - name: Valid phone (E.164)
-    description: Phone number conforms to the E164 international dialling format.
+    description: Phone number is in valid E.164 international format.
     dimension: Validity
     severity: High
     check:

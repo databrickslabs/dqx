@@ -70,7 +70,7 @@ rules:
       arguments:
         expression: "({{price}} - {{cost}}) / nullif({{price}}, 0) between 0 and 0.95"
   - name: Valid credit card (Luhn)
-    description: Card number passes the Luhn checksum after stripping non-digit characters.
+    description: Card number passes the Luhn checksum after stripping non-digit characters (requires DBR 13.3+).
     industries: [banking]
     dimension: Validity
     severity: High
