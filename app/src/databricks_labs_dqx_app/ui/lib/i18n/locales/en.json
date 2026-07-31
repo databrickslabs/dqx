@@ -2838,6 +2838,9 @@
     "importError": "Import failed. Please try again.",
     "selectRule": "Select {{name}}",
     "selectPack": "Select all rules in {{title}}",
-    "packSelectedCount": "{{selected}} / {{total}} selected"
+    "packSelectedCount": "{{selected}} / {{total}} selected",
+    "selectedLabel": "selected",
+    "tryIt": "Try it out",
+    "tryItTitle": "Try it out — {{name}}"
   }
 }

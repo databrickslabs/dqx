@@ -186,6 +186,7 @@ def batch_import_registry_rules(
     body: BatchImportRegistryRulesIn,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     user_email: CurrentUser,
+    role: CurrentUserRole,
 ) -> BatchImportRegistryRulesOut:
     """Bulk-create registry drafts from imported checks in a single request.
 
@@ -199,6 +200,13 @@ def batch_import_registry_rules(
     Per-rule failures are collected (partial success) rather than aborting
     the batch.
     """
+    # auto_approve publishes each imported rule outright; only approver-level
+    # roles may bypass the queue. A non-approver asking for it is a client bug
+    # (the admin-only Marketplace is the only caller), so fail loudly rather
+    # than silently downgrading to a draft.
+    if body.auto_approve and role not in _APPROVERS_ONLY:
+        raise HTTPException(status_code=403, detail="auto_approve requires an approver role")
+
     created: list[CreateRegistryRuleOut] = []
     reused: list[CreateRegistryRuleOut] = []
     failed: list[BatchImportRegistryRulesFailure] = []
@@ -248,7 +256,23 @@ def batch_import_registry_rules(
             if fingerprint is not None:
                 seen_in_batch[fingerprint] = out
 
-            if body.also_submit:
+            if body.auto_approve:
+                # Publish outright: submit to leave draft, then approve to
+                # bump v0 -> v1 and freeze the snapshot. A freshly-imported
+                # reusable rule has no applications yet, so no re-materialize
+                # is needed here (that's the approve ROUTE's concern).
+                try:
+                    svc.submit(rule.rule_id, user_email)
+                    svc.approve(rule.rule_id, user_email)
+                    submitted += 1
+                except Exception as approve_err:
+                    logger.warning(
+                        "Batch import created rule %s but auto-approve failed: %s",
+                        rule.rule_id,
+                        approve_err,
+                    )
+                    submit_failed += 1
+            elif body.also_submit:
                 try:
                     svc.submit(rule.rule_id, user_email)
                     submitted += 1

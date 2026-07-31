@@ -563,6 +563,14 @@ class BatchImportRegistryRulesIn(BaseModel):
         default=False,
         description="When true, transition each successfully created draft to pending_approval.",
     )
+    auto_approve: bool = Field(
+        default=False,
+        description=(
+            "When true, publish each successfully created rule outright (submit + approve), "
+            "bypassing the approval queue. Restricted to callers who may approve; used by the "
+            "admin-only Marketplace so curated packs import ready to apply, not as pending drafts."
+        ),
+    )
     skip_duplicates: bool = Field(
         default=False,
         description=(

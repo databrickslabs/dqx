@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Play } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CheckFunctionDef, MarketplaceRuleOut } from "@/lib/api";
 import type { LabelColorDefinition } from "@/components/RegistryRuleBadges";
@@ -13,6 +15,7 @@ import {
 } from "@/components/RegistryRuleBadges";
 import { RuleLogicBody } from "@/components/apply-rules/RuleConfigCard";
 import { checkDictToPreviewRule, formatTagLabel } from "@/lib/marketplace-selection";
+import { RuleTestModal } from "./RuleTestModal";
 
 export function MarketplaceRuleRow({
   rule,
@@ -32,16 +35,16 @@ export function MarketplaceRuleRow({
   labelDefinitions: LabelColorDefinition[];
 }) {
   const { t } = useTranslation();
+  const [testOpen, setTestOpen] = useState(false);
   const previewRule = checkDictToPreviewRule(rule, checkFunctions, t);
   const tags = [...rule.industries, ...rule.regions];
 
   return (
-    <div className={cn("rounded-md border transition-colors", selected && "border-primary/50 bg-primary/5")}>
-      {/* items-stretch + padding-on-children so both the checkbox cell and the
-          toggle button fill the FULL row height — no dead padding zone that
-          only lets you open the card by clicking its vertical centre. */}
+    <div className={cn("rounded-md border bg-background transition-colors", selected && "border-primary/50 bg-primary/5")}>
       <div className="flex items-stretch">
-        <div className="flex items-start pl-3 pt-2.5">
+        {/* Checkbox aligned to the NAME line (h-9 matches the first row's
+            height) rather than floating above the whole cell. */}
+        <div className="flex h-9 items-center pl-3">
           <Checkbox
             checked={selected}
             onCheckedChange={onToggleSelect}
@@ -49,15 +52,15 @@ export function MarketplaceRuleRow({
             onClick={(e) => e.stopPropagation()}
           />
         </div>
-        {/* The whole button (its own px/py) is the click target. */}
+        {/* Whole button (its own padding) toggles the rule open/closed. */}
         <button
           type="button"
           onClick={onToggleOpen}
           aria-expanded={open}
-          className="flex flex-1 items-start gap-2 px-3 py-2.5 text-left"
+          className="flex flex-1 items-start gap-2 px-3 py-2 text-left"
         >
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex h-5 flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{rule.name}</span>
               <TagBadge
                 label={rule.dimension}
@@ -70,10 +73,9 @@ export function MarketplaceRuleRow({
             </div>
             <p className="text-xs text-muted-foreground">{rule.description}</p>
           </div>
-          {/* Industry/region tags pinned to the top-right corner, away from the
-              dimension/severity that describe the rule itself. */}
+          {/* Industry/region tags pinned to the top-right corner. */}
           {tags.length > 0 && (
-            <div className="flex max-w-[45%] flex-wrap justify-end gap-1">
+            <div className="flex max-w-[40%] flex-wrap justify-end gap-1">
               {tags.map((tag) => (
                 <TagBadge key={tag} label={formatTagLabel(tag)} />
               ))}
@@ -89,8 +91,7 @@ export function MarketplaceRuleRow({
         </button>
       </div>
 
-      {/* Animated open/close via a grid-rows height transition. Open state is
-          owned by the parent pack accordion (one rule open at a time). */}
+      {/* Animated open/close via a grid-rows height transition. */}
       <div
         className={cn(
           "grid transition-[grid-template-rows] duration-200 ease-out",
@@ -98,7 +99,7 @@ export function MarketplaceRuleRow({
         )}
       >
         <div className="overflow-hidden">
-          <div className="border-t px-3 pb-3 pl-10 pt-3">
+          <div className="space-y-3 border-t px-3 pb-3 pl-10 pt-3">
             {previewRule ? (
               <RuleLogicBody registryRule={previewRule} />
             ) : (
@@ -106,9 +107,28 @@ export function MarketplaceRuleRow({
                 {t("monitoredTables.ruleLogicUnavailable")}
               </p>
             )}
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setTestOpen(true)}
+              >
+                <Play className="h-3.5 w-3.5" aria-hidden />
+                {t("marketplace.tryIt")}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
+
+      <RuleTestModal
+        rule={rule}
+        checkFunctions={checkFunctions}
+        open={testOpen}
+        onOpenChange={setTestOpen}
+      />
     </div>
   );
 }

@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FadeIn } from "@/components/anim/FadeIn";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { DeployDemoRow } from "./DeployDemoRow";
 import { PackGroup } from "./PackGroup";
 
@@ -86,7 +87,8 @@ function MarketplaceContent() {
     region: "all",
     search: "",
   });
-  const [expandedPacks, setExpandedPacks] = useState<Set<string>>(new Set());
+  // Pack accordion — at most one pack open at a time.
+  const [expandedPackId, setExpandedPackId] = useState<string | null>(null);
   const [openRuleByPack, setOpenRuleByPack] = useState<Record<string, string | null>>({});
   const [isImporting, setIsImporting] = useState(false);
 
@@ -103,13 +105,12 @@ function MarketplaceContent() {
     [allPacks, filters],
   );
 
-  // Auto-expand packs that have search hits
-  const effectiveExpanded = useMemo<Set<string>>(() => {
-    if (filters.search.trim() !== "") {
-      return new Set(visiblePacks.map((p) => p.id));
-    }
-    return expandedPacks;
-  }, [filters.search, visiblePacks, expandedPacks]);
+  // While searching, expand every pack with a hit (so matches aren't hidden);
+  // otherwise honour the single-open accordion selection.
+  const isSearching = filters.search.trim() !== "";
+  function isPackExpanded(packId: string): boolean {
+    return isSearching ? true : expandedPackId === packId;
+  }
 
   function handleToggleRule(key: string) {
     setSelected((prev) => toggleRule(prev, key));
@@ -120,12 +121,8 @@ function MarketplaceContent() {
   }
 
   function handleTogglePackExpanded(packId: string) {
-    setExpandedPacks((prev) => {
-      const next = new Set(prev);
-      if (next.has(packId)) next.delete(packId);
-      else next.add(packId);
-      return next;
-    });
+    // Accordion: open the clicked pack, or close it if it was already open.
+    setExpandedPackId((prev) => (prev === packId ? null : packId));
   }
 
   function handleOpenRule(packId: string, ruleKey: string | null) {
@@ -137,16 +134,15 @@ function MarketplaceContent() {
     setIsImporting(true);
     try {
       const dicts = selectedCheckDicts(allPacks, selected);
-      // alsoSubmit submits each imported rule for review; in the workspace's
-      // approvals mode (admin-only marketplace) that publishes them straight to
-      // approved rather than leaving drafts — the packs are curated, so they
-      // arrive ready to apply, not as pending drafts.
+      // autoApprove publishes each imported rule outright (submit + approve) —
+      // the Marketplace is admin-only and its packs are curated, so they arrive
+      // approved and ready to apply, never as pending drafts in a review queue.
       const result = await importChecksAsRegistryDrafts({
         checks: dicts,
         checkFunctions,
         t,
         authorKind: "human",
-        alsoSubmit: true,
+        autoApprove: true,
       });
       if (result.failed > 0) {
         toast.error(
@@ -172,12 +168,16 @@ function MarketplaceContent() {
   const selectedCount = selected.size;
 
   return (
-    <div className="space-y-5">
-      {/* Page header + right-aligned import action */}
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-6">
+      <PageBreadcrumb page={t("marketplace.title")} />
+
+      {/* Page header + right-aligned import action — matches the standard
+          page header (registry-rules, runs-history): tracking-tight title,
+          muted subtitle, primary action on the right. */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">{t("marketplace.title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("marketplace.subtitle")}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("marketplace.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t("marketplace.subtitle")}</p>
         </div>
         <Button
           className="shrink-0"
@@ -199,48 +199,50 @@ function MarketplaceContent() {
         />
       </div>
 
-      {/* Filters — industry + region on one line, in a filled bar, with
-          horizontal scroll for overflow so the row never wraps or clips. */}
+      {/* Filters — industry and region on their OWN rows, each scrolling
+          independently with an auto-hiding scrollbar. The industry row fades
+          on its left edge to hint at scrolled-off chips. No shared bar. */}
       {(industries.length > 1 || regions.length > 1) && (
-        <div className="flex items-center gap-4 overflow-x-auto rounded-lg border bg-muted/40 px-3 py-2">
+        <div className="space-y-2">
           {industries.length > 1 && (
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span className="w-16 shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.industryLabel")}
               </span>
-              {industries.map((ind) => (
-                <FilterChip
-                  key={ind}
-                  label={ind === "all" ? t("marketplace.all") : formatTagLabel(ind)}
-                  active={filters.industry === ind}
-                  onClick={() => setFilters((prev) => ({ ...prev, industry: ind }))}
-                />
-              ))}
+              <div className="dq-scroll-auto dq-fade-left flex flex-1 items-center gap-2 overflow-x-auto py-0.5 pl-2">
+                {industries.map((ind) => (
+                  <FilterChip
+                    key={ind}
+                    label={ind === "all" ? t("marketplace.all") : formatTagLabel(ind)}
+                    active={filters.industry === ind}
+                    onClick={() => setFilters((prev) => ({ ...prev, industry: ind }))}
+                  />
+                ))}
+              </div>
             </div>
           )}
-          {industries.length > 1 && regions.length > 1 && (
-            <div className="h-5 w-px shrink-0 bg-border" aria-hidden />
-          )}
           {regions.length > 1 && (
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span className="w-16 shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.regionLabel")}
               </span>
-              {regions.map((reg, i) => {
-                // A thin divider whenever the tier changes (global | macro | country),
-                // so the tiered grouping reads visually — never before the first chip.
-                const showDivider = i > 0 && regionTier(reg) !== regionTier(regions[i - 1]);
-                return (
-                  <div key={reg} className="flex shrink-0 items-center gap-2">
-                    {showDivider && <div className="h-5 w-px bg-border" aria-hidden />}
-                    <FilterChip
-                      label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
-                      active={filters.region === reg}
-                      onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
-                    />
-                  </div>
-                );
-              })}
+              <div className="dq-scroll-auto flex flex-1 items-center gap-2 overflow-x-auto py-0.5">
+                {regions.map((reg, i) => {
+                  // Vertical divider whenever the tier changes (global | macro |
+                  // country) so the tiered grouping reads — never before the first.
+                  const showDivider = i > 0 && regionTier(reg) !== regionTier(regions[i - 1]);
+                  return (
+                    <div key={reg} className="flex shrink-0 items-center gap-2">
+                      {showDivider && <div className="h-5 w-px bg-border" aria-hidden />}
+                      <FilterChip
+                        label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
+                        active={filters.region === reg}
+                        onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -262,7 +264,7 @@ function MarketplaceContent() {
             onOpenRule={(key) => handleOpenRule(pack.id, key)}
             checkFunctions={checkFunctions}
             labelDefinitions={labelDefinitions}
-            expanded={effectiveExpanded.has(pack.id)}
+            expanded={isPackExpanded(pack.id)}
             onToggleExpanded={() => handleTogglePackExpanded(pack.id)}
           />
         ))}

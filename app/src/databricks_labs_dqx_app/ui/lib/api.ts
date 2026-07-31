@@ -510,6 +510,8 @@ export interface BatchImportRegistryRulesIn {
   rules: CreateRegistryRuleIn[];
   /** When true, transition each successfully created draft to pending_approval. */
   also_submit?: boolean;
+  /** When true, publish each successfully created rule outright (submit + approve), bypassing the approval queue. Restricted to callers who may approve; used by the admin-only Marketplace so curated packs import ready to apply, not as pending drafts. */
+  auto_approve?: boolean;
   /** When true, reuse an existing structurally-identical ACTIVE rule (draft/pending_approval/approved) instead of creating a duplicate, and dedupe repeated rules within this batch. Reused rules are returned in ``reused`` and are neither re-created nor re-submitted. Makes re-importing the same contract bundle idempotent. */
   skip_duplicates?: boolean;
 }

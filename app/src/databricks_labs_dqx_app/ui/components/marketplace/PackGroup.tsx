@@ -8,6 +8,7 @@ import type { CheckFunctionDef, MarketplacePackOut } from "@/lib/api";
 import type { LabelColorDefinition } from "@/components/RegistryRuleBadges";
 import { packSelectionState } from "@/lib/marketplace-selection";
 import { MarketplaceRuleRow } from "./MarketplaceRuleRow";
+import { AnimatedCount } from "./AnimatedCount";
 
 export function PackGroup({
   pack,
@@ -49,7 +50,7 @@ export function PackGroup({
   }
 
   return (
-    <div className="rounded-lg border">
+    <div className="rounded-lg border bg-muted/50">
       {/* Header — checkbox cell + a full-height toggle button. Padding lives on
           the button (not the row div) so the ENTIRE header area toggles the
           pack, not just its vertical centre. */}
@@ -70,11 +71,9 @@ export function PackGroup({
         >
           <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
           <span className="text-sm font-semibold">{pack.title}</span>
-          <span className="text-xs text-muted-foreground ml-auto shrink-0">
-            {t("marketplace.packSelectedCount", {
-              selected: selectedCount,
-              total: pack.rules.length,
-            })}
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+            <AnimatedCount value={selectedCount} /> / <AnimatedCount value={pack.rules.length} />{" "}
+            {t("marketplace.selectedLabel")}
           </span>
           <ChevronDown
             className={cn(
@@ -95,7 +94,6 @@ export function PackGroup({
       >
         <div className="overflow-hidden">
           <div className="px-4 pb-4 space-y-2 border-t pt-3">
-            <p className="text-xs text-muted-foreground">{pack.description}</p>
             {pack.rules.map((rule) => (
               <MarketplaceRuleRow
                 key={rule.rule_key}

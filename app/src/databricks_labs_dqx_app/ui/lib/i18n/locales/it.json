@@ -2838,6 +2838,9 @@
     "importError": "Importazione non riuscita. Riprova.",
     "selectRule": "Seleziona {{name}}",
     "selectPack": "Seleziona tutte le regole in {{title}}",
-    "packSelectedCount": "{{selected}} / {{total}} selezionati"
+    "packSelectedCount": "{{selected}} / {{total}} selezionati",
+    "selectedLabel": "selezionate",
+    "tryIt": "Provala",
+    "tryItTitle": "Provala — {{name}}"
   }
 }

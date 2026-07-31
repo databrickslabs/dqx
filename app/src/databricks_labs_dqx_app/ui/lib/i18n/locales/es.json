@@ -2838,6 +2838,9 @@
     "importError": "Error al importar. Inténtelo de nuevo.",
     "selectRule": "Seleccionar {{name}}",
     "selectPack": "Seleccionar todas las reglas en {{title}}",
-    "packSelectedCount": "{{selected}} / {{total}} seleccionados"
+    "packSelectedCount": "{{selected}} / {{total}} seleccionados",
+    "selectedLabel": "seleccionadas",
+    "tryIt": "Probar",
+    "tryItTitle": "Probar — {{name}}"
   }
 }
