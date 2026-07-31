@@ -422,3 +422,27 @@ def test_log_dataframe_telemetry_never_throws_when_is_streaming_raises():
     # Must not raise, and must not reach the control-plane ping (it fails before any log_telemetry send).
     log_dataframe_telemetry(_FakeWorkspaceClient(), spark, df)
     assert _FakeWorkspaceClient.call_count == 0
+
+
+def test_log_telemetry_cache_is_bounded_and_evicts_oldest(monkeypatch):
+    """The dedup cache is hard-bounded: past the cap the oldest signal is evicted (FIFO), so it can be
+    re-sent later. Prevents unbounded growth for a long-lived process reading ever-new inputs."""
+    monkeypatch.setattr("databricks.labs.dqx.telemetry._TELEMETRY_CACHE_MAX_SIZE", 3)
+    ws = _FakeWorkspaceClient()
+
+    # Fill to capacity with distinct signals (each pings once).
+    for i in range(3):
+        log_telemetry(ws, "input_table", f"h{i}")
+    assert _FakeWorkspaceClient.call_count == 3
+
+    # One more distinct signal exceeds the cap and evicts the oldest ("h0").
+    log_telemetry(ws, "input_table", "h3")
+    assert _FakeWorkspaceClient.call_count == 4
+
+    # The evicted "h0" is no longer cached, so re-sending it pings again (proves eviction happened).
+    log_telemetry(ws, "input_table", "h0")
+    assert _FakeWorkspaceClient.call_count == 5
+
+    # A still-cached signal ("h3") is not re-sent.
+    log_telemetry(ws, "input_table", "h3")
+    assert _FakeWorkspaceClient.call_count == 5

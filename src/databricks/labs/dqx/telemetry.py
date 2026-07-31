@@ -4,6 +4,7 @@ import functools
 import logging
 import hashlib
 from io import StringIO
+from collections import OrderedDict
 from collections.abc import Callable
 from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
@@ -21,11 +22,19 @@ _TELEMETRY_TIMEOUT_SECONDS = 5
 # already sent means the ping fires at most once per signal instead of once per check per micro-batch
 # — bounding both the load on the control plane and the number of times a brownout can stall a caller.
 #
-# No lock: set membership/add are atomic under the GIL and add is idempotent, so the cache can never be
-# corrupted. The only thing a lock would add is preventing a rare check-then-add race under concurrent
-# callers (e.g. overlapping foreachBatch micro-batches) from firing one duplicate ping — harmless for a
-# best-effort, timeout-bounded call, so it isn't worth the extra machinery.
-_sent_telemetry: set[tuple[str, str]] = set()
+# Most signals are naturally bounded (a fixed set of check names, streaming/dlt/workflow flags), but
+# input_table / input_path add one hashed entry per *distinct* input, so a very long-lived process that
+# reads an ever-growing set of tables could accumulate unboundedly. Cap the cache and evict oldest-first
+# (FIFO via OrderedDict) so memory is hard-bounded; the realistic ceiling is far below the cap, so
+# eviction only ever kicks in for pathological workloads and merely allows an evicted signal to be
+# re-sent once later — harmless for best-effort telemetry.
+#
+# No lock: dict membership/set/popitem are atomic under the GIL. A concurrent check-then-add race can at
+# most fire one duplicate ping, and since eviction only runs when the cache is over capacity (never near
+# empty) a concurrent eviction can at most drop one extra entry — both harmless for a best-effort call,
+# so a lock isn't worth the machinery.
+_TELEMETRY_CACHE_MAX_SIZE = 10_000
+_sent_telemetry: "OrderedDict[tuple[str, str], None]" = OrderedDict()
 
 
 def reset_telemetry_cache() -> None:
@@ -55,7 +64,10 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
     # cannot re-stall the caller on every subsequent micro-batch.
     if (key, value) in _sent_telemetry:
         return
-    _sent_telemetry.add((key, value))
+    _sent_telemetry[(key, value)] = None
+    if len(_sent_telemetry) > _TELEMETRY_CACHE_MAX_SIZE:
+        # Evict the oldest signal to keep memory hard-bounded (last=False -> FIFO).
+        _sent_telemetry.popitem(last=False)
 
     try:
         new_config = ws.config.copy().with_user_agent_extra(key, value)
