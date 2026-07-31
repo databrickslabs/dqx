@@ -390,7 +390,8 @@
     "governedKeyError": "No se pudieron cargar las claves de etiqueta gobernadas.",
     "governedKeyEmpty": "No hay claves de etiqueta gobernadas disponibles.",
     "governedKeyValueCount_one": "{{count}} valor",
-    "governedKeyValueCount_other": "{{count}} valores"
+    "governedKeyValueCount_other": "{{count}} valores",
+    "demoDeployShort": "Desplegar"
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",
@@ -2065,8 +2066,6 @@
     "ruleLogicLabel": "Lógica de la regla",
     "ruleLogicUnavailable": "No hay detalles de lógica disponibles para esta regla.",
     "ruleLogicCustomSql": "Verificación SQL personalizada",
-    "ruleLogicThenPasses": "ENTONCES LA REGLA PASA",
-    "ruleLogicThenFails": "ENTONCES LA REGLA FALLA",
     "mappingCheckCount_one": "→ {{count}} verificación",
     "mappingCheckCount_other": "→ {{count}} verificaciones",
     "noColumnMapped": "Ninguna columna asignada",

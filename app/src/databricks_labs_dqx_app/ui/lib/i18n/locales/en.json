@@ -390,7 +390,8 @@
     "governedKeyError": "Could not load governed tag keys.",
     "governedKeyEmpty": "No governed tag keys available.",
     "governedKeyValueCount_one": "{{count}} value",
-    "governedKeyValueCount_other": "{{count}} values"
+    "governedKeyValueCount_other": "{{count}} values",
+    "demoDeployShort": "Deploy"
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -2065,8 +2066,6 @@
     "ruleLogicLabel": "Rule logic",
     "ruleLogicUnavailable": "No logic details available for this rule.",
     "ruleLogicCustomSql": "Custom SQL check",
-    "ruleLogicThenPasses": "THEN THE RULE PASSES",
-    "ruleLogicThenFails": "THEN THE RULE FAILS",
     "mappingCheckCount_one": "→ {{count}} check",
     "mappingCheckCount_other": "→ {{count}} checks",
     "noColumnMapped": "No column mapped",

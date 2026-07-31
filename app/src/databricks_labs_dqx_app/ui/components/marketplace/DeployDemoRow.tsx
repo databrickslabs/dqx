@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { AxiosError } from "axios";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { Rocket, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +61,10 @@ export function DeployDemoRow() {
 
   return (
     <>
+      {/* Inverse-toned banner (dark in light mode, light in dark mode) so it
+          reads as a distinct, invitational setup action rather than a warning.
+          The whole row is clickable; the Deploy button makes that affordance
+          explicit. Icon + button are vertically centred against the text. */}
       <button
         type="button"
         disabled={!isAdmin || isRunning}
@@ -69,19 +73,30 @@ export function DeployDemoRow() {
           setOpen(true);
         }}
         className={cn(
-          "w-full flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-left transition-colors hover:bg-amber-500/10 disabled:opacity-60 disabled:cursor-not-allowed",
+          "w-full flex items-center gap-4 rounded-lg bg-foreground px-4 py-3.5 text-left text-background",
+          "transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed",
         )}
       >
-        <FlaskConical className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
-        <div className="space-y-1">
-          <div className="text-sm font-medium flex items-center gap-2">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-background/15">
+          <Rocket className="h-5 w-5" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex items-center gap-2 text-sm font-semibold">
             {t("config.demoTitle")}
             {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
           </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">
+          <p className="text-xs leading-relaxed text-background/70">
             {isRunning ? t("config.demoRunningBanner", { phase: status?.phase ?? "" }) : t("config.demoBody")}
           </p>
         </div>
+        <span
+          className={cn(
+            "shrink-0 rounded-md bg-background px-4 py-2 text-sm font-medium text-foreground",
+            "shadow-sm",
+          )}
+        >
+          {isRunning ? t("config.demoInProgress") : t("config.demoDeployShort")}
+        </span>
       </button>
 
       <Dialog
@@ -95,7 +110,7 @@ export function DeployDemoRow() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <FlaskConical className="h-5 w-5" />
+              <Rocket className="h-5 w-5" />
               {t("config.demoDialogTitle")}
             </DialogTitle>
             <DialogDescription>{t("config.demoWarning")}</DialogDescription>

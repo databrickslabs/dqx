@@ -5,6 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { CheckFunctionDef, MarketplacePackOut } from "@/lib/api";
+import type { LabelColorDefinition } from "@/components/RegistryRuleBadges";
 import { packSelectionState } from "@/lib/marketplace-selection";
 import { MarketplaceRuleRow } from "./MarketplaceRuleRow";
 
@@ -16,6 +17,7 @@ export function PackGroup({
   openRuleKey,
   onOpenRule,
   checkFunctions,
+  labelDefinitions,
   expanded,
   onToggleExpanded,
 }: {
@@ -26,6 +28,7 @@ export function PackGroup({
   openRuleKey: string | null;
   onOpenRule: (key: string | null) => void;
   checkFunctions: CheckFunctionDef[];
+  labelDefinitions: LabelColorDefinition[];
   expanded: boolean;
   onToggleExpanded: () => void;
 }) {
@@ -97,6 +100,7 @@ export function PackGroup({
                 open={openRuleKey === rule.rule_key}
                 onToggleOpen={() => handleRuleToggleOpen(rule.rule_key)}
                 checkFunctions={checkFunctions}
+                labelDefinitions={labelDefinitions}
               />
             ))}
           </div>

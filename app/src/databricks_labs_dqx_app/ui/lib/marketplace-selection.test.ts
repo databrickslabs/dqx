@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  polarityLineKey,
+  formatTagLabel,
+  compareRegions,
   ruleMatchesFilters,
   collectIndustries,
   collectRegions,
@@ -12,16 +13,25 @@ import {
 } from "./marketplace-selection";
 import type { CheckFunctionDef, MarketplacePackOut, MarketplaceRuleOut } from "@/lib/api";
 
-describe("polarityLineKey", () => {
-  it("maps pass -> then-passes key", () => {
-    expect(polarityLineKey("pass")).toBe("monitoredTables.ruleLogicThenPasses");
+describe("formatTagLabel", () => {
+  it("sentence-cases ordinary words", () => {
+    expect(formatTagLabel("banking")).toBe("Banking");
+    expect(formatTagLabel("australia")).toBe("Australia");
   });
-  it("maps fail -> then-fails key", () => {
-    expect(polarityLineKey("fail")).toBe("monitoredTables.ruleLogicThenFails");
+  it("upper-cases known acronyms", () => {
+    expect(formatTagLabel("us")).toBe("US");
+    expect(formatTagLabel("uk")).toBe("UK");
+    expect(formatTagLabel("eu")).toBe("EU");
   });
-  it("returns null when polarity is absent", () => {
-    expect(polarityLineKey(null)).toBeNull();
-    expect(polarityLineKey(undefined)).toBeNull();
+  it("passes 'all' through unchanged (caller localizes it)", () => {
+    expect(formatTagLabel("all")).toBe("all");
+  });
+});
+
+describe("compareRegions", () => {
+  it("orders by tier (global -> macro -> country), then A-Z within tier", () => {
+    const sorted = ["us", "eu", "global", "uk", "australia", "canada"].sort(compareRegions);
+    expect(sorted).toEqual(["global", "eu", "australia", "canada", "uk", "us"]);
   });
 });
 
@@ -70,8 +80,9 @@ describe("collectIndustries / collectRegions", () => {
     { rules: [rule({ industries: ["retail"] }), rule({ industries: ["banking"] })] },
     { rules: [rule({ regions: ["uk"] }), rule({ regions: ["eu"] })] },
   ] as unknown as MarketplacePackOut[];
-  it("prepends all and unions/sorts", () => {
+  it("prepends all and unions/sorts (regions tiered)", () => {
     expect(collectIndustries(packs)).toEqual(["all", "banking", "retail"]);
+    // eu (macro tier) sorts before uk (country tier), both after all.
     expect(collectRegions(packs)).toEqual(["all", "eu", "uk"]);
   });
 });

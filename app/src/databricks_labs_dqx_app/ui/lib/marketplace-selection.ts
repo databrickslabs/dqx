@@ -1,17 +1,46 @@
 import type { CheckFunctionDef, MarketplacePackOut, MarketplaceRuleOut, RegistryRuleOut, RuleDefinition } from "@/lib/api";
 import { parseDqxCheckJson } from "@/lib/registry-rule-conversion";
 
+// ---------------------------------------------------------------------------
+// Tag display + ordering
+// ---------------------------------------------------------------------------
+
+/** Short tags that read as acronyms rather than words — upper-cased whole. */
+const TAG_ACRONYMS = new Set(["us", "uk", "eu", "usa", "crm", "fsi", "emea", "apac", "latam"]);
+
 /**
- * Map a rule's polarity to the i18n key for its read-only "THEN THE RULE
- * PASSES/FAILS" line. Returns null when polarity is absent (dqx_native rules
- * carry no polarity, so no line is shown).
+ * Human display label for an industry/region tag value. Acronyms upper-case
+ * whole (``us`` → ``US``); everything else is sentence-cased (``banking`` →
+ * ``Banking``, ``new zealand`` → ``New zealand``). ``all`` is handled by the
+ * caller (localized), so it is passed through unchanged here.
  */
-export function polarityLineKey(
-  polarity: RegistryRuleOut["polarity"] | null | undefined,
-): "monitoredTables.ruleLogicThenPasses" | "monitoredTables.ruleLogicThenFails" | null {
-  if (polarity === "pass") return "monitoredTables.ruleLogicThenPasses";
-  if (polarity === "fail") return "monitoredTables.ruleLogicThenFails";
-  return null;
+export function formatTagLabel(value: string): string {
+  if (value === "all") return value;
+  const lower = value.toLowerCase();
+  if (TAG_ACRONYMS.has(lower)) return lower.toUpperCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/**
+ * Region tier for the tiered ordering the UI wants: broad → narrow
+ * (``global`` → macro-region → country). Lower tier sorts first; within a
+ * tier, values sort A–Z. Example order: ``global, eu, australia, canada, uk,
+ * us``. Unknown values default to the country tier so a new country tag slots
+ * in sensibly without code changes.
+ */
+const REGION_TIER: Record<string, number> = { global: 0, emea: 1, apac: 1, latam: 1, eu: 1 };
+const REGION_COUNTRY_TIER = 2;
+
+function regionTier(value: string): number {
+  return REGION_TIER[value.toLowerCase()] ?? REGION_COUNTRY_TIER;
+}
+
+/** Compare two region tags by (tier asc, then A–Z). */
+export function compareRegions(a: string, b: string): number {
+  const ta = regionTier(a);
+  const tb = regionTier(b);
+  if (ta !== tb) return ta - tb;
+  return a.localeCompare(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -34,18 +63,22 @@ export function ruleMatchesFilters(rule: MarketplaceRuleOut, f: MarketplaceFilte
   return industryOk && regionOk && searchOk;
 }
 
-function collectTag(packs: MarketplacePackOut[], pick: (r: MarketplaceRuleOut) => string[]): string[] {
+function collectTag(
+  packs: MarketplacePackOut[],
+  pick: (r: MarketplaceRuleOut) => string[],
+  sort: (a: string, b: string) => number,
+): string[] {
   const set = new Set<string>();
   for (const p of packs) for (const r of p.rules) for (const tag of pick(r)) set.add(tag);
-  return ["all", ...[...set].sort()];
+  return ["all", ...[...set].sort(sort)];
 }
 
 export function collectIndustries(packs: MarketplacePackOut[]): string[] {
-  return collectTag(packs, (r) => r.industries);
+  return collectTag(packs, (r) => r.industries, (a, b) => a.localeCompare(b));
 }
 
 export function collectRegions(packs: MarketplacePackOut[]): string[] {
-  return collectTag(packs, (r) => r.regions);
+  return collectTag(packs, (r) => r.regions, compareRegions);
 }
 
 export function packSelectionState(

@@ -390,7 +390,8 @@
     "governedKeyError": "Não foi possível carregar as chaves de tag governadas.",
     "governedKeyEmpty": "Nenhuma chave de tag governada disponível.",
     "governedKeyValueCount_one": "{{count}} valor",
-    "governedKeyValueCount_other": "{{count}} valores"
+    "governedKeyValueCount_other": "{{count}} valores",
+    "demoDeployShort": "Implantar"
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -2065,8 +2066,6 @@
     "ruleLogicLabel": "Lógica da regra",
     "ruleLogicUnavailable": "Nenhum detalhe de lógica disponível para esta regra.",
     "ruleLogicCustomSql": "Verificação SQL personalizada",
-    "ruleLogicThenPasses": "ENTÃO A REGRA PASSA",
-    "ruleLogicThenFails": "ENTÃO A REGRA FALHA",
     "mappingCheckCount_one": "→ {{count}} verificação",
     "mappingCheckCount_other": "→ {{count}} verificações",
     "noColumnMapped": "Nenhuma coluna mapeada",

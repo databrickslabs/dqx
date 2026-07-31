@@ -25,7 +25,7 @@ import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RegistryRuleVersionOut
 import { useListCheckFunctions, useListRegistryRuleVersions } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
-import { polarityLineKey } from "@/lib/marketplace-selection";
+import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
@@ -159,18 +159,33 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   );
 }
 
+// Read-only polarity indicator — the same PASS/FAIL pill used in the rule
+// editor, shown disabled here so the rule-logic disclosure faithfully mirrors
+// whether a TRUE predicate means the row passed or failed. Rules with no
+// polarity (dqx_native checks that don't carry one) render nothing.
 function PolarityLine({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
-  const key = polarityLineKey(registryRule.polarity);
-  if (!key) return null;
+  const polarity = registryRule.polarity;
+  if (polarity !== "pass" && polarity !== "fail") return null;
   return (
-    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-      {t(key)}
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {t("rulesRegistry.thenTheRow")}
+      </span>
+      <PredicatePolaritySwitch
+        value={polarity}
+        onChange={() => {}}
+        disabled
+        disabledReason={t("rulesRegistry.polarityHint")}
+      />
     </div>
   );
 }
 
-function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
+// Exported so the Marketplace preview can render the read-only rule body
+// directly (function/SQL/low-code + polarity pill) inside its own animated
+// accordion, rather than nesting the toggle-owning RuleLogicDisclosure.
+export function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const fn = typeof body.function === "string" ? body.function : undefined;
