@@ -11,7 +11,7 @@ from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDe
 from databricks.labs.dqx.actions.message import AlertMessage
 
 
-class SlackDQAlertDestination(WebhookAlertDestination):
+class DQSlackAlertDestination(WebhookAlertDestination):
     """Slack incoming-webhook destination using Slack Block Kit format.
 
     Posts a structured Block Kit message to a Slack incoming webhook URL.
@@ -90,4 +90,4 @@ class SlackDQAlertDestination(WebhookAlertDestination):
         return {"blocks": blocks}
 
 
-__all__ = ["SlackDQAlertDestination"]
+__all__ = ["DQSlackAlertDestination"]

@@ -18,7 +18,7 @@ from databricks.labs.blueprint.parallel import Threads
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
-from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.callback import DQCallbackAlertDestination
 from databricks.labs.dqx.actions.destinations.union import AnyDestination
 from databricks.labs.dqx.actions.message import AlertMessage, StandardMessageBuilder
 from databricks.labs.dqx.actions.registry import register_action
@@ -147,7 +147,7 @@ class DQAlert(Action):
     def _serialize_destinations(self, destinations: list[AlertDestination]) -> list[dict[str, object]]:
         """Serialize destinations, excluding non-persistable callbacks.
 
-        *CallbackDQAlertDestination* instances hold a live Python callable that
+        *DQCallbackAlertDestination* instances hold a live Python callable that
         cannot be persisted, so they are skipped with a sanitized warning — the
         same behaviour as the legacy serializer.
 
@@ -159,10 +159,10 @@ class DQAlert(Action):
         """
         serialized: list[dict[str, object]] = []
         for destination in destinations:
-            if isinstance(destination, CallbackDQAlertDestination):
+            if isinstance(destination, DQCallbackAlertDestination):
                 safe_name = _sanitize(destination.name)
                 logger.warning(
-                    f"Destination '{safe_name}' is a CallbackDQAlertDestination and cannot be serialized; skipping."
+                    f"Destination '{safe_name}' is a DQCallbackAlertDestination and cannot be serialized; skipping."
                 )
                 continue
             serialized.append(destination.model_dump(mode="json"))

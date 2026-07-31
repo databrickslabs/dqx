@@ -24,7 +24,7 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import ActionContext
 from databricks.labs.dqx.actions.dq_action import DQAction
-from databricks.labs.dqx.actions.destinations import CallbackDQAlertDestination, SlackDQAlertDestination
+from databricks.labs.dqx.actions.destinations import DQCallbackAlertDestination, DQSlackAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.manager import DQActionManager
 from databricks.labs.dqx.actions.message import AlertMessage
@@ -82,12 +82,12 @@ def test_apply_checks_and_save_raises_pipeline_failed_error(ws, spark, make_sche
 
 
 # ---------------------------------------------------------------------------
-# Test: CallbackDQAlertDestination fires once with populated metrics
+# Test: DQCallbackAlertDestination fires once with populated metrics
 # ---------------------------------------------------------------------------
 
 
 def test_apply_checks_and_save_fires_callback_with_metrics(ws, spark, make_schema, make_random) -> None:
-    """*CallbackDQAlertDestination* receives a populated *ActionContext* with metrics."""
+    """*DQCallbackAlertDestination* receives a populated *ActionContext* with metrics."""
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -112,7 +112,7 @@ def test_apply_checks_and_save_fires_callback_with_metrics(ws, spark, make_schem
     def capture_callback(_message: AlertMessage, context: ActionContext) -> None:
         received_contexts.append(context)
 
-    callback_dest = CallbackDQAlertDestination(name="capture", callback=capture_callback)
+    callback_dest = DQCallbackAlertDestination(name="capture", callback=capture_callback)
     alert = DQAlert(destinations=[callback_dest])
     action = DQAction(
         action=alert,
@@ -148,13 +148,13 @@ def _make_streaming_action(received_contexts: list[ActionContext]) -> DQAction:
     def capture_callback(_message: AlertMessage, context: ActionContext) -> None:
         received_contexts.append(context)
 
-    callback_dest = CallbackDQAlertDestination(name="capture_streaming", callback=capture_callback)
+    callback_dest = DQCallbackAlertDestination(name="capture_streaming", callback=capture_callback)
     alert = DQAlert(destinations=[callback_dest])
     return DQAction(action=alert, condition="error_row_count > 0", name="alert_on_errors_streaming")
 
 
 def test_streaming_apply_checks_fires_callback_per_microbatch(ws, spark, make_schema, make_volume, make_random) -> None:
-    """*CallbackDQAlertDestination* receives an *ActionContext* from each streaming micro-batch.
+    """*DQCallbackAlertDestination* receives an *ActionContext* from each streaming micro-batch.
 
     This test uses *availableNow=True* so the stream processes all available
     data as a single micro-batch and terminates, allowing a synchronous assert.
@@ -260,7 +260,7 @@ def test_local_file_action_round_trip(tmp_path, filename) -> None:
     actions = [
         DQAction(
             action=DQAlert(
-                destinations=[SlackDQAlertDestination(name="ops", webhook_url=DQSecret(scope="s", key="k"))]
+                destinations=[DQSlackAlertDestination(name="ops", webhook_url=DQSecret(scope="s", key="k"))]
             ),
             condition="error_row_count > 0",
             name="alert_from_file",
@@ -276,7 +276,7 @@ def test_local_file_action_round_trip(tmp_path, filename) -> None:
     alert = loaded[0].action
     assert isinstance(alert, DQAlert)
     destination = alert.destinations[0]
-    assert isinstance(destination, SlackDQAlertDestination)
+    assert isinstance(destination, DQSlackAlertDestination)
     assert isinstance(destination.webhook_url, DQSecret)
     fail = loaded[1].action
     assert isinstance(fail, FailPipeline)

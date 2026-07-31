@@ -19,7 +19,7 @@ from databricks.labs.dqx.actions.secret_field import SecretOrStr
 from databricks.labs.dqx.errors import InvalidActionError
 
 
-class WebhookDQAlertDestination(WebhookAlertDestination):
+class DQWebhookAlertDestination(WebhookAlertDestination):
     """Generic HTTPS webhook destination with optional Basic-auth.
 
     Posts a canonical DQX JSON payload to any HTTPS endpoint.  No host
@@ -50,7 +50,7 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
     password: SecretOrStr | None = Field(default=None)
 
     @model_validator(mode="after")
-    def _validate_auth_pair(self) -> "WebhookDQAlertDestination":
+    def _validate_auth_pair(self) -> "DQWebhookAlertDestination":
         """Reject a half-configured Basic-auth credential.
 
         Basic-auth needs both *username* and *password*. Providing exactly one is almost certainly a
@@ -64,7 +64,7 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
         # is set (both-set and both-None are allowed; exactly-one is the misconfiguration).
         if (self.username is None) != (self.password is None):
             raise InvalidActionError(
-                "WebhookDQAlertDestination Basic-auth requires both 'username' and 'password' to be set "
+                "DQWebhookAlertDestination Basic-auth requires both 'username' and 'password' to be set "
                 "(or neither); exactly one was provided."
             )
         return self
@@ -118,4 +118,4 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
         }
 
 
-__all__ = ["WebhookDQAlertDestination"]
+__all__ = ["DQWebhookAlertDestination"]

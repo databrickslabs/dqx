@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC This short demo shows how to react automatically to data quality problems using DQX **actions**. After checks run, DQX evaluates each action's optional *condition* against the observed summary metrics and, when it matches, fires the action — for example sending an alert.
 # MAGIC
-# MAGIC We use a `LogDQAlertDestination`, which writes the alert to the driver log and contacts no external system, so the demo runs end-to-end anywhere. We also show how to add a Slack destination: supply a Slack incoming-webhook URL in the `slack_webhook_url` widget and the demo will additionally deliver to Slack. Finally, we show how to register and fire a **custom action** of your own.
+# MAGIC We use a `DQLogAlertDestination`, which writes the alert to the driver log and contacts no external system, so the demo runs end-to-end anywhere. We also show how to add a Slack destination: supply a Slack incoming-webhook URL in the `slack_webhook_url` widget and the demo will additionally deliver to Slack. Finally, we show how to register and fire a **custom action** of your own.
 # MAGIC
 # MAGIC See the [Actions and Alerting guide](https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts) for the full reference.
 
@@ -94,14 +94,14 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.actions import (
     DQAction,
     DQAlert,
-    LogDQAlertDestination,
-    SlackDQAlertDestination,
+    DQLogAlertDestination,
+    DQSlackAlertDestination,
 )
 
 # Always log alerts; add Slack only when a webhook URL is supplied.
-destinations = [LogDQAlertDestination(name="driver-log", level="warning")]
+destinations = [DQLogAlertDestination(name="driver-log", level="warning")]
 if slack_webhook_url:
-    destinations.append(SlackDQAlertDestination(name="slack", webhook_url=slack_webhook_url))
+    destinations.append(DQSlackAlertDestination(name="slack", webhook_url=slack_webhook_url))
 
 actions = [
     DQAction(
@@ -268,9 +268,9 @@ display(spark.table(events_table).orderBy("run_time", ascending=False))
 # MAGIC
 # MAGIC ```python
 # MAGIC from databricks.labs.dqx.config import DQSecret
-# MAGIC from databricks.labs.dqx.actions import SlackDQAlertDestination
+# MAGIC from databricks.labs.dqx.actions import DQSlackAlertDestination
 # MAGIC
-# MAGIC SlackDQAlertDestination(
+# MAGIC DQSlackAlertDestination(
 # MAGIC     name="slack",
 # MAGIC     webhook_url=DQSecret(scope="dq-secrets", key="slack-webhook-url"),
 # MAGIC )

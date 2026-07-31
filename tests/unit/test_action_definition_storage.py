@@ -15,7 +15,7 @@ from databricks.labs.dqx.actions.definition_storage import (
     LakebaseActionsStorageHandler,
     TableActionsStorageHandler,
 )
-from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.serializer import ActionSerializer
@@ -35,7 +35,7 @@ def _make_fail_action(name: str = "fail") -> DQAction:
 
 def _make_slack_action(name: str = "alert") -> DQAction:
     """Return a *DQAction* wrapping a *DQAlert* with a Slack destination."""
-    dest = SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/T/B/x")
+    dest = DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/T/B/x")
     alert = DQAlert(destinations=[dest], name=name)
     return DQAction(action=alert)
 

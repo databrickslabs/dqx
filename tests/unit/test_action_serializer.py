@@ -20,10 +20,10 @@ from databricks.labs.dqx.actions.base import (
 )
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.definition_storage import build_replace_where_predicate
-from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
-from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
-from databricks.labs.dqx.actions.destinations.teams import TeamsDQAlertDestination
-from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
+from databricks.labs.dqx.actions.destinations.callback import DQCallbackAlertDestination
+from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination
+from databricks.labs.dqx.actions.destinations.teams import DQTeamsAlertDestination
+from databricks.labs.dqx.actions.destinations.webhook import DQWebhookAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import DQSecret
@@ -37,7 +37,7 @@ from databricks.labs.dqx.errors import InvalidActionError, UnsafeSqlQueryError
 
 def _make_slack_dq_action(condition: str | None = None, name: str = "") -> DQAction:
     """Build a DQAction wrapping a DQAlert with a Slack destination."""
-    dest = SlackDQAlertDestination(name="slack-dest", webhook_url="https://hooks.slack.com/T/B/x")
+    dest = DQSlackAlertDestination(name="slack-dest", webhook_url="https://hooks.slack.com/T/B/x")
     alert = DQAlert(
         destinations=[dest],
         name="my-alert",
@@ -113,7 +113,7 @@ class TestSlackRoundTrip:
             assert restored.action.severity == "warning"
             assert len(restored.action.destinations) == 1
             dest = restored.action.destinations[0]
-            assert isinstance(dest, SlackDQAlertDestination)
+            assert isinstance(dest, DQSlackAlertDestination)
             assert dest.name == "slack-dest"
             assert dest.webhook_url == "https://hooks.slack.com/T/B/x"
 
@@ -131,7 +131,7 @@ class TestSlackRoundTrip:
 
 class TestTeamsRoundTrip:
     def test_round_trip(self) -> None:
-        dest = TeamsDQAlertDestination(
+        dest = DQTeamsAlertDestination(
             name="teams-dest",
             webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
         )
@@ -147,7 +147,7 @@ class TestTeamsRoundTrip:
         assert isinstance(restored.action, DQAlert)
         if isinstance(restored.action, DQAlert):
             dest_restored = restored.action.destinations[0]
-            assert isinstance(dest_restored, TeamsDQAlertDestination)
+            assert isinstance(dest_restored, DQTeamsAlertDestination)
             assert (
                 dest_restored.webhook_url
                 == "https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz"
@@ -161,7 +161,7 @@ class TestTeamsRoundTrip:
 
 class TestWebhookRoundTrip:
     def test_round_trip_no_auth(self) -> None:
-        dest = WebhookDQAlertDestination(
+        dest = DQWebhookAlertDestination(
             name="webhook-dest",
             webhook_url="https://example.com/hook",
         )
@@ -181,7 +181,7 @@ class TestWebhookRoundTrip:
         assert isinstance(restored.action, DQAlert)
         if isinstance(restored.action, DQAlert):
             dest_r = restored.action.destinations[0]
-            assert isinstance(dest_r, WebhookDQAlertDestination)
+            assert isinstance(dest_r, DQWebhookAlertDestination)
             assert dest_r.webhook_url == "https://example.com/hook"
             assert dest_r.username is None
             assert dest_r.password is None
@@ -195,7 +195,7 @@ class TestWebhookRoundTrip:
 class TestDQSecretSerialization:
     def test_webhook_url_as_dq_secret_round_trips(self) -> None:
         secret = DQSecret(scope="my-scope", key="my-key")
-        dest = SlackDQAlertDestination(name="slack-dest", webhook_url=secret)
+        dest = DQSlackAlertDestination(name="slack-dest", webhook_url=secret)
         alert = DQAlert(destinations=[dest], name="secret-alert")
         action = DQAction(action=alert)
 
@@ -210,13 +210,13 @@ class TestDQSecretSerialization:
         assert isinstance(restored.action, DQAlert)
         if isinstance(restored.action, DQAlert):
             dest_r = restored.action.destinations[0]
-            assert isinstance(dest_r, SlackDQAlertDestination)
+            assert isinstance(dest_r, DQSlackAlertDestination)
             assert isinstance(dest_r.webhook_url, DQSecret)
             assert dest_r.webhook_url.scope == "my-scope"
             assert dest_r.webhook_url.key == "my-key"
 
     def test_plain_string_webhook_url_stays_string(self) -> None:
-        dest = SlackDQAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
+        dest = DQSlackAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
         alert = DQAlert(destinations=[dest], name="plain-alert")
         action = DQAction(action=alert)
 
@@ -229,13 +229,13 @@ class TestDQSecretSerialization:
         assert isinstance(restored.action, DQAlert)
         if isinstance(restored.action, DQAlert):
             dest_r = restored.action.destinations[0]
-            assert isinstance(dest_r, SlackDQAlertDestination)
+            assert isinstance(dest_r, DQSlackAlertDestination)
             assert isinstance(dest_r.webhook_url, str)
 
     def test_webhook_dest_username_password_as_dq_secret(self) -> None:
         u_secret = DQSecret(scope="s1", key="user")
         p_secret = DQSecret(scope="s2", key="pass")
-        dest = WebhookDQAlertDestination(
+        dest = DQWebhookAlertDestination(
             name="wh",
             webhook_url="https://example.com/hook",
             username=u_secret,
@@ -255,7 +255,7 @@ class TestDQSecretSerialization:
         assert isinstance(restored.action, DQAlert)
         if isinstance(restored.action, DQAlert):
             dest_r = restored.action.destinations[0]
-            assert isinstance(dest_r, WebhookDQAlertDestination)
+            assert isinstance(dest_r, DQWebhookAlertDestination)
             assert isinstance(dest_r.username, DQSecret)
             assert dest_r.username.scope == "s1"
             assert dest_r.username.key == "user"
@@ -317,7 +317,7 @@ class TestFailPipelineRoundTrip:
 class TestEnumSerialization:
     def test_alert_frequency_enum_round_trips(self) -> None:
         for freq in DQAlertFrequency:
-            dest = SlackDQAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
+            dest = DQSlackAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
             alert = DQAlert(destinations=[dest], alert_frequency=freq)
             action = DQAction(action=alert)
             raw = ActionSerializer.to_dict(action)
@@ -330,7 +330,7 @@ class TestEnumSerialization:
 
     def test_notify_on_enum_round_trips(self) -> None:
         for notify in NotifyOn:
-            dest = SlackDQAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
+            dest = DQSlackAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
             alert = DQAlert(destinations=[dest], notify_on=notify)
             action = DQAction(action=alert)
             raw = ActionSerializer.to_dict(action)
@@ -342,7 +342,7 @@ class TestEnumSerialization:
                 assert restored.action.notify_on == notify
 
     def test_severity_round_trips(self) -> None:
-        dest = SlackDQAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
+        dest = DQSlackAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
         alert = DQAlert(destinations=[dest], severity="critical")
         action = DQAction(action=alert)
         raw = ActionSerializer.to_dict(action)
@@ -361,11 +361,11 @@ class TestEnumSerialization:
 
 class TestCallbackDestinationHandling:
     def test_callback_skipped_and_warning_emitted(self, caplog: pytest.LogCaptureFixture) -> None:
-        callback_dest = CallbackDQAlertDestination(
+        callback_dest = DQCallbackAlertDestination(
             name="cb-dest",
             callback=lambda msg, ctx: None,
         )
-        slack_dest = SlackDQAlertDestination(name="slack-dest", webhook_url="https://hooks.slack.com/T/B/x")
+        slack_dest = DQSlackAlertDestination(name="slack-dest", webhook_url="https://hooks.slack.com/T/B/x")
         alert = DQAlert(destinations=[callback_dest, slack_dest], name="mixed-alert")
         action = DQAction(action=alert)
 
@@ -383,7 +383,7 @@ class TestCallbackDestinationHandling:
         assert any("cb-dest" in record.message for record in caplog.records)
 
     def test_all_callback_destinations_produces_empty_destinations_list(self, caplog: pytest.LogCaptureFixture) -> None:
-        callback_dest = CallbackDQAlertDestination(
+        callback_dest = DQCallbackAlertDestination(
             name="only-callback",
             callback=lambda msg, ctx: None,
         )
@@ -432,7 +432,7 @@ class TestUnknownTypeErrors:
 
 class TestDQActionNameField:
     def test_explicit_name_preserved(self) -> None:
-        dest = SlackDQAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
+        dest = DQSlackAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
         alert = DQAlert(destinations=[dest], name="alert")
         action = DQAction(action=alert, name="my-explicit-name")
         raw = ActionSerializer.to_dict(action)
@@ -441,7 +441,7 @@ class TestDQActionNameField:
         assert restored.name == "my-explicit-name"
 
     def test_derived_name_preserved(self) -> None:
-        dest = SlackDQAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
+        dest = DQSlackAlertDestination(name="sd", webhook_url="https://hooks.slack.com/T/B/x")
         alert = DQAlert(destinations=[dest], name="alert")
         action = DQAction(action=alert)
         # name should be auto-derived from action.name

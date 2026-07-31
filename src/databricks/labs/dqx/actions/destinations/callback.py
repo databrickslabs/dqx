@@ -16,7 +16,7 @@ from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.errors import InvalidActionError
 
 
-class CallbackDQAlertDestination(AlertDestination):
+class DQCallbackAlertDestination(AlertDestination):
     """In-process callback destination that invokes a Python callable on delivery.
 
     Useful for testing and for scenarios where alert handling must occur
@@ -44,7 +44,7 @@ class CallbackDQAlertDestination(AlertDestination):
             raise InvalidActionError(str(exc)) from exc
 
     @model_validator(mode="after")
-    def _validate_callback(self) -> "CallbackDQAlertDestination":
+    def _validate_callback(self) -> "DQCallbackAlertDestination":
         """Validate that *callback* is callable.
 
         Returns:
@@ -55,7 +55,7 @@ class CallbackDQAlertDestination(AlertDestination):
         """
         if not callable(self.callback):
             raise InvalidActionError(
-                f"CallbackDQAlertDestination.callback must be callable, got {type(self.callback).__name__!r}"
+                f"DQCallbackAlertDestination.callback must be callable, got {type(self.callback).__name__!r}"
             )
         return self
 
@@ -73,4 +73,4 @@ class CallbackDQAlertDestination(AlertDestination):
         self.callback(message, context)
 
 
-__all__ = ["CallbackDQAlertDestination"]
+__all__ = ["DQCallbackAlertDestination"]

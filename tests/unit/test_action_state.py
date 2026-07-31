@@ -29,7 +29,7 @@ from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyO
 from databricks.labs.dqx.actions.base import ActionContext, ActionStatus
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
-from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.callback import DQCallbackAlertDestination
 from databricks.labs.dqx.actions.state import ActionEventStore, ActionStateStore, AlertEvent
 
 
@@ -64,9 +64,9 @@ class FakeEventStore(ActionEventStore):
         return {name: event.run_time for name, event in self._initial.items() if event.fired}
 
 
-def _make_destination() -> CallbackDQAlertDestination:
+def _make_destination() -> DQCallbackAlertDestination:
     """Return a real in-process callback destination (a member of *AnyDestination*)."""
-    return CallbackDQAlertDestination(name="stub-dest", callback=lambda message, context: None)
+    return DQCallbackAlertDestination(name="stub-dest", callback=lambda message, context: None)
 
 
 def _make_dq_alert(

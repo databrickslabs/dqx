@@ -13,7 +13,7 @@ from databricks.labs.dqx.actions.base import (
     ActionStatus,
 )
 from databricks.labs.dqx.actions.alert import DQAlert, NotifyOn
-from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.callback import DQCallbackAlertDestination
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
@@ -460,7 +460,7 @@ def test_status_change_full_cycle_fires_only_on_transitions_into_unhealthy() -> 
         fires.append(context.metrics["error_row_count"])
 
     alert = DQAlert(
-        destinations=[CallbackDQAlertDestination(name="counter", callback=_count)],
+        destinations=[DQCallbackAlertDestination(name="counter", callback=_count)],
         notify_on=NotifyOn.STATUS_CHANGE,
     )
     dq_action = DQAction(condition="error_row_count > 0", action=alert, name="cycle")

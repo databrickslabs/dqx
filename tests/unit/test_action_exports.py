@@ -3,32 +3,32 @@
 from databricks.labs.dqx import actions
 from databricks.labs.dqx.actions import (
     ActionContext,
-    CallbackDQAlertDestination,
+    DQCallbackAlertDestination,
     DQAction,
     DQActionManager,
     DQAlert,
     DQAlertFrequency,
     FailPipeline,
     NotifyOn,
-    SlackDQAlertDestination,
-    TeamsDQAlertDestination,
-    WebhookDQAlertDestination,
+    DQSlackAlertDestination,
+    DQTeamsAlertDestination,
+    DQWebhookAlertDestination,
 )
 
 # Core names the PRD/usage examples depend on, referenced as symbols (not a
 # duplicated string list) so the check tracks the real objects.
 _CORE_PUBLIC_SYMBOLS = (
     ActionContext,
-    CallbackDQAlertDestination,
+    DQCallbackAlertDestination,
     DQAction,
     DQActionManager,
     DQAlert,
     DQAlertFrequency,
     FailPipeline,
     NotifyOn,
-    SlackDQAlertDestination,
-    TeamsDQAlertDestination,
-    WebhookDQAlertDestination,
+    DQSlackAlertDestination,
+    DQTeamsAlertDestination,
+    DQWebhookAlertDestination,
 )
 
 

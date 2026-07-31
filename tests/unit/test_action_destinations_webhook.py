@@ -24,10 +24,10 @@ from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth, WebhookClient
 from databricks.labs.dqx.actions.destinations import (
     AlertDestination,
-    SlackDQAlertDestination,
-    TeamsDQAlertDestination,
+    DQSlackAlertDestination,
+    DQTeamsAlertDestination,
     WebhookAlertDestination,
-    WebhookDQAlertDestination,
+    DQWebhookAlertDestination,
 )
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secrets import SecretResolver
@@ -151,7 +151,7 @@ def test_slack_delivers_to_resolved_url():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
     dest.deliver(_make_message(), context, services)
 
     assert len(client.calls) == 1
@@ -163,7 +163,7 @@ def test_slack_allowed_host_suffixes():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
     dest.deliver(_make_message(), context, services)
 
     assert client.calls[0].allowed_host_suffixes == ["hooks.slack.com"]
@@ -174,7 +174,7 @@ def test_slack_payload_has_blocks():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
     dest.deliver(_make_message(), context, services)
 
     payload = client.calls[0].payload
@@ -188,7 +188,7 @@ def test_slack_blocks_are_valid_block_kit():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
     dest.deliver(_make_message(), context, services)
 
     for block in client.calls[0].payload["blocks"]:
@@ -200,14 +200,14 @@ def test_slack_no_auth_passed():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
     dest.deliver(_make_message(), context, services)
 
     assert client.calls[0].auth is None
 
 
 def test_slack_type_discriminator():
-    dest = SlackDQAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
     assert dest.type == "slack"
 
 
@@ -221,7 +221,7 @@ def test_teams_delivers_to_resolved_url():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -238,7 +238,7 @@ def test_teams_allowed_host_suffixes():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -256,7 +256,7 @@ def test_teams_payload_has_message_card_type():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -271,7 +271,7 @@ def test_teams_payload_has_sections():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -287,7 +287,7 @@ def test_teams_payload_context_field():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -298,7 +298,7 @@ def test_teams_payload_context_field():
 
 
 def test_teams_type_discriminator():
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -315,7 +315,7 @@ def test_webhook_delivers_to_resolved_url():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
     dest.deliver(_make_message(), context, services)
 
     assert client.calls[0].url == "https://example.com/hook"
@@ -326,7 +326,7 @@ def test_webhook_allowed_host_suffixes_none():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
     dest.deliver(_make_message(), context, services)
 
     assert client.calls[0].allowed_host_suffixes is None
@@ -337,7 +337,7 @@ def test_webhook_payload_contains_required_keys():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
     dest.deliver(_make_message(), context, services)
 
     payload = client.calls[0].payload
@@ -353,7 +353,7 @@ def test_webhook_payload_run_time_is_isoformat():
     run_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     msg = _make_message(run_time=run_time)
 
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
     dest.deliver(msg, context, services)
 
     payload = client.calls[0].payload
@@ -361,7 +361,7 @@ def test_webhook_payload_run_time_is_isoformat():
 
 
 def test_webhook_type_discriminator():
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
     assert dest.type == "webhook"
 
 
@@ -377,7 +377,7 @@ def test_dqsecret_url_is_resolved_before_posting():
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
     secret_url = DQSecret(scope="myscope", key="mykey")
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url=secret_url)
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url=secret_url)
     dest.deliver(_make_message(), context, services)
 
     # The resolver should have been called and the resolved URL used.
@@ -391,7 +391,7 @@ def test_slack_dqsecret_url_resolved():
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
     secret_url = DQSecret(scope="slack_scope", key="slack_key")
-    dest = SlackDQAlertDestination(name="slack_secret", webhook_url=secret_url)
+    dest = DQSlackAlertDestination(name="slack_secret", webhook_url=secret_url)
     dest.deliver(_make_message(), context, services)
 
     assert client.calls[0].url == "resolved_slack_scope_slack_key"
@@ -407,7 +407,7 @@ def test_webhook_no_credentials_passes_auth_none():
     services = _make_services(webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = WebhookDQAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
+    dest = DQWebhookAlertDestination(name="wh_test", webhook_url="https://example.com/hook")
     dest.deliver(_make_message(), context, services)
 
     assert client.calls[0].auth is None
@@ -419,7 +419,7 @@ def test_webhook_with_plain_credentials_passes_webhook_auth():
     services = _make_services(secret_resolver=fake_resolver, webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = WebhookDQAlertDestination(
+    dest = DQWebhookAlertDestination(
         name="wh_test",
         webhook_url="https://example.com/hook",
         username="user1",
@@ -439,7 +439,7 @@ def test_webhook_with_dqsecret_credentials_resolves_and_passes_webhook_auth():
     services = _make_services(secret_resolver=fake_resolver, webhook_client=client)
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
 
-    dest = WebhookDQAlertDestination(
+    dest = DQWebhookAlertDestination(
         name="wh_test",
         webhook_url="https://example.com/hook",
         username=DQSecret(scope="creds", key="username"),
@@ -456,7 +456,7 @@ def test_webhook_with_dqsecret_credentials_resolves_and_passes_webhook_auth():
 def test_webhook_only_username_rejected():
     """Only username set (no password) → construction fails rather than silently dropping auth."""
     with pytest.raises(InvalidActionError, match="both 'username' and 'password'"):
-        WebhookDQAlertDestination(
+        DQWebhookAlertDestination(
             name="wh_test",
             webhook_url="https://example.com/hook",
             username="user1",
@@ -466,7 +466,7 @@ def test_webhook_only_username_rejected():
 def test_webhook_only_password_rejected():
     """Only password set (no username) → construction fails rather than silently dropping auth."""
     with pytest.raises(InvalidActionError, match="both 'username' and 'password'"):
-        WebhookDQAlertDestination(
+        DQWebhookAlertDestination(
             name="wh_test",
             webhook_url="https://example.com/hook",
             password="pass1",
@@ -480,17 +480,17 @@ def test_webhook_only_password_rejected():
 
 def test_slack_validate_raises_for_empty_name():
     with pytest.raises(InvalidActionError):
-        SlackDQAlertDestination(name="", webhook_url="https://hooks.slack.com/services/T/B/x")
+        DQSlackAlertDestination(name="", webhook_url="https://hooks.slack.com/services/T/B/x")
 
 
 def test_slack_validate_raises_for_empty_url():
     with pytest.raises(InvalidActionError):
-        SlackDQAlertDestination(name="slack_test", webhook_url="")
+        DQSlackAlertDestination(name="slack_test", webhook_url="")
 
 
 def test_teams_validate_raises_for_empty_name():
     with pytest.raises(InvalidActionError):
-        TeamsDQAlertDestination(
+        DQTeamsAlertDestination(
             name="",
             webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
         )
@@ -498,22 +498,22 @@ def test_teams_validate_raises_for_empty_name():
 
 def test_teams_validate_raises_for_empty_url():
     with pytest.raises(InvalidActionError):
-        TeamsDQAlertDestination(name="teams_test", webhook_url="")
+        DQTeamsAlertDestination(name="teams_test", webhook_url="")
 
 
 def test_webhook_validate_raises_for_empty_name():
     with pytest.raises(InvalidActionError):
-        WebhookDQAlertDestination(name="", webhook_url="https://example.com/hook")
+        DQWebhookAlertDestination(name="", webhook_url="https://example.com/hook")
 
 
 def test_webhook_validate_raises_for_empty_url_string():
     with pytest.raises(InvalidActionError):
-        WebhookDQAlertDestination(name="wh_test", webhook_url="")
+        DQWebhookAlertDestination(name="wh_test", webhook_url="")
 
 
 def test_webhook_validate_passes_for_dqsecret_url():
     """A DQSecret webhook_url should be accepted at construction."""
-    dest = WebhookDQAlertDestination(
+    dest = DQWebhookAlertDestination(
         name="wh_test",
         webhook_url=DQSecret(scope="myscope", key="mykey"),
     )
@@ -522,13 +522,13 @@ def test_webhook_validate_passes_for_dqsecret_url():
 
 def test_slack_validate_passes_for_valid_destination():
     """Valid Slack destination with non-empty name and URL must construct."""
-    dest = SlackDQAlertDestination(name="slack_ok", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest = DQSlackAlertDestination(name="slack_ok", webhook_url="https://hooks.slack.com/services/T/B/x")
     assert dest.name == "slack_ok"
 
 
 def test_teams_validate_passes_for_valid_destination():
     """Valid Teams destination with non-empty name and URL must construct."""
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_ok",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -546,7 +546,7 @@ def test_teams_payload_section_activity_title_matches_message_title():
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
     msg = _make_message(title="My Alert Title")
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -567,7 +567,7 @@ def test_teams_payload_section_facts_derived_from_message_fields():
     context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
     msg = _make_message(fields={"condition": "error_row_count > 0", "run_id": "run-xyz"})
 
-    dest = TeamsDQAlertDestination(
+    dest = DQTeamsAlertDestination(
         name="teams_test",
         webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
     )
@@ -625,26 +625,26 @@ _WEBHOOK_BASE_LOGGER = "databricks.labs.dqx.actions.destinations.webhook_base"
 def test_slack_plaintext_url_warns(caplog: pytest.LogCaptureFixture) -> None:
     """A plaintext Slack webhook_url (which embeds a token) warns to prefer DQSecret."""
     with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
-        SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/services/T/B/x")
+        DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/services/T/B/x")
     assert any("plaintext" in r.message.lower() and "DQSecret" in r.message for r in caplog.records)
 
 
 def test_teams_plaintext_url_warns(caplog: pytest.LogCaptureFixture) -> None:
     """A plaintext Teams webhook_url also warns to prefer DQSecret."""
     with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
-        TeamsDQAlertDestination(name="teams", webhook_url="https://x.logic.azure.com/workflows/a?sig=b")
+        DQTeamsAlertDestination(name="teams", webhook_url="https://x.logic.azure.com/workflows/a?sig=b")
     assert any("plaintext" in r.message.lower() and "DQSecret" in r.message for r in caplog.records)
 
 
 def test_slack_dqsecret_url_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
     """A DQSecret Slack webhook_url must NOT emit the plaintext warning."""
     with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
-        SlackDQAlertDestination(name="slack", webhook_url=DQSecret(scope="s", key="k"))
+        DQSlackAlertDestination(name="slack", webhook_url=DQSecret(scope="s", key="k"))
     assert not any("plaintext" in r.message.lower() for r in caplog.records)
 
 
 def test_generic_webhook_plaintext_url_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
     """The generic webhook (url_contains_secret=False) must not warn for a plaintext URL."""
     with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
-        WebhookDQAlertDestination(name="wh", webhook_url="https://example.com/hook")
+        DQWebhookAlertDestination(name="wh", webhook_url="https://example.com/hook")
     assert not any("plaintext" in r.message.lower() for r in caplog.records)

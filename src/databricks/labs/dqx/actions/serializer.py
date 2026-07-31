@@ -12,7 +12,7 @@ Wire format
 - A *DQSecret* credential serializes to a tagged dict mapping the key *secret*
   to a *scope/key* reference (via *SecretOrStr*), so it round-trips losslessly
   without being confused with a plain string.
-- *CallbackDQAlertDestination* instances are skipped during *to_dict* with a
+- *DQCallbackAlertDestination* instances are skipped during *to_dict* with a
   *WARNING*-level log message because they hold a live Python callable that
   cannot be persisted (see *DQAlert._serialize_destinations*).
 - The *"condition"* field is omitted from the output of *to_dict* when it is
@@ -42,7 +42,7 @@ class ActionSerializer:
     *scope/key* reference) so the reference survives JSON / YAML without being
     confused with a plain string.
 
-    *CallbackDQAlertDestination* instances are skipped during *to_dict* because
+    *DQCallbackAlertDestination* instances are skipped during *to_dict* because
     they hold a live Python callable that cannot be persisted.  The
     *"condition"* field is omitted when *None*.
     """

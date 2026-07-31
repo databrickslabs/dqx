@@ -18,7 +18,7 @@ import pytest
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookClient
-from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.callback import DQCallbackAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.errors import InvalidActionError
@@ -63,7 +63,7 @@ def _make_services() -> ActionServices:
 
 
 def test_callback_type_discriminator() -> None:
-    dest = CallbackDQAlertDestination(name="cb_dest", callback=lambda msg, ctx: None)
+    dest = DQCallbackAlertDestination(name="cb_dest", callback=lambda msg, ctx: None)
     assert dest.type == "callback"
 
 
@@ -82,7 +82,7 @@ def test_deliver_calls_callback_exactly_once() -> None:
     context = _make_context()
     services = _make_services()
 
-    dest = CallbackDQAlertDestination(name="cb_dest", callback=my_callback)
+    dest = DQCallbackAlertDestination(name="cb_dest", callback=my_callback)
     dest.deliver(message, context, services)
 
     assert len(captured) == 1, "callback must be called exactly once"
@@ -98,7 +98,7 @@ def test_deliver_passes_same_message_and_context_objects() -> None:
     context = _make_context()
     services = _make_services()
 
-    dest = CallbackDQAlertDestination(name="cb_dest", callback=my_callback)
+    dest = DQCallbackAlertDestination(name="cb_dest", callback=my_callback)
     dest.deliver(message, context, services)
 
     received_msg, received_ctx = captured[0]
@@ -119,7 +119,7 @@ def test_deliver_with_mock_callable() -> None:
     context = _make_context()
     services = _make_services()
 
-    dest = CallbackDQAlertDestination(name="cb_dest", callback=mock_cb)
+    dest = DQCallbackAlertDestination(name="cb_dest", callback=mock_cb)
     dest.deliver(message, context, services)
 
     mock_cb.assert_called_once_with(message, context)
@@ -135,26 +135,26 @@ def test_validate_raises_for_empty_name() -> None:
         pass
 
     with pytest.raises(InvalidActionError):
-        CallbackDQAlertDestination(name="", callback=noop)
+        DQCallbackAlertDestination(name="", callback=noop)
 
 
 def test_validate_raises_for_non_callable_callback() -> None:
     # Use typing.cast to pass a non-callable value without a type-ignore suppression.
     bad: Callable[[AlertMessage, ActionContext], None] = cast(Callable[[AlertMessage, ActionContext], None], 123)
     with pytest.raises(InvalidActionError):
-        CallbackDQAlertDestination(name="cb_dest", callback=bad)
+        DQCallbackAlertDestination(name="cb_dest", callback=bad)
 
 
 def test_validate_passes_for_valid_destination() -> None:
     def my_callback(_msg: AlertMessage, _ctx: ActionContext) -> None:
         pass
 
-    dest = CallbackDQAlertDestination(name="cb_dest", callback=my_callback)
+    dest = DQCallbackAlertDestination(name="cb_dest", callback=my_callback)
     assert dest.name == "cb_dest"
 
 
 def test_validate_passes_for_lambda_callback() -> None:
-    dest = CallbackDQAlertDestination(
+    dest = DQCallbackAlertDestination(
         name="lambda_dest",
         callback=lambda msg, ctx: None,
     )

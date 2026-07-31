@@ -20,7 +20,7 @@ import pytest
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.delivery import WebhookClient
-from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.callback import DQCallbackAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.errors import InvalidActionError
@@ -31,23 +31,23 @@ from databricks.labs.dqx.errors import InvalidActionError
 # ---------------------------------------------------------------------------
 
 
-def _recording_destination(name: str) -> tuple[CallbackDQAlertDestination, list[AlertMessage]]:
+def _recording_destination(name: str) -> tuple[DQCallbackAlertDestination, list[AlertMessage]]:
     """Return a callback destination that records every delivered message."""
     received: list[AlertMessage] = []
 
     def _record(message: AlertMessage, _context: ActionContext) -> None:
         received.append(message)
 
-    return CallbackDQAlertDestination(name=name, callback=_record), received
+    return DQCallbackAlertDestination(name=name, callback=_record), received
 
 
-def _failing_destination(name: str, error_message: str = "delivery failed\nwith newline") -> CallbackDQAlertDestination:
+def _failing_destination(name: str, error_message: str = "delivery failed\nwith newline") -> DQCallbackAlertDestination:
     """Return a callback destination that always raises on delivery."""
 
     def _fail(_message: AlertMessage, _context: ActionContext) -> None:
         raise RuntimeError(error_message)
 
-    return CallbackDQAlertDestination(name=name, callback=_fail)
+    return DQCallbackAlertDestination(name=name, callback=_fail)
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ def test_dq_alert_propagates_destination_error() -> None:
     """A destination whose own validator fails raises InvalidActionError at its construction."""
     with pytest.raises(InvalidActionError):
         # An empty destination name fails the base AlertDestination validator.
-        DQAlert(destinations=[CallbackDQAlertDestination(name="", callback=lambda message, context: None)])
+        DQAlert(destinations=[DQCallbackAlertDestination(name="", callback=lambda message, context: None)])
 
 
 def test_dq_alert_passes_for_valid_destinations() -> None:

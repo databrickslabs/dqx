@@ -10,14 +10,14 @@ Typical usage::
     from pyspark.sql import SparkSession
     from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
     from databricks.labs.dqx.actions.dq_action import DQAction
-    from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
+    from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination
     from databricks.labs.dqx.actions.manager import DQActionManager
     from databricks.labs.dqx.config import TableActionsStorageConfig
 
     ws = WorkspaceClient()
     manager = DQActionManager(ws=ws)
 
-    dest = SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")
+    dest = DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")
     alert = DQAlert(destinations=[dest])
     actions = [DQAction(action=alert, condition="error_row_count > 0")]
 

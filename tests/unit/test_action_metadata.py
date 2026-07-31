@@ -21,7 +21,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import ActionResult, ActionStatus
 from databricks.labs.dqx.actions.dq_action import DQAction
-from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination
 from databricks.labs.dqx.actions.evaluator import ActionEvaluator
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.manager import DQActionManager
@@ -39,7 +39,7 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
 def _make_alert_action(condition: str | None = None) -> DQAction:
     """Build a *DQAction* wrapping a *DQAlert* with a *DQSecret* Slack destination."""
-    dest = SlackDQAlertDestination(
+    dest = DQSlackAlertDestination(
         name="ops-channel",
         webhook_url=DQSecret(scope="my_scope", key="slack_webhook"),
     )
@@ -105,7 +105,7 @@ def test_serialize_deserialize_round_trip() -> None:
 
     # Check DQSecret round-trips correctly
     alert_dest = deserialized[0].action.destinations[0]
-    assert isinstance(alert_dest, SlackDQAlertDestination)
+    assert isinstance(alert_dest, DQSlackAlertDestination)
     assert isinstance(alert_dest.webhook_url, DQSecret)
     assert alert_dest.webhook_url.scope == "my_scope"
     assert alert_dest.webhook_url.key == "slack_webhook"

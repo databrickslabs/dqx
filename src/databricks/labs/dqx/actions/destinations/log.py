@@ -4,7 +4,7 @@ Delivers DQX alert messages by writing them to the standard Python logger on the
 Spark driver. Unlike webhook destinations it contacts no external system, which
 makes it ideal for local development, demos, and end-to-end tests where the
 alerting mechanism must be exercised without a live Slack / Teams / webhook
-endpoint. Unlike *CallbackDQAlertDestination* it is fully serializable, so it has
+endpoint. Unlike *DQCallbackAlertDestination* it is fully serializable, so it has
 a metadata (*type: log*) form and can be persisted and loaded like any other
 destination.
 """
@@ -23,7 +23,7 @@ from databricks.labs.dqx.errors import InvalidActionError
 logger = logging.getLogger(__name__)
 
 
-class LogDQAlertDestination(AlertDestination):
+class DQLogAlertDestination(AlertDestination):
     """Alert destination that logs the alert message to the driver logger.
 
     Writes a single, sanitized log record summarizing the alert — title,
@@ -53,7 +53,7 @@ class LogDQAlertDestination(AlertDestination):
     }
 
     @model_validator(mode="after")
-    def _validate_level(self) -> "LogDQAlertDestination":
+    def _validate_level(self) -> "DQLogAlertDestination":
         """Validate that *level* names a supported logging level.
 
         Returns:
@@ -65,7 +65,7 @@ class LogDQAlertDestination(AlertDestination):
         normalized = self.level.lower()
         if normalized not in self._LEVELS:
             supported = ", ".join(sorted(self._LEVELS))
-            raise InvalidActionError(f"LogDQAlertDestination.level must be one of: {supported}; got {self.level!r}.")
+            raise InvalidActionError(f"DQLogAlertDestination.level must be one of: {supported}; got {self.level!r}.")
         self.level = normalized
         return self
 
@@ -91,4 +91,4 @@ class LogDQAlertDestination(AlertDestination):
         logger.log(self._LEVELS[self.level], sanitize_for_log(rendered))
 
 
-__all__ = ["LogDQAlertDestination"]
+__all__ = ["DQLogAlertDestination"]

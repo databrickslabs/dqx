@@ -19,8 +19,8 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.dq_action import DQAction
-from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
-from databricks.labs.dqx.actions.destinations.webhook import WebhookDQAlertDestination
+from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination
+from databricks.labs.dqx.actions.destinations.webhook import DQWebhookAlertDestination
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.manager import DQActionManager
 from databricks.labs.dqx.config import TableActionsStorageConfig
@@ -55,11 +55,11 @@ def make_actions_table(ws: WorkspaceClient, make_schema):
 
 
 def _build_test_actions() -> list[DQAction]:
-    slack_dest = SlackDQAlertDestination(
+    slack_dest = DQSlackAlertDestination(
         name="slack-dest",
         webhook_url="https://hooks.slack.com/T/B/xtest",
     )
-    webhook_dest = WebhookDQAlertDestination(
+    webhook_dest = DQWebhookAlertDestination(
         name="webhook-dest",
         webhook_url="https://example.com/hook",
     )
@@ -113,8 +113,8 @@ class TestDQActionManagerTableRoundTrip:
         assert len(alert.destinations) == 2
 
         dest_types = {type(dest).__name__ for dest in alert.destinations}
-        assert "SlackDQAlertDestination" in dest_types
-        assert "WebhookDQAlertDestination" in dest_types
+        assert "DQSlackAlertDestination" in dest_types
+        assert "DQWebhookAlertDestination" in dest_types
 
         loaded_fail_action = fail_actions[0]
         assert loaded_fail_action.name == "fail-action"
@@ -139,7 +139,7 @@ class TestDQActionManagerTableRoundTrip:
         config_a = TableActionsStorageConfig(location=table_name, run_config_name="run-a")
         config_b = TableActionsStorageConfig(location=table_name, run_config_name="run-b")
 
-        slack_dest = SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/T/B/x")
+        slack_dest = DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/T/B/x")
         alert = DQAlert(destinations=[slack_dest])
         actions_a = [DQAction(action=alert, name="action-for-a")]
         manager.save_actions(actions_a, config_a)
@@ -156,7 +156,7 @@ class TestDQActionManagerTableRoundTrip:
         config = TableActionsStorageConfig(location=table_name, run_config_name="run-ow", mode="overwrite")
         manager = DQActionManager(ws=ws, spark=spark)
 
-        slack_dest = SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/T/B/x")
+        slack_dest = DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/T/B/x")
         alert1 = DQAlert(destinations=[slack_dest], name="first-alert")
         manager.save_actions([DQAction(action=alert1, name="first")], config)
 

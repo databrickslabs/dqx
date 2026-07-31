@@ -18,7 +18,7 @@ from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDe
 from databricks.labs.dqx.actions.message import AlertMessage
 
 
-class TeamsDQAlertDestination(WebhookAlertDestination):
+class DQTeamsAlertDestination(WebhookAlertDestination):
     """Microsoft Teams destination using a Power Automate Workflows webhook.
 
     Posts a Teams MessageCard to a Workflows webhook URL created via the
@@ -84,4 +84,4 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
         }
 
 
-__all__ = ["TeamsDQAlertDestination"]
+__all__ = ["DQTeamsAlertDestination"]

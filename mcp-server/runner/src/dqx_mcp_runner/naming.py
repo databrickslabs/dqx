@@ -6,8 +6,6 @@ library, and separates naming/validation (a pure concern) from the Spark-coupled
 ``runner.py``.
 """
 
-from __future__ import annotations
-
 import hashlib
 import re
 

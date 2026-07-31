@@ -9,7 +9,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.definition_storage import ActionsStorageHandlerFactory
-from databricks.labs.dqx.actions.destinations.slack import SlackDQAlertDestination
+from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination
 from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.manager import DQActionManager
@@ -29,7 +29,7 @@ def _make_fail_action() -> DQAction:
 
 def _make_alert_action(condition: str | None = None) -> DQAction:
     """Return a *DQAction* wrapping a *DQAlert* with a *DQSecret* Slack destination."""
-    dest = SlackDQAlertDestination(
+    dest = DQSlackAlertDestination(
         name="ops-channel",
         webhook_url=DQSecret(scope="my_scope", key="slack_webhook"),
     )

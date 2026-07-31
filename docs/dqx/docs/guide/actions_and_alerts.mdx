@@ -49,7 +49,7 @@ from databricks.labs.dqx.actions import (
     DQAlert,
     DQAlertFrequency,
     FailPipeline,
-    SlackDQAlertDestination,
+    DQSlackAlertDestination,
 )
 
 observer = DQMetricsObserver(name="my_pipeline")
@@ -60,7 +60,7 @@ actions = [
         condition="error_row_count > 0",
         action=DQAlert(
             destinations=[
-                SlackDQAlertDestination(
+                DQSlackAlertDestination(
                     name="slack",
                     webhook_url="https://hooks.slack.com/services/T000/B000/xxxx",
                 )
@@ -201,14 +201,14 @@ Which Spark action to trigger depends on what the actions do:
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
+from databricks.labs.dqx.actions import DQAction, DQAlert, DQSlackAlertDestination
 
 observer = DQMetricsObserver(name="manual_eval")
 engine = DQEngine(WorkspaceClient(), observer=observer, actions=[
     DQAction(
         condition="error_row_count > 0",
         action=DQAlert(
-            destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
+            destinations=[DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]
         ),
     )
 ])
@@ -323,7 +323,7 @@ observer = DQMetricsObserver(
 # "error_row_ratio" can now be referenced in conditions
 action = DQAction(
     condition="error_row_ratio > 0.10",
-    action=DQAlert(destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
+    action=DQAlert(destinations=[DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
 )
 ```
 
@@ -351,7 +351,7 @@ Compound conditions using `and` / `or` are supported:
 ```python
 DQAction(
     condition="error_row_count > 0 or warning_row_count > 0",
-    action=DQAlert(destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
+    action=DQAlert(destinations=[DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
 )
 ```
 
@@ -387,11 +387,11 @@ Every action is wrapped in a `DQAction` that binds it to an optional [condition]
   <TabItem value="Python" label="Python (classes)" default>
 
 ```python
-from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination
+from databricks.labs.dqx.actions import DQAction, DQAlert, DQSlackAlertDestination
 
 alert = DQAction(
     condition="error_row_count > 0",
-    action=DQAlert(destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
+    action=DQAlert(destinations=[DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")]),
 )
 ```
 
@@ -582,7 +582,7 @@ unique: registering a *different* class under a `type` already taken by another 
 
 ### Slack
 
-`SlackDQAlertDestination` posts a Block Kit message to a Slack incoming webhook. Delivery is restricted to `hooks.slack.com`.
+`DQSlackAlertDestination` posts a Block Kit message to a Slack incoming webhook. Delivery is restricted to `hooks.slack.com`.
 
 <Admonition type="note" title="Use a Slack App webhook">
 Create the webhook via a **Slack App** (add the *Incoming Webhooks* feature to an app in your workspace) rather than the older *legacy custom integration*, which Slack has deprecated. Both produce a `hooks.slack.com/services/…` URL that works with DQX; the app-based one is the supported, future-proof path. The URL carries its own token, so no additional authentication is required.
@@ -592,11 +592,11 @@ Create the webhook via a **Slack App** (add the *Incoming Webhooks* feature to a
   <TabItem value="Python" label="Python (classes)" default>
 
 ```python
-from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, DQSlackAlertDestination
 
 alert = DQAlert(
     destinations=[
-        SlackDQAlertDestination(
+        DQSlackAlertDestination(
             name="data-quality-alerts",
             webhook_url="https://hooks.slack.com/services/T000/B000/xxxx",
         )
@@ -627,7 +627,7 @@ alert = DQAlert(
 
 ### Microsoft Teams
 
-`TeamsDQAlertDestination` posts a MessageCard to a Microsoft Teams channel via a **Power Automate Workflows** webhook. Delivery is restricted to the Workflows webhook hosts `logic.azure.com` and `environment.api.powerplatform.com`.
+`DQTeamsAlertDestination` posts a MessageCard to a Microsoft Teams channel via a **Power Automate Workflows** webhook. Delivery is restricted to the Workflows webhook hosts `logic.azure.com` and `environment.api.powerplatform.com`.
 
 <Admonition type="note" title="Use a Workflows webhook — Office 365 Connectors are retired">
 Microsoft **retired the legacy Office 365 Connector incoming webhooks** (`webhook.office.com`) in May 2026. Create a **Workflows** webhook instead: in Teams, use the *Workflows* app → template **"Post to a channel when a webhook request is received"**, and use the generated URL as `webhook_url`. Workflows renders the MessageCard text and facts, but **not interactive buttons**.
@@ -639,11 +639,11 @@ Anonymous Workflows URLs on `logic.azure.com` carry their authorization in the U
   <TabItem value="Python" label="Python (classes)" default>
 
 ```python
-from databricks.labs.dqx.actions import DQAlert, TeamsDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, DQTeamsAlertDestination
 
 alert = DQAlert(
     destinations=[
-        TeamsDQAlertDestination(
+        DQTeamsAlertDestination(
             name="teams-dq-channel",
             webhook_url="https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…",
         )
@@ -668,18 +668,18 @@ alert = DQAlert(
 
 ### Generic HTTPS webhook
 
-`WebhookDQAlertDestination` sends a canonical DQX JSON payload to any HTTPS endpoint. No host restriction is applied. Optional HTTP Basic-auth can be supplied via *username* and *password*.
+`DQWebhookAlertDestination` sends a canonical DQX JSON payload to any HTTPS endpoint. No host restriction is applied. Optional HTTP Basic-auth can be supplied via *username* and *password*.
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
 
 ```python
-from databricks.labs.dqx.actions import DQAlert, WebhookDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, DQWebhookAlertDestination
 from databricks.labs.dqx.config import DQSecret
 
 alert = DQAlert(
     destinations=[
-        WebhookDQAlertDestination(
+        DQWebhookAlertDestination(
             name="pagerduty",
             webhook_url="https://events.pagerduty.com/v2/enqueue",
             # In production, use DQSecret — see the Secrets section below
@@ -712,17 +712,17 @@ alert = DQAlert(
 
 ### Log (driver logger)
 
-`LogDQAlertDestination` writes the alert to the standard Python logger on the Spark driver instead of contacting an external system. Because logging performs no network I/O, it never triggers SSRF validation and cannot stall a streaming micro-batch. This makes it an ideal destination for local development, demos, and end-to-end tests. The optional `level` controls the log level (`debug`, `info`, `warning`, `error`, or `critical`; defaults to `warning`).
+`DQLogAlertDestination` writes the alert to the standard Python logger on the Spark driver instead of contacting an external system. Because logging performs no network I/O, it never triggers SSRF validation and cannot stall a streaming micro-batch. This makes it an ideal destination for local development, demos, and end-to-end tests. The optional `level` controls the log level (`debug`, `info`, `warning`, `error`, or `critical`; defaults to `warning`).
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
 
 ```python
-from databricks.labs.dqx.actions import DQAlert, LogDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, DQLogAlertDestination
 
 alert = DQAlert(
     destinations=[
-        LogDQAlertDestination(name="driver-log", level="warning")
+        DQLogAlertDestination(name="driver-log", level="warning")
     ]
 )
 ```
@@ -743,15 +743,15 @@ alert = DQAlert(
 </Tabs>
 
 <Admonition type="note" title="The log destination is a notification target, not an audit log">
-`LogDQAlertDestination` is a *destination of* `DQAlert`, so it is subject to the alert's suppression: with `alert_frequency` set to `hourly` / `daily`, or `notify_on: status_change`, the log line is throttled or skipped along with every other destination. That is intended for a notification (it keeps Slack and the log in sync), but it means the log is **not** a per-run record. If you want to record *every* evaluation regardless of suppression, use [`action_events_config`](#recording-action-event-history) (a durable table with one row per evaluation, including non-fired ones), or write a [custom action](#registering-a-custom-action) that logs unconditionally on its `condition`.
+`DQLogAlertDestination` is a *destination of* `DQAlert`, so it is subject to the alert's suppression: with `alert_frequency` set to `hourly` / `daily`, or `notify_on: status_change`, the log line is throttled or skipped along with every other destination. That is intended for a notification (it keeps Slack and the log in sync), but it means the log is **not** a per-run record. If you want to record *every* evaluation regardless of suppression, use [`action_events_config`](#recording-action-event-history) (a durable table with one row per evaluation, including non-fired ones), or write a [custom action](#registering-a-custom-action) that logs unconditionally on its `condition`.
 </Admonition>
 
 ### In-process callback
 
-`CallbackDQAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations hold a live Python callable, so they have **no metadata form** — they can only be configured in code, and they are skipped when actions are saved to storage.
+`DQCallbackAlertDestination` invokes a Python callable in the same process. It is useful for testing and for custom side effects (e.g. writing to a buffer, triggering another function). Callback destinations hold a live Python callable, so they have **no metadata form** — they can only be configured in code, and they are skipped when actions are saved to storage.
 
 ```python
-from databricks.labs.dqx.actions import DQAlert, CallbackDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, DQCallbackAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.base import ActionContext
 
@@ -762,7 +762,7 @@ def my_handler(message: AlertMessage, context: ActionContext) -> None:
 
 alert = DQAlert(
     destinations=[
-        CallbackDQAlertDestination(name="my-handler", callback=my_handler)
+        DQCallbackAlertDestination(name="my-handler", callback=my_handler)
     ]
 )
 ```
@@ -790,10 +790,10 @@ Two knobs control when `DQAlert` actually sends a notification after its conditi
   <TabItem value="Python" label="Python (classes)" default>
 
 ```python
-from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, SlackDQAlertDestination
+from databricks.labs.dqx.actions import DQAlert, DQAlertFrequency, NotifyOn, DQSlackAlertDestination
 
 alert = DQAlert(
-    destinations=[SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")],
+    destinations=[DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")],
     alert_frequency=DQAlertFrequency.DAILY,  # at most once per day
     notify_on=NotifyOn.STATUS_CHANGE,         # only on the transition into unhealthy
 )
@@ -861,7 +861,7 @@ storage-config type you pass, so the surrounding code is identical either way.
 Actions can be persisted to a Unity Catalog Delta table or a Lakebase PostgreSQL instance using `DQActionManager`. This allows actions to be managed separately from the pipeline code and reused across runs.
 
 <Admonition type="note" title="Callback destinations not serializable">
-`CallbackDQAlertDestination` instances are skipped when saving because Python callables cannot be serialized. Only webhook-based destinations (Slack, Teams, generic webhook) are persisted.
+`DQCallbackAlertDestination` instances are skipped when saving because Python callables cannot be serialized. Only webhook-based destinations (Slack, Teams, generic webhook) are persisted.
 </Admonition>
 
 #### Definitions table structure
@@ -886,7 +886,7 @@ in the same table are preserved.
 
 ```python
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.actions import DQAction, DQAlert, SlackDQAlertDestination, DQActionManager
+from databricks.labs.dqx.actions import DQAction, DQAlert, DQSlackAlertDestination, DQActionManager
 from databricks.labs.dqx.config import TableActionsStorageConfig
 
 ws = WorkspaceClient()
@@ -897,7 +897,7 @@ actions = [
         condition="error_row_count > 0",
         action=DQAlert(
             destinations=[
-                SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")
+                DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/…")
             ]
         ),
     )
@@ -1086,16 +1086,16 @@ Webhook URLs, usernames, and passwords accept either a plain `str` or a `DQSecre
 
 ```python
 from databricks.labs.dqx.config import DQSecret
-from databricks.labs.dqx.actions import SlackDQAlertDestination, WebhookDQAlertDestination
+from databricks.labs.dqx.actions import DQSlackAlertDestination, DQWebhookAlertDestination
 
 # Slack webhook URL from a Databricks secret scope
-slack_dest = SlackDQAlertDestination(
+slack_dest = DQSlackAlertDestination(
     name="slack",
     webhook_url=DQSecret(scope="dq-secrets", key="slack-webhook-url"),
 )
 
 # Generic webhook with Basic-auth credentials from secret scope
-webhook_dest = WebhookDQAlertDestination(
+webhook_dest = DQWebhookAlertDestination(
     name="my-webhook",
     webhook_url=DQSecret(scope="dq-secrets", key="webhook-url"),
     username=DQSecret(scope="dq-secrets", key="webhook-user"),
