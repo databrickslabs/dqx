@@ -1,12 +1,18 @@
 ---
+title: Summary Metrics
 sidebar_position: 310
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Summary Metrics
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.10.0" heading={false} />
+</FeatureTags>
 
 DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see [Table Schemas and Relationships](/docs/reference/table_schemas).
 
@@ -27,6 +33,10 @@ DQX automatically captures the following built-in metrics for every data quality
 | `check_metrics`          | `string` (JSON)                                 | Per-check breakdown of error and warning counts, stored as a JSON array of structs: `[{"check_name": "...", "error_count": N, "warning_count": N}, ...]`. Automatically included when checks are applied. |
 
 ### Per-Check Metrics
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
 
 When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error and warning counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
 
