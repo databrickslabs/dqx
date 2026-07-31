@@ -8,8 +8,9 @@ import {
   toggleRule,
   togglePack,
   selectedCheckDicts,
+  checkDictToPreviewRule,
 } from "./marketplace-selection";
-import type { MarketplacePackOut, MarketplaceRuleOut } from "@/lib/api";
+import type { CheckFunctionDef, MarketplacePackOut, MarketplaceRuleOut } from "@/lib/api";
 
 describe("polarityLineKey", () => {
   it("maps pass -> then-passes key", () => {
@@ -103,5 +104,40 @@ describe("selection", () => {
     const dicts = selectedCheckDicts(packs, new Set(["p:a"]));
     expect(dicts).toHaveLength(1);
     expect(dicts[0]).toEqual(ruleA.check);
+  });
+});
+
+const T = (k: string) => k;
+// Minimal stub so parseDqxCheckJson recognises is_not_null as a known function.
+const FNS: CheckFunctionDef[] = [
+  { name: "is_not_null", params: [{ name: "column", kind: "column", family: "any" }] },
+] as unknown as CheckFunctionDef[];
+
+describe("checkDictToPreviewRule", () => {
+  it("produces a RegistryRuleOut-shaped object for a native check", () => {
+    const r = rule({
+      rule_key: "standard-checks:must-not-be-null",
+      check: {
+        criticality: "error",
+        check: { function: "is_not_null", arguments: { column: "{{column}}" } },
+        user_metadata: { name: "Must not be null" },
+      },
+    });
+    const preview = checkDictToPreviewRule(r, FNS, T);
+    expect(preview).toBeDefined();
+    expect(preview?.rule_id).toBe("standard-checks:must-not-be-null");
+    expect(preview?.definition).toBeDefined();
+  });
+
+  it("returns undefined for an unrecognised function", () => {
+    const r = rule({
+      rule_key: "p:unknown",
+      check: {
+        criticality: "error",
+        check: { function: "no_such_function", arguments: {} },
+        user_metadata: {},
+      },
+    });
+    expect(checkDictToPreviewRule(r, FNS, T)).toBeUndefined();
   });
 });

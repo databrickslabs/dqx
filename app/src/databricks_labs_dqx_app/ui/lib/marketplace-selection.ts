@@ -1,4 +1,5 @@
-import type { MarketplacePackOut, MarketplaceRuleOut, RegistryRuleOut } from "@/lib/api";
+import type { CheckFunctionDef, MarketplacePackOut, MarketplaceRuleOut, RegistryRuleOut } from "@/lib/api";
+import { parseDqxCheckJson } from "@/lib/registry-rule-conversion";
 
 /**
  * Map a rule's polarity to the i18n key for its read-only "THEN THE RULE
@@ -81,4 +82,47 @@ export function selectedCheckDicts(
   for (const p of packs)
     for (const r of p.rules) if (selected.has(r.rule_key)) dicts.push(r.check as Record<string, unknown>);
   return dicts;
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace preview helper
+// ---------------------------------------------------------------------------
+
+const EMPTY_DEFINITION = { body: {}, slots: [], parameters: [] };
+
+/**
+ * Build a minimal {@link RegistryRuleOut}-shaped object from a marketplace
+ * rule's normalized check dict so the existing {@link RuleLogicDisclosure}
+ * component can render it without modification. Returns `undefined` if the
+ * check dict cannot be parsed (e.g. references an unknown function).
+ */
+export function checkDictToPreviewRule(
+  rule: MarketplaceRuleOut,
+  checkFunctions: CheckFunctionDef[],
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): RegistryRuleOut | undefined {
+  try {
+    const parsed = parseDqxCheckJson(
+      JSON.stringify(rule.check),
+      EMPTY_DEFINITION as never,
+      {},
+      checkFunctions,
+      t,
+    );
+    return {
+      rule_id: rule.rule_key,
+      mode: parsed.mode,
+      status: "draft",
+      version: 1,
+      polarity: parsed.polarity ?? null,
+      author_kind: "human",
+      definition: parsed.definition,
+      user_metadata: parsed.userMetadata,
+      is_builtin: false,
+      modified_since_publish: false,
+      display_status: "draft",
+    } as RegistryRuleOut;
+  } catch {
+    return undefined;
+  }
 }
