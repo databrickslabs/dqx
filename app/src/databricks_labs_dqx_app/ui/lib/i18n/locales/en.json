@@ -2824,6 +2824,18 @@
     "categoryDiagnose": "Diagnose"
   },
   "marketplace": {
+    "title": "Rule Marketplace",
+    "subtitle": "Browse and import pre-built data quality rule packs into your registry.",
+    "searchPlaceholder": "Search rules…",
+    "importSelected_one": "Import {{count}} rule",
+    "importSelected_other": "Import {{count}} rules",
+    "industryLabel": "Industry:",
+    "regionLabel": "Region:",
+    "all": "All",
+    "noResults": "No rules match your filters.",
+    "importDone": "Imported {{saved}} rule(s) ({{reused}} reused).",
+    "importPartial": "Imported {{saved}} rule(s), {{reused}} reused, {{failed}} failed.",
+    "importError": "Import failed. Please try again.",
     "selectRule": "Select {{name}}",
     "selectPack": "Select all rules in {{title}}",
     "packSelectedCount": "{{selected}} / {{total}} selected"

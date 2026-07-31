@@ -2824,6 +2824,18 @@
     "categoryDiagnose": "Diagnóstico"
   },
   "marketplace": {
+    "title": "Marketplace de regras",
+    "subtitle": "Navegue e importe pacotes de regras de qualidade de dados pré-criados para o seu registro.",
+    "searchPlaceholder": "Pesquisar regras…",
+    "importSelected_one": "Importar {{count}} regra",
+    "importSelected_other": "Importar {{count}} regras",
+    "industryLabel": "Setor:",
+    "regionLabel": "Região:",
+    "all": "Todas",
+    "noResults": "Nenhuma regra corresponde aos filtros.",
+    "importDone": "{{saved}} regra(s) importada(s) ({{reused}} reutilizadas).",
+    "importPartial": "{{saved}} regra(s) importada(s), {{reused}} reutilizadas, {{failed}} com falha.",
+    "importError": "Falha ao importar. Tente novamente.",
     "selectRule": "Selecionar {{name}}",
     "selectPack": "Selecionar todas as regras em {{title}}",
     "packSelectedCount": "{{selected}} / {{total}} selecionados"

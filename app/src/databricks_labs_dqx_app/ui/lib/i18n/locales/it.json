@@ -2824,6 +2824,18 @@
     "categoryDiagnose": "Diagnosi"
   },
   "marketplace": {
+    "title": "Marketplace delle regole",
+    "subtitle": "Sfoglia e importa pacchetti di regole di qualità dei dati predefiniti nel tuo registro.",
+    "searchPlaceholder": "Cerca regole…",
+    "importSelected_one": "Importa {{count}} regola",
+    "importSelected_other": "Importa {{count}} regole",
+    "industryLabel": "Settore:",
+    "regionLabel": "Regione:",
+    "all": "Tutte",
+    "noResults": "Nessuna regola corrisponde ai filtri.",
+    "importDone": "Importate {{saved}} regola/e ({{reused}} riutilizzate).",
+    "importPartial": "Importate {{saved}} regola/e, {{reused}} riutilizzate, {{failed}} non riuscite.",
+    "importError": "Importazione non riuscita. Riprova.",
     "selectRule": "Seleziona {{name}}",
     "selectPack": "Seleziona tutte le regole in {{title}}",
     "packSelectedCount": "{{selected}} / {{total}} selezionati"
