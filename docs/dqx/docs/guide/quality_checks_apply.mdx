@@ -6,6 +6,7 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Applying Quality Checks
 
@@ -254,6 +255,10 @@ For details on each check, please refer to the documentation [here](/docs/refere
 </Admonition>
 
 ### Applying checks on multiple tables
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.9.3" heading={false} />
+</FeatureTags>
 
 Applying checks on multiple tables can be performed by executing the same methods as described above in a loop.
 However, DQX provides a convenient method to handle multiple tables in a single method call.
@@ -679,6 +684,10 @@ The workflows can be executed as batch or streaming jobs.
 
 ### Quality Checker Workflow
 
+<FeatureTags>
+  <AvailableSinceVersion version="0.9.1" heading={false} />
+</FeatureTags>
+
 Quality checker workflow performs the following:
 * apply checks to the input data (files or a table)
 * save results to output tables (with or without a quarantine)
@@ -793,6 +802,10 @@ Example of the configuration file (relevant fields only):
 ```
 
 ### End-to-End Workflow
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.9.1" heading={false} />
+</FeatureTags>
 
 The end-to-end (e2e) workflow is designed to automate the entire data quality checking process, from profiling the input data to applying quality checks and saving results.
 The workflow executes the profiler and quality checker workflows in sequence, allowing you to generate quality checks based on the input data and then apply those checks to the same data.
@@ -954,6 +967,10 @@ Example of the configuration file (relevant fields only):
 ```
 
 ## Summary Metrics
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.10.0" heading={false} />
+</FeatureTags>
 
 DQX can capture and store summary metrics for your data quality checks in a centralized Delta table.
 These metrics can complement row-level quality checks stored in output DataFrames or be stored independently.
