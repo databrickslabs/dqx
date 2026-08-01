@@ -196,8 +196,13 @@ def set_utc_timezone():
     Set the timezone to UTC for the duration of the test to make sure spark timestamps    are handled the same way regardless of the environment.
     """
     os.environ["TZ"] = "UTC"
+    if hasattr(time, "tzset"):
+        # Without this, glibc keeps using the host's cached timezone (POSIX-only, hence the guard)
+        time.tzset()
     yield
     os.environ.pop("TZ")
+    if hasattr(time, "tzset"):
+        time.tzset()
 
 
 @pytest.fixture
