@@ -145,7 +145,27 @@ def test_profiler_is_in_large_table_few_distinct_values(spark, ws):
     [T.TimestampType(), T.TimestampNTZType()],
     ids=["timestamp", "timestamp_ntz"],
 )
-def test_profiler_preserves_timestamp_precision_when_rounding_disabled(spark, ws, timestamp_type):
+@pytest.mark.parametrize(
+    ("rounding", "expected_parameters"),
+    [
+        (
+            False,
+            {
+                "min": datetime(2024, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc),
+                "max": datetime(2024, 12, 31, 23, 59, 59, 654321, tzinfo=timezone.utc),
+            },
+        ),
+        (
+            True,
+            {
+                "min": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                "max": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+        ),
+    ],
+    ids=["rounding_disabled", "rounding_enabled"],
+)
+def test_profiler_timestamp_precision_and_rounding(spark, ws, timestamp_type, rounding, expected_parameters):
     schema = T.StructType([T.StructField("created_at", timestamp_type)])
     input_df = spark.createDataFrame(
         [
@@ -157,15 +177,12 @@ def test_profiler_preserves_timestamp_precision_when_rounding_disabled(spark, ws
 
     profiler = DQProfiler(ws)
     _, profiles = profiler.profile(
-        input_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "round": False}
+        input_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "round": rounding}
     )
 
     min_max_profiles = [p for p in profiles if p.name == "min_max" and p.column == "created_at"]
     assert len(min_max_profiles) == 1
-    assert min_max_profiles[0].parameters == {
-        "min": datetime(2024, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc),
-        "max": datetime(2024, 12, 31, 23, 59, 59, 654321, tzinfo=timezone.utc),
-    }
+    assert min_max_profiles[0].parameters == expected_parameters
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws):

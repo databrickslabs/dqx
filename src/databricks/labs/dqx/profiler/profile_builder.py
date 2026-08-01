@@ -530,6 +530,7 @@ def _make_min_max_profile_without_outlier_removal(
         col = df.columns[0]
         agg_df = df.agg(F.min(col).alias("min_value"), F.max(col).alias("max_value"))
         if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
+            # Six S characters always emit six fractional digits, including .000000, to match strptime's %f.
             agg_df = agg_df.select(
                 F.date_format("min_value", "yyyy-MM-dd HH:mm:ss.SSSSSS").alias("min_value"),
                 F.date_format("max_value", "yyyy-MM-dd HH:mm:ss.SSSSSS").alias("max_value"),
