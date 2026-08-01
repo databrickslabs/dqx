@@ -514,3 +514,10 @@
     arguments:
       column: col_currency
       code_format: alphabetic
+
+# is_valid_subdivision_code check
+- criticality: error
+  check:
+    function: is_valid_subdivision_code
+    arguments:
+      column: col_subdivision

@@ -4,7 +4,7 @@ from databricks.labs.dqx.check_funcs import load_iso_codes
 def assert_packaged_codes_match(expected: dict[str, frozenset[str]]) -> None:
     """Assert that each packaged ISO resource file exactly matches the expected code set.
 
-    Shared by the ISO 3166-1 and ISO 4217 freshness tests. Reads via the production loader
+    Shared by the ISO 3166-1, ISO 3166-2, and ISO 4217 freshness tests. Reads via the production loader
     (*load_iso_codes*) so it covers what actually runs rather than reimplementing the reader, and
     uses exact equality so drift is caught in both directions: codes the standard *adds* that are
     missing from the packaged list, and stale codes the packaged list still contains.

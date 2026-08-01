@@ -17,6 +17,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_national_id,
     is_valid_country_code,
     is_valid_currency_code,
+    is_valid_subdivision_code,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -268,3 +269,18 @@ def test_is_valid_currency_code_unsupported_code_format():
 def test_is_valid_currency_code_case_insensitive_auto_name():
     result = is_valid_currency_code("a", case_sensitive=False)
     assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_subdivision_code_default_auto_name():
+    result = is_valid_subdivision_code("a")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_subdivision_code"
+
+
+def test_is_valid_subdivision_code_case_insensitive_auto_name():
+    result = is_valid_subdivision_code("a", case_sensitive=False)
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_subdivision_code"
+
+
+def test_is_valid_subdivision_code_with_country_column_auto_name():
+    result = is_valid_subdivision_code("a", country_column="b")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_subdivision_code"
