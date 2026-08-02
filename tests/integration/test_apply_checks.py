@@ -4396,6 +4396,175 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_sql_query_ref_tables_argument(ws, spark, make_schema, make_random):
+    """ref_tables lets sql_query be defined entirely via check arguments (YAML-friendly), no ref_dfs needed."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    sensor_schema = "measurement_id: int, sensor_id: int, reading_value: int"
+    sensor_df = spark.createDataFrame([[1, 1, 4], [1, 2, 1], [2, 2, 110]], sensor_schema)
+
+    sensor_specs_df = spark.createDataFrame([[1, 5], [2, 100]], "sensor_id: int, min_threshold: int")
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    sensor_specs_df.write.saveAsTable(ref_table)
+
+    query = """
+            WITH joined AS (
+                SELECT
+                    sensor.*,
+                    COALESCE(specs.min_threshold, 100) AS effective_threshold
+                FROM {{ sensor }} sensor
+                LEFT JOIN {{ sensor_specs }} specs
+                    ON sensor.sensor_id = specs.sensor_id
+            )
+            SELECT
+                sensor_id,
+                MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+            FROM joined
+            GROUP BY sensor_id
+        """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "merge_columns": ["sensor_id"],
+                "condition_column": "condition",
+                "msg": "one of the sensor reading is greater than limit",
+                "name": "sensor_reading_check",
+                "input_placeholder": "sensor",
+                "ref_tables": {"sensor_specs": ref_table},
+            },
+        ),
+    ]
+
+    # no ref_dfs passed - the reference table is resolved entirely from the check's own arguments
+    checked = dq_engine.apply_checks(sensor_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 1, 4, None, None],
+            [
+                1,
+                2,
+                1,
+                [
+                    {
+                        "name": "sensor_reading_check",
+                        "message": "one of the sensor reading is greater than limit",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                2,
+                110,
+                [
+                    {
+                        "name": "sensor_reading_check",
+                        "message": "one of the sensor reading is greater than limit",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        sensor_schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_ref_tables_and_ref_dfs_combined(ws, spark, make_schema, make_random):
+    """ref_tables and the runtime ref_dfs dictionary can both be used in the same query for different names."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    sensor_schema = "measurement_id: int, sensor_id: int, reading_value: int"
+    sensor_df = spark.createDataFrame([[1, 1, 4], [1, 2, 200]], sensor_schema)
+
+    sensor_specs_df = spark.createDataFrame([[1, 5], [2, 100]], "sensor_id: int, min_threshold: int")
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    sensor_specs_df.write.saveAsTable(ref_table)
+
+    excluded_sensors_df = spark.createDataFrame([[2]], "sensor_id: int")
+
+    query = """
+            SELECT sensor.sensor_id, TRUE AS condition
+            FROM {{ sensor }} sensor
+            JOIN {{ specs }} specs ON sensor.sensor_id = specs.sensor_id
+            WHERE sensor.reading_value > specs.min_threshold
+              AND sensor.sensor_id NOT IN (SELECT sensor_id FROM {{ excluded }})
+        """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "merge_columns": ["sensor_id"],
+                "condition_column": "condition",
+                "name": "sensor_reading_check",
+                "input_placeholder": "sensor",
+                "ref_tables": {"specs": ref_table},
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(sensor_df, checks, ref_dfs={"excluded": excluded_sensors_df})
+
+    violations = checked.select("sensor_id", "_errors").collect()
+    violations_by_sensor = {row["sensor_id"]: row["_errors"] for row in violations}
+    assert violations_by_sensor[1] is None
+    # sensor 2 exceeds its threshold but is excluded via ref_dfs, so it must not be flagged
+    assert violations_by_sensor[2] is None
+
+
+def test_apply_checks_with_sql_query_ref_tables_collides_with_ref_dfs(ws, spark, make_schema, make_random):
+    """A name provided in both ref_tables and the runtime ref_dfs dictionary must raise, not silently pick one."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    sensor_df = spark.createDataFrame([[1, 1, 4]], "measurement_id: int, sensor_id: int, reading_value: int")
+    sensor_specs_df = spark.createDataFrame([[1, 5]], "sensor_id: int, min_threshold: int")
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    sensor_specs_df.write.saveAsTable(ref_table)
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT sensor_id, TRUE AS condition FROM {{ sensor }} sensor JOIN {{ specs }} specs ON sensor.sensor_id = specs.sensor_id",
+                "merge_columns": ["sensor_id"],
+                "condition_column": "condition",
+                "input_placeholder": "sensor",
+                "ref_tables": {"specs": ref_table},
+            },
+        ),
+    ]
+
+    with pytest.raises(InvalidParameterError, match="Reference 'specs' was provided both in the 'ref_tables'"):
+        dq_engine.apply_checks(sensor_df, checks, ref_dfs={"specs": sensor_specs_df})
+
+
 def test_apply_checks_with_custom_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [None, 4, None], [None, None, None]], SCHEMA)

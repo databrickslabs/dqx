@@ -207,6 +207,60 @@ def test_sql_query_merge_columns_invalid_entries_raise():
         )
 
 
+def test_sql_query_ref_tables_not_dict_raises():
+    """Ensure ref_tables must be a dictionary when provided."""
+    with pytest.raises(InvalidParameterError, match="'ref_tables' must be a dictionary mapping names to table names."):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "ref_tables": ["catalog.schema.table"],
+                "condition_column": "condition",
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "ref_tables",
+    [
+        {"": "catalog.schema.table"},
+        {"specs": ""},
+        {"specs": None},
+        {123: "catalog.schema.table"},
+    ],
+)
+def test_sql_query_ref_tables_invalid_entries_raise(ref_tables):
+    """Ensure ref_tables keys and values must all be non-empty strings."""
+    with pytest.raises(
+        InvalidParameterError,
+        match="'ref_tables' keys and values must all be non-empty strings",
+    ):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "ref_tables": ref_tables,
+                "condition_column": "condition",
+            },
+        )
+
+
+def test_sql_query_ref_tables_collides_with_input_placeholder_raises():
+    """Ensure a ref_tables name cannot collide with input_placeholder."""
+    with pytest.raises(InvalidParameterError, match="'ref_tables' contains the name 'input_view' which collides"):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "ref_tables": {"input_view": "catalog.schema.table"},
+                "condition_column": "condition",
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "lookback_windows, min_records_per_window, window_minutes, expected_message",
     [
