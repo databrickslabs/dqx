@@ -510,6 +510,8 @@ export interface BatchImportRegistryRulesIn {
   rules: CreateRegistryRuleIn[];
   /** When true, transition each successfully created draft to pending_approval. */
   also_submit?: boolean;
+  /** When true, publish each successfully created rule outright (submit + approve), bypassing the approval queue. Restricted to callers who may approve; used by the admin-only Marketplace so curated packs import ready to apply, not as pending drafts. */
+  auto_approve?: boolean;
   /** When true, reuse an existing structurally-identical ACTIVE rule (draft/pending_approval/approved) instead of creating a duplicate, and dedupe repeated rules within this batch. Reused rules are returned in ``reused`` and are neither re-created nor re-submitted. Makes re-importing the same contract bundle idempotent. */
   skip_duplicates?: boolean;
 }
@@ -2048,6 +2050,37 @@ export interface LabelDefinitionsIn {
 
 export interface LabelDefinitionsOut {
   definitions: LabelDefinition[];
+}
+
+export interface MarketplacePackOut {
+  id: string;
+  title: string;
+  icon: string;
+  description: string;
+  rules: MarketplaceRuleOut[];
+}
+
+export interface MarketplacePacksOut {
+  packs: MarketplacePackOut[];
+}
+
+export type MarketplaceRuleOutCheck = { [key: string]: unknown };
+
+export type MarketplaceRuleOutSlotFamilies = {[key: string]: string};
+
+/**
+ * A marketplace rule as returned to the frontend (normalized check dict).
+ */
+export interface MarketplaceRuleOut {
+  rule_key: string;
+  name: string;
+  description: string;
+  industries: string[];
+  regions: string[];
+  dimension: string;
+  severity: string;
+  check: MarketplaceRuleOutCheck;
+  slot_families?: MarketplaceRuleOutSlotFamilies;
 }
 
 export type MetricSnapshotOutRunType = string | null;
@@ -27583,6 +27616,153 @@ export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof d
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getDemoContentStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the full marketplace pack catalogue (admin only).
+ * @summary List Marketplace Packs
+ */
+export const listMarketplacePacks = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MarketplacePacksOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/marketplace/packs`,options
+    );
+  }
+
+
+
+
+export const getListMarketplacePacksQueryKey = () => {
+    return [
+    `/api/v1/marketplace/packs`
+    ] as const;
+    }
+
+    
+export const getListMarketplacePacksQueryOptions = <TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMarketplacePacksQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMarketplacePacks>>> = ({ signal }) => listMarketplacePacks({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMarketplacePacksQueryResult = NonNullable<Awaited<ReturnType<typeof listMarketplacePacks>>>
+export type ListMarketplacePacksQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMarketplacePacks>>,
+          TError,
+          Awaited<ReturnType<typeof listMarketplacePacks>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMarketplacePacks>>,
+          TError,
+          Awaited<ReturnType<typeof listMarketplacePacks>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Marketplace Packs
+ */
+
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMarketplacePacksQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListMarketplacePacksSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMarketplacePacksQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMarketplacePacks>>> = ({ signal }) => listMarketplacePacks({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMarketplacePacksSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listMarketplacePacks>>>
+export type ListMarketplacePacksSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMarketplacePacksSuspense<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMarketplacePacksSuspense<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMarketplacePacksSuspense<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Marketplace Packs
+ */
+
+export function useListMarketplacePacksSuspense<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMarketplacePacksSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

@@ -96,7 +96,8 @@
     "rulesRegistry": "Regole",
     "monitoredTables": "Tabelle",
     "importRules": "Importa Regole",
-    "results": "Risultati"
+    "results": "Risultati",
+    "marketplace": "Marketplace"
   },
   "userMenu": {
     "profile": "Profilo",
@@ -142,7 +143,8 @@
       "monitoredTablesDesc": "Applica regole a tabelle specifiche e monitora la loro qualità dei dati",
       "tableSpacesDesc": "Raggruppa tabelle correlate in raccolte con una pianificazione condivisa",
       "config": "Impostazioni Amministratore",
-      "configDesc": "Configura impostazioni e preferenze"
+      "configDesc": "Configura impostazioni e preferenze",
+      "marketplaceDesc": "Importa pacchetti di regole di qualità dei dati pronti all'uso nel tuo registro."
     },
     "avgQuality": "Qualità media di tutte le tabelle",
     "notEnoughHistory": "Cronologia delle esecuzioni ancora insufficiente.",
@@ -345,7 +347,7 @@
     "resetDbPartial": "Database reimpostato, ma non è stato possibile cancellare {{count}} tabella/e. Consulta i log del server.",
     "resetDbFailed": "Impossibile reimpostare il database.",
     "demoTitle": "Distribuisci contenuti demo",
-    "demoBody": "Popola questo workspace con una distribuzione di qualità dei dati di esempio realistica — tabelle di esempio, regole per ogni dimensione di qualità e diverse settimane di cronologia delle esecuzioni.",
+    "demoBody": "Popola questo workspace con tabelle, regole e risultati di esecuzioni di esempio per esplorare lo Studio con dati realistici.",
     "demoButton": "Distribuisci contenuti demo",
     "demoAdminOnly": "Solo gli amministratori possono distribuire i contenuti demo.",
     "demoDialogTitle": "Distribuire i contenuti demo?",
@@ -389,7 +391,8 @@
     "governedKeyError": "Impossibile caricare le chiavi di tag governate.",
     "governedKeyEmpty": "Nessuna chiave di tag governata disponibile.",
     "governedKeyValueCount_one": "{{count}} valore",
-    "governedKeyValueCount_other": "{{count}} valori"
+    "governedKeyValueCount_other": "{{count}} valori",
+    "demoDeployShort": "Distribuisci"
   },
   "discovery": {
     "breadcrumb": "Esplorazione",
@@ -2820,5 +2823,26 @@
     "categoryDrilldown": "Analisi dettagliata",
     "categoryTrends": "Tendenze nel tempo",
     "categoryDiagnose": "Diagnosi"
+  },
+  "marketplace": {
+    "title": "Marketplace delle regole",
+    "subtitle": "Sfoglia e importa pacchetti di regole di qualità dei dati predefiniti nel tuo registro.",
+    "searchPlaceholder": "Cerca regole…",
+    "importSelected_one": "Importa {{count}} regola",
+    "importSelected_other": "Importa {{count}} regole",
+    "industryLabel": "Settore:",
+    "regionLabel": "Regione:",
+    "all": "Tutte",
+    "noResults": "Nessuna regola corrisponde ai filtri.",
+    "importDone": "Importate {{saved}} regola/e ({{reused}} riutilizzate).",
+    "importPartial": "Importate {{saved}} regola/e, {{reused}} riutilizzate, {{failed}} non riuscite.",
+    "importError": "Importazione non riuscita. Riprova.",
+    "selectRule": "Seleziona {{name}}",
+    "selectPack": "Seleziona tutte le regole in {{title}}",
+    "packSelectedCount": "{{selected}} / {{total}} selezionati",
+    "selectedLabel": "selezionate",
+    "tryIt": "Provala",
+    "tryItTitle": "Provala — {{name}}",
+    "contribute": "Contribuisci su GitHub"
   }
 }

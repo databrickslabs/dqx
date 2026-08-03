@@ -94,6 +94,7 @@ artifacts = [
     "src/databricks_labs_dqx_app/__dist__",
     "src/databricks_labs_dqx_app/_metadata.py",
     "src/databricks_labs_dqx_app/_version.py",
+    "src/databricks_labs_dqx_app/backend/marketplace/packs/*.yaml",
 ]
 exclude = ["src/databricks_labs_dqx_app/ui"]
 

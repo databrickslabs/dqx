@@ -226,6 +226,45 @@
 }
 
 /* ---------------------------------------------------------------------
+ * Auto-hiding scrollbar (dq-scroll-auto)
+ *
+ * For horizontally-scrolling chip rows (e.g. the Marketplace industry /
+ * region filters): the scrollbar is invisible at rest and only appears
+ * while hovering or actively scrolling, so a short overflow doesn't leave
+ * a permanent bar sitting under the chips. Firefox can only toggle
+ * thin/none, so the thumb fades in on hover; WebKit gets a true
+ * transparent→visible thumb transition.
+ * ------------------------------------------------------------------- */
+.dq-scroll-auto {
+  /* The scrollbar TRACK is always present (Firefox `thin`, WebKit fixed
+     height) so hovering never toggles the box's size and reflows the chips.
+     Only the THUMB fades in — invisible at rest, visible on hover/scroll. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
+}
+.dq-scroll-auto:hover,
+.dq-scroll-auto:focus-within {
+  scrollbar-color: var(--border) transparent;
+}
+.dq-scroll-auto::-webkit-scrollbar {
+  height: 6px;
+}
+.dq-scroll-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dq-scroll-auto::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+.dq-scroll-auto:hover::-webkit-scrollbar-thumb,
+.dq-scroll-auto:active::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+}
+
+
+/* ---------------------------------------------------------------------
  * AI styling helpers
  *
  * Shared violet → fuchsia → pink gradient treatment for AI-driven surfaces

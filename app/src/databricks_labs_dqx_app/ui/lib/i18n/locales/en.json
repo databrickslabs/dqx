@@ -96,7 +96,8 @@
     "rulesRegistry": "Rules",
     "monitoredTables": "Tables",
     "importRules": "Import Rules",
-    "results": "Results"
+    "results": "Results",
+    "marketplace": "Marketplace"
   },
   "userMenu": {
     "profile": "Profile",
@@ -142,7 +143,8 @@
       "monitoredTablesDesc": "Apply rules to specific tables and monitor their data quality",
       "tableSpacesDesc": "Group related tables into collections with a shared schedule",
       "config": "Admin Settings",
-      "configDesc": "Configure settings and preferences"
+      "configDesc": "Configure settings and preferences",
+      "marketplaceDesc": "Import curated, ready-made data-quality rule packs into your registry."
     },
     "avgQuality": "Average Quality of All Tables",
     "notEnoughHistory": "Not enough run history yet.",
@@ -345,7 +347,7 @@
     "resetDbPartial": "Database reset, but {{count}} table(s) could not be cleared. See server logs.",
     "resetDbFailed": "Failed to reset the database.",
     "demoTitle": "Deploy demo content",
-    "demoBody": "Populate this workspace with a realistic sample data-quality deployment — sample tables, rules across every quality dimension, and several weeks of run history.",
+    "demoBody": "Fills this workspace with example tables, rules, and past run results so you can explore the Studio with realistic data.",
     "demoButton": "Deploy demo content",
     "demoAdminOnly": "Only admins can deploy demo content.",
     "demoDialogTitle": "Deploy demo content?",
@@ -389,7 +391,8 @@
     "governedKeyError": "Could not load governed tag keys.",
     "governedKeyEmpty": "No governed tag keys available.",
     "governedKeyValueCount_one": "{{count}} value",
-    "governedKeyValueCount_other": "{{count}} values"
+    "governedKeyValueCount_other": "{{count}} values",
+    "demoDeployShort": "Deploy"
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -2820,5 +2823,26 @@
     "categoryDrilldown": "Drilldown",
     "categoryTrends": "Trends over time",
     "categoryDiagnose": "Diagnose"
+  },
+  "marketplace": {
+    "title": "Rule Marketplace",
+    "subtitle": "Browse and import pre-built data quality rule packs into your registry.",
+    "searchPlaceholder": "Search rules…",
+    "importSelected_one": "Import {{count}} rule",
+    "importSelected_other": "Import {{count}} rules",
+    "industryLabel": "Industry:",
+    "regionLabel": "Region:",
+    "all": "All",
+    "noResults": "No rules match your filters.",
+    "importDone": "Imported {{saved}} rule(s) ({{reused}} reused).",
+    "importPartial": "Imported {{saved}} rule(s), {{reused}} reused, {{failed}} failed.",
+    "importError": "Import failed. Please try again.",
+    "selectRule": "Select {{name}}",
+    "selectPack": "Select all rules in {{title}}",
+    "packSelectedCount": "{{selected}} / {{total}} selected",
+    "selectedLabel": "selected",
+    "tryIt": "Try it out",
+    "tryItTitle": "Try it out — {{name}}",
+    "contribute": "Contribute on GitHub"
   }
 }

@@ -10,6 +10,7 @@ import {
   Library,
   Table2,
   Boxes,
+  Store,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -22,6 +23,7 @@ import {
 import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { useRunFailureToasts } from "@/hooks/use-run-failure-toasts";
+import { usePermissions } from "@/hooks/use-permissions";
 
 export const Route = createFileRoute("/_sidebar")({
   component: () => <Layout />,
@@ -37,6 +39,7 @@ function Layout() {
   // When approvals are disabled app-wide there is no review queue, so the
   // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
   const { mode: approvalsMode } = useApprovalsMode();
+  const { isAdmin } = usePermissions();
   const approvalsEnabled = approvalsMode !== "disabled";
 
   // App-wide run-failure watcher (item 58). Mounted once here so a FAILED
@@ -204,6 +207,20 @@ function Layout() {
       <SidebarGroup className="pb-2">
         <SidebarGroupContent>
           <SidebarMenu>
+            {isAdmin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname.startsWith("/marketplace")}
+                  tooltip={t("sidebar.marketplace")}
+                >
+                  <Link to="/marketplace">
+                    <Store />
+                    <span>{t("sidebar.marketplace")}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
             <SidebarMenuItem>
               <SidebarMenuButton asChild tooltip={t("sidebar.documentation")}>
                 <a

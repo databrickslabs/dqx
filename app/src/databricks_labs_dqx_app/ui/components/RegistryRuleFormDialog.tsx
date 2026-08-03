@@ -63,7 +63,6 @@ import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { TagPicker } from "@/components/apply-rules/TagPicker";
 import { PermissionsTab, type StewardGrantIntent } from "@/components/permissions/PermissionsTab";
-import { PrincipalPicker, type PickedPrincipal } from "@/components/permissions/PrincipalPicker";
 import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
@@ -155,14 +154,8 @@ import {
   orderSeverityValuesForDisplay,
   colorFor,
   ColorDot,
-  StatusBadge,
-  ModifiedBadge,
-  RuleVersionBadge,
-  AuthorKindBadge,
-  RuleSourceBadge,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
-import { formatDateShort } from "@/lib/format-utils";
 import {
   buildDqxCheckJson,
   COLUMN_KINDS,
@@ -3067,13 +3060,6 @@ export function RegistryRuleFormDialog({
     </>
   );
 
-  // Steward shown by the About panel's picker. Reads the EDIT state, not the
-  // persisted rule, so a pick is visible immediately instead of only after a
-  // save. Same shape PermissionsTab builds for its own picker.
-  const stewardPickerValue: PickedPrincipal | null = steward
-    ? { principal_id: "", principal_type: "user", principal_name: stewardDisplayName || steward }
-    : null;
-
   // Field order mirrors dqlake's AboutTab: Name, Description, a divider,
   // then Default Severity before Dimension — each picker shows the same
   // colored dot dqlake renders next to the selected value (sourced from the
@@ -3264,118 +3250,11 @@ export function RegistryRuleFormDialog({
         definitions={tagDefinitions}
       />
 
-      {/* Provenance for a SAVED rule, mirroring the monitored-table and
-          data-product About tabs (same <dl> grid, same label casing) so a rule
-          reads like every other governed object. Every row EXCEPT steward
-          reflects `sourceRule` — the last-persisted rule — not the in-progress
-          edit state above it, so an unsaved rename never makes the panel claim
-          an update that hasn't happened. Steward is the one editable field, so
-          it reads the edit state instead. Absent entirely while creating, since
-          a rule that doesn't exist yet has no provenance to show. */}
-      {sourceRule && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold">{t("rulesRegistry.aboutMetadataTitle")}</h2>
-            <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutStatus")}</dt>
-              <dd className="flex flex-wrap items-center gap-1.5">
-                <StatusBadge status={sourceRule.status} />
-                {sourceRule.modified_since_publish && <ModifiedBadge version={sourceRule.version} />}
-              </dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutVersion")}</dt>
-              <dd>
-                {sourceRule.version > 0 ? (
-                  <RuleVersionBadge version={sourceRule.version} />
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </dd>
-
-              {/* The one genuinely NEW stat here: how many monitored tables
-                  currently apply this rule. Deliberately the viewer-independent
-                  `applied_to_count` (not per_table.length, which is filtered to
-                  the viewer's catalogs) so two people never see a different
-                  blast radius for the same rule. Undefined while the score
-                  query is in flight or failed — an em dash, not a zero, since
-                  "not loaded" and "applied nowhere" mean opposite things. */}
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAppliedTo")}</dt>
-              <dd>
-                {ruleScore?.applied_to_count === undefined ? (
-                  <span className="text-muted-foreground">—</span>
-                ) : ruleScore.applied_to_count === 0 ? (
-                  <span className="text-muted-foreground italic">{t("rulesRegistry.aboutAppliedToNone")}</span>
-                ) : (
-                  t("rulesRegistry.aboutAppliedToTables", { count: ruleScore.applied_to_count })
-                )}
-              </dd>
-
-              {/* Editable in place, like the data-product and monitored-table
-                  About tabs. Only the steward FIELD is set here; the grant
-                  side-effects of a handover (give the new steward full access,
-                  optionally revoke the old one's) stay on the Permissions tab,
-                  which owns that dialog and the grants list it needs to resolve
-                  the outgoing steward. A change made here therefore DISCARDS
-                  any intent stashed over there — saving it would write a grant
-                  for someone who is no longer the steward. */}
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSteward")}</dt>
-              <dd>
-                {readOnly ? (
-                  stewardDisplayName ||
-                  steward || <span className="text-muted-foreground italic">{t("rulesRegistry.aboutStewardNone")}</span>
-                ) : (
-                  <PrincipalPicker
-                    value={stewardPickerValue}
-                    className="w-full max-w-xs h-8 text-xs"
-                    onSelect={(p) => {
-                      // Identity is the email/username; display_name is only for
-                      // rendering. Groups have no `secondary`, hence the fallback.
-                      setSteward(p.secondary ?? p.display_name);
-                      setStewardDisplayName(p.display_name);
-                      setStewardGrantIntent(null);
-                    }}
-                    onClear={() => {
-                      setSteward("");
-                      setStewardDisplayName("");
-                      setStewardGrantIntent(null);
-                    }}
-                  />
-                )}
-              </dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAuthor")}</dt>
-              <dd>
-                {sourceRule.author_kind ? (
-                  <AuthorKindBadge authorKind={sourceRule.author_kind} />
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSource")}</dt>
-              <dd>
-                <RuleSourceBadge source={sourceRule.source} />
-              </dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedBy")}</dt>
-              <dd>{sourceRule.created_by || t("rulesRegistry.aboutUnknown")}</dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedAt")}</dt>
-              <dd>{sourceRule.created_at ? formatDateShort(sourceRule.created_at) : t("rulesRegistry.aboutUnknown")}</dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedBy")}</dt>
-              <dd>{sourceRule.updated_by || t("rulesRegistry.aboutUnknown")}</dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedAt")}</dt>
-              <dd>{sourceRule.updated_at ? formatDateShort(sourceRule.updated_at) : t("rulesRegistry.aboutUnknown")}</dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutRuleId")}</dt>
-              <dd className="font-mono break-all">{sourceRule.rule_id}</dd>
-            </dl>
-          </section>
-        </>
-      )}
+      {/* The "Details" provenance block (status, version, applied-to,
+          steward, author/source, timestamps, rule id) was removed from the
+          About tab — governance/provenance lives on the dedicated tabs
+          (Permissions owns steward editing), keeping About focused on the
+          rule's descriptive metadata. */}
     </div>
   );
 
