@@ -266,6 +266,44 @@ class TestStandardMessageBuilderBuild:
         )
         assert isinstance(msg, AlertMessage)
 
+    def test_user_metadata_surfaced_in_fields_with_prefix(self):
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+            user_metadata={"owner": "data-eng", "pipeline": "sales_daily"},
+        )
+        assert msg.fields["user_metadata.owner"] == "data-eng"
+        assert msg.fields["user_metadata.pipeline"] == "sales_daily"
+
+    def test_user_metadata_values_are_stringified(self):
+        # Non-string metadata values are coerced to str for the flat fields mapping.
+        non_str_metadata: dict[str, str] = {"retries": 3}  # type: ignore[dict-item]
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+            user_metadata=non_str_metadata,
+        )
+        assert msg.fields["user_metadata.retries"] == "3"
+
+    def test_no_user_metadata_adds_no_prefixed_fields(self):
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+        )
+        assert not [key for key in msg.fields if key.startswith("user_metadata.")]
+
 
 # ---------------------------------------------------------------------------
 # Null / None condition (fire-unconditionally case)

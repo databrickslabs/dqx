@@ -775,6 +775,10 @@ alert = DQAlert(
 )
 ```
 
+<Admonition type="note" title="Engine user_metadata is included in the alert payload">
+Engine-level metadata set via `ExtraParams.user_metadata` is surfaced in every alert: it appears in the Slack message (a *Metadata* section), the Teams card (as facts), the generic webhook payload (under `user_metadata.<key>` in `fields`), and the driver-log line. So run-level context such as `{"pipeline": "sales_daily"}` reaches the notification regardless of destination. This is the run-level metadata; per-rule metadata (e.g. a per-check owner) is a separate, tracked enhancement.
+</Admonition>
+
 ## Controlling when alerts are sent
 
 Two knobs control when `DQAlert` actually sends a notification after its condition fires.

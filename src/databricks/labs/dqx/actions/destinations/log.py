@@ -88,6 +88,9 @@ class DQLogAlertDestination(AlertDestination):
             f"run_id={message.run_id} | run_time={message.run_time.isoformat()} | "
             f"metrics: {metrics} | {message.summary}"
         )
+        if message.user_metadata:
+            metadata = ", ".join(f"{key}={value}" for key, value in message.user_metadata.items())
+            rendered += f" | metadata: {metadata}"
         logger.log(self._LEVELS[self.level], sanitize_for_log(rendered))
 
 

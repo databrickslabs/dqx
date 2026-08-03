@@ -10,7 +10,7 @@ imports: the evaluator can call *StandardMessageBuilder.build(...)* using only
 primitive values already available at evaluation time.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -34,12 +34,15 @@ class AlertMessage:
         run_id: Identifier of the DQX run that produced this alert.
         run_time: Timestamp when the DQX run executed.
         severity: Alert severity level (e.g. "error", "warn").
+        user_metadata: Engine-level user metadata (from *ExtraParams.user_metadata*) as a raw
+            string-to-string mapping. Empty when no metadata was configured. Rendered by every
+            destination so run-level context (e.g. pipeline name) reaches the notification.
         fields: Flat string-to-string mapping suitable for key-value rendering
             in notification payloads.  Contains one entry per observed metric
-            under a key of the form *metric.NAME* (for example, *metric.error_row_count*)
-            plus un-prefixed reserved entries for *condition*, *run_id*,
-            *run_time*, and *table*.  The *"metric."* prefix ensures metric
-            names never silently overwrite the reserved metadata keys.
+            under a key of the form *metric.NAME* (for example, *metric.error_row_count*),
+            one *user_metadata.KEY* entry per user-metadata item, plus un-prefixed reserved
+            entries for *condition*, *run_id*, *run_time*, and *table*.  The prefixes ensure
+            metric and metadata names never silently overwrite the reserved metadata keys.
     """
 
     title: str
@@ -51,6 +54,7 @@ class AlertMessage:
     run_time: datetime
     severity: str
     fields: dict[str, str]
+    user_metadata: dict[str, str] = field(default_factory=dict)
 
 
 class StandardMessageBuilder:
@@ -82,6 +86,7 @@ class StandardMessageBuilder:
         run_time: datetime,
         table: str | None,
         severity: str = "error",
+        user_metadata: dict[str, str] | None = None,
     ) -> AlertMessage:
         """Build an *AlertMessage* from run-time primitives.
 
@@ -93,7 +98,8 @@ class StandardMessageBuilder:
         Metric entries in *fields* are stored under a key of the form *metric.NAME*
         (for example, *metric.error_row_count*) so that they never collide with the
         reserved metadata keys *condition*, *run_id*, *run_time*, and *table*,
-        which are always un-prefixed.  *observed_metrics* on the returned
+        which are always un-prefixed.  User metadata entries are likewise stored
+        under a *user_metadata.KEY* prefix.  *observed_metrics* on the returned
         *AlertMessage* is always the raw, un-prefixed metrics dict.
 
         Args:
@@ -105,6 +111,8 @@ class StandardMessageBuilder:
             run_time: Timestamp when the DQX run executed.
             table: Fully-qualified table name being checked, or *None*.
             severity: Alert severity level; defaults to "error".
+            user_metadata: Optional engine-level user metadata (from *ExtraParams.user_metadata*)
+                to surface in the alert payload; included under *user_metadata.KEY* prefixed keys.
 
         Returns:
             A frozen *AlertMessage* instance populated from the supplied arguments.
@@ -122,6 +130,9 @@ class StandardMessageBuilder:
         fields["run_id"] = run_id
         fields["run_time"] = str(run_time)
         fields["table"] = table_text
+        normalized_user_metadata = {key: str(value) for key, value in (user_metadata or {}).items()}
+        for meta_key, meta_value in normalized_user_metadata.items():
+            fields[f"user_metadata.{meta_key}"] = meta_value
 
         return AlertMessage(
             title=title,
@@ -133,4 +144,5 @@ class StandardMessageBuilder:
             run_time=run_time,
             severity=severity,
             fields=fields,
+            user_metadata=normalized_user_metadata,
         )

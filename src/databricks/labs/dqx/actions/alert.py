@@ -199,6 +199,7 @@ class DQAlert(Action):
             run_time=context.run_time,
             table=context.input_location,
             severity=self.severity,
+            user_metadata=context.user_metadata,
         )
 
         # error_map is populated inside each task via _make_deliver_task, which

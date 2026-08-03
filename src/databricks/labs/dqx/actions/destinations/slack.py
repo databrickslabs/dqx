@@ -87,6 +87,15 @@ class DQSlackAlertDestination(WebhookAlertDestination):
             },
         ]
 
+        if message.user_metadata:
+            metadata_text = ", ".join(f"{k}: {v}" for k, v in message.user_metadata.items())
+            blocks.append(
+                {
+                    "type": "section",
+                    "fields": [{"type": "mrkdwn", "text": f"*Metadata:*\n{metadata_text}"}],
+                }
+            )
+
         return {"blocks": blocks}
 
 

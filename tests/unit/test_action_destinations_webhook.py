@@ -87,6 +87,7 @@ def _make_message(
     run_time: datetime | None = None,
     severity: str = "error",
     fields: dict[str, str] | None = None,
+    user_metadata: dict[str, str] | None = None,
 ) -> AlertMessage:
     if observed_metrics is None:
         observed_metrics = {"error_row_count": 5}
@@ -94,6 +95,10 @@ def _make_message(
         run_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     if fields is None:
         fields = {"condition": condition or "unconditional", "run_id": run_id}
+    # Mirror StandardMessageBuilder: user_metadata is also flattened into fields under a
+    # user_metadata.* prefix (this is what Teams/webhook render).
+    for meta_key, meta_value in (user_metadata or {}).items():
+        fields[f"user_metadata.{meta_key}"] = str(meta_value)
     return AlertMessage(
         title=title,
         summary=summary,
@@ -104,6 +109,7 @@ def _make_message(
         run_time=run_time,
         severity=severity,
         fields=fields,
+        user_metadata=user_metadata or {},
     )
 
 
@@ -181,6 +187,30 @@ def test_slack_payload_has_blocks():
     assert "blocks" in payload, "Slack payload must contain 'blocks' key"
     assert isinstance(payload["blocks"], list), "'blocks' must be a list"
     assert len(payload["blocks"]) > 0, "'blocks' list must not be empty"
+
+
+def test_slack_payload_renders_user_metadata():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest.deliver(_make_message(user_metadata={"pipeline": "sales_daily"}), context, services)
+
+    rendered = str(client.calls[0].payload["blocks"])
+    assert "Metadata" in rendered
+    assert "pipeline: sales_daily" in rendered
+
+
+def test_slack_payload_omits_metadata_block_when_absent():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest.deliver(_make_message(), context, services)
+
+    assert "Metadata" not in str(client.calls[0].payload["blocks"])
 
 
 def test_slack_blocks_are_valid_block_kit():
@@ -264,6 +294,23 @@ def test_teams_payload_has_message_card_type():
 
     payload = client.calls[0].payload
     assert payload.get("@type") == "MessageCard"
+
+
+def test_teams_payload_renders_user_metadata_fact():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    dest = DQTeamsAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
+    dest.deliver(_make_message(user_metadata={"pipeline": "sales_daily"}), context, services)
+
+    # Teams renders all message.fields as facts, so the user_metadata.* entry must appear.
+    rendered = str(client.calls[0].payload)
+    assert "user_metadata.pipeline" in rendered
+    assert "sales_daily" in rendered
 
 
 def test_teams_payload_has_sections():

@@ -26,7 +26,13 @@ from email.utils import parsedate_to_datetime
 from http.client import HTTPMessage
 from typing import IO, Protocol
 
+from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.errors import AlertDeliveryError, UnsafeWebhookUrlError
+
+# User-Agent sent on webhook requests. urllib's default ("Python-urllib/X.Y") is rejected with HTTP
+# 403 by many WAF/bot-protected webhook endpoints (e.g. Cloudflare-fronted services); a descriptive
+# product UA is treated like a normal client and avoids those spurious rejections.
+_USER_AGENT = f"databricks-labs-dqx/{__version__}"
 
 # Cloud-metadata endpoint — blocked explicitly regardless of is_link_local result.
 _CLOUD_METADATA_IP = ipaddress.IPv4Address("169.254.169.254")
@@ -314,7 +320,7 @@ class WebhookClient:
         validate_webhook_url(url, allowed_host_suffixes)
 
         host = _sanitize_host(urllib.parse.urlparse(url).hostname or url)
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json", "User-Agent": _USER_AGENT}
         if auth is not None:
             headers.update(auth.header())
 

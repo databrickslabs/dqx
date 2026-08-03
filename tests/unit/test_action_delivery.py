@@ -234,6 +234,11 @@ class TestWebhookClientPost:
         req = opener.calls[0]
         assert req.get_method() == "POST"
         assert req.get_header("Content-type") == "application/json"
+        # A descriptive User-Agent is sent so WAF/bot-protected endpoints do not reject the default
+        # urllib UA ("Python-urllib/X.Y") with HTTP 403.
+        user_agent = req.get_header("User-agent")
+        assert user_agent is not None
+        assert user_agent.startswith("databricks-labs-dqx/")
         assert isinstance(req.data, bytes)
         body = json.loads(req.data)
         assert body == {"text": "hello"}
