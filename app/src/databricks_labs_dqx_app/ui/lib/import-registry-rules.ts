@@ -239,6 +239,7 @@ export async function importChecksAsRegistryDrafts({
   authorKind = "human",
   alsoSubmit = false,
   autoApprove = false,
+  source,
 }: {
   checks: Record<string, unknown>[];
   checkFunctions: CheckFunctionDef[];
@@ -249,6 +250,9 @@ export async function importChecksAsRegistryDrafts({
   /** Publish imported rules outright (submit + approve) — requires an approver
    *  role server-side. Used by the admin-only Marketplace. */
   autoApprove?: boolean;
+  /** Provenance recorded on each rule (RuleSourceBadge). Defaults server-side
+   *  to "import"; the Marketplace passes "marketplace". */
+  source?: string;
 }): Promise<ImportRegistryRulesResult> {
   const { rules, errors: parseErrors } = parseChecksForImport(checks, checkFunctions, t, authorKind);
 
@@ -274,6 +278,7 @@ export async function importChecksAsRegistryDrafts({
     also_submit: alsoSubmit,
     auto_approve: autoApprove,
     skip_duplicates: true,
+    ...(source ? { source } : {}),
   });
 
   const data = resp.data;

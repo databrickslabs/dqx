@@ -56,6 +56,10 @@ class MarketplaceRuleOut(BaseModel):
     severity: str
     check: dict[str, Any]
     slot_families: dict[str, str] = Field(default_factory=dict)
+    # True when a rule with this name already exists in the registry — the UI
+    # disables its checkbox so it can't be re-added. Set per-request by the
+    # route (the loader itself is registry-agnostic and cached).
+    imported: bool = False
 
 
 class MarketplacePackOut(BaseModel):

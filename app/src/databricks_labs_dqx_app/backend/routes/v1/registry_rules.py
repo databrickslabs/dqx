@@ -249,7 +249,7 @@ def batch_import_registry_rules(
                 user_metadata=rule_in.user_metadata,
                 steward=rule_in.steward,
                 steward_display_name=rule_in.steward_display_name,
-                source="import",
+                source=body.source,
             )
             out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
             created.append(out)

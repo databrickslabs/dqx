@@ -7,7 +7,12 @@ import { Search, Github } from "lucide-react";
 const MARKETPLACE_PACKS_REPO_URL =
   "https://github.com/databrickslabs/dqx/tree/main/app/src/databricks_labs_dqx_app/backend/marketplace/packs";
 import { toast } from "sonner";
-import { useListMarketplacePacksSuspense, useListCheckFunctions } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useListMarketplacePacksSuspense,
+  useListCheckFunctions,
+  getListMarketplacePacksQueryKey,
+} from "@/lib/api";
 import type { MarketplacePackOut, MarketplacePacksOut } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import type { LabelColorDefinition } from "@/components/RegistryRuleBadges";
@@ -68,6 +73,7 @@ function FilterChip({
 
 function MarketplaceContent() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   // Packs via Suspense — guaranteed resolved before render.
   // selector() extracts .data so TData = MarketplacePacksOut.
@@ -148,6 +154,7 @@ function MarketplaceContent() {
         t,
         authorKind: "human",
         autoApprove: true,
+        source: "marketplace",
       });
       if (result.failed > 0) {
         toast.error(
@@ -163,6 +170,9 @@ function MarketplaceContent() {
         );
       }
       setSelected(new Set());
+      // Refetch so the just-added rules flip to `imported` (disabled) without a
+      // manual page reload.
+      void queryClient.invalidateQueries({ queryKey: getListMarketplacePacksQueryKey() });
     } catch {
       toast.error(t("marketplace.importError"));
     } finally {

@@ -1876,7 +1876,8 @@
     "resultsOverallScoreLabel_other": "Pontuação geral em {{count}} tabelas",
     "joinPickCatalogPlaceholder": "Selecionar catálogo…",
     "joinPickSchemaPlaceholder": "Selecionar esquema…",
-    "joinPickTablePlaceholder": "Selecionar tabela…"
+    "joinPickTablePlaceholder": "Selecionar tabela…",
+    "sourceMarketplace": "Marketplace"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelas",
@@ -2828,8 +2829,8 @@
     "title": "Marketplace de regras",
     "subtitle": "Navegue e importe pacotes de regras de qualidade de dados pré-criados para o seu registro.",
     "searchPlaceholder": "Pesquisar regras…",
-    "importSelected_one": "Importar {{count}} regra",
-    "importSelected_other": "Importar {{count}} regras",
+    "importSelected_one": "Adicionar {{count}} ao registro",
+    "importSelected_other": "Adicionar {{count}} ao registro",
     "industryLabel": "Setor:",
     "regionLabel": "Região:",
     "all": "Todas",
@@ -2843,6 +2844,7 @@
     "selectedLabel": "selecionadas",
     "tryIt": "Experimentar",
     "tryItTitle": "Experimentar — {{name}}",
-    "contribute": "Contribua no GitHub"
+    "contribute": "Contribua no GitHub",
+    "added": "Adicionada"
   }
 }
