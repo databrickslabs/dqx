@@ -143,7 +143,8 @@
       "monitoredTablesDesc": "Apply rules to specific tables and monitor their data quality",
       "tableSpacesDesc": "Group related tables into collections with a shared schedule",
       "config": "Admin Settings",
-      "configDesc": "Configure settings and preferences"
+      "configDesc": "Configure settings and preferences",
+      "marketplaceDesc": "Import curated, ready-made data-quality rule packs into your registry."
     },
     "avgQuality": "Average Quality of All Tables",
     "notEnoughHistory": "Not enough run history yet.",

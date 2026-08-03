@@ -1,0 +1,99 @@
+---
+sidebar_position: 5
+title: Marketplace
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Marketplace
+
+The **Marketplace** is a catalogue of ready-made, reusable data-quality rules —
+so you don't have to write the common ones from scratch. Browse rules grouped by
+domain, tick the ones you want, and import them straight into your Rules
+Registry as reusable templates you can map onto your tables.
+
+<Admonition type="info" title="Admin only">
+The Marketplace is available to workspace **admins**. Find it in the sidebar,
+just above **Documentation**.
+</Admonition>
+
+<ThemedImage
+  alt="Marketplace page: industry and region filters, a search box, and domain-grouped rule packs"
+  sources={{
+    light: useBaseUrl('/img/studio/marketplace_light.png'),
+    dark: useBaseUrl('/img/studio/marketplace_dark.png'),
+  }}
+/>
+
+## Browse and filter
+
+Rules are grouped into **domain packs** — Contacts & People, Addresses & Geo,
+Pricing & Money, Dates & Freshness, Codes & Classifications, Standard checks, and
+more. Expand a pack to see its rules; each shows its **quality dimension** and
+**severity**.
+
+Two filters narrow what's shown:
+
+- **Industry** — e.g. Banking, Retail, Healthcare, Telco. Rules tagged for that
+  industry (plus general rules) show.
+- **Region** — e.g. Global, EU, UK, US. Regions are hierarchical: choosing **EU**
+  shows every EU rule (including per-country ones like France or Germany), while
+  choosing **France** narrows to just that country.
+
+Use the **search** box to find a rule by name across every pack.
+
+## Preview a rule
+
+Click a rule to expand it and see exactly what it does — its logic, parameters,
+and whether the row **passes** or **fails** when the condition is true.
+
+### Try it out
+
+Not sure a rule does what you expect? Hit **Try it out** on any rule to open a
+test panel. Type a few sample values (or point at one of your tables) and see
+per-row pass/fail before you import anything.
+
+## Import rules
+
+Tick the rules you want — individually, or a whole pack via its header
+checkbox — then click **Import _N_ selected**. The rules land in your Rules
+Registry as reusable templates, ready to [assign to your
+tables](/docs/studio/monitoring/assign-rules).
+
+<Admonition type="tip" title="Imported rules arrive approved">
+Because Marketplace packs are curated and the Marketplace is admin-only,
+imported rules are **published on import** — they don't sit in the approval
+queue. Re-importing is safe: a rule you already have is reused, not duplicated.
+</Admonition>
+
+## Deploy demo content
+
+The Marketplace is also home to **Deploy demo content** — the first row on the
+page. It fills the workspace with example tables, rules, and past run results so
+you can explore the Studio with realistic data.
+
+<ThemedImage
+  alt="Deploy demo content row at the top of the Marketplace, with a Deploy button"
+  sources={{
+    light: useBaseUrl('/img/studio/marketplace_demo_light.png'),
+    dark: useBaseUrl('/img/studio/marketplace_demo_dark.png'),
+  }}
+/>
+
+Click the row, confirm (the default wipes existing Studio data for a clean
+slate), and it seeds in the background — it takes a while, so leave it to run.
+
+<Admonition type="note" title="Moved from Settings">
+Deploying the demo used to live under **Settings**. It now lives here in the
+Marketplace, alongside the rule packs.
+</Admonition>
+
+## Contribute a pack
+
+The rule packs are DQX-YAML files in the
+[DQX repository](https://github.com/databrickslabs/dqx/tree/main/app/src/databricks_labs_dqx_app/backend/marketplace/packs).
+To add a rule or a whole new domain pack, open a pull request — see the README
+in that directory for the format. There's a **Contribute on GitHub** link in the
+Marketplace header too.
