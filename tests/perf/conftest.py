@@ -410,3 +410,26 @@ def generated_subdivision_code_df(spark):
         gen = gen.withColumnSpec(col, values=values)
 
     return gen.build()
+
+
+@pytest.fixture
+def generated_language_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
+    language_schema_str = "col1_language_code: string, col2_language_code: string"
+    schema = _parse_datatype_string(language_schema_str)
+
+    language_value_lists = {
+        "col1_language_code": ["en", "fr", "de", "ja", "zh", "xx"],
+        "col2_language_code": ["xx", "qq", "zz", "en"],
+    }
+
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(language_value_lists), partitions=DEFAULT_PARTITIONS
+    )
+    gen = gen.withSchema(schema)
+    for col, values in language_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
+
+    return gen.build()

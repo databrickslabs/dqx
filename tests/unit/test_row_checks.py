@@ -18,6 +18,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_country_code,
     is_valid_currency_code,
     is_valid_subdivision_code,
+    is_valid_language_code,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -284,3 +285,38 @@ def test_is_valid_subdivision_code_case_insensitive_auto_name():
 def test_is_valid_subdivision_code_with_country_column_auto_name():
     result = is_valid_subdivision_code("a", country_column="b")
     assert get_column_name_or_alias(result) == "a_is_not_a_valid_subdivision_code"
+
+
+def test_is_valid_language_code_default_format_auto_name():
+    result = is_valid_language_code("a")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_language_code"
+
+
+def test_is_valid_language_code_alpha_3_format_auto_name():
+    result = is_valid_language_code("a", code_format="alpha-3")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_language_code"
+
+
+def test_is_valid_language_code_format_is_case_insensitive():
+    result = is_valid_language_code("a", code_format="Alpha-3")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_language_code"
+
+
+def test_is_valid_language_code_missing_code_format():
+    with pytest.raises(MissingParameterError, match="'code_format' is not provided."):
+        is_valid_language_code("a", code_format=None)
+
+
+def test_is_valid_language_code_non_string_code_format():
+    with pytest.raises(InvalidParameterError, match="'code_format' must be a string"):
+        is_valid_language_code("a", code_format=123)
+
+
+def test_is_valid_language_code_unsupported_code_format():
+    with pytest.raises(InvalidParameterError, match="Unsupported code_format for language code validation"):
+        is_valid_language_code("a", code_format="numeric")
+
+
+def test_is_valid_language_code_case_insensitive_auto_name():
+    result = is_valid_language_code("a", case_sensitive=False)
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_language_code"
