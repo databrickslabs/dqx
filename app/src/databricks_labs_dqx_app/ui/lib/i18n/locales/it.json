@@ -143,8 +143,7 @@
       "monitoredTablesDesc": "Applica regole a tabelle specifiche e monitora la loro qualità dei dati",
       "tableSpacesDesc": "Raggruppa tabelle correlate in raccolte con una pianificazione condivisa",
       "config": "Impostazioni Amministratore",
-      "configDesc": "Configura impostazioni e preferenze",
-      "marketplaceDesc": "Importa pacchetti di regole di qualità dei dati pronti all'uso nel tuo registro."
+      "configDesc": "Configura impostazioni e preferenze"
     },
     "avgQuality": "Qualità media di tutte le tabelle",
     "notEnoughHistory": "Cronologia delle esecuzioni ancora insufficiente.",

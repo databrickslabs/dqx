@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { Boxes, Library, Settings, Store, Table2 } from "lucide-react";
+import { Boxes, Library, Settings, Table2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -39,23 +39,14 @@ const BASE_TILES: { nameKey: string; descriptionKey: string; href: string; icon:
   },
 ];
 
-// Admin-gated tiles, shown only to admins beneath the base row. Marketplace
-// (import curated rule packs) + Admin Settings (Config route). Marketplace
-// reuses the sidebar label key so it can't drift from the nav.
-const ADMIN_TILES: { nameKey: string; descriptionKey: string; href: string; icon: LucideIcon }[] = [
-  {
-    nameKey: "sidebar.marketplace",
-    descriptionKey: "home.grid.marketplaceDesc",
-    href: "/marketplace",
-    icon: Store,
-  },
-  {
-    nameKey: "home.grid.config",
-    descriptionKey: "home.grid.configDesc",
-    href: "/settings",
-    icon: Settings,
-  },
-];
+// The admin-gated "Admin Settings" tile (Config route). Reuses the existing
+// `home.grid.config` label key so it stays consistent with the user-menu entry.
+const ADMIN_TILE = {
+  nameKey: "home.grid.config",
+  descriptionKey: "home.grid.configDesc",
+  href: "/settings",
+  icon: Settings,
+};
 
 function GridCard({
   nameKey,
@@ -98,8 +89,7 @@ function HomeGridView({ showAdminTile }: { showAdminTile: boolean }) {
       {BASE_TILES.map((tile) => (
         <GridCard key={tile.nameKey} {...tile} />
       ))}
-      {showAdminTile &&
-        ADMIN_TILES.map((tile) => <GridCard key={tile.nameKey} {...tile} />)}
+      {showAdminTile && <GridCard {...ADMIN_TILE} className="sm:col-span-2 lg:col-span-3" />}
     </div>
   );
 }
