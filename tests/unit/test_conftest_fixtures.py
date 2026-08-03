@@ -3,20 +3,17 @@ import time
 
 import pytest
 
-from tests.conftest import restore_tz_env
+from tests.conftest import apply_tz
 
 
 @pytest.fixture
 def force_non_utc_start():
     """Force a non-UTC starting timezone regardless of the host's actual default."""
     original = os.environ.get("TZ")
-    os.environ["TZ"] = "America/New_York"
-    if hasattr(time, "tzset"):
-        time.tzset()
-    if time.tzname[0] == "UTC":
-        pytest.skip("Host's tzdata doesn't resolve America/New_York; glibc fell back to UTC")
+    # POSIX TZ string (not an IANA name), so glibc resolves it without needing tzdata
+    apply_tz("EST5EDT")
     yield
-    restore_tz_env(original)
+    apply_tz(original)
 
 
 def test_set_utc_timezone_overrides_a_non_utc_host(force_non_utc_start, set_utc_timezone):
