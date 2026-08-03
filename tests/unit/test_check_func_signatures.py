@@ -1,10 +1,19 @@
+"""Signature compatibility contract for registered public check functions."""
+
 import inspect
+from collections.abc import Callable
 
 import pytest
 
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
+from databricks.labs.dqx.pii import pii_detection_funcs
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
+
+CHECK_FUNCTION_MODULES = (check_funcs, geo_check_funcs, pii_detection_funcs)
+POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
+KEYWORD_ONLY = inspect.Parameter.KEYWORD_ONLY
 
 EXPECTED_PARAMETER_ORDER = {
     "is_not_null_and_not_empty": ("column", "trim_strings"),
@@ -128,22 +137,95 @@ EXPECTED_PARAMETER_ORDER = {
     "is_valid_json": ("column",),
     "has_json_keys": ("column", "keys", "require_all"),
     "has_valid_json_schema": ("column", "schema"),
+    "is_latitude": ("column",),
+    "is_longitude": ("column",),
+    "is_geometry": ("column",),
+    "is_geography": ("column",),
+    "is_point": ("column",),
+    "is_linestring": ("column",),
+    "is_polygon": ("column",),
+    "is_multipoint": ("column",),
+    "is_multilinestring": ("column",),
+    "is_multipolygon": ("column",),
+    "is_geometrycollection": ("column",),
+    "is_ogc_valid": ("column",),
+    "is_non_empty_geometry": ("column",),
+    "is_not_null_island": ("column",),
+    "has_dimension": ("column", "dimension"),
+    "has_x_coordinate_between": ("column", "min_value", "max_value"),
+    "has_y_coordinate_between": ("column", "min_value", "max_value"),
+    "is_area_equal_to": ("column", "value", "srid", "geodesic"),
+    "is_area_not_equal_to": ("column", "value", "srid", "geodesic"),
+    "is_area_not_greater_than": ("column", "value", "srid", "geodesic"),
+    "is_area_not_less_than": ("column", "value", "srid", "geodesic"),
+    "is_num_points_equal_to": ("column", "value"),
+    "is_num_points_not_equal_to": ("column", "value"),
+    "is_num_points_not_greater_than": ("column", "value"),
+    "is_num_points_not_less_than": ("column", "value"),
+    "are_polygons_mutually_disjoint": ("column", "row_filter"),
+    "is_geo_contains": ("column", "reference_geometry", "convert_column", "convert_reference_geometry"),
+    "is_geo_covers": (
+        "column",
+        "reference_geometry",
+        "precise",
+        "resolution",
+        "convert_column",
+        "convert_reference_geometry",
+    ),
+    "is_geo_intersects": (
+        "column",
+        "reference_geometry",
+        "precise",
+        "resolution",
+        "convert_column",
+        "convert_reference_geometry",
+    ),
+    "is_geo_touches": ("column", "reference_geometry", "convert_column", "convert_reference_geometry"),
+    "is_geo_within": ("column", "reference_geometry", "convert_column", "convert_reference_geometry"),
+    "does_not_contain_pii": ("column", "language", "threshold", "entities", "nlp_engine_config"),
+}
+
+EXPECTED_PARAMETER_KIND_OVERRIDES = {
+    "has_no_aggr_outliers": (
+        POSITIONAL_OR_KEYWORD,
+        POSITIONAL_OR_KEYWORD,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+        KEYWORD_ONLY,
+    )
 }
 
 
-def test_signature_contract_covers_all_registered_check_functions():
-    core_check_functions = {
-        function_name
-        for function_name in CHECK_FUNC_REGISTRY
-        if getattr(check_funcs, function_name, None)
-        and getattr(check_funcs, function_name).__module__ == check_funcs.__name__
-    }
+def registered_check_functions() -> dict[str, Callable]:
+    functions: dict[str, Callable] = {}
+    for module in CHECK_FUNCTION_MODULES:
+        functions.update(
+            (function_name, function)
+            for function_name in CHECK_FUNC_REGISTRY
+            if (function := getattr(module, function_name, None)) is not None
+        )
+    return functions
 
-    assert set(EXPECTED_PARAMETER_ORDER) == core_check_functions
+
+def test_signature_contract_covers_all_registered_check_functions():
+    check_functions = registered_check_functions()
+
+    assert set(EXPECTED_PARAMETER_ORDER) == set(CHECK_FUNC_REGISTRY) == set(check_functions)
 
 
 @pytest.mark.parametrize(("function_name", "expected_order"), EXPECTED_PARAMETER_ORDER.items())
 def test_registered_check_function_parameter_order(function_name: str, expected_order: tuple[str, ...]):
-    check_function = getattr(check_funcs, function_name)
+    check_function = registered_check_functions()[function_name]
+    parameters = inspect.signature(check_function).parameters
+    expected_kinds = EXPECTED_PARAMETER_KIND_OVERRIDES.get(
+        function_name, (POSITIONAL_OR_KEYWORD,) * len(expected_order)
+    )
+    expected_signature = tuple(zip(expected_order, expected_kinds, strict=True))
+    actual_signature = tuple((parameter.name, parameter.kind) for parameter in parameters.values())
 
-    assert tuple(inspect.signature(check_function).parameters) == expected_order
+    assert actual_signature == expected_signature
