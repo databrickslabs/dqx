@@ -419,6 +419,10 @@ alert = DQAction(
   </TabItem>
 </Tabs>
 
+<Admonition type="note" title="Alert message content is not templatable">
+The built-in alert message — its title, summary, and fields (condition, table, run identifiers, observed metrics, and engine `user_metadata`) — has a fixed structure assembled by DQX. `DQAlert` has no message-template configuration. To send a fully custom payload, use a [custom action](#registering-a-custom-action) (`@register_action`) or an [in-process callback destination](#in-process-callback): both receive the `AlertMessage` and run-time context and can build any payload you need.
+</Admonition>
+
 ### FailPipeline
 
 `FailPipeline` raises `PipelineFailedError` to abort the current run. The evaluator defers the error until all other non-terminal actions (e.g. alert notifications) have completed, so alerts are always delivered before the pipeline is stopped.
