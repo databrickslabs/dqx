@@ -1415,7 +1415,7 @@ def is_valid_language_code(column: str | Column, code_format: str = "alpha-2", c
 
     ISO 639 defines two code representations, selected with *code_format*:
 
-    * *alpha-2* (default): the two-letter ISO 639-1 code, e.g. *en*, *fr*, *de* (184 codes, covering
+    * *alpha-2* (default): the two-letter ISO 639-1 code, e.g. *en*, *fr*, *de* (covering
       macrolanguages and individual languages in common use).
     * *alpha-3*: the three-letter ISO 639-3 code, e.g. *eng*, *fra*, *deu* (the comprehensive
       registry covering all known languages, including ancient, extinct and constructed ones).
@@ -1433,8 +1433,8 @@ def is_valid_language_code(column: str | Column, code_format: str = "alpha-2", c
     accepted). Null values will pass the check with no violation reported.
 
     For best performance with large lists in general, prefer the *foreign_key* check function; the
-    *alpha-2* list (184 codes) is small, but the *alpha-3* list (~7930 codes) is large enough that
-    *foreign_key* may perform better for high-volume checks.
+    *alpha-2* list is small, but the *alpha-3* list is large enough that *foreign_key* may perform
+    better for high-volume checks.
 
     Args:
         column: column to check; can be a string column name or a column expression
