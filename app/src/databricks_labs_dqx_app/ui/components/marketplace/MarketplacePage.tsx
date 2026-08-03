@@ -227,7 +227,7 @@ function MarketplaceContent() {
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.industryLabel")}
               </span>
-              <div className="dq-scroll-auto flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
+              <div className="dq-scroll-auto flex h-9 min-w-0 items-center gap-2 overflow-x-auto">
                 {industries.map((ind) => (
                   <FilterChip
                     key={ind}
@@ -249,7 +249,7 @@ function MarketplaceContent() {
               </span>
               {/* Tier-ordered (global → macro → country) with a divider between
                   tier groups. */}
-              <div className="dq-scroll-auto flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
+              <div className="dq-scroll-auto flex h-9 min-w-0 items-center gap-2 overflow-x-auto">
                 {regions.map((reg, i) => {
                   const showDivider = i > 0 && regionTier(reg) !== regionTier(regions[i - 1]);
                   return (
