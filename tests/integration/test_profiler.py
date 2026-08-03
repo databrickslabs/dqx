@@ -165,11 +165,16 @@ def test_profiler_is_in_large_table_few_distinct_values(spark, ws):
     ],
     ids=["rounding_disabled", "rounding_enabled"],
 )
-def test_profiler_timestamp_precision_and_rounding(spark, ws, timestamp_type, rounding, expected_parameters):
+def test_profiler_timestamp_precision_and_rounding(
+    spark, ws, set_utc_timezone, timestamp_type, rounding, expected_parameters
+):
     schema = T.StructType([T.StructField("created_at", timestamp_type)])
     input_df = spark.createDataFrame(
         [
             [datetime(2024, 1, 1, 0, 0, 0, 123456)],
+            # An interior value between the min and max, so the assertion checks min/max actually
+            # select the extremes rather than just echoing a two-row dataset.
+            [datetime(2024, 6, 15, 12, 30, 30, 500000)],
             [datetime(2024, 12, 31, 23, 59, 59, 654321)],
         ],
         schema=schema,
@@ -185,7 +190,7 @@ def test_profiler_timestamp_precision_and_rounding(spark, ws, timestamp_type, ro
     assert min_max_profiles[0].parameters == expected_parameters
 
 
-def test_profiler_rounding_midnight_behavior(spark, ws):
+def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -516,10 +521,12 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
             name="min_max",
             column="s1.ns1",
             # 9999-12-31 is an outlier; with num_sigmas=1 max is capped at avg+1σ (real min kept).
-            description="Real min value was used. Max was capped by 1 sigmas. avg=85582778411.0, stddev=145335926001.69772, max=253402250411",
+            # Timestamps now flow through a double epoch (sub-second precision preserved), so the
+            # aggregates read as floats (max=...411.0) and the capped max carries fractional seconds.
+            description="Real min value was used. Max was capped by 1 sigmas. avg=85582778411.0, stddev=145335926001.69772, max=253402250411.0",
             parameters={
                 "min": datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc),
-                "max": datetime(9287, 7, 10, 4, 33, 32, tzinfo=timezone.utc),
+                "max": datetime(9287, 7, 10, 4, 33, 32, 697723, tzinfo=timezone.utc),
             },
         ),
         DQProfile(

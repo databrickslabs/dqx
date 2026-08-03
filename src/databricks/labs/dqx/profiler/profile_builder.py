@@ -34,6 +34,12 @@ from databricks.labs.dqx.profiler.profile_options import (
 TextType = T.CharType | T.StringType | T.VarcharType
 TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
 
+# Matched pair for serializing timestamp min/max through the Spark fallback: Spark renders with six
+# fractional-second digits and Python parses them back. Kept together as constants so the two patterns
+# can never drift apart (a mismatch would raise ValueError at parse time).
+_TIMESTAMP_SPARK_FORMAT = "yyyy-MM-dd HH:mm:ss.SSSSSS"
+_TIMESTAMP_STRPTIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+
 
 PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
 logger = logging.getLogger(__name__)
@@ -458,8 +464,10 @@ def _make_min_max_profile_with_outlier_removal(
         cast_df = df.select(F.col(column_alias).cast("timestamp").cast("bigint").alias(column_alias))
         aggregates = _get_aggregates(cast_df, column_alias)
     elif isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
-        # Cast to timestamp first for TimestampNTZType compatibility (e.g. Spark Connect), then to bigint epoch.
-        cast_df = df.select(F.col(column_alias).cast("timestamp").cast("bigint").alias(column_alias))
+        # Cast to timestamp first for TimestampNTZType compatibility (e.g. Spark Connect), then to a
+        # double epoch (fractional seconds) rather than bigint so sub-second precision survives the
+        # aggregation and is reconstructed below via datetime.fromtimestamp(float(...)).
+        cast_df = df.select(F.col(column_alias).cast("timestamp").cast("double").alias(column_alias))
         aggregates = _get_aggregates(cast_df, column_alias)
     else:
         aggregates = {
@@ -530,20 +538,21 @@ def _make_min_max_profile_without_outlier_removal(
         col = df.columns[0]
         agg_df = df.agg(F.min(col).alias("min_value"), F.max(col).alias("max_value"))
         if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
-            # Six S characters always emit six fractional digits, including .000000, to match strptime's %f.
+            # Render with six fractional-second digits (always emitted, including .000000) so full
+            # microsecond precision is preserved through the string round-trip.
             agg_df = agg_df.select(
-                F.date_format("min_value", "yyyy-MM-dd HH:mm:ss.SSSSSS").alias("min_value"),
-                F.date_format("max_value", "yyyy-MM-dd HH:mm:ss.SSSSSS").alias("max_value"),
+                F.date_format("min_value", _TIMESTAMP_SPARK_FORMAT).alias("min_value"),
+                F.date_format("max_value", _TIMESTAMP_SPARK_FORMAT).alias("max_value"),
             )
         aggregates = agg_df.collect()[0].asDict()
         if not aggregates or aggregates.get("min_value") is None:
             logger.info(f"Can't get min/max for field {column_name}")
             return None
         if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
-            min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S.%f").replace(
+            min_value = datetime.datetime.strptime(aggregates["min_value"], _TIMESTAMP_STRPTIME_FORMAT).replace(
                 tzinfo=datetime.timezone.utc
             )
-            max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S.%f").replace(
+            max_value = datetime.datetime.strptime(aggregates["max_value"], _TIMESTAMP_STRPTIME_FORMAT).replace(
                 tzinfo=datetime.timezone.utc
             )
         else:
@@ -653,8 +662,10 @@ def _adjust_min_max_limits(
         )
 
     if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
-        min_value = datetime.datetime.fromtimestamp(int(min_value), tz=datetime.timezone.utc)
-        max_value = datetime.datetime.fromtimestamp(int(max_value), tz=datetime.timezone.utc)
+        # float(), not int(): the epoch is a double carrying fractional seconds (see the double cast in
+        # _make_min_max_profile_with_outlier_removal), and fromtimestamp(float) preserves microseconds.
+        min_value = datetime.datetime.fromtimestamp(float(min_value), tz=datetime.timezone.utc)
+        max_value = datetime.datetime.fromtimestamp(float(max_value), tz=datetime.timezone.utc)
         return _round_value(min_value, "down", profiler_options), _round_value(max_value, "up", profiler_options)
 
     if isinstance(column_type, T.IntegralType):
