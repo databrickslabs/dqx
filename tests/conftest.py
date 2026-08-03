@@ -190,19 +190,28 @@ def override_cluster_id(debug_env):
     return debug_env
 
 
+def restore_tz_env(original: str | None) -> None:
+    """Restore the TZ environment variable to its pre-fixture value and reapply it via tzset."""
+    if original is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
 @pytest.fixture
 def set_utc_timezone():
     """
     Set the timezone to UTC for the duration of the test to make sure spark timestamps    are handled the same way regardless of the environment.
     """
+    original = os.environ.get("TZ")
     os.environ["TZ"] = "UTC"
     if hasattr(time, "tzset"):
         # Without this, glibc keeps using the host's cached timezone (POSIX-only, hence the guard)
         time.tzset()
     yield
-    os.environ.pop("TZ")
-    if hasattr(time, "tzset"):
-        time.tzset()
+    restore_tz_env(original)
 
 
 @pytest.fixture
