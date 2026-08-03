@@ -203,7 +203,7 @@ def restore_tz_env(original: str | None) -> None:
 @pytest.fixture
 def set_utc_timezone():
     """
-    Set the timezone to UTC for the duration of the test to make sure spark timestamps    are handled the same way regardless of the environment.
+    Set the timezone to UTC for the duration of the test to make sure spark timestamps are handled the same way regardless of the environment.
     """
     original = os.environ.get("TZ")
     os.environ["TZ"] = "UTC"
