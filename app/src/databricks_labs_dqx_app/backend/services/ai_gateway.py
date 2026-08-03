@@ -31,8 +31,6 @@ which depends on this gateway for the actual model call — this class has no op
 prompt content or rule semantics.
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import json

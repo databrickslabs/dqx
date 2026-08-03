@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

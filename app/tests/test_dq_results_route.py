@@ -13,8 +13,6 @@ filtered failed-rows endpoint — the Task 7 security-invariant ORDER
 (OBO self-check first, fine-grained suppression second, SP fetch last).
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import MagicMock, create_autospec
 

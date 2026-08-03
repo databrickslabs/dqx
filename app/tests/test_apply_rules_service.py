@@ -5,8 +5,6 @@ spec-bound ``create_autospec(SqlExecutor)`` mocks with dialect-helper side
 effects wired to their real Delta-flavoured behaviour.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import create_autospec
 

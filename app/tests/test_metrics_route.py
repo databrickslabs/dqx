@@ -7,8 +7,6 @@ are thin wrappers around SQL execution and would require a live warehouse
 to exercise end-to-end.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

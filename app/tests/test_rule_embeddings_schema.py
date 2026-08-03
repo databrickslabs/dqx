@@ -5,8 +5,6 @@ added as its own migration version (Postgres v4, Delta v8) rather than
 piggy-backing on the v1/v2 baseline, since it belongs to a distinct phase.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.migrations import MIGRATIONS
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 

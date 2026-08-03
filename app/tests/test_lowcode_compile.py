@@ -6,8 +6,6 @@ the compiled ``body`` is what materializes and runs, so a wrong shape here
 would ship a broken AI-proposed low-code rule.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest

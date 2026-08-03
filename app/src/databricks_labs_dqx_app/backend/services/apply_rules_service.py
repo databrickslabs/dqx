@@ -17,8 +17,6 @@ job, called separately (typically right after `apply_rule`/`set_pin`/
 `set_severity_override`/`remove_applied` from the routes layer).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field

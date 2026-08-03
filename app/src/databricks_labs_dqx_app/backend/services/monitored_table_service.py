@@ -18,8 +18,6 @@ shape (dialect-portable SQL via the executor helpers, Python-side
 filtering over JSON metadata) but operates on the monitored-table tables.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field

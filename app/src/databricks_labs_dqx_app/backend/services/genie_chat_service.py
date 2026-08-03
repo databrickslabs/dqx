@@ -31,8 +31,6 @@ Two flows share one parser:
   (writing SQL -> running query -> summarising) instead of one spinner.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from dataclasses import dataclass

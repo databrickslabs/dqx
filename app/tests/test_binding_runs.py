@@ -10,8 +10,6 @@ dispatch, run-set minting vs. joining, and that the submitted config
 carries EXACTLY the resolved checks.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

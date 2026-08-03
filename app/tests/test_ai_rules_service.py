@@ -8,8 +8,6 @@ gateway-backed methods: ``generate_checks_via_gateway``, ``generate_rule``, and
 invalid or unsafe rule) required by AGENTS.md.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import MagicMock, create_autospec
 

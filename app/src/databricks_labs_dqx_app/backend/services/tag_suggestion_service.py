@@ -23,8 +23,6 @@ Best-effort by construction: a read failure or an unknown binding degrades to
 ``[]``/``0``; neither :meth:`suggest` nor :meth:`apply_matches` raises.
 """
 
-from __future__ import annotations
-
 import collections.abc
 import logging
 from dataclasses import dataclass

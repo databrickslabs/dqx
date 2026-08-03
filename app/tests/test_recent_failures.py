@@ -9,8 +9,6 @@ are thin filters over the existing list infrastructure. These tests verify:
 4. Non-FAILED rows do not inflate the result count.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, create_autospec
 

@@ -1,7 +1,5 @@
 """Tests for AppConfig fields and env-var overrides."""
 
-from __future__ import annotations
-
 
 def test_genie_schema_name_default_and_env(monkeypatch):
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)

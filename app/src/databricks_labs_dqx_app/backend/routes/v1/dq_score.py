@@ -16,8 +16,6 @@ reserved for the row-level sample endpoint, since that returns actual
 row values).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Annotated
 

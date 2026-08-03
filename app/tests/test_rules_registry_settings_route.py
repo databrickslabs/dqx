@@ -6,8 +6,6 @@ Bundles two distinct admin governance knobs behind one read/write surface:
 data-product members). See ``AppSettingsService`` for the full semantics.
 """
 
-from __future__ import annotations
-
 import pytest
 from fastapi import HTTPException
 

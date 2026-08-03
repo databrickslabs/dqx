@@ -15,8 +15,6 @@ locale needing extra CLDR forms (e.g. Polish ``_few``/``_many``) would
 require comparing plural base-groups rather than exact keys.
 """
 
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path

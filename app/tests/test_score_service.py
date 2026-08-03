@@ -6,8 +6,6 @@ rate; dataset checks contribute one binary verdict; checks produced by
 the same reusable rule first roll up to one rule score.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown

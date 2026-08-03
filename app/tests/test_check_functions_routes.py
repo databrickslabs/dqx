@@ -16,8 +16,6 @@ We also smoke-test the FastAPI endpoint via ``TestClient`` to make sure
 the route wiring + Pydantic serialization round-trip is intact.
 """
 
-from __future__ import annotations
-
 import inspect
 from decimal import Decimal
 

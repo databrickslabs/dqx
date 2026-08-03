@@ -6,8 +6,6 @@ exactly as they run in production. The reset service is backed by in-memory
 fake executors, so the exact set of cleared tables is asserted end-to-end.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

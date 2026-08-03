@@ -1,7 +1,5 @@
 """Tests for TableDataService — View Data preview + AI question→SQL (P22-B)."""
 
-from __future__ import annotations
-
 import json
 from unittest.mock import create_autospec
 

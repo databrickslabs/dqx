@@ -49,8 +49,6 @@ rows), and a binding never surfaces them in its detail view. Freezing
 them would make vN reflect state the table-approval never governed.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any

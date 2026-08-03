@@ -11,8 +11,6 @@ status. It never writes to ``dq_validation_runs`` — that table stays
 owned by :class:`~databricks_labs_dqx_app.backend.services.job_service.JobService`.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime

@@ -5,8 +5,6 @@ fake :class:`SqlExecutor` so we can assert on the SQL that would have been
 sent to the warehouse — no warehouse needed.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

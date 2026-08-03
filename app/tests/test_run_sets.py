@@ -8,8 +8,6 @@ mint-and-join, member counts, and the aggregated-status precedence
 (running > failed > canceled > success).
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

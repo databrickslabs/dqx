@@ -8,8 +8,6 @@ from raw YAML, and the warnings-on-text-rules contract — i.e. the glue
 code that lives in this app, not the upstream DQX library.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any
 from unittest.mock import MagicMock

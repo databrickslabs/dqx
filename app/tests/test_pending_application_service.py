@@ -6,8 +6,6 @@ to their Delta-flavoured behaviour, so we assert on the emitted SQL and the
 row → domain parsing without a live backend.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

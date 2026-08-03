@@ -38,8 +38,6 @@ one scope (the homepage's global score trend + delta) — Postgres-only,
 no warehouse.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 

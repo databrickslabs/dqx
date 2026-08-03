@@ -15,8 +15,6 @@ Two layers are exercised:
   auto-upgrade Behaviour A/B, and cleanup of stale/orphaned rows.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import create_autospec
 

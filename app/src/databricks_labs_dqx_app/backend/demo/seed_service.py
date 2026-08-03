@@ -45,8 +45,6 @@ warehouse. The real ``weeks>0`` path (validation gate + weekly mutate / run /
 re-date) is behind that branch and exercised in the sandbox deploy.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time

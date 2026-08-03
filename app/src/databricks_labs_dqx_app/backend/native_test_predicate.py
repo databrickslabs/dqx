@@ -11,8 +11,6 @@ checks that rely on UDFs / geospatial builtins are rejected with
 :class:`NativeTestNotSupportedError`.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Any
 

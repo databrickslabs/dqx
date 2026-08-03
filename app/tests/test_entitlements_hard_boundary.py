@@ -27,8 +27,6 @@ The proofs are structural + behavioural, no workspace required:
    ``VIEWER`` do not.
 """
 
-from __future__ import annotations
-
 import re
 from typing import NamedTuple
 from unittest.mock import create_autospec

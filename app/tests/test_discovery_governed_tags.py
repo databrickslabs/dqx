@@ -7,8 +7,6 @@ including value-bearing tags (bare key + key=value entries), empty description â
 raises) or no SQL executor is injected.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, GovernedTag

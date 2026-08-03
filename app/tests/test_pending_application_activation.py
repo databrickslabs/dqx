@@ -8,8 +8,6 @@ best-effort failure, and a list-failure that must never bubble up and fail an
 otherwise-successful publish.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import _activate_pending_applications

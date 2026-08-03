@@ -18,8 +18,6 @@ statement and must pass DQX's :func:`is_sql_query_safe`; anything else raises
 :class:`UnsafeSqlQueryError`. The query runs under the caller's own UC grants.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import re

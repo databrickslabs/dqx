@@ -1,7 +1,5 @@
 """Unit tests for the pure privilege model in ``common.permissions``."""
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.common.permissions import (
     DEFAULT_USERS_GROUP_PRIVILEGES,
     USERS_GROUP_PRINCIPAL_ID,

@@ -32,8 +32,6 @@ applied with the admin's OBO client (the app SP usually can't CAN_MANAGE a
 warehouse it doesn't own). All routes are ADMIN-gated.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Literal
 
 from databricks.sdk import WorkspaceClient

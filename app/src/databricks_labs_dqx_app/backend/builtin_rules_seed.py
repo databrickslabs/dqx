@@ -29,8 +29,6 @@ admin may have since edited onto it — so a match always means "already
 seeded", never "coincidentally identical", and edits are never overwritten.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

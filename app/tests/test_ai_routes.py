@@ -8,8 +8,6 @@ AIResponseParseError/ValueError from the service map to clean 503/429/502/422 re
 never a bare 500.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

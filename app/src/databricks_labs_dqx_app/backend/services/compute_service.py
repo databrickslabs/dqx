@@ -18,8 +18,6 @@ Split-auth, mirroring the rest of the app:
   layer is ADMIN-gated and passes the OBO client as the grantor.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os

@@ -5,8 +5,6 @@ even when unset), and seeding happens only via the explicit
 ``seed_run_review_statuses_if_absent`` called at startup.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService

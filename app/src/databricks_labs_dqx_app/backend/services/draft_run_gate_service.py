@@ -45,8 +45,6 @@ domain-level :class:`DraftRunRequiredError`, which the route layer maps to a
 Delta executor regardless of whether the OLTP tables live in Lakebase.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime, timezone
 

@@ -7,8 +7,6 @@ add/list/delete route their SQL through the shared executor for any allowed
 type.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

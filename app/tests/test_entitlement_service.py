@@ -9,8 +9,6 @@ probe concurrency, never-raises), and the best-effort startup ensure +
 grant steps in ``backend.app``.
 """
 
-from __future__ import annotations
-
 import asyncio
 import threading
 from unittest.mock import create_autospec

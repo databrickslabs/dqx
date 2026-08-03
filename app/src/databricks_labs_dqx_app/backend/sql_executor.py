@@ -6,8 +6,6 @@ should accept a ``SqlExecutor`` instance instead of constructing its own
 makes services testable via ``create_autospec(SqlExecutor)``.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any, Protocol, runtime_checkable

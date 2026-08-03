@@ -13,8 +13,6 @@ which preserves the accepted approximation documented in
 docs/superpowers/specs/2026-07-10-dq-score-results-design.md §2.
 """
 
-from __future__ import annotations
-
 from collections import defaultdict
 from collections.abc import Collection, Mapping
 

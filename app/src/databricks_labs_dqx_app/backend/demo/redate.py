@@ -15,8 +15,6 @@ Fully-qualified table names are app-internal constants and are interpolated
 verbatim.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string

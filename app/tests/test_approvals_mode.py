@@ -12,8 +12,6 @@ Covers, in order:
   with an ``(auto)`` marker.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

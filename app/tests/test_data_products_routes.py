@@ -8,8 +8,6 @@ writes, the orthogonal RUNNER gate for run) without going through
 middleware.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

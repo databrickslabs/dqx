@@ -37,8 +37,6 @@ rights), and user emails already flow through the app's logs and the audit
 columns of other app tables, so this introduces no new exposure class.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 

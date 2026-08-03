@@ -33,8 +33,6 @@ stays entirely config-driven so a deploy with no Vector Search
 infrastructure provisioned (and AI left off) never attempts a call.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

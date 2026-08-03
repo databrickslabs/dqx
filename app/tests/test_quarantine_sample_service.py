@@ -6,8 +6,6 @@ service principal) and both fail closed: any error reads as "no access" /
 "fine-grained controls present" respectively.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

@@ -1,7 +1,5 @@
 """Tests for the ``/config/ai-settings`` admin route (Rules Registry Phase 4A)."""
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import create_autospec

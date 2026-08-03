@@ -5,8 +5,6 @@ and route redirect are conveniences, this is the real boundary. Packs are
 bundled YAML, loaded + validated + cached by the marketplace loader.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Annotated, Any
 

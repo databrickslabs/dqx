@@ -48,8 +48,6 @@ Options
     --wipe-first       Drop and re-seed all demo governed objects before starting.
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 import sys

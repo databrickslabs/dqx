@@ -20,8 +20,6 @@ Both checks fail closed. See
 docs/superpowers/specs/2026-07-10-dq-score-results-design.md §3.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field

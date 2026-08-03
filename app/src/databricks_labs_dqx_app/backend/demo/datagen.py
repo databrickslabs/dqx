@@ -28,8 +28,6 @@ SQL, and every string literal (such as column comments) is escaped with
 catalog/schema names are backtick-quoted via *quote_fqn*.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.demo import manifest
 from databricks_labs_dqx_app.backend.demo.manifest import TIGHTEN_WEEK
 from databricks_labs_dqx_app.backend.sql_utils import (

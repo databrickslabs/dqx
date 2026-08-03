@@ -24,8 +24,6 @@ the existing registry / monitored-table / data-product services and the
 materializer.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from typing import Any, Literal

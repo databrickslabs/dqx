@@ -6,8 +6,6 @@ logical columns so the ``ScoreCacheService`` read/write path and the list
 endpoints' LEFT JOINs are portable across backends.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.migrations import (
     _V15_SCORE_CACHE,
     _V16_SCORE_HISTORY,

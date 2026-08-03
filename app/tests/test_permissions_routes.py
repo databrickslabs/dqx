@@ -4,8 +4,6 @@ Handlers are called directly with a mocked ``PermissionsService`` (same
 convention as ``test_data_products_routes.py``) — no FastAPI TestClient.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

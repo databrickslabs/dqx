@@ -7,8 +7,6 @@ Resolution/enforcement tests run against a small in-memory fake executor
 and assert on the emitted SQL.
 """
 
-from __future__ import annotations
-
 import re
 from unittest.mock import MagicMock, create_autospec
 

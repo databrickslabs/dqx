@@ -5,8 +5,6 @@ global score endpoints), so they live here rather than as private
 helpers inside one route module.
 """
 
-from __future__ import annotations
-
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -58,7 +56,7 @@ def safe_float(value: Any) -> float | None:
         return None
 
 
-def parse_check_metrics(raw: Any) -> list[CheckMetricBreakdown]:
+def parse_check_metrics(raw: Any) -> "list[CheckMetricBreakdown]":
     """Parse the ``check_metrics`` JSON-string emitted by the observer."""
     # Local import breaks the module-level cycle this helper module would
     # otherwise create: ``models`` imports the OLTP services, and those

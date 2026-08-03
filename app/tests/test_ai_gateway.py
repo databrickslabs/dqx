@@ -6,8 +6,6 @@ per-user hourly rate limit, the happy-path serving-endpoint call shape, and the 
 JSON-fence parsing helper.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 

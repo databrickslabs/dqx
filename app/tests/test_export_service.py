@@ -10,8 +10,6 @@ Two layers:
   ``ExportError``.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

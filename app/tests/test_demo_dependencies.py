@@ -16,8 +16,8 @@ def test_demo_providers_exist() -> None:
 
 
 def _annotation_name(annotation: object) -> str:
-    # The module uses ``from __future__ import annotations`` so annotations are
-    # strings; a live class exposes ``__name__``. Handle both.
+    # A live class exposes ``__name__``; a string annotation (e.g. under a
+    # ``from __future__ import annotations`` module) does not. Handle both.
     return getattr(annotation, "__name__", str(annotation))
 
 

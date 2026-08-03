@@ -14,8 +14,6 @@ itself is pinned against ``ScoreService`` in
 ``test_score_view_service.py``.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

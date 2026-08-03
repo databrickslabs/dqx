@@ -8,8 +8,6 @@ introspected function gets tagged/sloted correctly" and "seeding is
 idempotent / never clobbers an admin edit" without a live SQL backend.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

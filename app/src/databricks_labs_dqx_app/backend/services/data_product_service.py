@@ -38,8 +38,6 @@ raises — see the docstring on ``BindingRunService.run_binding`` — that
 member is treated as failed here too, even though its job is live.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

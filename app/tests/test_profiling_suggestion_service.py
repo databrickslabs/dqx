@@ -10,8 +10,6 @@ apply-rules services (dependency injection per AGENTS.md); real profiler check
 dicts flow through the real ``build_profiling_rule`` introspection.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

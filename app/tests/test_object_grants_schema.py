@@ -5,8 +5,6 @@ and the matching Delta OLTP-fallback template (_V14). Both must declare the
 same logical columns so the ``PermissionsService`` read/write path is portable.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.migrations import _V14_OBJECT_GRANTS, MIGRATIONS
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 

@@ -32,8 +32,6 @@ increasing version number.  Postgres supports ``ALTER TABLE ... ADD
 COLUMN IF NOT EXISTS`` natively so re-running is safe out of the box.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Sequence
 from contextlib import AbstractContextManager

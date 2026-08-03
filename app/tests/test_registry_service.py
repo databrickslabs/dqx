@@ -6,8 +6,6 @@ side effects wired to their real Delta-flavoured behaviour, so assertions
 read real SQL/JSON rather than MagicMock reprs.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

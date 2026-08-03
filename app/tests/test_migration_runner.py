@@ -24,8 +24,6 @@ future migration authors from silently breaking the contract:
    raw ``CREATE SCHEMA prod-east.dqx_studio``.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

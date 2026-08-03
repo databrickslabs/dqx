@@ -32,8 +32,6 @@ ceiling — a deliberate widening for governance roles, never a way for a lower
 role to climb. This invariant is pinned by ``tests/test_entitlements_hard_boundary.py``.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass

@@ -26,8 +26,6 @@ honest — history shows *who* triggered the approval and that it was automatic,
 never a silent system approval.
 """
 
-from __future__ import annotations
-
 import logging
 
 logger = logging.getLogger(__name__)

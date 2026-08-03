@@ -4,8 +4,6 @@ All SQL string escaping MUST use these functions instead of inline
 .replace() calls to ensure consistent, correct Databricks SQL escaping.
 """
 
-from __future__ import annotations
-
 import re
 
 # Unity Catalog does not restrict catalog/schema/table names to "simple"

@@ -6,8 +6,6 @@ deterministic helpers (``_normalize_weight``, ``_check_signature``,
 ``set_status`` paths with a stubbed ``SqlExecutor``.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

@@ -13,8 +13,6 @@ caller to own the object or hold an admin/approver role (see
 ``PermissionsService.can_manage_grants``).
 """
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status

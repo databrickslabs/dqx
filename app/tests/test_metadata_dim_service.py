@@ -9,8 +9,6 @@ DDL, the zero-rows case (CREATE only, no INSERT), and literal rendering
 (string escaping, NULL for None, TRUE/FALSE, ``TIMESTAMP'<iso>'``).
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from unittest.mock import create_autospec
 

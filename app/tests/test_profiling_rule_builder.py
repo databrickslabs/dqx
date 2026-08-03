@@ -5,8 +5,6 @@ workspace): a profiler-generated check in DQX metadata form is turned into a
 table-agnostic registry-rule template + slot->column mapping, or skipped.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.profiling_rule_builder import build_profiling_rule
 
 

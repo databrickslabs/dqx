@@ -8,8 +8,6 @@ config to ``{volume}/run-configs/{run_id}.json`` and pass a tiny stub
 ``{"__staged__": "<path>"}`` instead.
 """
 
-from __future__ import annotations
-
 import io
 import json
 import logging

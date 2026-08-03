@@ -32,8 +32,6 @@ All functions here are pure: they take dicts/dataclasses and return SQL text.
 No SDK, no DB, no I/O — so they are exhaustively unit-tested.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass, field
 from collections.abc import Iterable

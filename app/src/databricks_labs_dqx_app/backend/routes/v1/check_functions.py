@@ -19,8 +19,6 @@ editor's ``sql_query`` are omitted — those belong to the cross-table
 editor.
 """
 
-from __future__ import annotations
-
 import inspect
 from collections.abc import Callable
 from functools import lru_cache

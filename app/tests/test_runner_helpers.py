@@ -6,8 +6,6 @@ validation, and conversion of observed ``check_metrics`` JSON into the
 legacy ``error_summary`` shape.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path

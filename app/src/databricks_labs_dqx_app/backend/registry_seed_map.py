@@ -20,8 +20,6 @@ covered by that map defaults to ``"any"``, which is correct for genuinely
 type-agnostic checks like ``is_not_null``.
 """
 
-from __future__ import annotations
-
 from typing import cast
 
 from .models import CheckFunctionDef

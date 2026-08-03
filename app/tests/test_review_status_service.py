@@ -7,8 +7,6 @@ never propagate after the status change has already committed (mirrors
 ``RoleService._record_history``).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

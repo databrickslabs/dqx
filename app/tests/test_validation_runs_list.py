@@ -7,8 +7,6 @@ to a few hundred bytes per row; the per-run detail path (``getDryRunResults``)
 remains the authoritative source for full check definitions.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import MagicMock, create_autospec
 

@@ -13,8 +13,6 @@ No I/O — unit-testable in isolation. The orchestrating reads/writes live in
 ``tag_reconcile_service``.
 """
 
-from __future__ import annotations
-
 import itertools
 from dataclasses import dataclass, field
 

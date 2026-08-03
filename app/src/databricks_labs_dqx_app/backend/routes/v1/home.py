@@ -19,8 +19,6 @@ filtered). The counts are likewise org-wide, matching dqlake's
 control-plane counts.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Annotated
 

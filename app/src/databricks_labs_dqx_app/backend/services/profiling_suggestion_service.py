@@ -21,8 +21,6 @@ This is the dqlake-style placement: profiler suggestions live on the Profile
 page, NOT folded into the AI "Suggest rules" dialog.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field

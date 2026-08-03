@@ -1,7 +1,5 @@
 """Unit tests for the pure Test-rule SQL builders (P22-E)."""
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.rule_test_sql import (

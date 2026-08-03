@@ -27,8 +27,6 @@ listing routes bulk-fetch effective statuses from this service and merge
 in Python (see :meth:`bulk_get_effective`).
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime, timezone
 

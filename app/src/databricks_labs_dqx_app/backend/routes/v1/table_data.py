@@ -17,8 +17,6 @@
 See ``services/table_data_service.py`` for the Genie-vs-LLM decision rationale.
 """
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError

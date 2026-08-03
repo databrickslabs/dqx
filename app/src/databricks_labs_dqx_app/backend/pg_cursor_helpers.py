@@ -35,8 +35,6 @@ of contract for both helpers — see :func:`run_trusted_sql` for the full
 rationale.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, LiteralString, cast
 
@@ -48,7 +46,7 @@ if TYPE_CHECKING:
     from psycopg import Cursor
 
 
-def run_trusted_sql(cur: Cursor[Any], sql: str) -> None:
+def run_trusted_sql(cur: "Cursor[Any]", sql: str) -> None:
     """Execute a backend-composed STATIC SQL string against a psycopg cursor.
 
     psycopg's stubs (PEP 675) require :meth:`Cursor.execute`'s
@@ -103,7 +101,7 @@ def run_trusted_sql(cur: Cursor[Any], sql: str) -> None:
     _ = cur.execute(cast(LiteralString, sql))
 
 
-def run_parameterized_sql(cur: Cursor[Any], sql: str, params: Sequence[Any]) -> None:
+def run_parameterized_sql(cur: "Cursor[Any]", sql: str, params: Sequence[Any]) -> None:
     """Execute a trusted SQL TEMPLATE with psycopg-bound runtime values.
 
     Sibling to :func:`run_trusted_sql` for the common pattern where

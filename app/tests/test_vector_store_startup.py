@@ -8,8 +8,6 @@ in isolation) is what wires it up at app startup: fire-and-forget via
 never allowed to raise or block startup.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import create_autospec
 

@@ -13,8 +13,6 @@ approve route on every publish. No Vector Search or embedding infrastructure
 is required for the app to build, deploy, or serve any other feature.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any

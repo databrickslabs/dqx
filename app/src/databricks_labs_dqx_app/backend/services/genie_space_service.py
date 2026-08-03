@@ -56,8 +56,6 @@ a timestamp to the title on create). Best-effort throughout — never raises
 out of the app lifespan.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging

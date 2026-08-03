@@ -16,8 +16,6 @@ executor helpers) but operates on the registry tables instead of
 per-table ``dq_quality_rules``.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import Collection
