@@ -35,14 +35,16 @@ export function PackGroup({
 }) {
   const { t } = useTranslation();
 
-  const packRuleKeys = pack.rules.map((r) => r.rule_key);
-  const selState = packSelectionState(packRuleKeys, selected);
-  const selectedCount = packRuleKeys.filter((k) => selected.has(k)).length;
+  // Already-imported rules aren't selectable, so the header checkbox, tri-state,
+  // and "N / M" count all operate over the SELECTABLE (non-imported) rules only.
+  const selectableRuleKeys = pack.rules.filter((r) => !r.imported).map((r) => r.rule_key);
+  const selState = packSelectionState(selectableRuleKeys, selected);
+  const selectedCount = selectableRuleKeys.filter((k) => selected.has(k)).length;
 
   const Icon = ((Icons as Record<string, unknown>)[pack.icon] as LucideIcon | undefined) ?? Icons.Package;
 
   function handlePackCheckbox() {
-    onTogglePack(packRuleKeys);
+    onTogglePack(selectableRuleKeys);
   }
 
   function handleRuleToggleOpen(key: string) {
@@ -69,6 +71,7 @@ export function PackGroup({
             onCheckedChange={handlePackCheckbox}
             aria-label={t("marketplace.selectPack", { title: pack.title })}
             onClick={(e) => e.stopPropagation()}
+            disabled={selectableRuleKeys.length === 0}
           />
         </div>
         <button
@@ -80,7 +83,7 @@ export function PackGroup({
           <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
           <span className="text-sm font-semibold">{pack.title}</span>
           <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-            <AnimatedCount value={selectedCount} /> / <AnimatedCount value={pack.rules.length} />{" "}
+            <AnimatedCount value={selectedCount} /> / <AnimatedCount value={selectableRuleKeys.length} />{" "}
             {t("marketplace.selectedLabel")}
           </span>
           <ChevronDown

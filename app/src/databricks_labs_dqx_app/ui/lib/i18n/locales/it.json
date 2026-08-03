@@ -1876,7 +1876,8 @@
     "resultsOverallScoreLabel_other": "Punteggio complessivo su {{count}} tabelle",
     "joinPickCatalogPlaceholder": "Seleziona catalogo…",
     "joinPickSchemaPlaceholder": "Seleziona schema…",
-    "joinPickTablePlaceholder": "Seleziona tabella…"
+    "joinPickTablePlaceholder": "Seleziona tabella…",
+    "sourceMarketplace": "Marketplace"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle",
@@ -2828,8 +2829,8 @@
     "title": "Marketplace delle regole",
     "subtitle": "Sfoglia e importa pacchetti di regole di qualità dei dati predefiniti nel tuo registro.",
     "searchPlaceholder": "Cerca regole…",
-    "importSelected_one": "Importa {{count}} regola",
-    "importSelected_other": "Importa {{count}} regole",
+    "importSelected_one": "Aggiungi {{count}} al registro",
+    "importSelected_other": "Aggiungi {{count}} al registro",
     "industryLabel": "Settore:",
     "regionLabel": "Regione:",
     "all": "Tutte",
@@ -2843,6 +2844,7 @@
     "selectedLabel": "selezionate",
     "tryIt": "Provala",
     "tryItTitle": "Provala — {{name}}",
-    "contribute": "Contribuisci su GitHub"
+    "contribute": "Contribuisci su GitHub",
+    "added": "Aggiunta"
   }
 }

@@ -581,6 +581,14 @@ class BatchImportRegistryRulesIn(BaseModel):
             "Makes re-importing the same contract bundle idempotent."
         ),
     )
+    source: str = Field(
+        default="import",
+        description=(
+            "Provenance recorded on each created rule (the RuleSourceBadge value). "
+            "Defaults to 'import' for YAML/contract imports; the Marketplace sends "
+            "'marketplace' so its rules are distinguishable from file imports."
+        ),
+    )
 
 
 class BatchImportRegistryRulesFailure(BaseModel):

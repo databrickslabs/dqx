@@ -1876,7 +1876,8 @@
     "resultsOverallScoreLabel_other": "Overall score across {{count}} tables",
     "joinPickCatalogPlaceholder": "Select catalog…",
     "joinPickSchemaPlaceholder": "Select schema…",
-    "joinPickTablePlaceholder": "Select table…"
+    "joinPickTablePlaceholder": "Select table…",
+    "sourceMarketplace": "Marketplace"
   },
   "monitoredTables": {
     "breadcrumb": "Tables",
@@ -2828,8 +2829,8 @@
     "title": "Rule Marketplace",
     "subtitle": "Browse and import pre-built data quality rule packs into your registry.",
     "searchPlaceholder": "Search rules…",
-    "importSelected_one": "Import {{count}} rule",
-    "importSelected_other": "Import {{count}} rules",
+    "importSelected_one": "Add {{count}} to registry",
+    "importSelected_other": "Add {{count}} to registry",
     "industryLabel": "Industry:",
     "regionLabel": "Region:",
     "all": "All",
@@ -2843,6 +2844,7 @@
     "selectedLabel": "selected",
     "tryIt": "Try it out",
     "tryItTitle": "Try it out — {{name}}",
-    "contribute": "Contribute on GitHub"
+    "contribute": "Contribute on GitHub",
+    "added": "Added"
   }
 }

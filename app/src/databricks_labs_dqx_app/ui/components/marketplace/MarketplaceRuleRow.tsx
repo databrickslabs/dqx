@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Play } from "lucide-react";
+import { Check, ChevronDown, Play } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CheckFunctionDef, MarketplaceRuleOut } from "@/lib/api";
@@ -39,17 +40,22 @@ export function MarketplaceRuleRow({
   const previewRule = checkDictToPreviewRule(rule, checkFunctions, t);
   const tags = [...rule.industries, ...rule.regions];
 
+  const imported = rule.imported ?? false;
+
   return (
     <div className={cn("rounded-md border bg-background transition-colors", selected && "border-primary/50 bg-primary/5")}>
       <div className="flex items-stretch">
         {/* Checkbox aligned to the NAME line (h-9 matches the first row's
-            height) rather than floating above the whole cell. */}
+            height) rather than floating above the whole cell. Already-added
+            rules can't be selected — the checkbox is disabled and an "Added"
+            badge marks them. */}
         <div className="flex h-9 items-center pl-3">
           <Checkbox
-            checked={selected}
+            checked={selected && !imported}
             onCheckedChange={onToggleSelect}
             aria-label={t("marketplace.selectRule", { name: rule.name })}
             onClick={(e) => e.stopPropagation()}
+            disabled={imported}
           />
         </div>
         {/* Whole button (its own padding) toggles the rule open/closed. */}
@@ -61,7 +67,7 @@ export function MarketplaceRuleRow({
         >
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex h-5 flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">{rule.name}</span>
+              <span className={cn("text-sm font-medium", imported && "text-muted-foreground")}>{rule.name}</span>
               <TagBadge
                 label={rule.dimension}
                 color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, rule.dimension)}
@@ -70,6 +76,12 @@ export function MarketplaceRuleRow({
                 severity={rule.severity}
                 color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, rule.severity)}
               />
+              {imported && (
+                <Badge variant="outline" className="gap-1 border-emerald-500/50 text-[10px] text-emerald-600">
+                  <Check className="h-3 w-3" aria-hidden />
+                  {t("marketplace.added")}
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground">{rule.description}</p>
           </div>

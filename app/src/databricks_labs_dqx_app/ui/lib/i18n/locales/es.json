@@ -1876,7 +1876,8 @@
     "resultsOverallScoreLabel_other": "Puntuación global en {{count}} tablas",
     "joinPickCatalogPlaceholder": "Seleccionar catálogo…",
     "joinPickSchemaPlaceholder": "Seleccionar esquema…",
-    "joinPickTablePlaceholder": "Seleccionar tabla…"
+    "joinPickTablePlaceholder": "Seleccionar tabla…",
+    "sourceMarketplace": "Marketplace"
   },
   "monitoredTables": {
     "breadcrumb": "Tablas",
@@ -2828,8 +2829,8 @@
     "title": "Mercado de reglas",
     "subtitle": "Examine e importe paquetes de reglas de calidad de datos prediseñados en su registro.",
     "searchPlaceholder": "Buscar reglas…",
-    "importSelected_one": "Importar {{count}} regla",
-    "importSelected_other": "Importar {{count}} reglas",
+    "importSelected_one": "Añadir {{count}} al registro",
+    "importSelected_other": "Añadir {{count}} al registro",
     "industryLabel": "Sector:",
     "regionLabel": "Región:",
     "all": "Todas",
@@ -2843,6 +2844,7 @@
     "selectedLabel": "seleccionadas",
     "tryIt": "Probar",
     "tryItTitle": "Probar — {{name}}",
-    "contribute": "Contribuye en GitHub"
+    "contribute": "Contribuye en GitHub",
+    "added": "Añadida"
   }
 }

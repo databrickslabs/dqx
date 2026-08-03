@@ -514,6 +514,8 @@ export interface BatchImportRegistryRulesIn {
   auto_approve?: boolean;
   /** When true, reuse an existing structurally-identical ACTIVE rule (draft/pending_approval/approved) instead of creating a duplicate, and dedupe repeated rules within this batch. Reused rules are returned in ``reused`` and are neither re-created nor re-submitted. Makes re-importing the same contract bundle idempotent. */
   skip_duplicates?: boolean;
+  /** Provenance recorded on each created rule (the RuleSourceBadge value). Defaults to 'import' for YAML/contract imports; the Marketplace sends 'marketplace' so its rules are distinguishable from file imports. */
+  source?: string;
 }
 
 /**
@@ -2081,6 +2083,7 @@ export interface MarketplaceRuleOut {
   severity: string;
   check: MarketplaceRuleOutCheck;
   slot_families?: MarketplaceRuleOutSlotFamilies;
+  imported?: boolean;
 }
 
 export type MetricSnapshotOutRunType = string | null;
@@ -27630,6 +27633,11 @@ export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof d
 
 /**
  * Return the full marketplace pack catalogue (admin only).
+
+Each rule is flagged ``imported`` when a rule of the same name already
+exists in the registry (any active status), so the UI can disable adding it
+again. Name-match, not fingerprint: a pack rule the user has since edited
+still reads as already-added, which is the intent for the disable state.
  * @summary List Marketplace Packs
  */
 export const listMarketplacePacks = (
