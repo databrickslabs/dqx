@@ -2619,6 +2619,7 @@ def test_col_is_valid_subdivision_code_with_country_column(spark):
             ["US-ZZ", "US"],  # invalid code, regardless of country match
             ["US-CA", None],  # null country - nothing to cross-check, passes
             [None, "US"],  # null code - passes regardless of country
+            ["US-ZZ", None],  # invalid code with a null country - still flagged, message shows 'null'
         ],
         schema_sub,
     )
@@ -2635,6 +2636,32 @@ def test_col_is_valid_subdivision_code_with_country_column(spark):
         [violation("US-ZZ", "US")],
         [None],
         [None],
+        [violation("US-ZZ", "null")],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_case_insensitive_with_country_column(spark):
+    schema_sub = "a: string, country: string"
+    test_df = spark.createDataFrame(
+        [
+            ["us-ca", "us"],  # lowercase code and country both accepted, still match
+            ["us-ca", "gb"],  # lowercase code valid, but does not belong to the given country
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", case_sensitive=False, country_column="country"))
+
+    def violation(value: str, country: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code for country '{country}' in Column 'country'"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [violation("us-ca", "gb")],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 

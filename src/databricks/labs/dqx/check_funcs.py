@@ -1431,8 +1431,11 @@ def is_valid_subdivision_code(
     column expression.
 
     By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
-    any case. Null values will pass the check with no violation reported; a null *country_column*
-    value for an otherwise-valid *column* value also passes, since there is nothing to cross-check.
+    any case. *case_sensitive* also governs the *country_column* cross-check: with the default
+    *case_sensitive=True*, *column="US-CA"* paired with a *country_column* value of *"us"* is flagged
+    as a mismatch, since the comparison is exact on both sides. Null values will pass the check with
+    no violation reported; a null *country_column* value for an otherwise-valid *column* value also
+    passes, since there is nothing to cross-check.
 
     For best performance with large lists in general, prefer the *foreign_key* check function; the
     ISO 3166-2 code list (~5,000 codes) is large enough that *foreign_key* may perform better for
@@ -1477,7 +1480,7 @@ def is_valid_subdivision_code(
             F.lit("Value '"),
             col_expr.cast("string"),
             F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 3166-2 subdivision code for country '"),
-            country_expr.cast("string"),
+            F.when(country_expr.isNull(), F.lit("null")).otherwise(country_expr.cast("string")),
             F.lit(f"' in Column '{country_expr_str}'"),
         )
 
