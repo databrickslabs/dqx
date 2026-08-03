@@ -174,10 +174,9 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   aiAuthorship: {
     labelKey: "rulesRegistry.colAiAuthorship",
     toggleable: true,
-    // Hidden by default — the list row's top area shows Status + Version
-    // instead of the type/authorship chips. Still available via Edit
-    // Columns for anyone who wants it back.
-    defaultVisible: false,
+    // Shown by default so a rule's AI-vs-human authorship is visible at a
+    // glance on the overview. Still toggleable via Edit Columns.
+    defaultVisible: true,
     defaultWidth: 56,
     sortable: true,
     resizable: false,

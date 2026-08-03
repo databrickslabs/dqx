@@ -203,7 +203,7 @@ class TestBatchImport:
                 CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
             ],
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert result.saved == 2
         assert len(result.created) == 2
         assert svc.create_rule.call_count == 2
@@ -216,22 +216,29 @@ class TestBatchImport:
             rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
             also_submit=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert result.submitted == 1
         svc.submit.assert_called_once_with("r1", "alice@x")
 
     def test_batch_import_auto_approve_publishes_outright(self):
         svc = MagicMock()
         svc.create_rule.return_value = (_rule("r1"), None)
+        approved = _rule("r1")
+        svc.approve.return_value = approved
+        embeddings = MagicMock()
         body = BatchImportRegistryRulesIn(
             rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
             auto_approve=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="carol@x", role=UserRole.RULE_APPROVER)
+        result = batch_import_registry_rules(
+            body=body, svc=svc, embeddings=embeddings, user_email="carol@x", role=UserRole.RULE_APPROVER
+        )
         assert result.submitted == 1
         # Publishing is submit THEN approve, both against the created rule.
         svc.submit.assert_called_once_with("r1", "carol@x")
         svc.approve.assert_called_once_with("r1", "carol@x")
+        # …and the published rule is embedded so it enters the suggestion corpus.
+        embeddings.embed_and_store.assert_called_once_with(approved)
 
     def test_batch_import_auto_approve_rejected_for_non_approver(self):
         svc = MagicMock()
@@ -240,7 +247,7 @@ class TestBatchImport:
             auto_approve=True,
         )
         with pytest.raises(HTTPException) as exc:
-            batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+            batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert exc.value.status_code == 403
         svc.create_rule.assert_not_called()
 
@@ -253,7 +260,7 @@ class TestBatchImport:
                 CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
             ],
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert result.saved == 1
         assert len(result.failed) == 1
         assert result.failed[0].index == 0
@@ -266,7 +273,7 @@ class TestBatchImport:
         leaky = RuntimeError('psycopg: relation "dq_rules" does not exist; host=db.internal port=5432')
         svc.create_rule.side_effect = leaky
         body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert result.saved == 0
         assert len(result.failed) == 1
         assert "dq_rules" not in result.failed[0].error
@@ -279,7 +286,7 @@ class TestBatchImport:
         svc = MagicMock()
         svc.create_rule.side_effect = ValueError("definition is missing required slot 'column'")
         body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert result.failed[0].error == "definition is missing required slot 'column'"
 
     def test_batch_import_rejects_empty_payload(self):
@@ -305,7 +312,7 @@ class TestBatchImport:
             rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
             skip_duplicates=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert result.saved == 0
         assert result.created == []
         assert len(result.reused) == 1
@@ -326,7 +333,7 @@ class TestBatchImport:
             ],
             skip_duplicates=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert len(result.created) == 1
         assert len(result.reused) == 1
         assert result.reused[0].rule.rule_id == "r1"
@@ -342,7 +349,7 @@ class TestBatchImport:
                 CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
             ],
         )
-        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
         assert len(result.created) == 2
         assert result.reused == []
         svc.compute_definition_fingerprint.assert_not_called()

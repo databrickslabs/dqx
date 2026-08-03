@@ -2845,6 +2845,7 @@
     "tryIt": "Try it out",
     "tryItTitle": "Try it out — {{name}}",
     "contribute": "Contribute on GitHub",
-    "added": "Added"
+    "added": "Added",
+    "alreadyImported": "This rule is already imported"
   }
 }
