@@ -2845,6 +2845,7 @@
     "tryIt": "Experimentar",
     "tryItTitle": "Experimentar — {{name}}",
     "contribute": "Contribua no GitHub",
-    "added": "Adicionada"
+    "added": "Adicionada",
+    "alreadyImported": "Esta regra já foi importada"
   }
 }

@@ -2845,6 +2845,7 @@
     "tryIt": "Provala",
     "tryItTitle": "Provala — {{name}}",
     "contribute": "Contribuisci su GitHub",
-    "added": "Aggiunta"
+    "added": "Aggiunta",
+    "alreadyImported": "Questa regola è già stata importata"
   }
 }

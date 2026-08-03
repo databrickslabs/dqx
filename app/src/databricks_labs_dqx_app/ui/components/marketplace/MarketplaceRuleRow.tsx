@@ -4,6 +4,7 @@ import { Check, ChevronDown, Play } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { CheckFunctionDef, MarketplaceRuleOut } from "@/lib/api";
 import type { LabelColorDefinition } from "@/components/RegistryRuleBadges";
@@ -42,16 +43,16 @@ export function MarketplaceRuleRow({
 
   const imported = rule.imported ?? false;
 
-  return (
+  const card = (
     <div className={cn("rounded-md border bg-background transition-colors", selected && "border-primary/50 bg-primary/5")}>
       <div className="flex items-stretch">
         {/* Checkbox aligned to the NAME line (h-9 matches the first row's
             height) rather than floating above the whole cell. Already-added
-            rules can't be selected — the checkbox is disabled and an "Added"
-            badge marks them. */}
+            rules show a CHECKED, disabled box (they're in the registry) plus an
+            "Added" badge; a tooltip on the row explains why it's locked. */}
         <div className="flex h-9 items-center pl-3">
           <Checkbox
-            checked={selected && !imported}
+            checked={imported || selected}
             onCheckedChange={onToggleSelect}
             aria-label={t("marketplace.selectRule", { name: rule.name })}
             onClick={(e) => e.stopPropagation()}
@@ -145,4 +146,17 @@ export function MarketplaceRuleRow({
       />
     </div>
   );
+
+  // Already-imported rules get an explanatory tooltip on the whole card.
+  if (imported) {
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>{card}</TooltipTrigger>
+          <TooltipContent>{t("marketplace.alreadyImported")}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+  return card;
 }

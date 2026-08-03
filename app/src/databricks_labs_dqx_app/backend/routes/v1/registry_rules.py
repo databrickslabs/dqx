@@ -185,6 +185,7 @@ def create_registry_rule(
 def batch_import_registry_rules(
     body: BatchImportRegistryRulesIn,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     user_email: CurrentUser,
     role: CurrentUserRole,
 ) -> BatchImportRegistryRulesOut:
@@ -260,10 +261,14 @@ def batch_import_registry_rules(
                 # Publish outright: submit to leave draft, then approve to
                 # bump v0 -> v1 and freeze the snapshot. A freshly-imported
                 # reusable rule has no applications yet, so no re-materialize
-                # is needed here (that's the approve ROUTE's concern).
+                # is needed here (that's the approve ROUTE's concern) — but we
+                # DO embed it, mirroring the approve route, so the published
+                # rule enters the suggestion corpus and shows up in Apply Rules
+                # → Suggest rules. embed_and_store is best-effort / never raises.
                 try:
                     svc.submit(rule.rule_id, user_email)
-                    svc.approve(rule.rule_id, user_email)
+                    approved = svc.approve(rule.rule_id, user_email)
+                    embeddings.embed_and_store(approved)
                     submitted += 1
                 except Exception as approve_err:
                     logger.warning(
