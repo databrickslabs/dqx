@@ -112,6 +112,7 @@ def _load_pack_file(
                 dimension=rule.dimension,
                 severity=rule.severity,
                 check=normalized,
+                slot_families=rule.slot_families,
             )
         )
     return MarketplacePackOut(

@@ -29,6 +29,7 @@ rules:
     description: Amount is rounded to at most two decimal places.
     dimension: Consistency
     severity: Low
+    slot_families: {amount: numeric}
     check:
       function: sql_expression
       arguments:
@@ -56,6 +57,7 @@ rules:
     industries: [retail]
     dimension: Consistency
     severity: Medium
+    slot_families: {cost: numeric, price: numeric}
     check:
       function: sql_expression
       arguments:
@@ -65,6 +67,7 @@ rules:
     industries: [retail]
     dimension: Accuracy
     severity: Medium
+    slot_families: {price: numeric, cost: numeric}
     check:
       function: sql_expression
       arguments:

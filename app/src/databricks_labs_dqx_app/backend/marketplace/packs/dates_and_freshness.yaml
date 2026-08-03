@@ -16,6 +16,7 @@ rules:
     description: End timestamp is greater than or equal to the start timestamp.
     dimension: Consistency
     severity: High
+    slot_families: {end_ts: temporal, start_ts: temporal}
     check:
       function: sql_expression
       arguments:
@@ -34,6 +35,7 @@ rules:
     industries: [healthcare]
     dimension: Consistency
     severity: High
+    slot_families: {admission_ts: temporal, discharge_ts: temporal}
     check:
       function: sql_expression
       arguments:

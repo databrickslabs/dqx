@@ -2066,6 +2066,8 @@ export interface MarketplacePacksOut {
 
 export type MarketplaceRuleOutCheck = { [key: string]: unknown };
 
+export type MarketplaceRuleOutSlotFamilies = {[key: string]: string};
+
 /**
  * A marketplace rule as returned to the frontend (normalized check dict).
  */
@@ -2078,6 +2080,7 @@ export interface MarketplaceRuleOut {
   dimension: string;
   severity: string;
   check: MarketplaceRuleOutCheck;
+  slot_families?: MarketplaceRuleOutSlotFamilies;
 }
 
 export type MetricSnapshotOutRunType = string | null;

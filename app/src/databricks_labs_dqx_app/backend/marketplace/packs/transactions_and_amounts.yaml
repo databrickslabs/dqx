@@ -10,6 +10,7 @@ rules:
     industries: [banking]
     dimension: Validity
     severity: High
+    slot_families: {amount: numeric}
     check:
       function: sql_expression
       arguments:
@@ -19,6 +20,7 @@ rules:
     industries: [banking]
     dimension: Validity
     severity: High
+    slot_families: {amount: numeric}
     check:
       function: sql_expression
       arguments:
@@ -28,6 +30,7 @@ rules:
     industries: [banking]
     dimension: Consistency
     severity: High
+    slot_families: {amount: numeric}
     check:
       function: sql_expression
       arguments:
@@ -37,6 +40,7 @@ rules:
     industries: [banking]
     dimension: Consistency
     severity: High
+    slot_families: {amount: numeric}
     check:
       function: sql_expression
       arguments:

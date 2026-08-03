@@ -29,7 +29,13 @@ export function RuleTestModal({
 
   const mode = (preview?.mode ?? "sql") as "sql" | "lowcode" | "dqx_native";
   const polarity: "pass" | "fail" = preview?.polarity === "fail" ? "fail" : "pass";
-  const slots = def?.slots ?? [];
+  // Apply the pack's DECLARED slot families (sql_expression rules can't infer a
+  // family from the check function, so the test grid would default every cell
+  // to a plain text input). A declared family renders the right typed control.
+  const declaredFamilies = rule.slot_families ?? {};
+  const slots = (def?.slots ?? []).map((s) =>
+    declaredFamilies[s.name] ? { ...s, family: declaredFamilies[s.name] as typeof s.family } : s,
+  );
 
   // Read the ORIGINAL normalized check ({criticality, check:{function,
   // arguments}, user_metadata}), NOT the parsed preview definition — the

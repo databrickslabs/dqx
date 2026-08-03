@@ -29,6 +29,11 @@ class MarketplaceRule(BaseModel):
     dimension: str
     severity: str
     check: dict[str, Any]
+    # Declared slot families ({{slot}} name -> numeric|temporal|boolean|text),
+    # used by the "Try it out" test grid to render the right input control.
+    # Only needed for sql_expression rules, where the family can't be inferred
+    # from the check function (native checks derive it from the function).
+    slot_families: dict[str, str] = Field(default_factory=dict)
 
 
 class MarketplacePack(BaseModel):
@@ -52,6 +57,7 @@ class MarketplaceRuleOut(BaseModel):
     dimension: str
     severity: str
     check: dict[str, Any]
+    slot_families: dict[str, str] = Field(default_factory=dict)
 
 
 class MarketplacePackOut(BaseModel):
