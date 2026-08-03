@@ -1438,8 +1438,8 @@ def is_valid_subdivision_code(
     passes, since there is nothing to cross-check.
 
     For best performance with large lists in general, prefer the *foreign_key* check function; the
-    ISO 3166-2 code list (~5,000 codes) is large enough that *foreign_key* may perform better for
-    high-volume checks.
+    ISO 3166-2 code list is large enough that *foreign_key* may perform better for high-volume
+    checks.
 
     Args:
         column: column to check; can be a string column name or a column expression
