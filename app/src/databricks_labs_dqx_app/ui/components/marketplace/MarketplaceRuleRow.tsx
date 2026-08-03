@@ -99,7 +99,7 @@ export function MarketplaceRuleRow({
         )}
       >
         <div className="overflow-hidden">
-          <div className="space-y-3 border-t px-3 pb-3 pl-10 pt-3">
+          <div className="border-t px-3 pb-3 pl-10 pt-3">
             {previewRule ? (
               <RuleLogicBody registryRule={previewRule} />
             ) : (
@@ -107,10 +107,10 @@ export function MarketplaceRuleRow({
                 {t("monitoredTables.ruleLogicUnavailable")}
               </p>
             )}
-            {/* "Try it out" pinned to the bottom-right of the expanded rule,
-                below the logic/parameters. Filled (secondary) so it reads as
-                a button, not part of the card. */}
-            <div className="flex justify-end">
+            {/* "Try it out" sits bottom-right, snug under the logic/parameters
+                (small gap, not floating). Filled (secondary) so it reads as a
+                button, not part of the card. */}
+            <div className="mt-2 flex justify-end">
               <Button
                 type="button"
                 variant="secondary"

@@ -27,7 +27,7 @@ rules:
         regex: "^[A-Za-z][0-9][A-Za-z] ?[0-9][A-Za-z][0-9]$"
   - name: Valid Netherlands postcode
     description: Postcode matches the Dutch four-digit plus two-letter format.
-    regions: [eu]
+    regions: [eu, netherlands]
     dimension: Validity
     severity: Low
     check:
@@ -37,7 +37,7 @@ rules:
         regex: "^[0-9]{4} ?[A-Za-z]{2}$"
   - name: Valid German postcode
     description: Postcode is exactly five digits as required in Germany.
-    regions: [eu]
+    regions: [eu, germany]
     dimension: Validity
     severity: Low
     check:
@@ -47,7 +47,7 @@ rules:
         regex: "^[0-9]{5}$"
   - name: Valid French postcode
     description: Postcode is exactly five digits as required in France.
-    regions: [eu]
+    regions: [eu, france]
     dimension: Validity
     severity: Low
     check:

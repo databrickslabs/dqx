@@ -62,7 +62,7 @@ def test_name_and_description_conventions():
 def test_tag_values_are_from_taxonomy():
     _, rules = _all_rules()
     ok_ind = {"banking", "retail", "healthcare", "telco", "insurance", "logistics"}
-    ok_reg = {"global", "us", "uk", "eu", "canada", "australia"}
+    ok_reg = {"global", "us", "uk", "eu", "canada", "australia", "netherlands", "germany", "france"}
     for r in rules:
         assert set(r.industries) <= ok_ind, f"{r.rule_key}: bad industry {r.industries}"
         assert set(r.regions) <= ok_reg, f"{r.rule_key}: bad region {r.regions}"
