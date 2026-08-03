@@ -1,7 +1,5 @@
 """Tests for oversized run-config staging (Databricks 10k job-parameter limit)."""
 
-from __future__ import annotations
-
 import io
 import json
 from unittest.mock import MagicMock

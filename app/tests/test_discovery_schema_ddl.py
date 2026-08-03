@@ -5,8 +5,6 @@ position, ``type_text`` preference over ``type_name``, identifier
 quoting for non-standard column names, and skipping malformed columns.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

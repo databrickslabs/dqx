@@ -15,8 +15,6 @@ run set — a run set of one for single-table runs — so run history can be
 grouped consistently with product runs (Task 4).
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal

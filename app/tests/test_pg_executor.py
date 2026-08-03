@@ -26,8 +26,6 @@ SCRAM handshake, real token rotation) is covered by integration tests
 that run against a live Lakebase instance — out of scope here.
 """
 
-from __future__ import annotations
-
 import datetime as dt
 import logging
 import threading

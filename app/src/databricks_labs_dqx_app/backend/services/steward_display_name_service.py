@@ -19,8 +19,6 @@ A short in-process TTL cache keeps repeated writes for the same steward
 (e.g. bulk register, demo seed) from re-hitting SCIM.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Iterator

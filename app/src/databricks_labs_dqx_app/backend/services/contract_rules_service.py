@@ -13,8 +13,6 @@ before saving — most contracts describe the data product abstractly and
 don't carry a fully-qualified UC name.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re

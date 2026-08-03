@@ -9,8 +9,6 @@ one for the always-Delta ``dq_profiling_results`` read path — mirroring how
 ``dependencies.get_monitored_table_service`` wires the real service.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

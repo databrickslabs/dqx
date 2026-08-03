@@ -1,7 +1,5 @@
 """Tests for the compute routes (P22-B) — settings, listings, warehouse access/grant."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 

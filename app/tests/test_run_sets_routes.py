@@ -5,8 +5,6 @@ functions directly with a mocked ``RunSetService`` rather than spinning up
 a FastAPI ``TestClient``.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 

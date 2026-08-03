@@ -8,8 +8,6 @@ the daemon-thread launch is made synchronous in-test by monkeypatching the
 module-level ``_launch_seed`` indirection to run the target inline.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

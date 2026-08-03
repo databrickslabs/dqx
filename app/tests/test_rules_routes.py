@@ -12,8 +12,6 @@ rule via the ``rule_id`` update path — a gap that previously slipped
 through because only delete/submit/revoke had per-rule ownership checks.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

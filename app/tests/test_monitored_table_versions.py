@@ -16,8 +16,6 @@ of the rendered rule set, and :meth:`get_checks` reconstructs the runner
 payload by re-rendering those references through the ``Materializer``.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import create_autospec
 

@@ -9,8 +9,6 @@ deep link), input validation on the feedback/poll bodies, and viewer-level
 RBAC.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

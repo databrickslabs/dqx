@@ -8,8 +8,6 @@ existing baseline migration (Postgres version=1, Delta v2 OLTP fallback),
 not a new migration version.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.migrations import MIGRATIONS, _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 

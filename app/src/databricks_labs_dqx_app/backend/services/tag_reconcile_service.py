@@ -19,8 +19,6 @@ Every method is a no-op returning ``0`` when the ``tag_auto_apply`` app setting
 is off (the default) — the feature only feeds rule suggestions in that mode.
 """
 
-from __future__ import annotations
-
 import collections.abc
 import logging
 

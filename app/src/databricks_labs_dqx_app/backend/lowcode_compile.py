@@ -24,8 +24,6 @@ exhaustively unit-tested and never widen the ``Any`` surface beyond the
 JSON-shaped AST the model returns.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import Callable
 from dataclasses import dataclass

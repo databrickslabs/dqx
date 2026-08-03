@@ -22,8 +22,6 @@ rejected by the route.
 literals (never executed as SQL) and the raw model response is never relayed.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

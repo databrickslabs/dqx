@@ -1,7 +1,5 @@
 """Tests for native_test_predicate — compile dqx_native checks to SQL test predicates."""
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.native_test_predicate import (

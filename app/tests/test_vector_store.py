@@ -7,8 +7,6 @@ transient outage or missing permission can never crash app startup or the
 admin "enable AI" flow.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

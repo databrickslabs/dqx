@@ -25,8 +25,6 @@ Permission model (unchanged from Phase 1):
   fine-grained-control suppression -> SP fetch last.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from collections.abc import Iterable

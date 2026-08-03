@@ -5,8 +5,6 @@ accepts a pre-cached mapping list. We swap the
 mappings in via ``_mappings_cache`` so no SQL is touched.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import datetime, timezone
 

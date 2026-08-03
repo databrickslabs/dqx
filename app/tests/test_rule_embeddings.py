@@ -5,8 +5,6 @@ Covers ``build_rule_embed_text`` (pure function) and ``RuleEmbeddingsService``
 ``embedding_endpoint_name`` is unconfigured).
 """
 
-from __future__ import annotations
-
 import json
 from types import SimpleNamespace
 from unittest.mock import create_autospec

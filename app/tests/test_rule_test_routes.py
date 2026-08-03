@@ -1,7 +1,5 @@
 """Tests for the Rule Test routes (P22-E) — run + generate error mapping + native guard."""
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

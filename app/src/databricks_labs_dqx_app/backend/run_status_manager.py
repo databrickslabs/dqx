@@ -5,8 +5,6 @@ All SQL is executed via :class:`SqlExecutor` — no private-attribute access
 to any other service.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Callable

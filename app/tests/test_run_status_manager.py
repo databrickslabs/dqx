@@ -5,8 +5,6 @@ return-shape behaviour and the literal SQL that gets executed (so any
 future regression in escaping or column ordering is caught early).
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock

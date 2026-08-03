@@ -8,8 +8,6 @@ is NOT a column on ``dq_rules``: it lives as reserved keys inside
 tests exercise the domain model in isolation (no DB, no Spark).
 """
 
-from __future__ import annotations
-
 import pytest
 from pydantic import ValidationError
 

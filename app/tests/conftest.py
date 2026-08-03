@@ -6,8 +6,6 @@ with a ``unittest.mock.MagicMock`` (or ``create_autospec``) so the
 suite runs offline in <1s.
 """
 
-from __future__ import annotations
-
 import os
 from typing import Any
 from unittest.mock import MagicMock, create_autospec

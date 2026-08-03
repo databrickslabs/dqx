@@ -15,8 +15,6 @@ identically, so ``RegistryService`` (a later phase) can warn on true
 duplicates regardless of who authored them or what they're called.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from typing import Any

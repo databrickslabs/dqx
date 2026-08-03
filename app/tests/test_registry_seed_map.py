@@ -8,8 +8,6 @@ representative end-to-end check of the seed-map refinement over DQX's own
 check-function signatures — not just hand-rolled fixtures.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.models import CheckFunctionDef, CheckFunctionParam

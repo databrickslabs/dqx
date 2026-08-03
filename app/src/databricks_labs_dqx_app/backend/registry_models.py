@@ -15,8 +15,6 @@ module are the single place that reads/writes those keys so callers never
 hand-roll ``user_metadata["dimension"]`` lookups.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from datetime import datetime
@@ -694,7 +692,7 @@ SEVERITY_TO_CRITICALITY: dict[str, str] = {
 _SEVERITY_LABEL_KEY = "severity"
 
 
-def resolve_criticality(severity: str | None, app_settings_service: AppSettingsService) -> str:
+def resolve_criticality(severity: str | None, app_settings_service: "AppSettingsService") -> str:
     """Map a registry ``severity`` tag value to a DQX ``criticality`` value.
 
     Reads the admin-editable ``value_criticality`` map on the reserved

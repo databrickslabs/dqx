@@ -7,8 +7,6 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

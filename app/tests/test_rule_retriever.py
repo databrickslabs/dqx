@@ -6,8 +6,6 @@ report a specific reason via ``is_available`` and never let ``retrieve``
 attempt a call.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import create_autospec
 

@@ -15,8 +15,6 @@ or workspace needed. Pins:
 - ``get_many`` parsing.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

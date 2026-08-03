@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -48,7 +46,7 @@ class GovernedTag:
     description: str | None
 
 
-def read_column_tags(sql: SqlExecutor, table_fqn: str) -> dict[str, list[str]]:
+def read_column_tags(sql: "SqlExecutor", table_fqn: str) -> dict[str, list[str]]:
     """Return a ``column_name -> ["key" | "key=value", ...]`` map for a table.
 
     Sources tags from ``<catalog>.information_schema.column_tags`` — the reliable
@@ -98,7 +96,7 @@ def read_column_tags(sql: SqlExecutor, table_fqn: str) -> dict[str, list[str]]:
 class DiscoveryService:
     """OBO-scoped Unity Catalog browsing with per-user response caching."""
 
-    def __init__(self, ws: WorkspaceClient, user_id: str, sql: SqlExecutor | None = None) -> None:
+    def __init__(self, ws: WorkspaceClient, user_id: str, sql: "SqlExecutor | None" = None) -> None:
         self._ws = ws
         self.user_id = user_id  # exposed for the {_user} cache key expansion
         self._sql = sql

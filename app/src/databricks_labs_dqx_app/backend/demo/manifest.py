@@ -26,8 +26,6 @@ Each *slot* names a placeholder a binding fills with a real column. A later
 task converts these to *RuleDefinition* objects.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 SOURCE_CATALOG_ENV_DEFAULT = "dqx"

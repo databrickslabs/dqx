@@ -36,8 +36,6 @@ at the application level:
   only non-stored access path. Revoking a grant permanently removes the row.
 """
 
-from __future__ import annotations
-
 from enum import Enum
 
 

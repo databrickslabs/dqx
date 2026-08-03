@@ -9,8 +9,6 @@ guards against a user schedule silently hijacking — or being overwritten
 by — a Data Product's tracker row in ``dq_schedule_runs``.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.services.schedule_config_service import (

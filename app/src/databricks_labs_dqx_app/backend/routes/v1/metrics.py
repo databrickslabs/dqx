@@ -13,8 +13,6 @@ Per-check breakdowns and admin-defined custom metrics are surfaced as
 new optional fields on :class:`MetricSnapshotOut`.
 """
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from typing import Annotated, Any

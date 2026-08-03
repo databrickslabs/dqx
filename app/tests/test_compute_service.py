@@ -1,7 +1,5 @@
 """Tests for ComputeService — warehouse/cluster discovery + SP access check/grant (P22-B)."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 

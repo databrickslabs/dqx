@@ -5,8 +5,6 @@ exercised end-to-end; ``create_autospec`` fakes stand in for every I/O
 collaborator and a plain callable fakes the SP-authed column-tag reader.
 """
 
-from __future__ import annotations
-
 from typing import cast
 from unittest.mock import create_autospec
 

@@ -14,8 +14,6 @@ The async loop itself (``_loop`` / ``_tick``) is exercised via
 integration tests; here we keep the surface narrow and deterministic.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import datetime, timedelta, timezone

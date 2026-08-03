@@ -11,8 +11,6 @@ These pin the destructive-scope guarantees that make the feature safe:
   not locked out.
 """
 
-from __future__ import annotations
-
 import re
 from unittest.mock import create_autospec
 

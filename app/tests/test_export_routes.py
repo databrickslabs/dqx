@@ -5,8 +5,6 @@ direct-call style as the other route tests), asserting the ExportOut envelope
 is returned and that ExportError maps to a 404.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest

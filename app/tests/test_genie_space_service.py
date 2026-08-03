@@ -9,8 +9,6 @@ a mocked ``ws.api_client.do`` and an in-memory settings fake (no live
 workspace).
 """
 
-from __future__ import annotations
-
 import json
 import re
 from unittest.mock import MagicMock, create_autospec

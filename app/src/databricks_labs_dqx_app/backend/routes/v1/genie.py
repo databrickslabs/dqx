@@ -24,8 +24,6 @@ failed) every endpoint returns ``available=False`` with a 200 rather than
 erroring, so the UI can hide/disable the chat cleanly.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Annotated

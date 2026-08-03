@@ -9,8 +9,6 @@ created_at))`` and NOT ``MAX(created_at)`` (which the runner back-dates to
 exclude cluster startup, understating the runtime — the original bug).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

@@ -6,8 +6,6 @@ catalog visibility to another. These tests pin that isolation property, the
 TTL behaviour, and the uncached local-dev fallback.
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 from types import SimpleNamespace

@@ -14,8 +14,6 @@ covered by their own service-level tests, so we focus the suite on:
    serialises / round-trips.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

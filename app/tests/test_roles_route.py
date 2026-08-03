@@ -6,8 +6,6 @@ CAN_USE principals being excluded, graceful degradation when app-permissions
 lookup fails, and the absent-admins-group edge case.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 import pytest

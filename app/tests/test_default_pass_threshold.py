@@ -9,8 +9,6 @@ Layers exercised here:
 * Admin-only RBAC — both operations are gated by ``require_role(ADMIN)``.
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

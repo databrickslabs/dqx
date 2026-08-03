@@ -22,8 +22,6 @@ pure-Python ``ScoreService`` specification. Live MEASURE() behaviour is
 covered by the plan's manual verification pass.
 """
 
-from __future__ import annotations
-
 import yaml
 
 import pytest

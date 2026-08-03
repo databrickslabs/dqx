@@ -1,7 +1,5 @@
 """Unit tests for steward_display_name_service — SCIM resolver (batch + single)."""
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 from databricks.sdk import WorkspaceClient

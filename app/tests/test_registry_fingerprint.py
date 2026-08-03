@@ -9,8 +9,6 @@ names/owners. It must be deterministic and independent of slot/parameter
 declaration order.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
 from databricks_labs_dqx_app.backend.registry_models import (
     RegistryRule,

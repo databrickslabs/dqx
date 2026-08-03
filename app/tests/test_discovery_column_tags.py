@@ -6,8 +6,6 @@ executor is injected, the method falls back to the legacy
 ``tables.get().columns[].tags`` scan so it still works without SQL.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, read_column_tags

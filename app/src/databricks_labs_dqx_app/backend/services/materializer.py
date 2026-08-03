@@ -54,8 +54,6 @@ of the auto-upgrade setting — pins only exempt an application from
 *version* upgrades, not from re-approval after an intentional edit.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import Mapping

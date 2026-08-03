@@ -10,8 +10,6 @@ is pinned in ``tests/test_binding_runs.py``. Layers exercised here:
   bounds (ge=0, le=10_000_000).
 """
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

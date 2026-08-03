@@ -14,8 +14,6 @@ aggregation math (pass rates, distinct-rule counts, explosions, facet
 filtering, axes slicing) independent of the routes.
 """
 
-from __future__ import annotations
-
 import json
 from collections import defaultdict
 from dataclasses import replace

@@ -9,8 +9,6 @@ fallback on 403/404 with a once-per-process warning) — all against mocked
 ``ws.api_client.do`` surfaces.
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import MagicMock
 

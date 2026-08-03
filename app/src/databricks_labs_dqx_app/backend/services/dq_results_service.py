@@ -29,8 +29,6 @@ Everything in this module is pure (no I/O) so the aggregation semantics
 are unit-testable without a warehouse.
 """
 
-from __future__ import annotations
-
 import json
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -54,7 +52,7 @@ VALID_AXES = ("all", "trend", "breakdown")
 ThresholdResolver = Callable[["CheckResultRow"], int]
 
 
-def _breach_criticality(row: CheckResultRow, threshold: int) -> str | None:
+def _breach_criticality(row: "CheckResultRow", threshold: int) -> str | None:
     """The criticality of *row*'s breach ("error"/"warn"), or None if no breach.
 
     A check breaches when it HAS rows (``total`` truthy) and its pass rate
@@ -87,7 +85,7 @@ def _worse_criticality(a: str | None, b: str | None) -> str | None:
 
 
 def breach_criticality_by_run(
-    rows: Iterable[CheckResultRow],
+    rows: "Iterable[CheckResultRow]",
     resolve_threshold: ThresholdResolver,
 ) -> dict[str | None, str | None]:
     """run_id -> worst breach criticality over that run's checks (None if none).
@@ -104,7 +102,7 @@ def breach_criticality_by_run(
     return out
 
 
-def _rows_have_draft(rows: Iterable[CheckResultRow]) -> bool:
+def _rows_have_draft(rows: "Iterable[CheckResultRow]") -> bool:
     """True when ANY row came from a draft (non-published) run.
 
     A trend point that pools multiple runs onto one instant is marked draft

@@ -5,8 +5,6 @@ plus the ``compute_mapping_hash`` dedup helper. No DB, no Spark — pure model
 construction/validation, mirroring ``test_registry_models.py``'s style.
 """
 
-from __future__ import annotations
-
 import pytest
 from pydantic import ValidationError
 

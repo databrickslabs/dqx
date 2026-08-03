@@ -8,8 +8,6 @@ SUGGESTIONS rather than auto-attached. Uses the REAL pure resolver
 callable fakes the SP/OBO-authed column-tag reader.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 from databricks_labs_dqx_app.backend.registry_models import (

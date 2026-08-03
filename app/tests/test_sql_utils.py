@@ -1,7 +1,5 @@
 """Tests for ``sql_utils`` — the front line of SQL/identifier injection defence."""
 
-from __future__ import annotations
-
 import json
 
 import pytest

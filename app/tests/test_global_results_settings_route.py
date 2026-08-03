@@ -5,8 +5,6 @@ OFF by default; read at VIEWER+ (the sidebar / homepage gate on it) and
 written ADMIN-only. See ``AppSettingsService.get_global_results_enabled``.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_labs_dqx_app.backend.routes.v1.config import (

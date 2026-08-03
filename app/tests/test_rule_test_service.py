@@ -1,7 +1,5 @@
 """Tests for RuleTestService — rule-test execution + AI test-data generation (P22-E)."""
 
-from __future__ import annotations
-
 from unittest.mock import create_autospec
 
 import pytest

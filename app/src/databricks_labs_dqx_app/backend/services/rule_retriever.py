@@ -42,8 +42,6 @@ surface an opaque "Rule retrieval failed" instead of a clear, actionable
 "not provisioned yet" message.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 from collections.abc import Sequence

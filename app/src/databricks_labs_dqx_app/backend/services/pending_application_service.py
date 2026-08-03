@@ -18,8 +18,6 @@ with ``UNIQUE (binding_id, rule_id)``; this service mirrors it on the Delta
 OLTP-fallback baseline, which can't declare the constraint natively).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field

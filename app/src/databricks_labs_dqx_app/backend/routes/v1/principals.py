@@ -6,8 +6,6 @@ in-process cache so a steward typing into a picker doesn't re-hit SCIM on
 every keystroke. Uses the index-friendly SCIM ``sw`` (starts-with) filter.
 """
 
-from __future__ import annotations
-
 import time
 from itertools import islice
 from typing import Annotated

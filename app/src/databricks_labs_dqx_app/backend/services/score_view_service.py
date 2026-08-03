@@ -67,8 +67,6 @@ Statement Execution API) and is re-applied on every app startup so
 definition changes ship with the app — see *app._ensure_score_views*.
 """
 
-from __future__ import annotations
-
 import logging
 
 # Importing check_funcs registers every built-in function's execution

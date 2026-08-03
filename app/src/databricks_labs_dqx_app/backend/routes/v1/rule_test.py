@@ -17,8 +17,6 @@ Security: the rule predicate must pass DQX's ``is_sql_query_safe`` (in the
 service); errors are sanitized so no raw warehouse/LLM text reaches the client.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Any, Literal
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError

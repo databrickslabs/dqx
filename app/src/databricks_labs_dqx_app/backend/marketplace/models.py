@@ -8,8 +8,6 @@ Two layers:
   a second round-trip.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import BaseModel, Field

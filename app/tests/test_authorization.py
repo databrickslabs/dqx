@@ -6,8 +6,6 @@ Covers:
 - ``get_user_email`` header trust, OBO fallback, and 401 behaviour.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

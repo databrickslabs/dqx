@@ -5,8 +5,6 @@ config serialized as JSON.  Every mutation is recorded in
 ``dq_schedule_configs_history`` for auditability.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass

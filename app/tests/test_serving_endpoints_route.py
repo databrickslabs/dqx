@@ -4,8 +4,6 @@ Backs the AI settings serving-endpoint dropdown: returns the workspace's serving
 endpoint names, degrading to an empty list (never a 500) when the SDK call fails.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import create_autospec
 

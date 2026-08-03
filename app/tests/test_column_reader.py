@@ -7,8 +7,6 @@ tests use a fake ``ws`` (``MagicMock`` ``tables.get``) and a fake ``SqlExecutor`
 merging and the best-effort degradation contract (never raises).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, create_autospec
 
 from databricks.sdk import WorkspaceClient

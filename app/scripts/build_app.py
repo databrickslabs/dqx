@@ -71,8 +71,6 @@ The script is invoked from the ``app-build`` Makefile target and from the
 cwd-independent — paths resolve relative to this file.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import re

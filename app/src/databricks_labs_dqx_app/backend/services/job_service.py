@@ -4,8 +4,6 @@ All operations use the **SP WorkspaceClient** (``rt.ws``) so that the
 app's service principal submits and polls job runs.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any

@@ -7,8 +7,6 @@ parse or whose rules fail validation / vocabulary is logged at WARNING and
 skipped — a bad pack never crashes startup or the endpoint.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from collections.abc import Callable

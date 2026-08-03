@@ -34,8 +34,6 @@ is skipped, and any SQL-bearing argument is validated with
 rather than persisted.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any

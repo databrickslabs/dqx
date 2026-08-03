@@ -7,8 +7,6 @@ logical columns and the ``(binding_id, rule_id, mapping_hash)`` primary key so
 across backends.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.migrations import (
     _V19_TAG_AUTO_SUPPRESSIONS,
     MIGRATIONS,

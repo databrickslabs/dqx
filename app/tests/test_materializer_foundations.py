@@ -8,8 +8,6 @@
   Behaviour A/B (design spec §5).
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

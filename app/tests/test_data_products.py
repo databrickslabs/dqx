@@ -10,8 +10,6 @@ binding_id, publish version bump, and the run fan-out resolution matrix
 zero-runnable, per-member submission failures collected into ``skipped``).
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from unittest.mock import create_autospec
 

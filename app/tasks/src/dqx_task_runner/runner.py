@@ -10,8 +10,6 @@ view in a ``finally`` block.
 Parameters are received as command-line arguments (``--key value``).
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import logging

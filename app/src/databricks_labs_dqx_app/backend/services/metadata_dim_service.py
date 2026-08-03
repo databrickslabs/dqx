@@ -37,8 +37,6 @@ hourly tick), both of which are best-effort — mirroring how
 catches.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 

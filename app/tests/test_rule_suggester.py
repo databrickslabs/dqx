@@ -6,8 +6,6 @@ serving endpoint): a fake ``RuleRetriever`` returning candidates, a fake
 monitored-table / apply-rules services (dependency injection per AGENTS.md).
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import create_autospec
 

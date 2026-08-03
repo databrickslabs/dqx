@@ -14,8 +14,6 @@ is what makes the ``APPLY`` check bite. One ``200``-after-grant case proves a
 matching personal grant lets the same caller through.
 """
 
-from __future__ import annotations
-
 import re
 from unittest.mock import MagicMock
 

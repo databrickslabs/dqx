@@ -10,8 +10,6 @@ catalog, not new tables. Three layers exercised:
   deletion/rename while allowing value edits.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest

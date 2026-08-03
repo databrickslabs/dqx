@@ -18,8 +18,6 @@ scope-config path reads, so that path's behaviour is unaffected. See
 :meth:`SchedulerService._tick_products` for the full contract.
 """
 
-from __future__ import annotations
-
 import asyncio
 import calendar
 import json
