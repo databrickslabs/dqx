@@ -99,7 +99,11 @@ export function MarketplaceRuleRow({
         )}
       >
         <div className="overflow-hidden">
-          <div className="border-t px-3 pb-3 pl-10 pt-3">
+          {/* relative + a right-side gutter (pr-28) so the absolutely-placed
+              "Try it out" hugs the bottom-right corner, aligning with the last
+              content line (THEN THE ROW) instead of adding its own row and a
+              floating gap below. */}
+          <div className="relative border-t px-3 pb-3 pl-10 pr-28 pt-3">
             {previewRule ? (
               <RuleLogicBody registryRule={previewRule} />
             ) : (
@@ -107,21 +111,16 @@ export function MarketplaceRuleRow({
                 {t("monitoredTables.ruleLogicUnavailable")}
               </p>
             )}
-            {/* "Try it out" sits bottom-right, snug under the logic/parameters
-                (small gap, not floating). Filled (secondary) so it reads as a
-                button, not part of the card. */}
-            <div className="mt-2 flex justify-end">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="gap-1.5"
-                onClick={() => setTestOpen(true)}
-              >
-                <Play className="h-3.5 w-3.5" aria-hidden />
-                {t("marketplace.tryIt")}
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="absolute bottom-3 right-3 gap-1.5"
+              onClick={() => setTestOpen(true)}
+            >
+              <Play className="h-3.5 w-3.5" aria-hidden />
+              {t("marketplace.tryIt")}
+            </Button>
           </div>
         </div>
       </div>
