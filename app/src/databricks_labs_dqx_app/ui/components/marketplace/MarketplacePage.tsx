@@ -215,21 +215,19 @@ function MarketplaceContent() {
         />
       </div>
 
-      {/* Filters — industry and region on ONE line. Each group scrolls
-          independently (auto-hiding scrollbar); the industry group takes the
-          flexible space and fades on its RIGHT edge to hint at more chips
-          scrolled off before the region group. A divider separates the two. */}
+      {/* Filters — industry and region on ONE line. Each group is sized to
+          its content (shrink, don't grow) so there's no dead 50/50 gap; when
+          the row runs out of room each group shrinks and scrolls INDEPENDENTLY.
+          The scrollbar track is always reserved and only the thumb fades in on
+          scroll (dq-scroll-auto), so scrolling never reflows the chips. */}
       {(industries.length > 1 || regions.length > 1) && (
-        // Both groups are flex-1 + min-w-0 so they split the width evenly and
-        // each scrolls INTERNALLY — the row can never exceed the container and
-        // clip the "Industry:" label off the left edge.
         <div className="flex items-center gap-3 overflow-hidden">
           {industries.length > 1 && (
-            <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex min-w-0 shrink items-center gap-2">
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.industryLabel")}
               </span>
-              <div className="dq-scroll-auto dq-fade-right flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5 pr-6">
+              <div className="dq-scroll-auto flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
                 {industries.map((ind) => (
                   <FilterChip
                     key={ind}
@@ -241,8 +239,11 @@ function MarketplaceContent() {
               </div>
             </div>
           )}
+          {industries.length > 1 && regions.length > 1 && (
+            <div className="h-6 w-px shrink-0 bg-border" aria-hidden />
+          )}
           {regions.length > 1 && (
-            <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex min-w-0 shrink items-center gap-2">
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.regionLabel")}
               </span>

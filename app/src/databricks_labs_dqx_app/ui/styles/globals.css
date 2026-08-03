@@ -263,14 +263,6 @@
   background-color: var(--border);
 }
 
-/* Right-edge fade mask — hints there's more content scrolled off to the
-   right. Applied to the industry filter group (which shares a line with the
-   region group) so its trailing chips fade into the divider rather than
-   hard-clipping at the scroll boundary. */
-.dq-fade-right {
-  -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-  mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-}
 
 /* ---------------------------------------------------------------------
  * AI styling helpers
