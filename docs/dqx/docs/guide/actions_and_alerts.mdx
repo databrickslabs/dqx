@@ -765,7 +765,10 @@ from databricks.labs.dqx.actions.base import ActionContext
 
 
 def my_handler(message: AlertMessage, context: ActionContext) -> None:
-    print(f"Alert fired: {message.title} | errors={context.metrics.get('error_row_count')}")
+    # message exposes title, summary, severity, observed_metrics, the flat fields mapping, and
+    # user_metadata (engine-level ExtraParams.user_metadata) for building a custom payload.
+    owner = message.user_metadata.get("owner", "unknown")
+    print(f"Alert fired: {message.title} | errors={context.metrics.get('error_row_count')} | owner={owner}")
 
 
 alert = DQAlert(
