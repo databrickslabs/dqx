@@ -99,29 +99,29 @@ export function MarketplaceRuleRow({
         )}
       >
         <div className="overflow-hidden">
-          {/* Rule logic on the left, "Try it out" pinned top-right on the SAME
-              row so the button sits inline with the logic/parameters rather
-              than floating on its own line below. */}
-          <div className="flex items-start gap-3 border-t px-3 pb-3 pl-10 pt-3">
-            <div className="min-w-0 flex-1">
-              {previewRule ? (
-                <RuleLogicBody registryRule={previewRule} />
-              ) : (
-                <p className="text-xs italic text-muted-foreground">
-                  {t("monitoredTables.ruleLogicUnavailable")}
-                </p>
-              )}
+          <div className="space-y-3 border-t px-3 pb-3 pl-10 pt-3">
+            {previewRule ? (
+              <RuleLogicBody registryRule={previewRule} />
+            ) : (
+              <p className="text-xs italic text-muted-foreground">
+                {t("monitoredTables.ruleLogicUnavailable")}
+              </p>
+            )}
+            {/* "Try it out" pinned to the bottom-right of the expanded rule,
+                below the logic/parameters. Filled (secondary) so it reads as
+                a button, not part of the card. */}
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setTestOpen(true)}
+              >
+                <Play className="h-3.5 w-3.5" aria-hidden />
+                {t("marketplace.tryIt")}
+              </Button>
             </div>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="shrink-0 gap-1.5"
-              onClick={() => setTestOpen(true)}
-            >
-              <Play className="h-3.5 w-3.5" aria-hidden />
-              {t("marketplace.tryIt")}
-            </Button>
           </div>
         </div>
       </div>
