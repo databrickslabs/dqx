@@ -7304,6 +7304,80 @@
       }
     },
     {
+      "group": "test_benchmark_is_valid_language_code col1_language_code",
+      "name": "test_benchmark_is_valid_language_code[col1_language_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_language_code[col1_language_code]",
+      "params": {
+        "column": "col1_language_code"
+      },
+      "param": "col1_language_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.37578565399962827,
+        "max": 0.4698687999998583,
+        "mean": 0.44126928919977215,
+        "stddev": 0.03822792018393862,
+        "rounds": 5,
+        "median": 0.45696881499952724,
+        "iqr": 0.04090358974985975,
+        "q1": 0.4241512032499486,
+        "q3": 0.46505479299980834,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.37578565399962827,
+        "hd15iqr": 0.4698687999998583,
+        "ops": 2.266189885576375,
+        "total": 2.206346445998861,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_language_code col2_language_code",
+      "name": "test_benchmark_is_valid_language_code[col2_language_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_language_code[col2_language_code]",
+      "params": {
+        "column": "col2_language_code"
+      },
+      "param": "col2_language_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.309235066999463,
+        "max": 0.34010965200013743,
+        "mean": 0.3259318155998699,
+        "stddev": 0.014252192371159171,
+        "rounds": 5,
+        "median": 0.3267403209993063,
+        "iqr": 0.02700374275059403,
+        "q1": 0.31275648274981904,
+        "q3": 0.33976022550041307,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.309235066999463,
+        "hd15iqr": 0.34010965200013743,
+        "ops": 3.0681263753264574,
+        "total": 1.6296590779993494,
+        "iterations": 1
+      }
+    },
+    {
       "group": "test_benchmark_is_valid_national_id col1_ssn_dashed",
       "name": "test_benchmark_is_valid_national_id[col1_ssn_dashed]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_national_id[col1_ssn_dashed]",
