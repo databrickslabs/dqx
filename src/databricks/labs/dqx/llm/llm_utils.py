@@ -35,13 +35,16 @@ def extract_json_rules(raw: str) -> object:
     all of these (for example with *Extra data* when text trails a valid array) and discards
     otherwise-valid rules.
 
-    The DQX rules payload is always a JSON array, so this helper returns the first *[* position at
-    which *raw_decode* yields a list. It strips a surrounding code fence, then scans every *[* in the
-    text and attempts a decode at each. Scanning (rather than trusting the first bracket) means a stray
-    bracket inside the preamble — e.g. ``Rules for [orders]:`` — does not defeat parsing, and a leading
-    reasoning object the model may emit before the array does not shadow it. Genuinely truncated or
-    non-array output yields no decodable list and raises, so broken responses are not silently salvaged
-    into a meaningless fragment.
+    The DQX rules payload is always a JSON array of rule objects, so this helper scans every *[* in the
+    text and returns the first that *raw_decode*s to a list containing at least one dict. Scanning
+    (rather than trusting the first bracket) means a stray bracket in the preamble — e.g.
+    ``Rules for [orders]:`` — does not defeat parsing. Requiring a dict element means an incidental JSON
+    array in the prose (e.g. ``Given columns ["a", "b"], here are the rules:``) does not shadow the real
+    rules array that follows, while an array that mixes valid rule dicts with malformed entries is still
+    returned (dropping the junk is *_filter_unsafe_sql_rules*' job, not the extractor's). A code fence is
+    stripped first. An empty ``[]`` is accepted as a fallback (a model that legitimately produced no
+    rules); genuinely truncated or non-array output decodes to no qualifying list and raises, so broken
+    responses are not silently salvaged into a meaningless fragment.
 
     Args:
         raw: The raw *quality_rules* string returned by the model.
@@ -64,20 +67,31 @@ def extract_json_rules(raw: str) -> object:
         text = text.strip()
 
     decoder = json.JSONDecoder()
+    empty_list_fallback = False
     # Try decoding at every '[' position; raw_decode ignores trailing content, so a valid array embedded
-    # after prose (or before a trailing explanation) is recovered. A '[' inside preamble text simply
+    # after prose (or before a trailing explanation) is recovered. Pass the index to raw_decode rather
+    # than slicing to avoid re-allocating the tail on each attempt. A '[' inside preamble text simply
     # fails to decode and is skipped.
     for idx, char in enumerate(text):
         if char != "[":
             continue
         try:
-            value, _ = decoder.raw_decode(text[idx:])
+            value, _ = decoder.raw_decode(text, idx)
         except json.JSONDecodeError:
             continue
         if isinstance(value, list):
-            return value
+            # A list with at least one dict is the rules array (malformed sibling entries are dropped
+            # downstream). A list with no dicts (e.g. ["a", "b"] in the prose) is not the rules array —
+            # keep scanning, but remember an empty [] as a last-resort fallback for the "model produced
+            # no rules" case.
+            if any(isinstance(item, dict) for item in value):
+                return value
+            if not value:
+                empty_list_fallback = True
 
-    raise json.JSONDecodeError("No JSON array found in model output", text, 0)
+    if empty_list_fallback:
+        return []
+    raise json.JSONDecodeError("No JSON array of rules found in model output", text, 0)
 
 
 def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:

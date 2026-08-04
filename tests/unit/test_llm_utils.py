@@ -307,3 +307,20 @@ def test_extract_json_rules_keeps_triple_backticks_inside_string_value():
     raw = '```json\n[{"check": {"arguments": {"query": "a ``` b"}}}]\n```'
     parsed = extract_json_rules(raw)
     assert parsed[0]["check"]["arguments"]["query"] == "a ``` b"
+
+
+def test_extract_json_rules_ignores_incidental_prose_array():
+    # A syntactically valid but non-rules array in the preamble must not shadow the real rules array.
+    raw = f'Given columns ["a", "b"], here are the rules:\n{_RULES}'
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_accepts_empty_rules_array():
+    # A model that legitimately produced no rules yields an empty list, not an error.
+    assert extract_json_rules("No issues found: []") == []
+
+
+def test_extract_json_rules_raises_when_only_non_rules_array():
+    # A prose array with no following rules array is not salvaged as rules.
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_rules('Columns ["a", "b"] only, no rules generated.')
