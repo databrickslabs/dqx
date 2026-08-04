@@ -20,6 +20,7 @@ from unittest.mock import create_autospec
 
 import pytest
 
+from databricks.labs.dqx.actions import DQAction, DQAlert
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth, WebhookClient
 from databricks.labs.dqx.actions.destinations import (
@@ -681,6 +682,16 @@ def test_teams_plaintext_url_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
         DQTeamsAlertDestination(name="teams", webhook_url="https://x.logic.azure.com/workflows/a?sig=b")
     assert any("plaintext" in r.message.lower() and "DQSecret" in r.message for r in caplog.records)
+
+
+def test_plaintext_url_warns_only_once_when_nested_in_alert(caplog: pytest.LogCaptureFixture) -> None:
+    """Regression: the plaintext warning must fire once per instance even when the destination is
+    nested into a DQAlert/DQAction, which re-validates it (pydantic re-runs mode="after" validators)."""
+    with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
+        destination = DQSlackAlertDestination(name="slack", webhook_url="https://hooks.slack.com/services/T/B/x")
+        DQAction(condition="error_row_count > 0", action=DQAlert(name="a", destinations=[destination]))
+    plaintext_warnings = [r for r in caplog.records if "plaintext" in r.message.lower()]
+    assert len(plaintext_warnings) == 1
 
 
 def test_slack_dqsecret_url_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:

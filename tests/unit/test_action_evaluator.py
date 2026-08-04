@@ -1,5 +1,6 @@
 """Unit tests for ActionEvaluator: condition gating, suppression, polymorphic dispatch, terminal-error deferral, and alert-before-abort ordering."""
 
+import logging
 from datetime import datetime, timezone
 from unittest.mock import create_autospec
 
@@ -541,3 +542,90 @@ def test_runtime_condition_error_records_config_error_and_no_raise() -> None:
     assert event.action_name == "bad_action"
     # try_fire / execute are never reached for a condition that errors.
     state_store.try_fire.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test: every evaluation outcome is logged with its status so operators can see
+# whether an action fired and why (at INFO, visible by default).
+# ---------------------------------------------------------------------------
+
+_EVALUATOR_LOGGER = "databricks.labs.dqx.actions.evaluator"
+
+
+def test_fired_action_logs_status(caplog: pytest.LogCaptureFixture) -> None:
+    """A fired action logs at INFO that it fired, including its outcome status."""
+    action_mock = create_autospec(Action, instance=True)
+    action_mock.name = "alert_action"
+    action_mock.execute.return_value = ActionResult(
+        action_name="alert_action", fired=True, status=ActionStatus.UNHEALTHY
+    )
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="alert_action")
+    state_store = create_autospec(ActionStateStore, instance=True)
+    state_store.try_fire.return_value = True
+
+    evaluator = ActionEvaluator(actions=[dq_action], state_store=state_store, services=_make_services())
+    with caplog.at_level(logging.INFO, logger=_EVALUATOR_LOGGER):
+        evaluator.evaluate(_make_context())
+
+    assert any(
+        "alert_action" in r.message and "fired" in r.message and ActionStatus.UNHEALTHY.value in r.message
+        for r in caplog.records
+    )
+
+
+def test_condition_false_logs_did_not_fire_with_status(caplog: pytest.LogCaptureFixture) -> None:
+    """When the condition is False the evaluator logs (at INFO) that the action did not fire and the status."""
+    action_mock = create_autospec(Action, instance=True)
+    action_mock.name = "alert_action"
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 100", name="alert_action")
+    state_store = create_autospec(ActionStateStore, instance=True)
+
+    evaluator = ActionEvaluator(actions=[dq_action], state_store=state_store, services=_make_services())
+    with caplog.at_level(logging.INFO, logger=_EVALUATOR_LOGGER):
+        evaluator.evaluate(_make_context())  # error_row_count=5, condition >100 → False
+
+    assert any(
+        "alert_action" in r.message and "did not fire" in r.message and ActionStatus.HEALTHY.value in r.message
+        for r in caplog.records
+    )
+
+
+def test_suppressed_action_logs_did_not_fire_with_status(caplog: pytest.LogCaptureFixture) -> None:
+    """A suppressed action logs (at INFO) that it did not fire, with the recorded UNHEALTHY status."""
+    action_mock = create_autospec(Action, instance=True)
+    action_mock.name = "alert_action"
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="alert_action")
+    state_store = create_autospec(ActionStateStore, instance=True)
+    state_store.try_fire.return_value = False
+
+    evaluator = ActionEvaluator(actions=[dq_action], state_store=state_store, services=_make_services())
+    with caplog.at_level(logging.INFO, logger=_EVALUATOR_LOGGER):
+        evaluator.evaluate(_make_context())
+
+    action_mock.execute.assert_not_called()
+    assert any(
+        "alert_action" in r.message and "did not fire" in r.message and ActionStatus.UNHEALTHY.value in r.message
+        for r in caplog.records
+    )
+
+
+def test_fired_action_with_destination_errors_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """When a fired action reports destination errors the evaluator logs a WARNING naming the failures."""
+    action_mock = create_autospec(Action, instance=True)
+    action_mock.name = "alert_action"
+    action_mock.execute.return_value = ActionResult(
+        action_name="alert_action",
+        fired=True,
+        status=ActionStatus.UNHEALTHY,
+        destination_errors={"slack": "connection refused"},
+    )
+    dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="alert_action")
+    state_store = create_autospec(ActionStateStore, instance=True)
+    state_store.try_fire.return_value = True
+
+    evaluator = ActionEvaluator(actions=[dq_action], state_store=state_store, services=_make_services())
+    with caplog.at_level(logging.INFO, logger=_EVALUATOR_LOGGER):
+        evaluator.evaluate(_make_context())
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("alert_action" in r.message and "slack" in r.message for r in warnings)

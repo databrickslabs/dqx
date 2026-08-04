@@ -9,7 +9,7 @@ import abc
 import logging
 from typing import ClassVar
 
-from pydantic import model_validator
+from pydantic import PrivateAttr, model_validator
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth
@@ -52,6 +52,12 @@ class WebhookAlertDestination(AlertDestination, abc.ABC):
 
     webhook_url: SecretOrStr
 
+    # Guards the plaintext-secret warning so it is emitted at most once per instance. This validator
+    # is a mode="after" validator, which pydantic re-runs whenever the instance is re-validated —
+    # e.g. when the destination is nested into a DQAlert(destinations=[...]) — which would otherwise
+    # log the same warning twice. The flag is instance state preserved across those re-validations.
+    _plaintext_secret_warned: bool = PrivateAttr(default=False)
+
     @model_validator(mode="after")
     def _validate_webhook_url(self) -> "WebhookAlertDestination":
         """Validate *webhook_url* and warn when a token-bearing URL is a plaintext string.
@@ -66,12 +72,19 @@ class WebhookAlertDestination(AlertDestination, abc.ABC):
             raise InvalidActionError("AlertDestination 'webhook_url' must be a non-empty string or DQSecret.")
         # Token-bearing webhook URLs (Slack/Teams) should be secret references. Allow a plain string
         # for local development but warn — the token would otherwise sit in config/logs in plaintext.
-        if self.url_contains_secret and not isinstance(self.webhook_url, DQSecret):
+        # Warn only once per instance (see _plaintext_secret_warned) so nested re-validation does not
+        # emit the warning multiple times.
+        if (
+            self.url_contains_secret
+            and not isinstance(self.webhook_url, DQSecret)
+            and not self._plaintext_secret_warned
+        ):
             logger.warning(
                 f"Destination '{sanitize_for_log(self.name)}' ({type(self).__name__}) was given a plaintext "
                 "webhook_url that embeds a secret token. Prefer a DQSecret (scope/key) reference; plaintext is "
                 "for local development only."
             )
+            self._plaintext_secret_warned = True
         return self
 
     @abc.abstractmethod

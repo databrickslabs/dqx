@@ -115,7 +115,8 @@ class ActionEvaluator:
                     # Record CONFIG_ERROR (not UNHEALTHY): the data is not known to be bad, the action's
                     # condition is misconfigured, so this must not seed STATUS_CHANGE suppression state.
                     logger.warning(
-                        f"Action '{safe_name}' skipped: condition '{safe_condition}' could not be "
+                        f"Action '{safe_name}' evaluated and did not fire (status "
+                        f"'{ActionStatus.CONFIG_ERROR.value}'): condition '{safe_condition}' could not be "
                         f"evaluated: {_sanitize(str(exc))}"
                     )
                     self._state_store.record(
@@ -123,7 +124,10 @@ class ActionEvaluator:
                     )
                     continue
                 if not condition_result:
-                    logger.debug(f"Action '{safe_name}' skipped: condition '{safe_condition}' evaluated to False.")
+                    logger.info(
+                        f"Action '{safe_name}' evaluated and did not fire (status "
+                        f"'{ActionStatus.HEALTHY.value}'): condition '{safe_condition}' is False."
+                    )
                     self._state_store.record(
                         self._build_event(dq_action, context, fired=False, status=ActionStatus.HEALTHY)
                     )
@@ -137,7 +141,11 @@ class ActionEvaluator:
             # try_fire (not should_fire) so the gate decision and the fire reservation are atomic:
             # concurrent streaming callbacks cannot both pass the check and double-fire the same alert.
             if not self._state_store.try_fire(dq_action, context, condition_result=condition_result):
-                logger.debug(f"Action '{safe_name}' suppressed by state store.")
+                logger.info(
+                    f"Action '{safe_name}' evaluated and did not fire (status "
+                    f"'{ActionStatus.UNHEALTHY.value}'): notification suppressed by "
+                    f"frequency / status-change gating."
+                )
                 # The condition fired (the data is unhealthy) but the notification was suppressed by
                 # frequency / status-change gating. Record UNHEALTHY — not HEALTHY — so *last_status*
                 # stays unhealthy across consecutive suppressed runs; otherwise STATUS_CHANGE would
@@ -156,6 +164,7 @@ class ActionEvaluator:
                 action_context = dataclasses.replace(context, condition=dq_action.condition)
                 result = dq_action.action.execute(action_context, self._services)
                 results.append(result)
+                self._log_fired(safe_name, result)
                 self._state_store.record(
                     self._build_event(
                         dq_action,
@@ -166,7 +175,10 @@ class ActionEvaluator:
                     )
                 )
             except TerminalActionError as exc:
-                logger.warning(f"Action '{safe_name}' raised a terminal error; deferring until loop completes.")
+                logger.warning(
+                    f"Action '{safe_name}' fired with status '{ActionStatus.UNHEALTHY.value}' and raised a "
+                    f"terminal error; deferring until loop completes."
+                )
                 deferred.append(exc)
                 self._state_store.record(
                     self._build_event(dq_action, context, fired=True, status=ActionStatus.UNHEALTHY)
@@ -180,9 +192,21 @@ class ActionEvaluator:
 
         return results
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _log_fired(safe_name: str, result: ActionResult) -> None:
+        """Log that an action fired, at INFO on success or WARNING when some destinations failed.
+
+        Args:
+            safe_name: Sanitized action name (safe to embed in a log message).
+            result: The *ActionResult* returned by the action's *execute*.
+        """
+        if result.destination_errors:
+            logger.warning(
+                f"Action '{safe_name}' fired with status '{result.status.value}' but some destinations "
+                f"failed: {_sanitize(str(result.destination_errors))}"
+            )
+        else:
+            logger.info(f"Action '{safe_name}' fired with status '{result.status.value}'.")
 
     @staticmethod
     def _build_event(

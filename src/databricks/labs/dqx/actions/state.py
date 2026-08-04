@@ -328,10 +328,6 @@ class ActionStateStore:
                     f"stands but will not survive a restart: {sanitize_for_log(str(exc))}"
                 )
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
     def _check_frequency(self, frequency: DQAlertFrequency, action_name: str, run_time: datetime) -> bool:
         """Return *True* when the frequency window permits firing.
 

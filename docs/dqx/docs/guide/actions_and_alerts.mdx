@@ -1098,7 +1098,53 @@ restarts. Without it, alert state resets on every run.
 
 ### Using DQSecret for credentials
 
-Webhook URLs, usernames, and passwords accept either a plain `str` or a `DQSecret(scope, key)` reference. In production, always use `DQSecret` to avoid storing credentials in source code or configuration files. In metadata, a secret reference is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference.
+Webhook URLs, usernames, and passwords accept either a plain `str` or a `DQSecret(scope, key)` reference. In production, always use `DQSecret` to avoid storing credentials in source code or configuration files. In metadata, a secret reference is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference. A `scope/key` reference string can also be parsed into a `DQSecret` with `DQSecret.from_reference("scope/key")`.
+
+`DQSecret` resolves against **classic Databricks workspace secret scopes** (the `dbutils.secrets` / *Secrets* API), **not** Unity Catalog secrets. The value is read at delivery time from the workspace that the engine's `WorkspaceClient` targets — i.e. the workspace where the DQX job or notebook runs.
+
+<Admonition type="warning" title="The secret must exist in the same workspace">
+The scope and key must be created in the **same workspace** that runs the checks. If the engine runs in a different workspace than the one where you created the secret, resolution fails with `Failed to resolve secret for scope=..., key=...`. Create the secret in the workspace where the DQX job or notebook executes.
+</Admonition>
+
+#### Creating the secret
+
+Classic secret scopes have no workspace UI — create the scope and key with the [Databricks CLI](https://docs.databricks.com/en/security/secrets/index.html) or the SDK. This is a one-time setup step per workspace.
+
+<Tabs>
+  <TabItem value="CLI" label="Databricks CLI" default>
+
+```bash
+# Create the scope once (idempotent errors are safe to ignore if it already exists)
+databricks secrets create-scope dq-secrets
+
+# Store the webhook URL under a key
+databricks secrets put-secret dq-secrets slack-webhook-url --string-value "https://hooks.slack.com/services/T.../B.../..."
+
+# Verify the key exists (the value is never returned by the API)
+databricks secrets list-secrets dq-secrets
+```
+
+  </TabItem>
+  <TabItem value="SDK" label="Python (SDK)">
+
+```python
+from databricks.sdk import WorkspaceClient
+
+# Binds to the workspace this code runs in — the same one the DQX engine will use.
+w = WorkspaceClient()
+w.secrets.create_scope("dq-secrets")  # skip / ignore if it already exists
+w.secrets.put_secret(
+    scope="dq-secrets",
+    key="slack-webhook-url",
+    string_value="https://hooks.slack.com/services/T.../B.../...",
+)
+print(w.secrets.list_secrets("dq-secrets"))  # shows the key, never the value
+```
+
+  </TabItem>
+</Tabs>
+
+#### Using the secret
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>

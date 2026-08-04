@@ -45,6 +45,11 @@ class DQSecret:
     a credential reference in DQX configuration without embedding the secret
     value in plain text.
 
+    Resolves against **classic Databricks workspace secret scopes** (the
+    *dbutils.secrets* / Secrets API), **not** Unity Catalog secrets. The value is
+    read at delivery time from the workspace that the engine's *WorkspaceClient*
+    targets, so the scope and key must exist in that same workspace.
+
     Args:
         scope: The Databricks secret scope name.
         key: The key within the secret scope.
