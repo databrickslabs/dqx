@@ -15,6 +15,7 @@ from databricks.labs.dqx.llm.llm_utils import (
     get_required_check_functions_definitions,
     get_column_metadata,
     create_optimizer_training_set_with_stats,
+    extract_json_rules,
 )
 
 
@@ -242,3 +243,84 @@ def test_create_optimizer_training_set_with_stats():
 
         # Verify quality_rules is a string
         assert isinstance(example.quality_rules, str)
+
+
+_RULES = '[{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "c"}}}]'
+
+
+def test_extract_json_rules_plain_array():
+    parsed = extract_json_rules(_RULES)
+    assert parsed == [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "c"}}}]
+
+
+def test_extract_json_rules_ignores_trailing_explanation():
+    # The 'Extra data' failure: a valid array followed by prose the model appended.
+    raw = _RULES + "\n\nThese rules validate that column c is not null."
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_strips_json_code_fence():
+    raw = f"```json\n{_RULES}\n```"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_strips_bare_code_fence():
+    raw = f"```\n{_RULES}\n```"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_skips_prose_preamble():
+    raw = f"Here are the generated rules:\n{_RULES}"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_raises_when_no_json():
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_rules("no json here at all")
+
+
+def test_extract_json_rules_raises_on_truncated_object():
+    # A non-array top-level value (e.g. truncated output missing the array brackets) is not salvaged
+    # into a fragment — it must raise so callers score it as invalid rather than a partial rule.
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_rules('{"check": {"function": "is_not_null", "arguments": {"column": "c"}}')
+
+
+def test_extract_json_rules_ignores_bracket_in_preamble():
+    # A stray '[' inside prose must not be mistaken for the start of the rules array.
+    raw = f"Rules for [orders]:\n{_RULES}"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_ignores_brace_in_preamble():
+    raw = f"Here is the JSON {{see below}}:\n{_RULES}"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_prefers_array_over_leading_object():
+    # A reasoning object emitted before the rules array must not shadow the array.
+    raw = '{"reasoning": "why"} ' + _RULES
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_keeps_triple_backticks_inside_string_value():
+    raw = '```json\n[{"check": {"arguments": {"query": "a ``` b"}}}]\n```'
+    parsed = extract_json_rules(raw)
+    assert parsed[0]["check"]["arguments"]["query"] == "a ``` b"
+
+
+def test_extract_json_rules_ignores_incidental_prose_array():
+    # A syntactically valid but non-rules array in the preamble must not shadow the real rules array.
+    raw = f'Given columns ["a", "b"], here are the rules:\n{_RULES}'
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_accepts_empty_rules_array():
+    # A model that legitimately produced no rules yields an empty list, not an error.
+    assert extract_json_rules("No issues found: []") == []
+
+
+def test_extract_json_rules_raises_when_only_non_rules_array():
+    # A prose array with no following rules array is not salvaged as rules.
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_rules('Columns ["a", "b"] only, no rules generated.')
