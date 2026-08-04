@@ -23,7 +23,50 @@ __all__ = [
     "create_optimizer_training_set",
     "create_optimizer_training_set_with_stats",
     "get_column_metadata",
+    "extract_json_rules",
 ]
+
+
+def extract_json_rules(raw: str) -> object:
+    """Parse the first complete JSON value from an LLM rules response, tolerating surrounding noise.
+
+    Smaller serving models frequently wrap the rules array in a markdown code fence, prepend a short
+    prose preamble, or append a trailing explanation after the closing bracket. A strict *json.loads*
+    rejects all of these (for example with *Extra data* when text trails a valid array) and discards
+    otherwise-valid rules. This helper strips a surrounding code fence, skips any prose before the first
+    *[* or *{*, and then uses *raw_decode* to read exactly one JSON value while ignoring whatever trails
+    it.
+
+    Args:
+        raw: The raw *quality_rules* string returned by the model.
+
+    Returns:
+        The decoded JSON value (typically a list of rule dicts).
+
+    Raises:
+        json.JSONDecodeError: if no JSON value can be located.
+    """
+    text = raw.strip()
+
+    # Strip a surrounding markdown code fence (```json ... ``` or ``` ... ```), which models add often.
+    if text.startswith("```"):
+        text = text[3:]
+        if text[:4].lower() == "json":
+            text = text[4:]
+        fence_end = text.rfind("```")
+        if fence_end != -1:
+            text = text[:fence_end]
+        text = text.strip()
+
+    # Skip any prose preamble before the first JSON value so raw_decode starts on a '[' or '{'.
+    candidates = [i for i in (text.find("["), text.find("{")) if i != -1]
+    if not candidates:
+        raise json.JSONDecodeError("No JSON value found in model output", text, 0)
+
+    # raw_decode reads one complete JSON value and returns where it stopped, so any trailing explanation
+    # after the rules array (the common 'Extra data' failure) is simply ignored.
+    parsed, _ = json.JSONDecoder().raw_decode(text[min(candidates) :])
+    return parsed
 
 
 def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:

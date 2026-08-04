@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.llm.llm_utils import extract_json_rules
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +70,14 @@ class RuleValidator:
 
         # Rules validation score
         try:
-            rules = json.loads(rules_json)
-            rules_score = self._validate_rules_structure(rules)
-            total_score += rules_score * self._score_weights.rule_validation
+            rules = extract_json_rules(rules_json)
         except json.JSONDecodeError:
             # Should not happen since we already validated, but be defensive
-            pass
+            return total_score
+        # Valid DQX rules are always a JSON array; a non-list parse scores zero on structure.
+        if isinstance(rules, list):
+            rules_score = self._validate_rules_structure(rules)
+            total_score += rules_score * self._score_weights.rule_validation
 
         logger.debug(f"Final validation score: {total_score:.2f}")
         return total_score
@@ -90,7 +93,7 @@ class RuleValidator:
             1.0 if valid JSON, 0.0 otherwise.
         """
         try:
-            json.loads(rules_json)
+            extract_json_rules(rules_json)
             logger.debug("✓ JSON parsing successful")
             return 1.0
         except json.JSONDecodeError as e:

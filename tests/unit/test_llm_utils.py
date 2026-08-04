@@ -15,6 +15,7 @@ from databricks.labs.dqx.llm.llm_utils import (
     get_required_check_functions_definitions,
     get_column_metadata,
     create_optimizer_training_set_with_stats,
+    extract_json_rules,
 )
 
 
@@ -242,3 +243,42 @@ def test_create_optimizer_training_set_with_stats():
 
         # Verify quality_rules is a string
         assert isinstance(example.quality_rules, str)
+
+
+_RULES = '[{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "c"}}}]'
+
+
+def test_extract_json_rules_plain_array():
+    parsed = extract_json_rules(_RULES)
+    assert parsed == [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "c"}}}]
+
+
+def test_extract_json_rules_ignores_trailing_explanation():
+    # The 'Extra data' failure: a valid array followed by prose the model appended.
+    raw = _RULES + "\n\nThese rules validate that column c is not null."
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_strips_json_code_fence():
+    raw = f"```json\n{_RULES}\n```"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_strips_bare_code_fence():
+    raw = f"```\n{_RULES}\n```"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_skips_prose_preamble():
+    raw = f"Here are the generated rules:\n{_RULES}"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_object_value():
+    raw = '{"criticality": "error"} trailing noise'
+    assert extract_json_rules(raw) == {"criticality": "error"}
+
+
+def test_extract_json_rules_raises_when_no_json():
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_rules("no json here at all")
