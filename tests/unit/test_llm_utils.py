@@ -274,11 +274,36 @@ def test_extract_json_rules_skips_prose_preamble():
     assert extract_json_rules(raw) == json.loads(_RULES)
 
 
-def test_extract_json_rules_object_value():
-    raw = '{"criticality": "error"} trailing noise'
-    assert extract_json_rules(raw) == {"criticality": "error"}
-
-
 def test_extract_json_rules_raises_when_no_json():
     with pytest.raises(json.JSONDecodeError):
         extract_json_rules("no json here at all")
+
+
+def test_extract_json_rules_raises_on_truncated_object():
+    # A non-array top-level value (e.g. truncated output missing the array brackets) is not salvaged
+    # into a fragment — it must raise so callers score it as invalid rather than a partial rule.
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_rules('{"check": {"function": "is_not_null", "arguments": {"column": "c"}}')
+
+
+def test_extract_json_rules_ignores_bracket_in_preamble():
+    # A stray '[' inside prose must not be mistaken for the start of the rules array.
+    raw = f"Rules for [orders]:\n{_RULES}"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_ignores_brace_in_preamble():
+    raw = f"Here is the JSON {{see below}}:\n{_RULES}"
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_prefers_array_over_leading_object():
+    # A reasoning object emitted before the rules array must not shadow the array.
+    raw = '{"reasoning": "why"} ' + _RULES
+    assert extract_json_rules(raw) == json.loads(_RULES)
+
+
+def test_extract_json_rules_keeps_triple_backticks_inside_string_value():
+    raw = '```json\n[{"check": {"arguments": {"query": "a ``` b"}}}]\n```'
+    parsed = extract_json_rules(raw)
+    assert parsed[0]["check"]["arguments"]["query"] == "a ``` b"

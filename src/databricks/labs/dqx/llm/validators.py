@@ -60,46 +60,24 @@ class RuleValidator:
         """
         total_score = 0.0
 
-        # JSON parsing score
-        json_score = self._validate_json_parsing(rules_json)
-        total_score += json_score * self._score_weights.json_parsing
-
-        if json_score == 0.0:
-            # Early return if we can't parse JSON
-            return total_score
-
-        # Rules validation score
+        # JSON parsing score — parse once and reuse the result for structure validation below.
         try:
             rules = extract_json_rules(rules_json)
-        except json.JSONDecodeError:
-            # Should not happen since we already validated, but be defensive
+        except json.JSONDecodeError as e:
+            logger.warning(f"✗ JSON parsing failed: {e}")
+            logger.debug(f"  Raw output: {repr(rules_json[:200])}")
             return total_score
-        # Valid DQX rules are always a JSON array; a non-list parse scores zero on structure.
+        logger.debug("✓ JSON parsing successful")
+        total_score += self._score_weights.json_parsing
+
+        # Rules validation score. Valid DQX rules are always a JSON array; a non-list parse scores
+        # zero on structure.
         if isinstance(rules, list):
             rules_score = self._validate_rules_structure(rules)
             total_score += rules_score * self._score_weights.rule_validation
 
         logger.debug(f"Final validation score: {total_score:.2f}")
         return total_score
-
-    def _validate_json_parsing(self, rules_json: str) -> float:
-        """
-        Validate that the rules can be parsed as JSON.
-
-        Args:
-            rules_json: JSON string to validate.
-
-        Returns:
-            1.0 if valid JSON, 0.0 otherwise.
-        """
-        try:
-            extract_json_rules(rules_json)
-            logger.debug("✓ JSON parsing successful")
-            return 1.0
-        except json.JSONDecodeError as e:
-            logger.warning(f"✗ JSON parsing failed: {e}")
-            logger.debug(f"  Raw output: {repr(rules_json[:200])}")
-            return 0.0
 
     def _validate_rules_structure(self, rules: list[dict]) -> float:
         """

@@ -28,45 +28,56 @@ __all__ = [
 
 
 def extract_json_rules(raw: str) -> object:
-    """Parse the first complete JSON value from an LLM rules response, tolerating surrounding noise.
+    """Extract the DQX rules JSON value from an LLM rules response, tolerating surrounding noise.
 
-    Smaller serving models frequently wrap the rules array in a markdown code fence, prepend a short
-    prose preamble, or append a trailing explanation after the closing bracket. A strict *json.loads*
-    rejects all of these (for example with *Extra data* when text trails a valid array) and discards
-    otherwise-valid rules. This helper strips a surrounding code fence, skips any prose before the first
-    *[* or *{*, and then uses *raw_decode* to read exactly one JSON value while ignoring whatever trails
-    it.
+    Smaller serving models frequently wrap the rules array in a markdown code fence, prepend a prose
+    preamble, or append a trailing explanation after the closing bracket. A strict *json.loads* rejects
+    all of these (for example with *Extra data* when text trails a valid array) and discards
+    otherwise-valid rules.
+
+    The DQX rules payload is always a JSON array, so this helper returns the first *[* position at
+    which *raw_decode* yields a list. It strips a surrounding code fence, then scans every *[* in the
+    text and attempts a decode at each. Scanning (rather than trusting the first bracket) means a stray
+    bracket inside the preamble — e.g. ``Rules for [orders]:`` — does not defeat parsing, and a leading
+    reasoning object the model may emit before the array does not shadow it. Genuinely truncated or
+    non-array output yields no decodable list and raises, so broken responses are not silently salvaged
+    into a meaningless fragment.
 
     Args:
         raw: The raw *quality_rules* string returned by the model.
 
     Returns:
-        The decoded JSON value (typically a list of rule dicts).
+        The decoded rules list.
 
     Raises:
-        json.JSONDecodeError: if no JSON value can be located.
+        json.JSONDecodeError: if no JSON array can be located.
     """
     text = raw.strip()
 
-    # Strip a surrounding markdown code fence (```json ... ``` or ``` ... ```), which models add often.
+    # Strip only the *opening* markdown fence (```json / ```), which models often add. The closing
+    # fence is left in place: raw_decode below ignores everything after the JSON value, so we neither
+    # over-truncate on multiple fences nor cut a JSON string value that legitimately contains ```.
     if text.startswith("```"):
         text = text[3:]
         if text[:4].lower() == "json":
             text = text[4:]
-        fence_end = text.rfind("```")
-        if fence_end != -1:
-            text = text[:fence_end]
         text = text.strip()
 
-    # Skip any prose preamble before the first JSON value so raw_decode starts on a '[' or '{'.
-    candidates = [i for i in (text.find("["), text.find("{")) if i != -1]
-    if not candidates:
-        raise json.JSONDecodeError("No JSON value found in model output", text, 0)
+    decoder = json.JSONDecoder()
+    # Try decoding at every '[' position; raw_decode ignores trailing content, so a valid array embedded
+    # after prose (or before a trailing explanation) is recovered. A '[' inside preamble text simply
+    # fails to decode and is skipped.
+    for idx, char in enumerate(text):
+        if char != "[":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[idx:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list):
+            return value
 
-    # raw_decode reads one complete JSON value and returns where it stopped, so any trailing explanation
-    # after the rules array (the common 'Extra data' failure) is simply ignored.
-    parsed, _ = json.JSONDecoder().raw_decode(text[min(candidates) :])
-    return parsed
+    raise json.JSONDecodeError("No JSON array found in model output", text, 0)
 
 
 def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
