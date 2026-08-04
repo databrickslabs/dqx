@@ -201,7 +201,7 @@ EXPECTED_PARAMETER_KIND_OVERRIDES = {
 }
 
 
-def registered_check_functions() -> dict[str, Callable]:
+def _registered_check_functions() -> dict[str, Callable]:
     functions: dict[str, Callable] = {}
     for module in CHECK_FUNCTION_MODULES:
         functions.update(
@@ -212,15 +212,18 @@ def registered_check_functions() -> dict[str, Callable]:
     return functions
 
 
-def test_signature_contract_covers_all_registered_check_functions():
-    check_functions = registered_check_functions()
+# The registry is fixed at import time, so resolve the check functions once and reuse the mapping
+# across the parametrized cases below instead of rebuilding it for every function.
+REGISTERED_CHECK_FUNCTIONS = _registered_check_functions()
 
-    assert set(EXPECTED_PARAMETER_ORDER) == set(CHECK_FUNC_REGISTRY) == set(check_functions)
+
+def test_signature_contract_covers_all_registered_check_functions():
+    assert set(EXPECTED_PARAMETER_ORDER) == set(CHECK_FUNC_REGISTRY) == set(REGISTERED_CHECK_FUNCTIONS)
 
 
 @pytest.mark.parametrize(("function_name", "expected_order"), EXPECTED_PARAMETER_ORDER.items())
 def test_registered_check_function_parameter_order(function_name: str, expected_order: tuple[str, ...]):
-    check_function = registered_check_functions()[function_name]
+    check_function = REGISTERED_CHECK_FUNCTIONS[function_name]
     parameters = inspect.signature(check_function).parameters
     expected_kinds = EXPECTED_PARAMETER_KIND_OVERRIDES.get(
         function_name, (POSITIONAL_OR_KEYWORD,) * len(expected_order)
