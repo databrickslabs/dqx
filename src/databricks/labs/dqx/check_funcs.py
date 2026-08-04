@@ -1409,6 +1409,109 @@ def is_valid_currency_code(
     return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_4217)
 
 
+# ISO 3166-2 country subdivision codes (states, provinces, regions, etc.). The authoritative source
+# is https://www.iso.org/obp; the values were verified against it and cover the officially assigned
+# codes as of July 2026. Unlike ISO 3166-1/ISO 4217, there is only one code representation (e.g.
+# *US-CA*, *GB-ENG*), so there is no *code_format* parameter. The code list is stored as a data file
+# under the resources package and loaded via importlib.resources. To regenerate it, iterate
+# pycountry.subdivisions (which packages the ISO 3166-2 data) as a convenience, then reconcile
+# against the official standard before committing.
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_3166_2_codes() -> frozenset[str]:
+    return load_iso_codes("iso_3166_2.txt")
+
+
+# Precomputed once on first use and cached, mirroring _iso_literals for the same reason: the literal
+# list never changes at runtime, so building it per call would repeat needless work on every check
+# evaluation.
+@lru_cache(maxsize=None)
+def _iso_3166_2_literals(lower: bool) -> list[Column]:
+    codes = _iso_3166_2_codes()
+    return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
+
+
+@register_rule("row")
+def is_valid_subdivision_code(
+    column: str | Column, case_sensitive: bool = True, country_column: str | Column | None = None
+) -> Column:
+    """Checks whether the values in the input column are valid ISO 3166-2 country subdivision codes.
+
+    ISO 3166-2 codes identify subdivisions (states, provinces, regions, etc.) of a country, e.g.
+    *US-CA* (California, US), *GB-ENG* (England, GB), *DE-BY* (Bavaria, DE). Every code embeds its
+    country's ISO 3166-1 alpha-2 prefix, so a plain membership check against the full code list
+    already rejects a subdivision suffix paired with the wrong country (e.g. *US-BY* is not itself a
+    registered code, even though *US* and *BY* are each valid on their own).
+
+    If the checked column and a country code live in separate columns, pass *country_column* to
+    additionally verify that the subdivision's country prefix matches that column's value for the
+    same row (e.g. *country_column="country"* with *column="subdivision"* flags a row where
+    *subdivision="US-CA"* but *country="GB"*). *country_column* can be a string column name or a
+    column expression.
+
+    By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
+    any case. *case_sensitive* also governs the *country_column* cross-check: with the default
+    *case_sensitive=True*, *column="US-CA"* paired with a *country_column* value of *"us"* is flagged
+    as a mismatch, since the comparison is exact on both sides. Null values will pass the check with
+    no violation reported; a null *country_column* value for an otherwise-valid *column* value also
+    passes, since there is nothing to cross-check.
+
+    For best performance with large lists in general, prefer the *foreign_key* check function; the
+    ISO 3166-2 code list is large enough that *foreign_key* may perform better for high-volume
+    checks.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        case_sensitive: whether to perform a case-sensitive comparison (default: True)
+        country_column: optional column name or column expression holding the expected ISO 3166-1
+            alpha-2 country code; when provided, also flags a row where *column*'s country prefix
+            does not match this column's value
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if case_sensitive:
+        col_expr_compare = col_expr
+        allowed = _iso_3166_2_literals(lower=False)
+    else:
+        col_expr_compare = to_lowercase(col_expr)
+        allowed = _iso_3166_2_literals(lower=True)
+
+    code_is_invalid = ~col_expr_compare.isin(*allowed)
+
+    if country_column is None:
+        condition = code_is_invalid
+        message = F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 3166-2 subdivision code"),
+        )
+    else:
+        _, country_expr_str, country_expr = get_normalized_column_and_expr(country_column)
+        country_expr_compare = country_expr if case_sensitive else to_lowercase(country_expr)
+        prefix_expr = F.split(col_expr_compare, "-").getItem(0)
+        # != yields NULL (not True) when either side is NULL, so a null country_column passes.
+        condition = code_is_invalid | (prefix_expr != country_expr_compare)
+        message = F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 3166-2 subdivision code for country '"),
+            F.when(country_expr.isNull(), F.lit("null")).otherwise(country_expr.cast("string")),
+            F.lit(f"' in Column '{country_expr_str}'"),
+        )
+
+    return make_condition(
+        condition,
+        message,
+        f"{col_str_norm}_is_not_a_valid_subdivision_code",
+    )
+
+
 @register_rule("row")
 def is_valid_language_code(column: str | Column, code_format: str = "alpha-2", case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are valid ISO 639 language codes.
