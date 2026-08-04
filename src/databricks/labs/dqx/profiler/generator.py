@@ -10,10 +10,12 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.io import UC_TABLE_PATTERN
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
+from databricks.labs.dqx.utils import get_table_column_metadata
 
 # Conditional imports for LLM-assisted rules generation
 try:
@@ -51,21 +53,35 @@ class DQGenerator(DQEngineBase):
 
         Args:
             workspace_client: Databricks WorkspaceClient instance.
-            spark: Optional SparkSession instance. If not provided, a new session will be created.
+            spark: Optional SparkSession instance. Required to infer the schema of inputs given
+                as a storage path; Unity Catalog tables are read through the workspace client. If
+                needed and not provided, a new session will be created on first use.
             llm_model_config: Optional LLM model configuration for AI-assisted rule generation.
             custom_check_functions: Optional dictionary of custom check functions.
         """
         super().__init__(workspace_client=workspace_client)
-        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+        self._spark = spark
 
         self.custom_check_functions = custom_check_functions
 
         llm_model_config = llm_model_config or LLMModelConfig()
         self.llm_engine = (
-            DQLLMEngine(model_config=llm_model_config, spark=self.spark, custom_check_functions=custom_check_functions)
+            DQLLMEngine(model_config=llm_model_config, custom_check_functions=custom_check_functions)
             if LLM_ENABLED
             else None
         )
+
+    @property
+    def spark(self) -> SparkSession:
+        """
+        Gets a Spark session. Gets an available one or creates a new one if none was provided.
+
+        Returns:
+            Spark session instance.
+        """
+        if self._spark is None:
+            self._spark = SparkSession.builder.getOrCreate()
+        return self._spark
 
     @telemetry_logger("generator", "generate_dq_rules")
     def generate_dq_rules(self, profiles: list[DQProfile] | None = None, criticality: str = "error") -> list[dict]:
@@ -135,7 +151,7 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = get_column_metadata(self.spark, input_config) if input_config else ""
+        schema_info = self._get_schema_info(input_config) if input_config else ""
 
         # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.detect_business_rules_with_llm(
@@ -157,6 +173,23 @@ class DQGenerator(DQEngineBase):
             f"out of {len(raw_rules)} LLM output(s)."
         )
         return dq_rules
+
+    def _get_schema_info(self, input_config: InputConfig) -> str:
+        """
+        Gets the input schema as JSON for use as LLM context.
+
+        Unity Catalog tables are resolved through a Databricks workspace client. Other locations
+        (e.g. storage paths, files, or temporary views) are read using a Spark session.
+
+        Args:
+            input_config: Input config providing the input data location.
+
+        Returns:
+            A JSON string containing the column metadata with columns wrapped in a "columns" key.
+        """
+        if UC_TABLE_PATTERN.match(input_config.location):
+            return get_table_column_metadata(self.ws, input_config.location)
+        return get_column_metadata(self.spark, input_config)
 
     def _filter_valid_rules(self, rules: list[dict]) -> list[dict]:
         """Return only rules that pass ``DQEngine.validate_checks``.

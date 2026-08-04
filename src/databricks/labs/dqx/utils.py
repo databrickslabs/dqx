@@ -680,6 +680,30 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]:
         return set()
 
 
+def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> str:
+    """
+    Gets column metadata for a Unity Catalog table using the Databricks SDK.
+
+    Note:
+        This method is used in place of *databricks.labs.dqx.llm.llm_utils.get_column_metadata*
+        when no Spark session is available. Schemas are read from Unity Catalog. The returned JSON
+        has the same shape, so methods can be used interchangeably for LLM-based rule generation.
+
+    Args:
+        workspace_client: Databricks WorkspaceClient instance.
+        table: Fully qualified table name (e.g. *catalog.schema.table*).
+
+    Returns:
+        A JSON string containing the column metadata with columns wrapped in a "columns" key.
+
+    Raises:
+        NotFound: If the table does not exist or is not accessible.
+    """
+    table_info = workspace_client.tables.get(table)
+    columns = [{"name": col.name or "", "type": col.type_text or ""} for col in (table_info.columns or [])]
+    return json.dumps({"columns": columns})
+
+
 def missing_required_packages(packages: list[str]) -> bool:
     """
     Checks if any of the required packages are missing.
