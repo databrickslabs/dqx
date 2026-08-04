@@ -192,6 +192,62 @@ for result in results:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Define actions declaratively (YAML / dicts)
+# MAGIC
+# MAGIC The actions above were built programmatically with the DQX classes. The equivalent declarative form is a list of action dicts — exactly like DQX checks. This keeps alerting configuration out of code and lets ops teams edit it without touching the pipeline. There are two ways to bring declarative actions into your pipeline:
+# MAGIC
+# MAGIC 1. **In memory** — parse a YAML string into dicts with `yaml.safe_load` and hand them to `DQEngine(actions=...)` directly. No file needed, because the engine accepts raw action dicts as well as `DQAction` instances. This is what the cell below does.
+# MAGIC 2. **From a file** — keep the actions in a checked-in `.yml` / `.json` file and load them with `DQActionManager.load_actions_from_local_file(path)` (shown, commented, in the cell below). This is the usual choice in production: the file lives in your repo or workspace, so alerting config is version-controlled and editable without code changes. The loaded list is passed to `DQEngine(actions=...)` the same way.
+# MAGIC
+# MAGIC Below we use an in-memory YAML string (a driver-log alert, so it runs anywhere). To deliver to Slack or Teams instead, add additional destination entries, e.g.:
+# MAGIC
+# MAGIC ```yaml
+# MAGIC - type: slack
+# MAGIC   name: slack
+# MAGIC   webhook_url:
+# MAGIC     secret: dqx_demo/slack_webhook_url   # scope/key of a classic workspace secret
+# MAGIC ```
+
+# COMMAND ----------
+
+import yaml
+
+actions_yaml = """
+- action:
+    type: alert
+    name: alert_on_errors
+    destinations:
+      - type: log
+        name: driver-log
+        level: warning
+  condition: error_row_count > 0
+"""
+
+# Parse the YAML into a list of dicts in memory — no file on disk required.
+action_dicts = yaml.safe_load(actions_yaml)
+print(f"Parsed {len(action_dicts)} action(s) from the YAML string")
+
+# Alternatively, load the actions from a checked-in file (YAML or JSON) — the usual production choice:
+#
+#   from databricks.labs.dqx.actions import DQActionManager
+#   action_dicts = DQActionManager.load_actions_from_local_file("actions.yml")
+#
+# It returns a list[DQAction] that you pass to DQEngine(actions=...) exactly like the parsed dicts.
+
+observer = DQMetricsObserver(name="alerting_demo_yaml")
+engine = DQEngine(WorkspaceClient(), observer=observer, actions=action_dicts, extra_params=extra_params)
+
+checked_df, observation = engine.apply_checks_by_metadata(df, checks)
+checked_df.count()  # materialize the observation so metrics are populated
+
+results = engine.evaluate_actions(observation.get, input_location="in-memory demo dataframe")
+
+for result in results:
+    print(f"action={result.action_name} fired={result.fired} status={result.status.value}")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## End-to-end: let the save method fire the actions automatically
 # MAGIC
 # MAGIC The example above calls `evaluate_actions` by hand because it works on an in-memory DataFrame. In a real pipeline you normally read from and write to Unity Catalog tables, and the **save methods** fire the configured actions for you — no manual `evaluate_actions` call. Below we write the demo data to an input table, then let `apply_checks_by_metadata_and_save_in_table` apply the checks, save the results, and fire the alert automatically.
