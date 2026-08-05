@@ -220,7 +220,11 @@ REGISTERED_CHECK_FUNCTIONS = _registered_check_functions()
 
 
 def test_signature_contract_covers_all_registered_check_functions():
-    assert set(EXPECTED_PARAMETER_ORDER) == set(CHECK_FUNC_REGISTRY) == set(REGISTERED_CHECK_FUNCTIONS)
+    # Compare against the production check functions only (registry names that resolve to a function in
+    # check_funcs / geo / pii), not the raw CHECK_FUNC_REGISTRY. The registry is a process-global that
+    # other test modules mutate by decorating their own dummy checks with @register_rule; asserting
+    # against it directly makes this contract order-of-execution dependent and fail under the full suite.
+    assert set(EXPECTED_PARAMETER_ORDER) == set(REGISTERED_CHECK_FUNCTIONS)
 
 
 @pytest.mark.parametrize(("function_name", "expected_order"), EXPECTED_PARAMETER_ORDER.items())
