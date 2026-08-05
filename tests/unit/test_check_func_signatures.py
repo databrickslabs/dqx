@@ -46,6 +46,8 @@ EXPECTED_PARAMETER_ORDER = {
     "is_valid_national_id": ("column", "country"),
     "is_valid_country_code": ("column", "code_format", "case_sensitive"),
     "is_valid_currency_code": ("column", "code_format", "case_sensitive"),
+    "is_valid_subdivision_code": ("column", "case_sensitive", "country_column"),
+    "is_valid_language_code": ("column", "code_format", "case_sensitive"),
     "is_ipv4_address_in_cidr": ("column", "cidr_block"),
     "is_valid_ipv6_address": ("column",),
     "is_ipv6_address_in_cidr": ("column", "cidr_block"),
