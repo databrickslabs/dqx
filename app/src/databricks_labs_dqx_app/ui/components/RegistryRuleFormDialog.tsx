@@ -161,7 +161,6 @@ import {
   RuleSourceBadge,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
-import { PrincipalPicker, type PickedPrincipal } from "@/components/permissions/PrincipalPicker";
 import { formatDateShort } from "@/lib/format-utils";
 import {
   buildDqxCheckJson,
@@ -3108,19 +3107,17 @@ export function RegistryRuleFormDialog({
     </>
   );
 
-  // Shape PermissionsTab builds for its own picker — reused so About can edit
-  // steward in place without inventing a second principal representation.
-  const stewardPickerValue: PickedPrincipal | null = steward
-    ? { principal_id: "", principal_type: "user", principal_name: stewardDisplayName || steward }
-    : null;
-
   // Field order mirrors dqlake's AboutTab: Name, Description, a divider,
   // then Default Severity before Dimension — each picker shows the same
   // colored dot dqlake renders next to the selected value (sourced from the
   // label definition's configured value_colors, same data DQX already uses
   // for badges elsewhere). Steward is also editable here (and on Permissions).
   const aboutTabContent = (
-    <div className="space-y-4 pt-2">
+    // Two columns on a SAVED rule: editable fields on the left, the read-only
+    // Details provenance panel on the right. On create (no sourceRule) the
+    // right column is absent, so the left column spans the full width.
+    <div className="flex flex-col gap-6 pt-2 lg:flex-row lg:items-start">
+      <div className="space-y-4 lg:min-w-0 lg:flex-1">
       <div className="space-y-2">
         <Label>
           {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
@@ -3302,114 +3299,83 @@ export function RegistryRuleFormDialog({
         defaultOpen={Object.keys(tags).length > 0}
         definitions={tagDefinitions}
       />
+      </div>
 
       {/* Provenance for a SAVED rule, mirroring the monitored-table About tab
           (same <dl> grid, same label casing) so a rule reads like every other
-          governed object. Every row EXCEPT steward reflects `sourceRule` — the
-          last-persisted rule — not the in-progress edit state above it, so an
-          unsaved rename never makes the panel claim an update that hasn't
-          happened. Steward is the one editable field, so it reads the edit
-          state instead. Absent entirely while creating, since a rule that
-          doesn't exist yet has no provenance to show. */}
+          governed object. Every row reflects `sourceRule` — the last-persisted
+          rule — not the in-progress edit state, so an unsaved rename never
+          makes the panel claim an update that hasn't happened. Absent entirely
+          while creating, since a rule that doesn't exist yet has no provenance
+          to show. Renders as the RIGHT column on a saved rule; steward is NOT
+          shown here — it's edited on the Permissions tab. */}
       {sourceRule && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold">{t("rulesRegistry.aboutMetadataTitle")}</h2>
-            <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutStatus")}</dt>
-              <dd className="flex flex-wrap items-center gap-1.5">
-                <StatusBadge status={sourceRule.status} />
-                {sourceRule.modified_since_publish && <ModifiedBadge version={sourceRule.version} />}
-              </dd>
+        <section className="space-y-3 lg:w-72 lg:shrink-0 lg:border-l lg:pl-6">
+          <h2 className="text-sm font-semibold">{t("rulesRegistry.aboutMetadataTitle")}</h2>
+          <dl className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-2 text-xs">
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutStatus")}</dt>
+            <dd className="flex flex-wrap items-center gap-1.5">
+              <StatusBadge status={sourceRule.status} />
+              {sourceRule.modified_since_publish && <ModifiedBadge version={sourceRule.version} />}
+            </dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutVersion")}</dt>
-              <dd>
-                {sourceRule.version > 0 ? (
-                  <RuleVersionBadge version={sourceRule.version} />
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutVersion")}</dt>
+            <dd>
+              {sourceRule.version > 0 ? (
+                <RuleVersionBadge version={sourceRule.version} />
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </dd>
 
-              {/* How many monitored tables currently apply this rule. Uses the
-                  viewer-independent `applied_to_count` (not per_table.length,
-                  which is filtered to the viewer's catalogs) so two people
-                  never see a different blast radius for the same rule.
-                  Undefined while the score query is in flight or failed — an
-                  em dash, not a zero, since "not loaded" and "applied nowhere"
-                  mean opposite things. */}
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAppliedTo")}</dt>
-              <dd>
-                {ruleScore?.applied_to_count === undefined ? (
-                  <span className="text-muted-foreground">—</span>
-                ) : ruleScore.applied_to_count === 0 ? (
-                  <span className="text-muted-foreground italic">{t("rulesRegistry.aboutAppliedToNone")}</span>
-                ) : (
-                  t("rulesRegistry.aboutAppliedToTables", { count: ruleScore.applied_to_count })
-                )}
-              </dd>
+            {/* How many monitored tables currently apply this rule. Uses the
+                viewer-independent `applied_to_count` (not per_table.length,
+                which is filtered to the viewer's catalogs) so two people
+                never see a different blast radius for the same rule.
+                Undefined while the score query is in flight or failed — an
+                em dash, not a zero, since "not loaded" and "applied nowhere"
+                mean opposite things. */}
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAppliedTo")}</dt>
+            <dd>
+              {ruleScore?.applied_to_count === undefined ? (
+                <span className="text-muted-foreground">—</span>
+              ) : ruleScore.applied_to_count === 0 ? (
+                <span className="text-muted-foreground italic">{t("rulesRegistry.aboutAppliedToNone")}</span>
+              ) : (
+                t("rulesRegistry.aboutAppliedToTables", { count: ruleScore.applied_to_count })
+              )}
+            </dd>
 
-              {/* Editable in place, like the monitored-table About tab. Only
-                  the steward FIELD is set here; grant side-effects of a
-                  handover stay on the Permissions tab. A change made here
-                  therefore discards any intent stashed there. */}
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSteward")}</dt>
-              <dd>
-                {readOnly ? (
-                  stewardDisplayName ||
-                  steward || <span className="text-muted-foreground italic">{t("rulesRegistry.aboutStewardNone")}</span>
-                ) : (
-                  <PrincipalPicker
-                    value={stewardPickerValue}
-                    className="w-full max-w-xs h-8 text-xs"
-                    onSelect={(p) => {
-                      // Identity is the email/username; display_name is only for
-                      // rendering. Groups have no `secondary`, hence the fallback.
-                      setSteward(p.secondary ?? p.display_name);
-                      setStewardDisplayName(p.display_name);
-                      setStewardGrantIntent(null);
-                    }}
-                    onClear={() => {
-                      setSteward("");
-                      setStewardDisplayName("");
-                      setStewardGrantIntent(null);
-                    }}
-                  />
-                )}
-              </dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAuthor")}</dt>
+            <dd>
+              {sourceRule.author_kind ? (
+                <AuthorKindBadge authorKind={sourceRule.author_kind} />
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAuthor")}</dt>
-              <dd>
-                {sourceRule.author_kind ? (
-                  <AuthorKindBadge authorKind={sourceRule.author_kind} />
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSource")}</dt>
+            <dd>
+              <RuleSourceBadge source={sourceRule.source} />
+            </dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSource")}</dt>
-              <dd>
-                <RuleSourceBadge source={sourceRule.source} />
-              </dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedBy")}</dt>
+            <dd>{sourceRule.created_by || t("rulesRegistry.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedBy")}</dt>
-              <dd>{sourceRule.created_by || t("rulesRegistry.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedAt")}</dt>
+            <dd>{sourceRule.created_at ? formatDateShort(sourceRule.created_at) : t("rulesRegistry.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedAt")}</dt>
-              <dd>{sourceRule.created_at ? formatDateShort(sourceRule.created_at) : t("rulesRegistry.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedBy")}</dt>
+            <dd>{sourceRule.updated_by || t("rulesRegistry.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedBy")}</dt>
-              <dd>{sourceRule.updated_by || t("rulesRegistry.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedAt")}</dt>
+            <dd>{sourceRule.updated_at ? formatDateShort(sourceRule.updated_at) : t("rulesRegistry.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedAt")}</dt>
-              <dd>{sourceRule.updated_at ? formatDateShort(sourceRule.updated_at) : t("rulesRegistry.aboutUnknown")}</dd>
-
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutRuleId")}</dt>
-              <dd className="font-mono break-all">{sourceRule.rule_id}</dd>
-            </dl>
-          </section>
-        </>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutRuleId")}</dt>
+            <dd className="font-mono break-all">{sourceRule.rule_id}</dd>
+          </dl>
+        </section>
       )}
     </div>
   );

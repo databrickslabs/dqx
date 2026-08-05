@@ -4,7 +4,6 @@ import { Check, ChevronDown, Play } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { CheckFunctionDef, MarketplaceRuleOut } from "@/lib/api";
 import type { LabelColorDefinition } from "@/components/RegistryRuleBadges";
@@ -44,7 +43,12 @@ export function MarketplaceRuleRow({
   const imported = rule.imported ?? false;
 
   const card = (
-    <div className={cn("rounded-md border bg-background transition-colors", selected && "border-primary/50 bg-primary/5")}>
+    <div
+      // Native title follows the cursor (an app-styled tooltip anchored to the
+      // card centre looked wrong on wide rows). Only imported rules get it.
+      title={imported ? t("marketplace.alreadyImported") : undefined}
+      className={cn("rounded-md border bg-background transition-colors", selected && "border-primary/50 bg-primary/5")}
+    >
       <div className="flex items-stretch">
         {/* Checkbox aligned to the NAME line (h-9 matches the first row's
             height) rather than floating above the whole cell. Already-added
@@ -147,16 +151,5 @@ export function MarketplaceRuleRow({
     </div>
   );
 
-  // Already-imported rules get an explanatory tooltip on the whole card.
-  if (imported) {
-    return (
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>{card}</TooltipTrigger>
-          <TooltipContent>{t("marketplace.alreadyImported")}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
   return card;
 }
