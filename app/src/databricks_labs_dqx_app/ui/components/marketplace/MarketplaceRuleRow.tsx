@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Play } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -37,6 +38,11 @@ export function MarketplaceRuleRow({
 }) {
   const { t } = useTranslation();
   const [testOpen, setTestOpen] = useState(false);
+  // Cursor-following tooltip for already-imported rules. A native `title`
+  // proved unreliable (it often didn't appear at all over the nested
+  // button/checkbox), so we render our own tooltip in a portal and track the
+  // pointer. `tip` holds the live cursor position while hovering; null hides it.
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
   const previewRule = checkDictToPreviewRule(rule, checkFunctions, t);
   const tags = [...rule.industries, ...rule.regions];
 
@@ -44,11 +50,22 @@ export function MarketplaceRuleRow({
 
   const card = (
     <div
-      // Native title follows the cursor (an app-styled tooltip anchored to the
-      // card centre looked wrong on wide rows). Only imported rules get it.
-      title={imported ? t("marketplace.alreadyImported") : undefined}
+      onMouseMove={imported ? (e) => setTip({ x: e.clientX, y: e.clientY }) : undefined}
+      onMouseLeave={imported ? () => setTip(null) : undefined}
       className={cn("rounded-md border bg-background transition-colors", selected && "border-primary/50 bg-primary/5")}
     >
+      {imported &&
+        tip &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md"
+            // Offset from the cursor so the tooltip doesn't sit under the pointer.
+            style={{ left: tip.x + 12, top: tip.y + 16 }}
+          >
+            {t("marketplace.alreadyImported")}
+          </div>,
+          document.body,
+        )}
       <div className="flex items-stretch">
         {/* Checkbox aligned to the NAME line (h-9 matches the first row's
             height) rather than floating above the whole cell. Already-added

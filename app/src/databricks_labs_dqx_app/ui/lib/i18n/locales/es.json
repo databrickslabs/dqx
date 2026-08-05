@@ -1817,6 +1817,7 @@
     "testNotAvailableAdvancedLowcode": "Las pruebas aún no están disponibles para reglas con uniones o agrupaciones.",
     "testRunButton": "Ejecutar prueba",
     "aboutMetadataTitle": "Detalles",
+    "aboutCollectionId": "ID de la colección",
     "aboutStatus": "Estado",
     "aboutVersion": "Versión",
     "aboutAppliedTo": "Aplicada a",

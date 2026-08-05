@@ -1817,6 +1817,7 @@
     "testNotAvailableAdvancedLowcode": "O teste ainda não está disponível para regras com junções ou agrupamentos.",
     "testRunButton": "Executar teste",
     "aboutMetadataTitle": "Detalhes",
+    "aboutCollectionId": "ID da coleção",
     "aboutStatus": "Status",
     "aboutVersion": "Versão",
     "aboutAppliedTo": "Aplicada a",

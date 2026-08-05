@@ -1817,6 +1817,7 @@
     "testNotAvailableAdvancedLowcode": "I test non sono ancora disponibili per regole con join o raggruppamenti.",
     "testRunButton": "Esegui test",
     "aboutMetadataTitle": "Dettagli",
+    "aboutCollectionId": "ID raccolta",
     "aboutStatus": "Stato",
     "aboutVersion": "Versione",
     "aboutAppliedTo": "Applicata a",

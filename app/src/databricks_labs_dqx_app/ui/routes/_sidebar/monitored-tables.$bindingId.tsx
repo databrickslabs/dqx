@@ -70,7 +70,6 @@ import {
   XCircle,
 } from "lucide-react";
 import {
-  useUpdateMonitoredTableOwner,
   useGetMonitoredTableSuspense,
   useDeleteMonitoredTable,
   useGetMonitoredTableProfile,
@@ -114,7 +113,6 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
-import { PrincipalPicker, type PickedPrincipal } from "@/components/permissions/PrincipalPicker";
 import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
@@ -916,7 +914,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} bindingId={bindingId} canEdit={perms.canCreateRules} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -1345,21 +1343,15 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 
 function AboutTab({
   table,
-  bindingId,
-  canEdit,
   onColumnClick,
 }: {
   table: MonitoredTableOut;
-  bindingId: string;
-  canEdit: boolean;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
    *  between the by-rule/by-column lenses in ApplyRulesTab. */
   onColumnClick: (columnName: string) => void;
 }) {
   const { t } = useTranslation();
-  const qc = useQueryClient();
-  const updateOwnerMut = useUpdateMonitoredTableOwner({ mutation: { onError: () => {} } });
   const [filter, setFilter] = useState("");
   // 1-indexed schema page (P26 item 2) — the shared `Pagination` footer
   // convention. Reset to 1 whenever the filter changes so a narrowed
@@ -1404,23 +1396,6 @@ function AboutTab({
     return `${host}/explore/data/${catalog}/${schema}/${tableName}`;
   }, [workspaceHostQuery.data?.workspace_host, parts.length, catalog, schema, tableName]);
 
-  const effectiveOwner = table.steward || table.created_by || "";
-  const ownerValue: PickedPrincipal | null = effectiveOwner
-    ? { principal_id: "", principal_type: "user", principal_name: effectiveOwner }
-    : null;
-
-  const handleOwnerSelect = async (owner: string) => {
-    const trimmed = owner.trim();
-    if (!trimmed || trimmed === effectiveOwner) return;
-    try {
-      await updateOwnerMut.mutateAsync({ bindingId, data: { owner: trimmed } });
-      invalidateAfterMonitoredTableChange(qc, bindingId);
-      toast.success(t("monitoredTables.aboutOwnerUpdated"));
-    } catch (err) {
-      toast.error(extractApiError(err, t("monitoredTables.aboutOwnerUpdateFailed")), { duration: 6000 });
-    }
-  };
-
   return (
     <div className="space-y-6 pt-4">
       {/* About (metadata) : Schema (columns table) — the schema table gets the
@@ -1444,33 +1419,7 @@ function AboutTab({
               <StatusBadge status={table.status} />
             </dd>
 
-            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutOwner")}</dt>
-            <dd>
-              {canEdit ? (
-                <PrincipalPicker
-                  value={ownerValue}
-                  disabled={updateOwnerMut.isPending}
-                  className="w-full max-w-xs h-8 text-xs"
-                  suggestion={
-                    table.created_by && table.created_by !== effectiveOwner
-                      ? {
-                          displayName: table.created_by,
-                          onPick: () => void handleOwnerSelect(table.created_by!),
-                        }
-                      : null
-                  }
-                  onSelect={(p) => void handleOwnerSelect(p.display_name)}
-                  onClear={() => {
-                    if (table.created_by) void handleOwnerSelect(table.created_by);
-                  }}
-                />
-              ) : effectiveOwner ? (
-                effectiveOwner
-              ) : (
-                <span className="text-muted-foreground italic">{t("monitoredTables.aboutOwnerNone")}</span>
-              )}
-            </dd>
-
+            {/* Steward/Owner is edited on the Permissions tab, not here. */}
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutLastProfiled")}</dt>
             <dd>{table.last_profiled_at ? formatDateShort(table.last_profiled_at) : t("monitoredTables.neverProfiled")}</dd>
 

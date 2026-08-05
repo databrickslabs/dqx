@@ -3310,9 +3310,9 @@ export function RegistryRuleFormDialog({
           to show. Renders as the RIGHT column on a saved rule; steward is NOT
           shown here — it's edited on the Permissions tab. */}
       {sourceRule && (
-        <section className="space-y-3 lg:w-72 lg:shrink-0 lg:border-l lg:pl-6">
+        <section className="space-y-3 lg:w-96 lg:shrink-0">
           <h2 className="text-sm font-semibold">{t("rulesRegistry.aboutMetadataTitle")}</h2>
-          <dl className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-2 text-xs">
+          <dl className="grid grid-cols-[130px_1fr] gap-x-4 gap-y-2 text-xs">
             <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutStatus")}</dt>
             <dd className="flex flex-wrap items-center gap-1.5">
               <StatusBadge status={sourceRule.status} />

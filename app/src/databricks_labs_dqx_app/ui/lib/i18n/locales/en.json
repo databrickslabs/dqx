@@ -1817,6 +1817,7 @@
     "testNotAvailableAdvancedLowcode": "Testing isn't available for rules with joins or grouping yet.",
     "testRunButton": "Run test",
     "aboutMetadataTitle": "Details",
+    "aboutCollectionId": "Collection ID",
     "aboutStatus": "Status",
     "aboutVersion": "Version",
     "aboutAppliedTo": "Applied to",
