@@ -48,6 +48,31 @@ variables:
   # /Volumes paths in a job dependency list.
   coverage_bootstrap_wheel_filename:
     default: "dqx_mcp_coverage_bootstrap-0.1.0-py3-none-any.whl"
+  # The app's runtime environment, as a complex variable so the dev-coverage target can extend it
+  # (DAB target overrides don't merge into a list). The default is what every real deploy gets.
+  app_environment:
+    type: complex
+    default:
+      # DQX_CATALOG is a plain (non-secret) value: a Unity Catalog *name* is not sensitive —
+      # access is governed by UC grants, not by hiding the name — so it does not belong in a
+      # secret scope. It is set at deploy time from the catalog_name bundle var, so there is
+      # nothing to configure out-of-band.
+      - name: DQX_CATALOG
+        value: "${var.catalog_name}"
+      - name: DQX_TMP_SCHEMA
+        value: "${var.tmp_schema_name}"
+      # Resource-backed: the runner job id comes from the app→job binding below.
+      - name: DQX_RUNNER_JOB_ID
+        value_from: "dqx-runner-job"
+      # Where the app publishes the runner wheel at startup, and the exact filename the runner
+      # job expects there (see server/bootstrap.py and the job's dependencies).
+      - name: DQX_WHEELS_VOLUME
+        value: "/Volumes/${resources.volumes.dqx_artifacts.catalog_name}/${resources.volumes.dqx_artifacts.schema_name}/${resources.volumes.dqx_artifacts.name}"
+      - name: DQX_RUNNER_WHEEL_FILENAME
+        value: "${var.runner_wheel_filename}"
+      # DQX release the runner installs, reported as the dqx/<version> telemetry token.
+      - name: DQX_VERSION
+        value: "${var.dqx_version}"
   # The runner job environment's dependency list, as a complex variable so the dev-coverage
   # target can extend it (DAB target overrides don't merge into an environment's spec list).
   # The default is what every real deploy installs — no test instrumentation.
@@ -240,24 +265,9 @@ resources:
       # reference ${var.*}).
       config:
         command: ["python", "server/main.py"]
-        env:
-          # DQX_CATALOG is a plain (non-secret) value: a Unity Catalog *name* is not sensitive —
-          # access is governed by UC grants, not by hiding the name — so it does not belong in a
-          # secret scope. It is set at deploy time from the catalog_name bundle var (the same value
-          # used for the artifacts-volume path), so there is nothing to configure out-of-band.
-          - name: DQX_CATALOG
-            value: "${var.catalog_name}"
-          - name: DQX_TMP_SCHEMA
-            value: "${var.tmp_schema_name}"
-          # Resource-backed: the runner job id comes from the app→job binding below.
-          - name: DQX_RUNNER_JOB_ID
-            value_from: "dqx-runner-job"
-          # Where the app publishes the runner wheel at startup, and the exact filename the runner
-          # job expects there (see server/bootstrap.py and the job's dependencies above).
-          - name: DQX_WHEELS_VOLUME
-            value: "/Volumes/${resources.volumes.dqx_artifacts.catalog_name}/${resources.volumes.dqx_artifacts.schema_name}/${resources.volumes.dqx_artifacts.name}"
-          - name: DQX_RUNNER_WHEEL_FILENAME
-            value: "${var.runner_wheel_filename}"
+        # See var.app_environment for the list + rationale (a complex variable so the dev-coverage
+        # target can add test-only sweep thresholds without touching the production default).
+        env: ${var.app_environment}
 
       resources:
         - name: dqx-runner-job
@@ -301,6 +311,22 @@ targets:
       dqx_mcp_coverage_bootstrap_wheel:
         build: uv build ../tests/integration_mcp/coverage_bootstrap --wheel --out-dir ./.build
     variables:
+      # Short sweep thresholds so a single test run exercises the stale-view / stale-result-file
+      # sweepers, which the hour-long production defaults make untestable. Only the thresholds
+      # differ; the sweep logic is identical. (Repeats the base list — target overrides replace
+      # a list rather than merging into it.)
+      app_environment:
+        default:
+          - name: DQX_CATALOG
+            value: "${var.catalog_name}"
+          - name: DQX_TMP_SCHEMA
+            value: "dqx_mcp_tmp"
+          - name: DQX_RUNNER_JOB_ID
+            value_from: "dqx-runner-job"
+          - name: DQX_SWEEP_TTL_SECONDS
+            value: "1"
+          - name: DQX_SWEEP_INTERVAL_SECONDS
+            value: "0"
       # Overrides the dependency-list variable — DAB target overrides don't merge into an
       # environment's spec list, so the base list is repeated here plus the bootstrap wheel
       # (which depends on `coverage`, so that need not be listed separately).

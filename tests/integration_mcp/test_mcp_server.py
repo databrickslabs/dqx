@@ -130,16 +130,45 @@ def _assert_agent_discovers_tools(
     assert any(col in final_text.lower() for col in ("order_id", "customer_id", "status", "amount", "column"))
 
 
-def _assert_contract_sources(client: McpClient, contract_file: str) -> None:
-    """generate_rules_from_contract accepts a volume path OR inline text, and exactly one of them.
+def _assert_catalogue_and_validation(client: McpClient) -> None:
+    """list_available_checks (with its filter) and validate_checks in both directions.
 
-    The inline path matters for agents that hold a contract in context rather than on a volume: the
-    server stages the text to the results volume before the runner reads it. The either/or errors are
-    part of the tool's contract, so an agent gets a clear message instead of a silent wrong answer.
+    An agent relies on the filter to find a check without pulling the whole catalogue. The filter
+    matches a name or anywhere in the full docstring, of which only the first line comes back as
+    ``description`` — so assert it narrows and keeps the obvious match, rather than re-deriving which
+    entries should have matched. Kept as a helper so the end-to-end test stays within pylint's
+    per-function statement budget.
+    """
+    listed = client.call("list_available_checks")
+    assert listed["count"] > 0
+    assert {"is_not_null", "is_in_range"} <= {c["name"] for c in listed["checks"]}
+
+    filtered = client.call("list_available_checks", {"filter": "range"})
+    assert 0 < filtered["count"] < listed["count"], filtered["count"]
+    assert "is_in_range" in {c["name"] for c in filtered["checks"]}, filtered["checks"]
+    assert client.call("list_available_checks", {"filter": "zzz_no_such_check"})["count"] == 0
+
+    assert client.call("validate_checks", {"checks": EXPLICIT_CHECKS})["valid"] is True
+    bad = [{"criticality": "error", "check": {"function": "not_a_real_check", "arguments": {}}}]
+    invalid = client.call("validate_checks", {"checks": bad})
+    assert invalid["valid"] is False
+    assert invalid["errors"], "an unknown check function should produce validation errors"
+
+
+def _assert_contract_sources(client: McpClient, contract_file: str, workspace_contract: str) -> None:
+    """generate_rules_from_contract accepts a volume path, a workspace path, or inline text.
+
+    All three must yield the same rules: the inline path matters for agents that hold a contract in
+    context (the server stages the text to the results volume first), and the workspace path is read
+    by a different mechanism than the volume one (export + base64 vs Files API download). Exactly one
+    source may be given, so an agent gets a clear error instead of a silent wrong answer.
     """
     inline = client.call("generate_rules_from_contract", {"contract_content": CONTRACT_YAML})
     assert inline["count"] > 0, inline
     assert client.call("validate_checks", {"checks": inline["rules"]})["valid"] is True
+
+    from_workspace = client.call("generate_rules_from_contract", {"contract_file": workspace_contract})
+    assert from_workspace["count"] == inline["count"], (from_workspace, inline)
 
     # Both sources, then neither: each must be rejected rather than guessed at. Tolerate either
     # surfacing — the MCP error may raise in the client or come back as a non-successful payload.
@@ -192,15 +221,23 @@ def _assert_persisting_tools(client: McpClient, table: str) -> None:
     assert applied["output_table"].endswith(".customers_clean"), applied["output_table"]
     assert len(applied.get("granted_tables") or []) == 2, applied.get("granted_tables")
 
-    # A caller-supplied output name that is a dotted FQN or starts with a digit is rejected up front
-    # (it would otherwise be interpolated unquoted into the FQN). Tolerate either surfacing: the MCP
-    # error may raise in the client, or come back as a non-successful payload — but it must NOT save.
-    for bad_name in ("catalog.schema.table", "2024_bad"):
+    # A caller-supplied output name that is a dotted FQN, starts with a digit, or is empty is
+    # rejected up front (it would otherwise be interpolated unquoted into the FQN). An unsupported
+    # write mode is likewise refused rather than silently defaulted. Tolerate either surfacing: the
+    # MCP error may raise in the client, or come back as a non-successful payload — but it must NOT
+    # save.
+    rejected: list[dict] = [
+        {"checks": EXPLICIT_CHECKS, "output_name": "catalog.schema.table"},
+        {"checks": EXPLICIT_CHECKS, "output_name": "2024_bad"},
+        {"checks": EXPLICIT_CHECKS, "output_name": ""},
+        {"checks": EXPLICIT_CHECKS, "output_name": "customers_checks", "mode": "upsert"},
+    ]
+    for arguments in rejected:
         try:
-            res = client.call("save_checks", {"checks": EXPLICIT_CHECKS, "output_name": bad_name})
-        except Exception:
-            continue  # rejected via raised MCP error — expected
-        assert not res.get("saved") and res.get("status") != "completed", f"bad output_name accepted: {res}"
+            res = client.call("save_checks", arguments)
+        except Exception:  # noqa: BLE001 — rejected via a raised MCP error, which is expected
+            continue
+        assert not res.get("saved") and res.get("status") != "completed", f"save_checks accepted {arguments}: {res}"
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
@@ -224,23 +261,8 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         workflow = client.call("get_workflow")
         assert workflow.get("steps"), "get_workflow should describe the recommended steps"
 
-        # 3. list_available_checks — built-ins present, and the filter narrows the catalogue (an
-        #    agent relies on the filter to find a check without pulling all ~68 of them).
-        listed = client.call("list_available_checks")
-        assert listed["count"] > 0
-        assert {"is_not_null", "is_in_range"} <= {c["name"] for c in listed["checks"]}
-        filtered = client.call("list_available_checks", {"filter": "range"})
-        assert 0 < filtered["count"] < listed["count"], filtered["count"]
-        assert all(
-            "range" in c["name"].lower() or "range" in (c.get("description") or "").lower() for c in filtered["checks"]
-        )
-
-        # 4. validate_checks — accepts valid, rejects invalid.
-        assert client.call("validate_checks", {"checks": EXPLICIT_CHECKS})["valid"] is True
-        bad = [{"criticality": "error", "check": {"function": "not_a_real_check", "arguments": {}}}]
-        invalid = client.call("validate_checks", {"checks": bad})
-        assert invalid["valid"] is False
-        assert invalid["errors"], "an unknown check function should produce validation errors"
+        # 3-4. The catalogue (with its filter) and check validation.
+        _assert_catalogue_and_validation(client)
 
         # 5. get_table_schema (direct SQL via OBO), then a table that does not exist — the SQL
         #    failure must surface as an error, not an empty-but-successful schema.
@@ -264,7 +286,7 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         from_contract = client.call("generate_rules_from_contract", {"contract_file": data["contract"]})
         assert from_contract["count"] > 0
         assert client.call("validate_checks", {"checks": from_contract["rules"]})["valid"] is True
-        _assert_contract_sources(client, data["contract"])
+        _assert_contract_sources(client, data["contract"], data["workspace_contract"])
 
         # 8. run_checks — flags exactly the known-dirty rows.
         run = client.call("run_checks", {"table_name": table, "checks": EXPLICIT_CHECKS})

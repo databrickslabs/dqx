@@ -27,6 +27,7 @@ from uuid import uuid4
 import pytest
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.workspace import ImportFormat
 
 from tests.constants import TEST_CATALOG
 
@@ -559,11 +560,23 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
     contract_path = f"/Volumes/{CATALOG}/{schema}/contracts/customers_contract.yaml"
     client.files.upload(contract_path, io.BytesIO(CONTRACT_YAML.encode()), overwrite=True)
 
+    # The same contract as a *workspace* file. The tools accept either backend and read them
+    # differently (Files API download vs workspace export + base64), so the test covers both.
+    # ImportFormat.AUTO with a .yml path keeps it a plain file (mirrors tests/conftest.py's
+    # make_check_file); without an explicit format the SDK tries to treat the bytes as an archive.
+    ws_contract_dir = f"/Users/{client.current_user.me().user_name}/dqx_mcp_it"
+    ws_contract_path = f"{ws_contract_dir}/{schema}_contract.yml"
+    client.workspace.mkdirs(ws_contract_dir)
+    client.workspace.upload(
+        path=ws_contract_path, format=ImportFormat.AUTO, content=CONTRACT_YAML.encode(), overwrite=True
+    )
+
     try:
         yield {
             "table": table,
             "schema": fq_schema,
             "contract": contract_path,
+            "workspace_contract": ws_contract_path,
             "service_principal": app_sp,
         }
     finally:
@@ -571,3 +584,7 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
             run_sql(f"DROP SCHEMA IF EXISTS {fq_schema} CASCADE")
         except Exception:  # best-effort cleanup, never fail the session on teardown
             sys.stderr.write(f"warning: failed to drop schema {fq_schema}\n")
+        try:
+            client.workspace.delete(ws_contract_path)
+        except Exception:  # noqa: BLE001 — best-effort cleanup, never fail the session on teardown
+            sys.stderr.write(f"warning: failed to delete {ws_contract_path}\n")

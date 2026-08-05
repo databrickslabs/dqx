@@ -584,8 +584,13 @@ def stage_bytes_to_results_volume(content: bytes, suffix: str = "") -> str:
 # so this sweeper only catches orphans: views whose job never started or was killed
 # before cleanup. It runs as the SP, which owns the temp schema (see setup.py).
 _VIEW_NAME_RE = re.compile(r"^v_(\d+)_[0-9a-f]+$")
-_VIEW_TTL_SECONDS = 3600  # drop views older than 1 hour
-_SWEEP_INTERVAL_SECONDS = 600  # sweep at most once per 10 minutes per replica
+# Overridable so the integration test can exercise the sweepers within a single run: the defaults
+# are deliberately long (an orphan is harmless for an hour), which no test can wait out. Only the
+# thresholds are configurable — the sweep logic itself is identical in every environment.
+_VIEW_TTL_SECONDS = int(os.environ.get("DQX_SWEEP_TTL_SECONDS", "3600"))  # drop views older than 1 hour
+_SWEEP_INTERVAL_SECONDS = int(
+    os.environ.get("DQX_SWEEP_INTERVAL_SECONDS", "600")
+)  # sweep at most once per 10 minutes per replica
 _last_sweep_at = 0.0
 
 
