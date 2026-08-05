@@ -214,26 +214,53 @@ mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors
 # The bundle artifact build runs `uv build ./runner` from inside mcp-server/, so the global
 # relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong
 # directory. Pin it to the absolute repo-root path so the wheel build finds it.
-mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
-mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start the app
-	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
-	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
-	cd mcp-server && DQX_MCP_CATALOG=$(CATALOG) DATABRICKS_PROFILE=$(PROFILE) ./scripts/ensure_artifacts_volume.sh
-	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
-	cd mcp-server && databricks bundle run dqx_setup -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
-	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+# The catalog is not bundle-managed, so catalog-level grants cannot be declared natively. Apply
+# them once per catalog with this target (idempotent). USERS_GROUP defaults to 'account users'.
+mcp-grant-prereqs: ## Apply the one-time catalog grants the bundle cannot. Requires PROFILE + CATALOG
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-grant-prereqs PROFILE=<databricks-profile> CATALOG=<catalog> [RUNNER_SP=<app-id>] [APP_SP=<app-id>] [USERS_GROUP=<group>]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-grant-prereqs PROFILE=<databricks-profile> CATALOG=<catalog> [RUNNER_SP=<app-id>] [APP_SP=<app-id>] [USERS_GROUP=<group>]"; exit 1)
+	cd mcp-server && DATABRICKS_PROFILE=$(PROFILE) DQX_MCP_CATALOG=$(CATALOG) \
+	  DQX_MCP_USERS_GROUP="$(USERS_GROUP)" DQX_MCP_RUNNER_SP="$(RUNNER_SP)" DQX_MCP_APP_SP="$(APP_SP)" \
+	  ./scripts/grant_catalog_prereqs.sh
 
-# One-command teardown (nothing in the MCP bundle is destroy-protected, so — unlike the Studio's
-# multi-step unbind-then-destroy uninstall — this is a single command). Removes the app + runner/
-# setup jobs, then drops the out-of-band runner-wheel volume. Leaves the <catalog>.dqx_mcp_tmp schema and any
-# dqx_mcp_<user> output schemas intact (they may hold user data) — drop those manually if you want a
-# fully clean wipe. runner_service_principal_id isn't needed to destroy, so its placeholder is fine.
-mcp-destroy: ## Tear down the MCP server (app + jobs + runner-wheel volume). Requires PROFILE + CATALOG
+# ONE command for the whole install. Everything the bundle owns (schema, both volumes, runner job,
+# app) is created with native UC grants by `bundle deploy`. The only grants it cannot declare are on
+# the *catalog*, which it does not own — so this target applies them itself, in the order that makes
+# a single pass sufficient:
+#
+#   1. bundle deploy      — creates the app, so its service principal now exists
+#   2. grant prereqs      — USE CATALOG for users + runner SP + the app SP (resolved from the app)
+#   3. bundle run         — starts the app, which publishes the runner wheel to the volume
+#
+# Granting BEFORE the app starts is what avoids a "grant, then restart" second pass: the app's first
+# startup already has the access it needs to publish the wheel. This mirrors scripts/ci_deploy.sh.
+mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
+mcp-deploy: ## Deploy the MCP server end to end: bundle, catalog grants, then start the app
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [RUNNER_SP=<app-id>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [RUNNER_SP=<app-id>] [BUNDLE_VARS=...]"; exit 1)
+	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && DATABRICKS_PROFILE=$(PROFILE) DQX_MCP_CATALOG=$(CATALOG) \
+	  DQX_MCP_USERS_GROUP="$(USERS_GROUP)" DQX_MCP_RUNNER_SP="$(RUNNER_SP)" \
+	  DQX_MCP_APP_NAME="$(if $(NAME_PREFIX),$(NAME_PREFIX),mcp-dqx)" \
+	  ./scripts/grant_catalog_prereqs.sh
+	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	@echo ""
+	@echo "Deployed. The app publishes the runner wheel at startup; verify with:"
+	@echo "  databricks fs ls dbfs:/Volumes/$(CATALOG)/dqx_mcp_tmp/dqx_artifacts -p $(PROFILE)"
+
+# One command: the schema and both volumes are bundle resources now, so destroy removes them too
+# (it previously left the schema behind and needed a separate `volumes delete`). Per-user
+# dqx_mcp_<user> output schemas are NOT bundle-managed and survive.
+# runner_service_principal_id isn't needed to destroy, so its placeholder default is fine.
+mcp-destroy: ## Tear down the MCP server (app, job, schema, volumes). Requires PROFILE + CATALOG
 	@test -n "$(PROFILE)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
 	@test -n "$(CATALOG)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
 	cd mcp-server && databricks bundle destroy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --auto-approve --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
-	cd mcp-server && databricks volumes delete $(CATALOG).dqx_mcp_tmp.dqx_artifacts -p $(PROFILE) 2>/dev/null || true
-	@echo "Destroyed the MCP app + jobs and the dqx_artifacts volume. The $(CATALOG).dqx_mcp_tmp schema and any $(CATALOG).dqx_mcp_<user> output schemas are left intact — drop them manually if you want a full wipe."
+	@echo ""
+	@echo "Destroyed the MCP app, the runner job, AND the bundle-managed $(CATALOG).dqx_mcp_tmp schema"
+	@echo "with its mcp_results + dqx_artifacts volumes — these are bundle resources now, so destroy"
+	@echo "removes them (it previously left the schema in place). Any $(CATALOG).dqx_mcp_<user> output"
+	@echo "schemas are not bundle-managed and survive; drop them manually for a full wipe."
 
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 

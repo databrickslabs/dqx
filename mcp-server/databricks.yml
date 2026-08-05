@@ -64,9 +64,20 @@ resources:
   # Mirrors the DQX Studio bundle.
   #
   # Catalog-level grants (USE CATALOG for everyone, and CREATE SCHEMA for the runner SP, which needs
-  # it to create per-user dqx_mcp_<user> output schemas) CANNOT be native: the bundle does not own
-  # the pre-existing catalog. They are a documented one-time prerequisite — see the MCP section of
+  # it to create per-user dqx_mcp_<user> output schemas) are deliberately NOT declared here. They are
+  # applied once per catalog by scripts/grant_catalog_prereqs.sh — see the MCP section of
   # docs/dqx/docs/installation.mdx.
+  #
+  # `resources.catalogs` does support `grants`, and declaring the catalog here WOULD work — but only
+  # after `bundle deployment bind`, because a catalog that already exists otherwise fails the deploy
+  # with CATALOG_ALREADY_EXISTS. Both routes were tested and rejected:
+  #   - bound WITHOUT lifecycle.prevent_destroy: `bundle destroy` deletes the customer's catalog and
+  #     everything in it. catalog_name is a free variable, so that could be `main`.
+  #   - bound WITH prevent_destroy: the catalog is safe, but `bundle destroy` then aborts entirely
+  #     (0 resources removed), so teardown would need an unbind step first and would no longer be one
+  #     command.
+  # A single documented grant command is the better trade, and matches the DQX Studio app, which also
+  # documents USE CATALOG as a prerequisite rather than binding the catalog.
   schemas:
     tmp_schema:
       catalog_name: ${var.catalog_name}

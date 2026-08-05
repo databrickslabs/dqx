@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deploy an isolated copy of the DQX MCP server (bundle + runner job + setup + app) for
-# integration testing, and print the deployed app URL. Idempotent / safe to re-run.
+# Deploy an isolated copy of the DQX MCP server (schema, volumes, runner job, app) for integration
+# testing, and print the deployed app URL. Idempotent / safe to re-run.
 #
 # Auth comes from the standard Databricks CLI env (DATABRICKS_HOST + DATABRICKS_TOKEN, or a
 # configured profile). Override the bundle's name/catalog via the env vars below so this never
@@ -9,7 +9,7 @@
 #
 # Env:
 #   NAME_PREFIX                          resource name prefix (default: mcp-dqx-ci)
-#   DQX_MCP_TEST_CATALOG                 catalog the setup job may create/drop a temp schema in (required)
+#   DQX_MCP_TEST_CATALOG                 catalog the bundle creates its schema + volumes in (required)
 #   DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID  application id of the workspace SP the runner job runs as.
 #                                        Optional: a real deploy sets this to a dedicated
 #                                        least-privilege SP (the deploying identity then needs the
@@ -44,25 +44,43 @@ if [ -z "$RUNNER_SP" ]; then
 fi
 : "${RUNNER_SP:?could not resolve the runner run_as SP (set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID, or ensure the deploy identity is resolvable via 'databricks current-user me')}"
 
+# Schema identifiers cannot contain '-' but NAME_PREFIX can (mcp-dqx-ci), so sanitise it. A
+# per-run schema keeps concurrent CI deploys from sharing the schema and its volumes.
+TMP_SCHEMA="$(printf '%s' "${NAME_PREFIX}_tmp" | tr -c 'A-Za-z0-9_' '_')"
+
 VARS=(--var "name_prefix=${NAME_PREFIX}"
       --var "catalog_name=${DQX_MCP_TEST_CATALOG}"
+      --var "tmp_schema_name=${TMP_SCHEMA}"
       --var "runner_service_principal_id=${RUNNER_SP}")
 
 cd "$(dirname "$0")/.."  # mcp-server/
 
-echo "::group::ensure artifacts volume (${DQX_MCP_TEST_CATALOG}.dqx_mcp_tmp.dqx_artifacts)"
-# workspace.artifact_path is a UC volume; it must exist before `bundle deploy` uploads the wheels.
-DQX_MCP_CATALOG="${DQX_MCP_TEST_CATALOG}" DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-}" \
-  ./scripts/ensure_artifacts_volume.sh
+echo "::group::one-time catalog grants (users + runner SP)"
+# The bundle applies every grant on the objects it owns natively. Catalog-level grants are the
+# exception — the catalog pre-exists and is not bundle-managed — so apply them here. The app SP's
+# grant comes after the deploy, once its service principal exists.
+DQX_MCP_CATALOG="${DQX_MCP_TEST_CATALOG}" DQX_MCP_RUNNER_SP="${RUNNER_SP}" \
+  DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-}" ./scripts/grant_catalog_prereqs.sh
 echo "::endgroup::"
 
 echo "::group::bundle deploy (${NAME_PREFIX}, target ${BUNDLE_TARGET})"
+# Creates the schema, both volumes, the runner job and the app, and applies their native grants.
 # The bundle uses `engine: direct` (no Terraform), so this does not download a provider.
 databricks bundle deploy -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
 echo "::endgroup::"
 
-echo "::group::run setup job (UC grants + temp-schema ownership)"
-databricks bundle run dqx_setup -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
+echo "::group::grant the app SP USE CATALOG (only resolvable after the app exists)"
+# The app's SP is created with the app, so this grant cannot be native and cannot precede the
+# deploy. Without it the app cannot publish the runner wheel and every data tool fails to install
+# it — so this must happen BEFORE the app is started below.
+APP_SP_ID="$(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("service_principal_client_id",""))')"
+if [ -n "${APP_SP_ID}" ]; then
+  DQX_MCP_CATALOG="${DQX_MCP_TEST_CATALOG}" DQX_MCP_RUNNER_SP="${RUNNER_SP}" DQX_MCP_APP_SP="${APP_SP_ID}" \
+    DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-}" ./scripts/grant_catalog_prereqs.sh
+else
+  echo "WARNING: could not resolve the app's service principal; the wheel publish may fail"
+fi
 echo "::endgroup::"
 
 echo "::group::deploy + start app"
@@ -71,6 +89,26 @@ echo "::group::deploy + start app"
 # app.yaml). This matches `make mcp-deploy`; raw `apps deploy` reads app.yaml from the source and
 # would fail with "No command to run" now that the config lives in databricks.yml.
 databricks bundle run mcp-dqx -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
+echo "::endgroup::"
+
+echo "::group::wait for the app to publish the runner wheel"
+# The app publishes the wheel at startup (server/bootstrap.py) and the runner job installs it from
+# that volume path, so a tool call before the publish completes would fail on library install.
+# Fail loudly here rather than let the test fail later with a confusing error.
+WHEEL_DIR="dbfs:/Volumes/${DQX_MCP_TEST_CATALOG}/${TMP_SCHEMA}/dqx_artifacts"
+for _ in $(seq 1 36); do
+  if databricks fs ls "${WHEEL_DIR}" "${PROFILE_ARG[@]}" 2>/dev/null | grep -q 'dqx_mcp_runner-.*\.whl'; then
+    echo "runner wheel published under ${WHEEL_DIR}"
+    break
+  fi
+  sleep 5
+done
+if ! databricks fs ls "${WHEEL_DIR}" "${PROFILE_ARG[@]}" 2>/dev/null | grep -q 'dqx_mcp_runner-.*\.whl'; then
+  echo "ERROR: the app did not publish the runner wheel to ${WHEEL_DIR} within 3 minutes." >&2
+  echo "Check 'databricks apps logs ${NAME_PREFIX}' for the reason (usually a missing USE CATALOG" >&2
+  echo "grant for the app's service principal ${APP_SP_ID:-<unresolved>})." >&2
+  exit 1
+fi
 echo "::endgroup::"
 
 # Emit the app URL and the app's service principal (application id). The SP is the identity
