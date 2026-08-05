@@ -35,6 +35,17 @@ You **write a rule**, **apply it to a table as a check**, and each time it runs
 it produces one **test** per row.
 </Admonition>
 
+## Row-level vs table-level
+
+Most checks answer "does **this row** look good?" — that's **row-level**, and
+failures point at specific records. Some expectations are about the **table as
+a whole** ("is the average in bounds?", "is the table empty?") — that's
+**table-level**, with one verdict and no per-row sample list.
+
+For built-in checks the level is fixed by the check. For a custom SQL *query*
+you choose **Applies to: Row-level** or **Table-level** yourself. How-to detail:
+[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+
 ## The three levels: Rules → Tables → Collections
 
 DQX Studio is organized into three levels that build on one another. This is the

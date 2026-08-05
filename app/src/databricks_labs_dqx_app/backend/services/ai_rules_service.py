@@ -182,77 +182,103 @@ Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
 # Ported from dqlake's AiAssistMenu backend (backend/routers/ai.py). Predicates are
 # DQX SQL boolean expressions authored in the Rules Registry SQL editor: reusable
 # columns are referenced as {{slot}} placeholders (a registry rule is table-agnostic),
-# and polarity is a separate PASS/FAIL switch. The returned predicate is always
-# re-validated with `is_sql_query_safe` server-side (AGENTS.md 11-SEC) before it can
-# reach the editor — never trust the model's SQL blindly.
-_WRITE_SQL_SYSTEM_TEMPLATE = """\
+# Shared Applies-to (row vs table) guidance for write/improve SQL. The user
+# message carries `granularity: row|dataset`; the model MUST match that shape.
+# The returned predicate is always re-validated with `is_sql_query_safe`
+# server-side (AGENTS.md 11-SEC) before it can reach the editor — never trust
+# the model's SQL blindly.
+_SQL_GRANULARITY_GUIDANCE = """\
+Applies-to (granularity) — follow the `granularity` field in the user message \
+(`row` or `dataset`). When omitted, treat it as `row`.
+
+Row-level (`granularity: row`) — a verdict per input row:
+- Write a boolean expression. STRONGLY PREFER the PASSING case: the expression \
+is TRUE when the row is VALID, and polarity is "pass". Only use polarity "fail" \
+when the passing-case would be substantially more complex/unnatural, or when the \
+user EXPLICITLY frames a failure condition (e.g. "flag rows where amount is \
+negative"). When in doubt, choose "pass".
+- Cross-table: write the boolean expression first, then append one or more JOIN \
+clauses AFTER it, each on its own line. Do NOT write a SELECT.
+- Example — "sales amount, converted via the main.ref.fx_rates table, must stay \
+below 10000":
+{"predicate": "{{amount}} * fx.rate_to_usd < 10000\\nLEFT JOIN main.ref.fx_rates \
+fx ON fx.country_code = {{country_code}}", "polarity": "pass", "slots": \
+[{"name": "amount", "family": "numeric"}, {"name": "country_code", "family": "text"}]}
+
+Table-level (`granularity: dataset`) — one verdict for the whole table:
+- Write a full SELECT that returns EXACTLY ONE row with a boolean column named \
+`condition`. A query that returns one row per input row fails at runtime.
+- Aggregate (COUNT / SUM / AVG / MAX / …, or a WHERE/FILTER that collapses) so \
+the result is a single row. Read the table under test via `FROM {{input_view}}`.
+- In a SELECT, `condition` is TRUE when the check FAILS (a violation). Keep \
+polarity "pass" so that matches DQX `sql_query` (condition TRUE = fail). Only \
+use polarity "fail" when the user EXPLICITLY asks to invert that.
+- JOINs go inside the SELECT (not after a bare predicate). Joined tables stay \
+literal FQNs with aliases; only the table under test's columns are {{placeholders}}.
+- Example — "table must contain fewer than 1000 rows":
+{"predicate": "SELECT COUNT(*) >= 1000 AS condition FROM {{input_view}}", \
+"polarity": "pass", "slots": []}
+- Example — "every amount must convert via main.ref.fx_rates":
+{"predicate": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}} LEFT JOIN \
+main.ref.fx_rates fx ON fx.country_code = {{country_code}} WHERE fx.rate_to_usd \
+IS NULL", "polarity": "pass", "slots": [{"name": "country_code", "family": "text"}]}"""
+
+_WRITE_SQL_SYSTEM_TEMPLATE = f"""\
 You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
 object:
-{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{"name": "<slot_name>", \
-"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}]}
+{{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{{"name": "<slot_name>", \
+"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}}]}}
 
-STRONGLY PREFER writing the predicate for the PASSING case: express the condition that is TRUE \
-when the row is VALID, and set polarity to "pass". This is almost always possible and is the \
-expected default. Only use polarity "fail" (a predicate describing the FAILING rows) when \
-writing the passing-case predicate would be substantially more complex/unnatural, OR when the \
-user's description EXPLICITLY frames it as a failure condition (e.g. "flag rows where amount \
-is negative"). When in doubt, write the passing case with polarity "pass".
+{_SQL_GRANULARITY_GUIDANCE}
 
 Column reference rules:
-- Reference every column OF THE TABLE UNDER TEST as a {{slot}} placeholder — never a bare \
+- Reference every column OF THE TABLE UNDER TEST as a {{{{slot}}}} placeholder — never a bare \
 column identifier. A registry rule is table-agnostic, so its own columns are always placeholders.
 - Prefer the provided declared slot names as-is when they fit.
-
-Cross-table checks (JOINs):
-- When the check needs data from ANOTHER table, write the boolean expression first, then append \
-one or more JOIN clauses AFTER it, each on its own line. Do NOT write a SELECT.
-- Write the joined TABLE as a LITERAL name, never a {{placeholder}}: only the table under test's \
-columns are placeholders, because only they are re-bound per monitored table. Use the \
+- Write a joined TABLE as a LITERAL name, never a {{{{placeholder}}}}: only the table under \
+test's columns are placeholders, because only they are re-bound per monitored table. Use the \
 fully-qualified name the description gives you; when it names no catalog or schema, write \
 `catalog.schema.<table>` verbatim so the author can see exactly what to replace.
 - Give every joined table a short alias, and reference the joined table's own columns as \
 `alias.column` (raw identifiers).
-- Example — "sales amount, converted via the main.ref.fx_rates table, must stay below 10000":
-{"predicate": "{{amount}} * fx.rate_to_usd < 10000\\nLEFT JOIN main.ref.fx_rates fx ON \
-fx.country_code = {{country_code}}", "polarity": "pass", "slots": [{"name": "amount", \
-"family": "numeric"}, {"name": "country_code", "family": "text"}]}
 
 "slots" rules:
-- Declare EVERY {{placeholder}} that appears in your predicate, and nothing else.
+- Declare EVERY {{{{placeholder}}}} that appears in your predicate, and nothing else.
 - Reuse the caller's declared slot names (and their intent) wherever they fit.
 - Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
 any when unsure.
 
 Safety rules:
-- No SELECT, no semicolons, no trailing punctuation, and no DDL/DML \
-(DROP/DELETE/INSERT/UPDATE/CREATE/ALTER/TRUNCATE/MERGE/GRANT/REVOKE)."""
+- No semicolons, no trailing punctuation, and no DDL/DML \
+(DROP/DELETE/INSERT/UPDATE/CREATE/ALTER/TRUNCATE/MERGE/GRANT/REVOKE).
+- Row-level: no SELECT.
+- Table-level: SELECT is required (and must aggregate to one row); still no DDL/DML."""
 
-_IMPROVE_SQL_SYSTEM_TEMPLATE = """\
+_IMPROVE_SQL_SYSTEM_TEMPLATE = f"""\
 You refine a DQX SQL boolean predicate per the user's instruction. Respond with ONLY a JSON \
 object:
-{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{"name": "<slot_name>", \
-"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}]}
+{{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{{"name": "<slot_name>", \
+"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}}]}}
 
-Keep every reference to a column of the table under test as a {{slot}} placeholder; keep \
-declared slot names unchanged. STRONGLY PREFER writing the predicate for the PASSING case: set \
-"polarity" to "pass" when the predicate is TRUE for a VALID row (the expected default). Only use \
-"fail" when the passing-case predicate would be substantially more complex/unnatural, or when \
-the user's instruction EXPLICITLY describes a failure condition; when in doubt choose "pass".
+Keep every reference to a column of the table under test as a {{{{slot}}}} placeholder; keep \
+declared slot names unchanged.
 
-Cross-table checks (JOINs):
-- The predicate may be followed by JOIN clauses on their own lines when the check spans tables. \
-Preserve any that are already there, INCLUDING the joined table's name exactly as written.
-Do NOT write a SELECT.
-- A joined TABLE is a literal catalog.schema.table name, never a {{placeholder}}; reference its \
-columns as `alias.column`.
+{_SQL_GRANULARITY_GUIDANCE}
+
+When refining, match the requested granularity even if the current text is the other shape \
+(e.g. rewrite a row-level predicate+JOIN into a one-row aggregate SELECT when \
+`granularity: dataset`, or the reverse when `granularity: row`). Preserve any joined table's \
+name exactly as written.
 
 "slots" rules:
-- Declare EVERY {{placeholder}} that appears in your predicate, and nothing else.
+- Declare EVERY {{{{placeholder}}}} that appears in your predicate, and nothing else.
 - Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
 any when unsure.
 
 Safety rules:
-- No SELECT, no semicolons, no trailing punctuation, and no DDL/DML."""
+- No semicolons, no trailing punctuation, and no DDL/DML.
+- Row-level: no SELECT.
+- Table-level: SELECT is required (and must aggregate to one row); still no DDL/DML."""
 
 _EXPLAIN_SQL_SYSTEM_TEMPLATE = """\
 Explain a DQX SQL boolean predicate for a data steward in plain language. Aim for one sentence; \
@@ -1200,11 +1226,16 @@ class AiRulesService:
         user_email: str,
         columns: list[str] | None = None,
         table_fqn: str | None = None,
+        granularity: str | None = None,
     ) -> SqlPredicateResult:
         """Write a SQL predicate for a rule from a natural-language description.
 
         Returns ``{"predicate": <str>, "polarity": "pass"|"fail"|None}``. The predicate is
         always re-validated with :func:`is_sql_query_safe` before being returned.
+
+        ``granularity`` is the SQL editor's Applies-to toggle (``row`` | ``dataset``);
+        it is forwarded into the prompt so the model emits row-level predicate(+JOIN)
+        syntax or a one-row aggregate SELECT as appropriate.
 
         Raises:
             AIUnavailableError: AI is disabled or unconfigured.
@@ -1213,7 +1244,7 @@ class AiRulesService:
             ValueError: the model returned no predicate, or an unsafe one.
         """
         schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
-        context = self._build_sql_context(description, schema_info, columns)
+        context = self._build_sql_context(description, schema_info, columns, granularity)
         content = await self._gateway.query(
             user_email=user_email,
             purpose="write_sql",
@@ -1232,11 +1263,15 @@ class AiRulesService:
         instruction: str,
         user_email: str,
         columns: list[str] | None = None,
+        granularity: str | None = None,
     ) -> SqlPredicateResult:
         """Refine an existing SQL predicate per a free-text instruction.
 
         Returns ``{"predicate": <str>, "polarity": "pass"|"fail"|None}``. The refined
         predicate is always re-validated with :func:`is_sql_query_safe` before being returned.
+
+        ``granularity`` is the SQL editor's Applies-to toggle (``row`` | ``dataset``);
+        when set, the model is instructed to keep (or convert to) that shape.
 
         Raises:
             AIUnavailableError: AI is disabled or unconfigured.
@@ -1247,6 +1282,7 @@ class AiRulesService:
         parts = [f"current_predicate: {predicate}", f"instruction: {instruction}"]
         if columns:
             parts.append(f"declared_columns: {json.dumps(columns)}")
+        parts.append(f"granularity: {self._normalize_sql_granularity(granularity)}")
         content = await self._gateway.query(
             user_email=user_email,
             purpose="improve_sql",
@@ -1287,12 +1323,23 @@ class AiRulesService:
         return explanation.strip()
 
     @staticmethod
-    def _build_sql_context(description: str, schema_info: str, columns: list[str] | None) -> str:
+    def _normalize_sql_granularity(granularity: str | None) -> str:
+        """Map the editor's Applies-to toggle to the prompt token; default to row."""
+        return granularity if granularity in ("row", "dataset") else "row"
+
+    @staticmethod
+    def _build_sql_context(
+        description: str,
+        schema_info: str,
+        columns: list[str] | None,
+        granularity: str | None = None,
+    ) -> str:
         parts = [f"description: {description}"]
         if columns:
             parts.append(f"declared_columns: {json.dumps(columns)}")
         if schema_info:
             parts.append(f"schema_info: {schema_info}")
+        parts.append(f"granularity: {AiRulesService._normalize_sql_granularity(granularity)}")
         return "\n".join(parts)
 
     @staticmethod

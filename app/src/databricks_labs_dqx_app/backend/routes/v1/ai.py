@@ -121,6 +121,7 @@ async def ai_write_sql(
             user_email=user_email,
             columns=body.columns,
             table_fqn=body.table_fqn,
+            granularity=body.granularity,
         )
         return AiSqlOut(**result)
     except AIUnavailableError as e:
@@ -155,6 +156,7 @@ async def ai_improve_sql(
             instruction=body.instruction,
             user_email=user_email,
             columns=body.columns,
+            granularity=body.granularity,
         )
         return AiSqlOut(**result)
     except AIUnavailableError as e:

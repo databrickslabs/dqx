@@ -795,7 +795,33 @@ class TestWriteSql:
         }
         assert gateway.query.call_args.kwargs["purpose"] == "write_sql"
         # Declared slots are forwarded so the model reuses them as {{slot}}s.
-        assert "amount" in gateway.query.call_args.kwargs["messages"][-1]["content"]
+        content = gateway.query.call_args.kwargs["messages"][-1]["content"]
+        assert "amount" in content
+        # Applies-to defaults to row when the caller omits it.
+        assert "granularity: row" in content
+
+    async def test_forwards_dataset_granularity_in_user_context(self):
+        gateway = _gateway_returning(
+            json.dumps(
+                {
+                    "predicate": "SELECT COUNT(*) >= 1000 AS condition FROM {{input_view}}",
+                    "polarity": "pass",
+                    "slots": [],
+                }
+            )
+        )
+        service = _service(gateway)
+
+        result = await service.write_sql(
+            description="table must stay under 1000 rows",
+            user_email="a@x",
+            granularity="dataset",
+        )
+
+        assert "SELECT COUNT(*) >= 1000 AS condition" in result["predicate"]
+        content = gateway.query.call_args.kwargs["messages"][-1]["content"]
+        assert "granularity: dataset" in content
+        assert "granularity: row" not in content
 
     async def test_cross_table_join_names_the_table_outright_not_as_a_slot(self):
         """A joined table is written as a literal FQN, so it declares no slot.
@@ -904,6 +930,28 @@ class TestImproveSql:
         content = gateway.query.call_args.kwargs["messages"][-1]["content"]
         assert "cap it at 100" in content
         assert "{{amount}} > 0" in content
+        assert "granularity: row" in content
+
+    async def test_forwards_dataset_granularity_in_user_context(self):
+        gateway = _gateway_returning(
+            json.dumps(
+                {
+                    "predicate": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}} WHERE {{amount}} IS NULL",
+                    "polarity": "pass",
+                }
+            )
+        )
+        service = _service(gateway)
+
+        await service.improve_sql(
+            predicate="{{amount}} IS NOT NULL",
+            instruction="make it table-level",
+            user_email="a@x",
+            granularity="dataset",
+        )
+
+        content = gateway.query.call_args.kwargs["messages"][-1]["content"]
+        assert "granularity: dataset" in content
 
     async def test_unsafe_refinement_is_rejected(self):
         gateway = _gateway_returning(json.dumps({"predicate": "1=1; DELETE FROM t"}))
@@ -986,6 +1034,22 @@ class TestPassPreferencePrompts:
         assert "never a {{placeholder}}" in _WRITE_SQL_SYSTEM_TEMPLATE
         assert "catalog.schema.<table>" in _WRITE_SQL_SYSTEM_TEMPLATE
         assert '"slots"' in _WRITE_SQL_SYSTEM_TEMPLATE
+
+    def test_sql_templates_teach_row_and_dataset_granularity(self):
+        """Write/Improve must teach both Applies-to shapes so the editor toggle sticks.
+
+        Row-level stays a boolean (+ optional JOINs, no SELECT). Table-level must
+        be a one-row aggregate SELECT with a `condition` column — otherwise DQX
+        raises when the query returns one row per input row.
+        """
+        for template in (_WRITE_SQL_SYSTEM_TEMPLATE, _IMPROVE_SQL_SYSTEM_TEMPLATE):
+            assert "granularity: row" in template
+            assert "granularity: dataset" in template
+            assert "EXACTLY ONE row" in template
+            assert "{{input_view}}" in template
+            assert "AS condition" in template
+            assert "Row-level: no SELECT" in template
+            assert "Table-level: SELECT is required" in template
 
 
 class TestPolarityDefaultsToPass:

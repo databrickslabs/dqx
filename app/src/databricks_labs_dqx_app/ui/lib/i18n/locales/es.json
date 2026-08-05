@@ -1645,6 +1645,8 @@
     "toastCreated": "Regla creada como borrador.",
     "toastUpdated": "Regla actualizada.",
     "saveFailed": "No se pudo guardar la regla.",
+    "toastSavedSubmitFailed": "La regla se guardó, pero no se pudo enviar a revisión: {{error}}",
+    "submitNoRevisionTooltip": "No hay nada que revisar: este cambio se aplica en cuanto lo guardas. Solo los cambios en la lógica o los metadatos de la regla crean una nueva versión que aprobar.",
     "dialogSrDescription": "Crea o edita una regla de calidad de datos reutilizable.",
     "createTitle": "Nueva regla del registro",
     "editTitle": "Editar borrador de regla",
@@ -2188,6 +2190,9 @@
     "suggestRulesToggleAll": "Alternar todos {{label}}",
     "suggestRulesSelectedCount": "{{selected}} de {{total}} seleccionados",
     "suggestRulesAddAllButton": "Agregar todas las comprobaciones",
+    "suggestRulesAddMandatoryButton_one": "Agregar regla obligatoria",
+    "suggestRulesAddMandatoryButton_other": "Agregar {{count}} reglas obligatorias",
+    "suggestRulesMandatoryBadge": "Obligatoria",
     "wizard": {
       "title": "Supervisar tablas",
       "description": "Selecciona la(s) tabla(s) para aplicar reglas y monitorear",

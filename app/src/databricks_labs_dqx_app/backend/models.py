@@ -176,6 +176,13 @@ class AiWriteSqlIn(BaseModel):
         description="Declared reusable slot names ({{slot}}) the predicate may reference",
     )
     table_fqn: str | None = Field(default=None, description="Optional fully qualified table name for schema context")
+    granularity: Literal["row", "dataset"] | None = Field(
+        default=None,
+        description=(
+            "Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' "
+            "(one table-level verdict). When omitted, the model defaults to row-level syntax."
+        ),
+    )
 
 
 class AiImproveSqlIn(BaseModel):
@@ -191,6 +198,13 @@ class AiImproveSqlIn(BaseModel):
         default=None,
         max_length=200,
         description="Declared reusable slot names ({{slot}}) the predicate may reference",
+    )
+    granularity: Literal["row", "dataset"] | None = Field(
+        default=None,
+        description=(
+            "Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' "
+            "(one table-level verdict). When omitted, the model defaults to row-level syntax."
+        ),
     )
 
 

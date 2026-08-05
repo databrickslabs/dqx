@@ -173,6 +173,8 @@ Expand it when your rule needs more than a plain condition:
   This is how referential checks work — for example "every `product_id` in orders
   must exist in the products table". You point at the reference table and the
   columns to match on, and DQX Studio compares against it when the rule runs.
+  See [Cross-table rules](/docs/studio/authoring/cross-table-rules) for the full
+  picture (built-in check, visual join, and SQL).
 
 Most rules never need the Advanced box — reach for it when a rule has to target a
 subset of rows or look something up in another table.
@@ -180,47 +182,40 @@ subset of rows or look something up in another table.
 ### Custom SQL
 
 For advanced users: when even the condition builder can't express what you need,
-write the condition directly in SQL. This gives you full control for cases the
-visual builder doesn't cover — for example a window calculation or a lookup.
+choose **SQL** under Custom condition. You can write either:
+
+- a **plain condition** over placeholders (always
+  [row-level](/docs/studio/authoring/row-and-table-level)), or
+- a **full query** (`SELECT … FROM {{input_view}} …`), where you set
+  **Applies to** to **Row-level** or **Table-level**.
+
+This is also the path for complex
+[cross-table](/docs/studio/authoring/cross-table-rules) comparisons. The query
+must be a single read-only `SELECT` — DQX Studio rejects anything that writes or
+runs multiple statements.
 
 ## Cross-table rules
 
-Some checks span two (or more) tables. There are three ways to write one:
+Some checks span two (or more) tables — for example "every order points at a
+real customer", or "a line item's price matches the catalogue".
 
-- **A referential integrity check** — the built-in "value exists in a reference
-  table" (foreign-key) check. Pick it in the check catalog and point it at the
-  reference table and matching columns. Best for the common "every `product_id`
-  in orders exists in products" case.
-- **The condition builder's Advanced box** — its *Join / reference another
-  table* option, when the cross-table lookup is part of a larger condition.
-- **A cross-table SQL rule** — for comparisons or aggregates that neither of the
-  above can express (see below).
+There are three ways to write one:
 
-### Cross-table SQL rules
+- **A built-in referential check** — "value exists in a reference table"
+  (foreign-key style). Best for the common case.
+- **The visual builder's Advanced → Joins** — when the lookup is part of a
+  larger condition.
+- **Custom SQL** — for comparisons or aggregates the builder can't express.
+  Read the monitored table with `FROM {{input_view}}`, name joined tables with
+  a fully qualified `catalog.schema.table`, and (for a full query) return a
+  boolean `condition` column where `TRUE` means fail. You can also write a
+  boolean expression followed by `JOIN` clauses and let Studio wrap it.
 
-Choose the **SQL** authoring mode and write a query that joins the tables and
-returns the rows that *fail*. Everything else — name, dimension, severity,
-review — works exactly as it does for any other rule. The query must be a single
-read-only `SELECT` (DQX Studio rejects anything that writes or runs multiple
-statements).
-
-Row-level examples with a basic join:
-
-```sql
--- Orphaned orders: a customer_id with no matching customer
-SELECT o.*
-FROM orders o
-LEFT JOIN customers c ON o.customer_id = c.id
-WHERE c.id IS NULL
-```
-
-```sql
--- Line item priced differently from the product's catalogue price
-SELECT i.*
-FROM order_items i
-JOIN products p ON i.product_id = p.id
-WHERE i.unit_price <> p.list_price
-```
+Step-by-step examples (including row-level vs table-level SQL, permissions, and
+common pitfalls) live on
+[Cross-table rules](/docs/studio/authoring/cross-table-rules). For when to use
+**Row-level** vs **Table-level**, see
+[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
 
 ## Generate a rule with AI
 

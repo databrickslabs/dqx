@@ -179,6 +179,11 @@ export interface AiGenerateRuleOut {
 export type AiImproveSqlInColumns = string[] | null;
 
 /**
+ * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax.
+ */
+export type AiImproveSqlInGranularity = 'row' | 'dataset' | null;
+
+/**
  * Request body for AI-improving an existing SQL predicate per a free-text instruction.
  */
 export interface AiImproveSqlIn {
@@ -196,6 +201,8 @@ export interface AiImproveSqlIn {
   instruction: string;
   /** Declared reusable slot names ({{slot}}) the predicate may reference */
   columns?: AiImproveSqlInColumns;
+  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax. */
+  granularity?: AiImproveSqlInGranularity;
 }
 
 export type AiSettingsInAiEnabled = boolean | null;
@@ -293,6 +300,11 @@ export type AiWriteSqlInColumns = string[] | null;
 export type AiWriteSqlInTableFqn = string | null;
 
 /**
+ * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax.
+ */
+export type AiWriteSqlInGranularity = 'row' | 'dataset' | null;
+
+/**
  * Request body for AI-writing a SQL predicate for a rule from a natural-language description.
  */
 export interface AiWriteSqlIn {
@@ -306,6 +318,8 @@ export interface AiWriteSqlIn {
   columns?: AiWriteSqlInColumns;
   /** Optional fully qualified table name for schema context */
   table_fqn?: AiWriteSqlInTableFqn;
+  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax. */
+  granularity?: AiWriteSqlInGranularity;
 }
 
 export type AnomalyConfigColumns = string[] | null;

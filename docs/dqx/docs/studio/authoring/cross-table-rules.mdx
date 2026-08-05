@@ -1,0 +1,229 @@
+---
+sidebar_position: 2
+title: Cross-table rules
+---
+
+import Admonition from '@theme/Admonition';
+
+# Cross-table rules
+
+A **cross-table rule** checks that data in one table is consistent with data in
+another — for example "every order points at a real customer", or "a line item's
+price matches the product catalogue".
+
+You still author the rule once in the [Rules Registry](/docs/studio/authoring/create-a-rule)
+and [apply it to a monitored table](/docs/studio/monitoring/assign-rules). The
+monitored table is the one being checked; the other table is a **reference**
+(joined or looked up) while the rule runs.
+
+There are three ways to write a cross-table rule. Start with the simplest that
+covers your case.
+
+## Pick the right approach
+
+| What you need | Use |
+| ------------- | --- |
+| Every value in a column must exist in another table (foreign-key style) | A **built-in referential check** |
+| A condition that also looks up another table (for example "status is active **and** the product exists") | The **visual builder** with a join in Advanced |
+| A comparison, aggregate, or multi-table query the builder can't express | **Custom SQL** |
+
+<Admonition type="tip" title="New to rule authoring?">
+Start with [Create a rule](/docs/studio/authoring/create-a-rule) for the overall
+flow (About → Implementation → Test → Save). This page only covers the
+cross-table parts of Implementation.
+</Admonition>
+
+## Built-in referential check
+
+For the common case — "every `product_id` in orders exists in products":
+
+1. Open **Rules** → **New rule**, fill in the About tab, then go to
+   **Implementation**.
+2. Under **Condition**, open the check picker and choose the built-in check that
+   requires a value to **exist in a reference table** (foreign-key style).
+3. Point it at the **reference table** and the columns to match on.
+4. Test, save, and apply the rule to the monitored table as usual.
+
+This is the no-code path. Prefer it whenever a simple "must exist over there"
+expectation is enough — it is faster to author and usually cheaper to run than
+an equivalent join in SQL.
+
+## Visual builder with a join
+
+Use this when the cross-table lookup is part of a larger condition — for example
+chaining several checks with `AND` / `OR`, or filtering which rows to evaluate.
+
+1. In **Condition**, choose **Custom condition** (or start from the visual
+   builder after picking Custom condition).
+2. Build the main condition as usual with column placeholders such as
+   `{{product_id}}`.
+3. Open **Advanced** → **Joins**, click **Add join**, and pick the reference
+   table (catalog → schema → table).
+4. Set the join keys (which column on the monitored table matches which column
+   on the joined table).
+5. Use the joined columns in your condition where needed.
+
+When you apply the rule later, you only map the monitored table's placeholders
+to real columns. The joined table is already named in the rule.
+
+<Admonition type="note" title="Joins keep the rule row-level">
+Adding a join in the builder does **not** turn the rule into a single
+table-wide verdict. Results are still matched back to individual rows using the
+join keys. See
+[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+</Admonition>
+
+## Custom SQL
+
+Choose **SQL** from the check picker (under **Custom condition**) when you need
+full control — for example a price comparison across tables, or an aggregate
+that spans a join.
+
+### How to reference tables and columns
+
+- **The table being checked** — in a full SQL query, read it with
+  `FROM {{input_view}}`. That placeholder becomes the monitored table when the
+  rule runs (you don't hard-code its name in the rule).
+- **Columns of the monitored table** — reusable placeholders such as
+  `{{customer_id}}` or `{{unit_price}}`. You map those when you apply the rule.
+- **Joined / reference tables** — use a **fully qualified name**
+  (`catalog.schema.table`). Write that name in the SQL, or declare the join in
+  **Advanced → Joins**.
+
+You can either declare the join in **Advanced → Joins** *or* write the `JOIN`
+yourself in the SQL editor — **not both**. Declaring the same join twice
+produces invalid SQL.
+
+### Two shapes of SQL
+
+Studio accepts either:
+
+1. **A boolean expression, optionally followed by `JOIN` clauses** — the
+   expression is TRUE when the row is **valid**. Studio wraps it into a query
+   for you (inverting it into a `condition` column that marks failures).
+2. **A full `SELECT`** — you own the query. It must return a boolean column
+   named `condition`, where **`condition` is TRUE when the check fails**.
+
+Both shapes are single read-only statements. DQX Studio rejects anything that
+writes data or runs multiple statements.
+
+### Row-level SQL — predicate + join (simplest)
+
+Write the **passing** case as a boolean expression, then append the join. Set
+**Applies to** to **Row-level** and choose the key columns to **merge results
+back on**.
+
+```sql
+-- Orphaned orders: customer_id must match a real customer
+{{customer_id}} IS NOT NULL AND c.id IS NOT NULL
+LEFT JOIN catalog.schema.customers c ON c.id = {{customer_id}}
+```
+
+```sql
+-- Line item priced the same as the product catalogue
+{{unit_price}} = p.list_price
+JOIN catalog.schema.products p ON p.id = {{product_id}}
+```
+
+Studio turns that into a `SELECT … AS condition FROM {{input_view}} …` under the
+hood, projecting your merge keys so failures can be attributed to individual
+rows.
+
+### Row-level SQL — full query
+
+When you need aggregates per key, filters, or more control, write the full
+`SELECT` yourself. Include every **merge column** in the select list, plus a
+boolean `condition` column (`TRUE` = fail).
+
+```sql
+-- Orphaned orders, written as a full query
+SELECT
+  o.{{order_id}},
+  o.{{customer_id}},
+  (c.id IS NULL) AS condition
+FROM {{input_view}} o
+LEFT JOIN catalog.schema.customers c ON o.{{customer_id}} = c.id
+```
+
+```sql
+-- Line item priced differently from the product catalogue
+SELECT
+  i.{{order_item_id}},
+  i.{{product_id}},
+  (i.{{unit_price}} <> p.list_price) AS condition
+FROM {{input_view}} i
+JOIN catalog.schema.products p ON i.{{product_id}} = p.id
+```
+
+### Table-level SQL
+
+One verdict for the whole table. Set **Applies to** to **Table-level**. The
+query must aggregate to **exactly one row** and return a boolean `condition`
+(`TRUE` = fail).
+
+```sql
+-- Fail the whole table if any order has no matching customer
+SELECT COUNT(*) > 0 AS condition
+FROM {{input_view}} o
+LEFT JOIN catalog.schema.customers c ON o.{{customer_id}} = c.id
+WHERE c.id IS NULL
+```
+
+```sql
+-- Fail if more than 1% of line items disagree with the catalogue price
+SELECT
+  (SUM(CASE WHEN i.{{unit_price}} <> p.list_price THEN 1 ELSE 0 END)
+    * 1.0 / COUNT(*)) > 0.01 AS condition
+FROM {{input_view}} i
+JOIN catalog.schema.products p ON i.{{product_id}} = p.id
+```
+
+<Admonition type="caution" title="Match the switch to the query">
+**Row-level** without merge keys, or **Table-level** without a single aggregated
+row, fails when the rule runs. The editor warns about these cases — don't ignore
+those messages. For more on when to pick each level, see
+[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+</Admonition>
+
+### Write or improve SQL with AI
+
+In the SQL editor, use **Write with AI** / **Improve** to draft a cross-table
+predicate from a plain-English description. Mention:
+
+- the **fully qualified** reference table (`catalog.schema.table`)
+- whether the check should be **row-level** or **table-level** (the **Applies
+  to** toggle is sent to the model as context)
+
+Always review the generated SQL and run **Test** before saving.
+
+## Permissions you need
+
+Cross-table rules read more than the monitored table:
+
+- **You** need `SELECT` on the monitored table *and* every reference table you
+  join (authoring and testing run as you).
+- The **app identity** that runs scheduled checks also needs `SELECT` on those
+  reference tables, or scheduled runs will fail even when your interactive test
+  passed.
+
+If a table isn't offered in the join picker, it's a Unity Catalog permissions
+question — see
+[Permissions & entitlements](/docs/studio/governance/permissions-and-entitlements).
+
+## Common pitfalls
+
+| Symptom | Likely cause |
+| ------- | ------------ |
+| "Declare the join in the card below or write it in the query — not both" | The same join is declared in **Advanced → Joins** *and* typed in the SQL. Pick one. |
+| Query uses columns of the table being checked but never reads it | A full `SELECT` forgot `FROM {{input_view}}`. |
+| Rule fails at runtime with a single-row / merge error | **Applies to** doesn't match the query shape (row-level needs merge keys in the `SELECT`; table-level must return exactly one row). |
+| Test works, scheduled run fails | The schedule runs as the app identity, which may lack `SELECT` on the reference table. |
+| Unexpected failures after a join | Remember: in a full `SELECT`, `condition` is TRUE when the check **fails**. Don't invert it by accident. |
+
+## After you save
+
+Cross-table rules follow the same path as any other rule: test on sample data,
+save as draft or submit for approval, then
+[apply the rule](/docs/studio/monitoring/assign-rules) to the monitored table.
+To understand how row-level vs table-level choices show up in results, see
+[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,6 +85,12 @@ function rowsToRecord(rows: Row[]): Record<string, string> {
   return out;
 }
 
+/** Order-insensitive content signature, so re-sync compares by value rather
+ *  than by object identity (callers often pass a freshly built map). */
+function recordSignature(rec: Record<string, string>): string {
+  return JSON.stringify(Object.entries(rec).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 export function LabelsEditor({
   value,
   onChange,
@@ -112,6 +118,25 @@ export function LabelsEditor({
     if (defaultOpen) setOpen(true);
   }, [defaultOpen]);
 
+  // Same async-hydration problem as `defaultOpen` above, for the rows
+  // themselves: `useState` only seeds them from the FIRST `value` it sees,
+  // which for an existing rule is the empty map rendered before that rule's
+  // tags arrive. Without this re-sync the editor keeps reading "No tags
+  // applied" for a rule that does have tags, and the first edit then commits
+  // those stale rows over the real ones — silently dropping the tags.
+  //
+  // `syncedSignature` tracks the content this component is already showing
+  // (seeded here, updated on every local commit) so only an EXTERNAL change
+  // re-seeds. Echoes of our own commits must not, or a row mid-edit would be
+  // rebuilt from the normalized record under the user's cursor.
+  const syncedSignature = useRef(recordSignature(value));
+  useEffect(() => {
+    const signature = recordSignature(value);
+    if (signature === syncedSignature.current) return;
+    syncedSignature.current = signature;
+    setRows(recordToRows(value));
+  }, [value]);
+
   const definitionsMap = useMemo(() => {
     const m = new Map<string, LabelDefinition>();
     for (const d of definitions ?? []) m.set(d.key, d);
@@ -120,8 +145,10 @@ export function LabelsEditor({
   const constrained = definitionsMap.size > 0;
 
   const commit = (next: Row[]) => {
+    const record = rowsToRecord(next);
+    syncedSignature.current = recordSignature(record);
     setRows(next);
-    onChange(rowsToRecord(next));
+    onChange(record);
   };
 
   const addCustomRow = () =>

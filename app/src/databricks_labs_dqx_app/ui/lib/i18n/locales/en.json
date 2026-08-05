@@ -1645,6 +1645,8 @@
     "toastCreated": "Rule created as a draft.",
     "toastUpdated": "Rule updated.",
     "saveFailed": "Failed to save rule.",
+    "toastSavedSubmitFailed": "Rule saved, but it could not be submitted for review: {{error}}",
+    "submitNoRevisionTooltip": "Nothing to review — this change takes effect as soon as you save it. Only edits to the rule's logic or metadata create a new version to approve.",
     "dialogSrDescription": "Create or edit a reusable data quality rule.",
     "createTitle": "New registry rule",
     "editTitle": "Edit draft rule",
@@ -2188,6 +2190,9 @@
     "suggestRulesToggleAll": "Toggle all {{label}}",
     "suggestRulesSelectedCount": "{{selected}} of {{total}} selected",
     "suggestRulesAddAllButton": "Add all checks",
+    "suggestRulesAddMandatoryButton_one": "Add mandatory rule",
+    "suggestRulesAddMandatoryButton_other": "Add {{count}} mandatory rules",
+    "suggestRulesMandatoryBadge": "Mandatory",
     "wizard": {
       "title": "Monitor tables",
       "description": "Select table(s) to apply rules to and monitor",

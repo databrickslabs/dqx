@@ -160,3 +160,37 @@ export function groupSelectState(
   if (on === items.length) return "all";
   return "some";
 }
+
+/** Custom rule label key authors set to mark a published rule as mandatory
+ *  for AI-suggestion UX (`mandatory=yes` on the rule's Tags). */
+export const MANDATORY_TAG_KEY = "mandatory";
+
+const MANDATORY_TRUTHY = new Set(["yes", "true", "1", "y"]);
+
+/** Whether a tag value means "mandatory" (case-insensitive). */
+export function isMandatoryTagValue(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return MANDATORY_TRUTHY.has(value.trim().toLowerCase());
+}
+
+/**
+ * True when *metadata* carries a truthy ``mandatory`` custom label
+ * (e.g. ``mandatory=yes``). Reserved keys like name/dimension/severity are
+ * unrelated — this is only the free-form Tags field on the rule.
+ */
+export function ruleHasMandatoryLabel(metadata: Record<string, unknown> | null | undefined): boolean {
+  if (!metadata) return false;
+  return isMandatoryTagValue(metadata[MANDATORY_TAG_KEY]);
+}
+
+/**
+ * Suggestions whose backing registry rule is tagged mandatory. *isMandatory*
+ * is injected so the caller can resolve rule_id → user_metadata (the
+ * suggestion payload itself does not carry custom tags).
+ */
+export function filterMandatorySuggestions<T extends SuggestedRuleMappingOut>(
+  suggestions: T[],
+  isMandatory: (ruleId: string) => boolean,
+): T[] {
+  return suggestions.filter((s) => isMandatory(s.rule_id));
+}

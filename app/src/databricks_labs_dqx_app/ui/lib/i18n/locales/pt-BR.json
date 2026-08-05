@@ -1645,6 +1645,8 @@
     "toastCreated": "Regra criada como rascunho.",
     "toastUpdated": "Regra atualizada.",
     "saveFailed": "Falha ao salvar a regra.",
+    "toastSavedSubmitFailed": "A regra foi salva, mas não foi possível enviá-la para revisão: {{error}}",
+    "submitNoRevisionTooltip": "Nada a revisar — esta alteração passa a valer assim que você salvar. Somente mudanças na lógica ou nos metadados da regra criam uma nova versão para aprovar.",
     "dialogSrDescription": "Crie ou edite uma regra de qualidade de dados reutilizável.",
     "createTitle": "Nova regra do registro",
     "editTitle": "Editar rascunho da regra",
@@ -2188,6 +2190,9 @@
     "suggestRulesToggleAll": "Alternar todos {{label}}",
     "suggestRulesSelectedCount": "{{selected}} de {{total}} selecionados",
     "suggestRulesAddAllButton": "Adicionar todas as verificações",
+    "suggestRulesAddMandatoryButton_one": "Adicionar regra obrigatória",
+    "suggestRulesAddMandatoryButton_other": "Adicionar {{count}} regras obrigatórias",
+    "suggestRulesMandatoryBadge": "Obrigatória",
     "wizard": {
       "title": "Monitorar tabelas",
       "description": "Selecione a(s) tabela(s) para aplicar regras e monitorar",

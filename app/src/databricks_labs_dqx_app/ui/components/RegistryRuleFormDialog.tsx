@@ -154,8 +154,15 @@ import {
   orderSeverityValuesForDisplay,
   colorFor,
   ColorDot,
+  StatusBadge,
+  ModifiedBadge,
+  RuleVersionBadge,
+  AuthorKindBadge,
+  RuleSourceBadge,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
+import { PrincipalPicker, type PickedPrincipal } from "@/components/permissions/PrincipalPicker";
+import { formatDateShort } from "@/lib/format-utils";
 import {
   buildDqxCheckJson,
   COLUMN_KINDS,
@@ -1689,6 +1696,17 @@ interface RuleEditSnapshot {
   authorKind: CreateRegistryRuleInAuthorKind | undefined;
 }
 
+/**
+ * The subset of a snapshot that a publish actually freezes into
+ * `dq_rule_versions` — i.e. everything except the fields that live only on the
+ * mutable rule row. Diffing two of these answers "is there a revision worth
+ * re-approving?", as opposed to `isDirty`'s "is there anything unsaved?".
+ */
+function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "steward" | "authorKind"> {
+  const { steward: _steward, authorKind: _authorKind, ...publishable } = snapshot;
+  return publishable;
+}
+
 function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
   const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
@@ -2285,9 +2303,18 @@ export function RegistryRuleFormDialog({
     groupBy,
     authorKind,
   };
-  const isDirty =
-    stableStringify(currentSnapshot) !==
-    stableStringify(editingRule ? snapshotFromRule(editingRule) : PRISTINE_NEW_SNAPSHOT);
+  const persistedSnapshot = editingRule ? snapshotFromRule(editingRule) : PRISTINE_NEW_SNAPSHOT;
+  const isDirty = stableStringify(currentSnapshot) !== stableStringify(persistedSnapshot);
+  // Whether anything the APPROVAL GATE cares about changed, which is a strictly
+  // narrower question than `isDirty`. A publish freezes mode / definition /
+  // polarity / user_metadata into `dq_rule_versions`; steward and author_kind
+  // live only on the rule row, so the backend's "modified since publish" check
+  // (`RegistryRuleService._compute_modified`) never looks at them. Reassigning
+  // ownership therefore takes effect on save with nothing left to review — and
+  // submitting it anyway is rejected outright ("No changes to submit"), which
+  // used to surface as a save failure on a save that had in fact succeeded.
+  const publishableDirty =
+    stableStringify(publishablePart(currentSnapshot)) !== stableStringify(publishablePart(persistedSnapshot));
 
   useEffect(() => {
     if (!open) return;
@@ -2488,12 +2515,19 @@ export function RegistryRuleFormDialog({
     severity.trim().length > 0 &&
     dimension.trim().length > 0 &&
     (mode !== "dqx_native" || nativeRequiredParamsFilled);
-  // An already-approved rule with no unsaved edits has nothing to resubmit —
-  // resubmitting would just re-run the (already-passed) approval gate. Disable
-  // Submit in that state, matching the Monitored Table / Table Space headers
-  // (ProductHeader's `submitDisabledNoChanges`). Editing it flips `isDirty`
-  // true and re-enables Submit so an approved rule can still be revised.
-  const submitDisabledNoChanges = sourceRule?.status === "approved" && !isDirty;
+  // An already-approved rule needs an actual REVISION to resubmit —
+  // resubmitting anything else would only re-run the (already-passed) approval
+  // gate to mint an identical vN+1, which the backend rejects outright. Mirrors
+  // the Monitored Table / Table Space headers (ProductHeader's
+  // `submitDisabledNoChanges`).
+  //
+  // Two things count as a revision, and gating on `isDirty` alone got both
+  // wrong: unsaved edits to publishable fields (`publishableDirty` — a
+  // steward-only edit is dirty but NOT a revision), and edits already SAVED
+  // against the published vN (`modified_since_publish` — those leave the form
+  // clean, yet the revision is still waiting to be submitted).
+  const hasRevisionToSubmit = publishableDirty || (sourceRule?.modified_since_publish ?? false);
+  const submitDisabledNoChanges = sourceRule?.status === "approved" && !hasRevisionToSubmit;
 
   // Human-readable lists of exactly which field(s) each gate is still
   // waiting on, surfaced as tooltips on the disabled buttons (see
@@ -2947,8 +2981,22 @@ export function RegistryRuleFormDialog({
         }
       }
       if (thenSubmit) {
-        await submitMutation.mutateAsync({ ruleId });
-        toast.success(t("rulesRegistry.toastSubmitted"));
+        try {
+          await submitMutation.mutateAsync({ ruleId });
+          toast.success(t("rulesRegistry.toastSubmitted"));
+        } catch (submitErr) {
+          // The rule itself is already persisted at this point — only the
+          // hand-off to the approval gate failed (e.g. the backend found no
+          // publishable revision to review). Say exactly that instead of
+          // falling through to the generic "Failed to save rule", which
+          // implies the edit was lost when it wasn't.
+          toast.error(
+            t("rulesRegistry.toastSavedSubmitFailed", {
+              error: extractApiError(submitErr, t("rulesRegistry.saveFailed")),
+            }),
+            { duration: 8000 },
+          );
+        }
       }
 
       // Write steward grant(s) after the rule is persisted (so `ruleId` is
@@ -3060,12 +3108,17 @@ export function RegistryRuleFormDialog({
     </>
   );
 
+  // Shape PermissionsTab builds for its own picker — reused so About can edit
+  // steward in place without inventing a second principal representation.
+  const stewardPickerValue: PickedPrincipal | null = steward
+    ? { principal_id: "", principal_type: "user", principal_name: stewardDisplayName || steward }
+    : null;
+
   // Field order mirrors dqlake's AboutTab: Name, Description, a divider,
   // then Default Severity before Dimension — each picker shows the same
   // colored dot dqlake renders next to the selected value (sourced from the
   // label definition's configured value_colors, same data DQX already uses
-  // for badges elsewhere). Steward now lives on its own Permissions tab (see
-  // permissionsTabContent below), alongside the UC-style grants surface.
+  // for badges elsewhere). Steward is also editable here (and on Permissions).
   const aboutTabContent = (
     <div className="space-y-4 pt-2">
       <div className="space-y-2">
@@ -3250,11 +3303,114 @@ export function RegistryRuleFormDialog({
         definitions={tagDefinitions}
       />
 
-      {/* The "Details" provenance block (status, version, applied-to,
-          steward, author/source, timestamps, rule id) was removed from the
-          About tab — governance/provenance lives on the dedicated tabs
-          (Permissions owns steward editing), keeping About focused on the
-          rule's descriptive metadata. */}
+      {/* Provenance for a SAVED rule, mirroring the monitored-table About tab
+          (same <dl> grid, same label casing) so a rule reads like every other
+          governed object. Every row EXCEPT steward reflects `sourceRule` — the
+          last-persisted rule — not the in-progress edit state above it, so an
+          unsaved rename never makes the panel claim an update that hasn't
+          happened. Steward is the one editable field, so it reads the edit
+          state instead. Absent entirely while creating, since a rule that
+          doesn't exist yet has no provenance to show. */}
+      {sourceRule && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold">{t("rulesRegistry.aboutMetadataTitle")}</h2>
+            <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutStatus")}</dt>
+              <dd className="flex flex-wrap items-center gap-1.5">
+                <StatusBadge status={sourceRule.status} />
+                {sourceRule.modified_since_publish && <ModifiedBadge version={sourceRule.version} />}
+              </dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutVersion")}</dt>
+              <dd>
+                {sourceRule.version > 0 ? (
+                  <RuleVersionBadge version={sourceRule.version} />
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </dd>
+
+              {/* How many monitored tables currently apply this rule. Uses the
+                  viewer-independent `applied_to_count` (not per_table.length,
+                  which is filtered to the viewer's catalogs) so two people
+                  never see a different blast radius for the same rule.
+                  Undefined while the score query is in flight or failed — an
+                  em dash, not a zero, since "not loaded" and "applied nowhere"
+                  mean opposite things. */}
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAppliedTo")}</dt>
+              <dd>
+                {ruleScore?.applied_to_count === undefined ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : ruleScore.applied_to_count === 0 ? (
+                  <span className="text-muted-foreground italic">{t("rulesRegistry.aboutAppliedToNone")}</span>
+                ) : (
+                  t("rulesRegistry.aboutAppliedToTables", { count: ruleScore.applied_to_count })
+                )}
+              </dd>
+
+              {/* Editable in place, like the monitored-table About tab. Only
+                  the steward FIELD is set here; grant side-effects of a
+                  handover stay on the Permissions tab. A change made here
+                  therefore discards any intent stashed there. */}
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSteward")}</dt>
+              <dd>
+                {readOnly ? (
+                  stewardDisplayName ||
+                  steward || <span className="text-muted-foreground italic">{t("rulesRegistry.aboutStewardNone")}</span>
+                ) : (
+                  <PrincipalPicker
+                    value={stewardPickerValue}
+                    className="w-full max-w-xs h-8 text-xs"
+                    onSelect={(p) => {
+                      // Identity is the email/username; display_name is only for
+                      // rendering. Groups have no `secondary`, hence the fallback.
+                      setSteward(p.secondary ?? p.display_name);
+                      setStewardDisplayName(p.display_name);
+                      setStewardGrantIntent(null);
+                    }}
+                    onClear={() => {
+                      setSteward("");
+                      setStewardDisplayName("");
+                      setStewardGrantIntent(null);
+                    }}
+                  />
+                )}
+              </dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutAuthor")}</dt>
+              <dd>
+                {sourceRule.author_kind ? (
+                  <AuthorKindBadge authorKind={sourceRule.author_kind} />
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutSource")}</dt>
+              <dd>
+                <RuleSourceBadge source={sourceRule.source} />
+              </dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedBy")}</dt>
+              <dd>{sourceRule.created_by || t("rulesRegistry.aboutUnknown")}</dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutCreatedAt")}</dt>
+              <dd>{sourceRule.created_at ? formatDateShort(sourceRule.created_at) : t("rulesRegistry.aboutUnknown")}</dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedBy")}</dt>
+              <dd>{sourceRule.updated_by || t("rulesRegistry.aboutUnknown")}</dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutUpdatedAt")}</dt>
+              <dd>{sourceRule.updated_at ? formatDateShort(sourceRule.updated_at) : t("rulesRegistry.aboutUnknown")}</dd>
+
+              <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutRuleId")}</dt>
+              <dd className="font-mono break-all">{sourceRule.rule_id}</dd>
+            </dl>
+          </section>
+        </>
+      )}
     </div>
   );
 
@@ -4026,6 +4182,7 @@ export function RegistryRuleFormDialog({
               <SqlAiAssistMenu
                 predicate={sqlPredicate}
                 slots={sqlSlots}
+                granularity={effectiveGranularity}
                 onPredicateReplace={setSqlPredicate}
                 onPolarityChange={setPolarity}
                 onSlotsDeclare={(aiSlots) => setSqlSlots((prev) => mergeAiDeclaredSlots(prev, aiSlots, filter))}
@@ -4699,6 +4856,29 @@ export function RegistryRuleFormDialog({
     );
   };
 
+  // A disabled Submit explains itself when the form is untouched, but not when
+  // the form IS dirty and the edit simply isn't something the approval gate has
+  // any say over (see `hasRevisionToSubmit`) — without a reason that reads as a
+  // rule that refuses to save. Skipped when `canSubmit` is false, so this never
+  // stacks a second tooltip on top of the missing-fields one.
+  const withNoRevisionTooltip = (button: ReactNode) => {
+    if (!submitDisabledNoChanges || !isDirty || !canSubmit) return button;
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="inline-flex">
+              {button}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <p>{t("rulesRegistry.submitNoRevisionTooltip")}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
   // Save-draft + submit buttons, shared by the dialog footer and the page
   // header. `showSubmitIcon` adds the Send glyph on the submit button to match
   // the MT/TS header treatment; the dialog footer keeps its icon-less look by
@@ -4750,18 +4930,20 @@ export function RegistryRuleFormDialog({
             "rulesRegistry.canSubmitMissingFieldsTooltip",
           )
         ) : (
-          withMissingFieldsTooltip(
-            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
-              {willAutoApprove
-                ? t("rulesRegistry.saveAndPublish")
-                : isPublishedRevision
-                  ? t("rulesRegistry.saveAndSubmitReview")
-                  : t("rulesRegistry.saveAndSubmit")}
-            </Button>,
-            !canSubmit,
-            missingSubmitFieldLabels,
-            "rulesRegistry.canSubmitMissingFieldsTooltip",
+          withNoRevisionTooltip(
+            withMissingFieldsTooltip(
+              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
+                {willAutoApprove
+                  ? t("rulesRegistry.saveAndPublish")
+                  : isPublishedRevision
+                    ? t("rulesRegistry.saveAndSubmitReview")
+                    : t("rulesRegistry.saveAndSubmit")}
+              </Button>,
+              !canSubmit,
+              missingSubmitFieldLabels,
+              "rulesRegistry.canSubmitMissingFieldsTooltip",
+            ),
           )
         )}
       </>

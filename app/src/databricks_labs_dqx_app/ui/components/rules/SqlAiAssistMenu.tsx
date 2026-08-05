@@ -15,6 +15,7 @@ import {
 import { useAiWriteSql, useAiImproveSql, useAiExplainSql, type RuleSlot } from "@/lib/api";
 import { type AiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_GRADIENT_URL } from "@/lib/ai-style";
+import type { RuleGranularity } from "@/lib/lowcodeCompile";
 
 type Polarity = "pass" | "fail";
 
@@ -23,6 +24,11 @@ interface SqlAiAssistMenuProps {
   predicate: string;
   /** Declared `{{slot}}` columns the AI may reference (forwarded as names). */
   slots: RuleSlot[];
+  /**
+   * Applies-to toggle (row vs table). Forwarded so Write/Improve emit the
+   * matching shape — row-level predicate(+JOIN) vs one-row aggregate SELECT.
+   */
+  granularity: RuleGranularity;
   /** Replace the editor's predicate with AI-written/improved SQL. */
   onPredicateReplace: (next: string) => void;
   /** Sync the PASS/FAIL polarity switch when the AI infers one. */
@@ -71,6 +77,7 @@ function extractApiError(err: unknown, fallback: string, networkFallback: string
 export function SqlAiAssistMenu({
   predicate,
   slots,
+  granularity,
   onPredicateReplace,
   onPolarityChange,
   onSlotsDeclare,
@@ -133,12 +140,21 @@ export function SqlAiAssistMenu({
     try {
       if (modal === "write") {
         const resp = await writeMutation.mutateAsync({
-          data: { description: text, columns: columns.length > 0 ? columns : null },
+          data: {
+            description: text,
+            columns: columns.length > 0 ? columns : null,
+            granularity,
+          },
         });
         applyResult(resp.data, "rulesRegistry.sqlAiWritten");
       } else if (modal === "improve") {
         const resp = await improveMutation.mutateAsync({
-          data: { predicate, instruction: text, columns: columns.length > 0 ? columns : null },
+          data: {
+            predicate,
+            instruction: text,
+            columns: columns.length > 0 ? columns : null,
+            granularity,
+          },
         });
         applyResult(resp.data, "rulesRegistry.sqlAiImproved");
       }

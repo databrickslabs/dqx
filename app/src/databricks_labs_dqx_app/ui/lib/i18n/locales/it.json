@@ -1645,6 +1645,8 @@
     "toastCreated": "Regola creata come bozza.",
     "toastUpdated": "Regola aggiornata.",
     "saveFailed": "Impossibile salvare la regola.",
+    "toastSavedSubmitFailed": "La regola è stata salvata, ma non è stato possibile inviarla in revisione: {{error}}",
+    "submitNoRevisionTooltip": "Nulla da revisionare: questa modifica ha effetto appena la salvi. Solo le modifiche alla logica o ai metadati della regola creano una nuova versione da approvare.",
     "dialogSrDescription": "Crea o modifica una regola di qualità dei dati riutilizzabile.",
     "createTitle": "Nuova regola del registro",
     "editTitle": "Modifica bozza regola",
@@ -2188,6 +2190,9 @@
     "suggestRulesToggleAll": "Attiva/disattiva tutti {{label}}",
     "suggestRulesSelectedCount": "{{selected}} di {{total}} selezionati",
     "suggestRulesAddAllButton": "Aggiungi tutti i controlli",
+    "suggestRulesAddMandatoryButton_one": "Aggiungi regola obbligatoria",
+    "suggestRulesAddMandatoryButton_other": "Aggiungi {{count}} regole obbligatorie",
+    "suggestRulesMandatoryBadge": "Obbligatoria",
     "wizard": {
       "title": "Monitora tabelle",
       "description": "Seleziona la/e tabella/e a cui applicare le regole e monitorare",
