@@ -249,7 +249,12 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         deploy_mcp_app(host, get_token) as app,
         seed_demo_data(app["service_principal"], app["runner_service_principal"]) as data,
     ):
-        client = McpClient(app["url"], get_app_token)
+        client = McpClient(
+            app["url"],
+            get_app_token,
+            job_id=app.get("runner_job_id", ""),
+            workspace_host=app.get("workspace_host", host),
+        )
         wait_until_ready(client)  # a freshly-deployed app needs a moment before /mcp serves
         table = data["table"]
 

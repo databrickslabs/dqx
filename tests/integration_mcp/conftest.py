@@ -209,19 +209,51 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
 
     url = _emitted(result.stdout, "DQX_MCP_SERVER_URL")
     assert url, "ci_deploy.sh did not emit DQX_MCP_SERVER_URL"
+    deployment = {
+        "url": url,
+        "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL"),
+        # The SP the runner job actually runs as (the deploying identity when no override is set).
+        # The seed grants it READ on the contract volume so generate_rules_from_contract can read it.
+        "runner_service_principal": _emitted(result.stdout, "DQX_MCP_RUNNER_SERVICE_PRINCIPAL"),
+        # The deployed app's name — a coverage-enabled run stops it before teardown so its
+        # graceful shutdown flushes the final coverage data (see collect_remote_coverage).
+        "app_name": _emitted(result.stdout, "DQX_MCP_APP_NAME") or name_prefix,
+        "runner_job_id": _emitted(result.stdout, "DQX_MCP_RUNNER_JOB_ID"),
+        "workspace_host": _emitted(result.stdout, "DQX_MCP_WORKSPACE_HOST") or host,
+    }
+    _log_deployment(deployment)
     try:
-        yield {
-            "url": url,
-            "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL"),
-            # The SP the runner job actually runs as (the deploying identity when no override is set).
-            # The seed grants it READ on the contract volume so generate_rules_from_contract can read it.
-            "runner_service_principal": _emitted(result.stdout, "DQX_MCP_RUNNER_SERVICE_PRINCIPAL"),
-            # The deployed app's name — a coverage-enabled run stops it before teardown so its
-            # graceful shutdown flushes the final coverage data (see collect_remote_coverage).
-            "app_name": _emitted(result.stdout, "DQX_MCP_APP_NAME") or name_prefix,
-        }
+        yield deployment
     finally:
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
+
+
+def _log_deployment(deployment: dict) -> None:
+    """Print the deployed resources' identities and clickable URLs, once, up front.
+
+    The acceptance harness truncates a failing test's traceback to a single line, so without this
+    banner a CI failure gives you nothing to investigate with. Everything here is non-sensitive
+    (names, ids, URLs — no tokens).
+    """
+    host = (deployment.get("workspace_host") or "").rstrip("/")
+    job_id = deployment.get("runner_job_id") or ""
+    lines = [
+        "=" * 78,
+        "MCP integration deployment",
+        f"  app name        : {deployment.get('app_name')}",
+        f"  app url         : {deployment.get('url')}",
+        f"  app SP          : {deployment.get('service_principal')}",
+        f"  runner run_as SP: {deployment.get('runner_service_principal')}",
+        f"  runner job id   : {job_id or '(not resolved)'}",
+        f"  catalog         : {CATALOG}",
+    ]
+    if host and job_id:
+        lines.append(f"  runner job URL  : {host}/#job/{job_id}")
+    if host and deployment.get("app_name"):
+        lines.append(f"  app logs        : databricks apps logs {deployment['app_name']}")
+    lines.append("=" * 78)
+    sys.stderr.write("\n".join(lines) + "\n")
+    sys.stderr.flush()
 
 
 # --- MCP-over-HTTP client used by the integration test ---------------------------------------
@@ -243,10 +275,33 @@ def _mcp_request(url: str, token: str, method: str, params: dict) -> dict:
     text = resp.text
     if "data:" in text[:32]:  # FastMCP can answer as an SSE event; unwrap the JSON line
         text = text.split("data:", 1)[1].strip()
-    body = json.loads(text)
+    try:
+        body = json.loads(text)
+    except json.JSONDecodeError as exc:
+        # A 2xx with a body we can't parse (commonly an EMPTY body) says nothing on its own, and the
+        # acceptance harness shows only the exception's first line — so name the request and quote
+        # what actually came back. Redacted: the body is app-controlled, never a credential store.
+        raise AssertionError(
+            f"MCP response was not JSON for method={method!r} "
+            f"params={_summarise_params(params)} status={resp.status_code} "
+            f"content-type={resp.headers.get('Content-Type')!r} len={len(resp.text)} "
+            f"body[:400]={_redact(resp.text[:400])!r}"
+        ) from exc
     if "error" in body:
-        raise RuntimeError(f"MCP error: {body['error']}")
+        raise RuntimeError(f"MCP error for method={method!r} params={_summarise_params(params)}: {body['error']}")
+    if "result" not in body:
+        raise AssertionError(f"MCP response has no 'result' for method={method!r}: {_redact(str(body)[:400])}")
     return body["result"]
+
+
+def _summarise_params(params: dict) -> str:
+    """Compact, non-sensitive description of a JSON-RPC params dict for error messages."""
+    name = params.get("name")
+    args = params.get("arguments")
+    if name:
+        keys = sorted(args) if isinstance(args, dict) else type(args).__name__
+        return f"tool={name!r} arg_keys={keys}"
+    return f"keys={sorted(params)}"
 
 
 def _tool_payload(call_result: dict) -> dict:
@@ -254,7 +309,18 @@ def _tool_payload(call_result: dict) -> dict:
     if call_result.get("structuredContent"):
         return call_result["structuredContent"]
     content = call_result.get("content") or []
-    return json.loads(content[0]["text"]) if content else call_result
+    if not content:
+        return call_result
+    text = content[0].get("text") if isinstance(content[0], dict) else None
+    try:
+        return json.loads(text or "")
+    except (json.JSONDecodeError, TypeError) as exc:
+        # Same rationale as _mcp_request: quote what the tool actually returned. An empty `text`
+        # here is the difference between "the tool failed" and "the transport hiccuped".
+        raise AssertionError(
+            f"tool content was not JSON: type={type(text).__name__} len={len(text or '')} "
+            f"text[:400]={_redact(str(text)[:400])!r} keys={sorted(call_result)}"
+        ) from exc
 
 
 class McpClient:
@@ -266,9 +332,12 @@ class McpClient:
     — ``call`` handles both.
     """
 
-    def __init__(self, url: str, get_token: Callable[[], str]):
+    def __init__(self, url: str, get_token: Callable[[], str], job_id: str = "", workspace_host: str = ""):
         self._url = url
         self._get_token = get_token  # mint a fresh bearer per request (no expiry over a long run)
+        # Used only to build clickable job/run URLs when something fails — never for auth.
+        self._job_id = job_id
+        self._workspace_host = (workspace_host or os.environ.get("DATABRICKS_HOST", "")).rstrip("/")
 
     @property
     def url(self) -> str:
@@ -305,10 +374,18 @@ class McpClient:
             if last == "completed":
                 return status.get("result", {})
             if last == "failed":
-                raise AssertionError(f"run {run_id} failed: {status.get('error')}")
+                raise AssertionError(f"run {run_id} failed: {status.get('error')}{self._run_hint(run_id)}")
             if time.monotonic() >= deadline:
-                raise AssertionError(f"run {run_id} not finished within {timeout:.0f}s (last status={last})")
+                raise AssertionError(
+                    f"run {run_id} not finished within {timeout:.0f}s (last status={last}){self._run_hint(run_id)}"
+                )
             time.sleep(interval)
+
+    def _run_hint(self, run_id: int) -> str:
+        """A clickable run URL, so a failed run is one click from its driver logs."""
+        if not (self._workspace_host and self._job_id):
+            return ""
+        return f"\n  run URL: {self._workspace_host}/#job/{self._job_id}/run/{run_id}"
 
 
 def collect_remote_coverage(app_name: str) -> list[str]:

@@ -169,6 +169,15 @@ echo "DQX_MCP_RUNNER_SERVICE_PRINCIPAL=${RUNNER_SP}"
 # The deployed app's name — a coverage-enabled run stops the app via the Apps API before teardown
 # so its graceful shutdown flushes the final coverage data (see conftest.collect_remote_coverage).
 echo "DQX_MCP_APP_NAME=${NAME_PREFIX}"
+# The runner job id, so a failing test can print a clickable job/run URL. The acceptance harness
+# truncates tracebacks to one line, so these identifiers are often the only way to RCA a CI failure.
+RUNNER_JOB_ID="$(databricks jobs list --name "${NAME_PREFIX}-runner" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json 2>/dev/null \
+  | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+jobs=d if isinstance(d,list) else d.get("jobs",[])
+print(jobs[0]["job_id"] if jobs else "")' 2>/dev/null || true)"
+echo "DQX_MCP_RUNNER_JOB_ID=${RUNNER_JOB_ID}"
+echo "DQX_MCP_WORKSPACE_HOST=${DATABRICKS_HOST%/}"
 # Use if-blocks (not `[ ] && echo`): the latter returns non-zero when the var is unset (local
 # runs), which would make this script exit 1 on an otherwise successful deploy.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"; fi
