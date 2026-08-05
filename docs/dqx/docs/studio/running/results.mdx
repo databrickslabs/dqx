@@ -14,15 +14,17 @@ how your data is doing, find what's failing, and decide what to do about it.
 
 ## Read the score
 
-At the top is the **DQ score** — the share of tests that passed. (A single run of
-one check produces many **tests**: one per row it evaluates, so a run over a
-million rows produces a million tests. See
-[Rules, checks, and tests](/docs/studio/start-here/key-concepts#rules-checks-and-tests).)
+At the top is the **DQ score** — a 0–100% summary of the latest run. Every
+applied **rule** has equal weight: a row-level check contributes its row pass
+rate, and a table-level check contributes one pass/fail verdict. How that is
+built (including multi-column rules and collection roll-ups) is documented in
+[How the quality score is calculated](/docs/studio/running/quality-score).
 
-A check is **failing** when its pass rate drops below its **pass threshold** —
-the minimum you require, shown as a `< 70%` badge. Below the score, breakdowns
-split the results by **dimension**, **severity** (Low / Medium / High /
-Critical), **rule**, and **column**, so you can see where quality is slipping.
+A check is **flagged as failing** when its pass rate drops below its **pass
+threshold** — the minimum you require, shown as a `< 70%` badge. That badge is
+separate from the numeric score formula. Below the score, breakdowns split the
+results by **dimension**, **severity** (Low / Medium / High / Critical),
+**rule**, and **column**, so you can see where quality is slipping.
 
 <ThemedImage
   alt="Collection Results view: average DQ score, trend over time, and breakdowns by dimension and severity"

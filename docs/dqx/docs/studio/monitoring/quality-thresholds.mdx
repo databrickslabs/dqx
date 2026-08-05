@@ -54,11 +54,22 @@ Same check, same column — the threshold is what let you track the climb.
 
 ## How thresholds relate to the quality score
 
-Each monitored table has a data quality (DQ) score based on how many **tests** passed versus how many ran. A test is a single evaluation of a check against one row, so a run of one check over a million rows produces a million tests.
+Each monitored table has a data quality (DQ) score. The score formula is
+documented in
+[How the quality score is calculated](/docs/studio/running/quality-score) —
+row-level checks contribute their row pass rate, table-level checks contribute
+one binary verdict, and every applied rule has equal weight.
 
-The threshold decides *when a check counts as passing* for that score. A green check (at or above its threshold) contributes as passing; a flagged one counts against the score. So thresholds shape both the badges you see on the Apply Rules tab and the overall score on the table's Results view.
+A **pass threshold does not change that formula**. It only decides when a check
+is *flagged* as failing in the UI (the `< 70%` badge / breach state). A check
+at 82% with a 70% threshold still contributes **0.82** to the score; it just
+shows as green instead of red.
 
-To see how the score and trend are built, read the [Results page](/docs/studio/running/results). For the difference between rules, checks, and tests, see [Key concepts](/docs/studio/start-here/key-concepts#rules-checks-and-tests).
+To see how the score and trend are built, read
+[How the quality score is calculated](/docs/studio/running/quality-score) and
+the [Results page](/docs/studio/running/results). For the difference between
+rules, checks, and tests, see
+[Key concepts](/docs/studio/start-here/key-concepts#rules-checks-and-tests).
 
 <Admonition type="info" title="Org-wide defaults">
 Admins can set default thresholds for your whole organization, so new checks start from a sensible bar instead of demanding 100%. You can still override the default on any individual check. See [Set up for your org](/docs/studio/governance/).

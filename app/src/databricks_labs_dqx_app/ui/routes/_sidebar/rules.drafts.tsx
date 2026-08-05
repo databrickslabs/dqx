@@ -19,6 +19,7 @@ import {
   Boxes,
   Table2,
   GitCompare,
+  Undo2,
 } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ import {
   useListRegistryRules,
   useApproveRegistryRule,
   useRejectRegistryRule,
+  useRevokeRegistryRule,
   useListDataProducts,
   useApproveDataProduct,
   useRejectDataProduct,
@@ -120,9 +122,11 @@ function DraftsSkeleton() {
  */
 function RegistryApprovalsSection({
   canApproveRules,
+  canCreateRules,
   currentUserEmail,
 }: {
   canApproveRules: boolean;
+  canCreateRules: boolean;
   currentUserEmail: string;
 }) {
   const { t } = useTranslation();
@@ -143,8 +147,28 @@ function RegistryApprovalsSection({
 
   const approveMutation = useApproveRegistryRule();
   const rejectMutation = useRejectRegistryRule();
+  const revokeMutation = useRevokeRegistryRule();
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<RegistryRuleOut | null>(null);
+
+  const isRuleAuthor = useCallback(
+    (rule: RegistryRuleOut) => {
+      if (!currentUserEmail) return false;
+      const author = (rule.updated_by ?? rule.created_by ?? "").toLowerCase();
+      return author === currentUserEmail.toLowerCase();
+    },
+    [currentUserEmail],
+  );
+
+  // Mirrors registry-rules list / detail: authors revoke their own pending
+  // submission; approvers/admins may revoke any. Without this, Drafts & Review
+  // only offered Approve/Reject (or a read-only "Awaiting approval" hint) and
+  // submitters had no way to pull a rule back before an approver acted.
+  const canRevokeRule = useCallback(
+    (rule: RegistryRuleOut) =>
+      rule.status === "pending_approval" && (canApproveRules || (canCreateRules && isRuleAuthor(rule))),
+    [canApproveRules, canCreateRules, isRuleAuthor],
+  );
 
   const runAction = useCallback(
     (ruleId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
@@ -177,6 +201,13 @@ function RegistryApprovalsSection({
       () => rejectMutation.mutateAsync({ ruleId: rule.rule_id }),
       t("rulesDrafts.registryToastRejected"),
       t("rulesDrafts.registryToastFailedReject"),
+    );
+  const confirmRevoke = (rule: RegistryRuleOut) =>
+    runAction(
+      rule.rule_id,
+      () => revokeMutation.mutateAsync({ ruleId: rule.rule_id }),
+      t("rulesDrafts.registryToastRevoked"),
+      t("rulesDrafts.registryToastFailedRevoke"),
     );
 
   const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
@@ -211,6 +242,7 @@ function RegistryApprovalsSection({
           const severity = md.severity;
           const author = rule.updated_by ?? rule.created_by ?? rule.steward ?? "";
           const busy = pendingRuleId === rule.rule_id;
+          const showRevoke = canRevokeRule(rule);
           return (
             <tr key={rule.rule_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
               <td className="p-3 font-mono text-xs">{name}</td>
@@ -249,6 +281,18 @@ function RegistryApprovalsSection({
                     <GitCompare className="h-3 w-3" />
                     {t("rulesDrafts.diff.viewChanges")}
                   </Button>
+                  {showRevoke && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => confirmRevoke(rule)}
+                      className="gap-1 h-7 text-xs text-amber-700 border-amber-400 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950"
+                    >
+                      <Undo2 className="h-3 w-3" />
+                      {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.revokeAction")}
+                    </Button>
+                  )}
                   {canApproveRules ? (
                     <>
                       <Button
@@ -273,7 +317,9 @@ function RegistryApprovalsSection({
                       </Button>
                     </>
                   ) : (
-                    <ReadOnlyActionHint author={author} currentUserEmail={currentUserEmail} />
+                    !showRevoke && (
+                      <ReadOnlyActionHint author={author} currentUserEmail={currentUserEmail} />
+                    )
                   )}
                 </div>
               </td>
@@ -675,7 +721,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
 
 function DraftsPage() {
   const { t } = useTranslation();
-  const { canApproveRules } = usePermissions();
+  const { canApproveRules, canCreateRules } = usePermissions();
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
 
@@ -690,7 +736,11 @@ function DraftsPage() {
           </div>
         </div>
 
-        <RegistryApprovalsSection canApproveRules={canApproveRules} currentUserEmail={currentUserEmail} />
+        <RegistryApprovalsSection
+          canApproveRules={canApproveRules}
+          canCreateRules={canCreateRules}
+          currentUserEmail={currentUserEmail}
+        />
 
         <MonitoredTablesApprovalsSection canApproveRules={canApproveRules} currentUserEmail={currentUserEmail} />
 

@@ -1,0 +1,172 @@
+---
+sidebar_position: 3
+title: How the quality score is calculated
+---
+
+import Admonition from '@theme/Admonition';
+
+# How the quality score is calculated
+
+Every monitored table and collection shows a **DQ score** — a number between
+0% and 100% that summarizes how the latest run went. This page explains exactly
+how that number is built, and how **row-level** vs **table-level** checks
+contribute differently.
+
+If you just want to *read* the Results page, start with
+[Results](/docs/studio/running/results). For the difference between rules,
+checks, and tests, see
+[Key concepts](/docs/studio/start-here/key-concepts#rules-checks-and-tests).
+
+## The short version
+
+1. Each **check** gets a score between 0 and 1.
+2. Checks that come from the **same reusable rule** (for example the same
+   "is never blank" rule applied to `email` and `phone`) are averaged into
+   **one rule score**.
+3. The **table score** is the unweighted mean of all rule scores on that table.
+4. A **collection score** is the unweighted mean of its member tables' latest
+   scores.
+
+Every applied rule has **equal weight**, whether it is a simple null check or a
+cross-table aggregate.
+
+## Per-check score: two formulas
+
+How a check contributes depends on whether it is **row-level** or
+**table-level** (dataset-level). DQX Studio classifies each check from the
+function that ran (and, for custom SQL, from whether merge keys were set).
+
+### Row-level checks
+
+A row-level check evaluates each row and attributes failures to specific
+records.
+
+```
+check score = 1 − (failed rows) / (input rows)
+```
+
+- **Failed rows** = rows that raised an error *or* a warning for that check.
+  Warnings count the same as errors for scoring.
+- **Input rows** = the table-wide row count for the run.
+
+**Example.** A "email is not null" check on a 1,000-row table finds 50 blank
+emails → score = `1 − 50/1000` = **0.95** (95%).
+
+Typical row-level built-ins include: is not null / not empty, is in list / in
+range, matches a pattern, is a valid date or timestamp, most geo checks, and
+plain SQL conditions (`sql_expression`).
+
+### Table-level (dataset) checks
+
+A table-level check produces **one verdict for the whole table**. Internally
+DQX may broadcast that verdict onto every input row, but the quality score
+collapses it back to a single binary contribution so a large table cannot
+inflate (or drown) the result:
+
+```
+check score = 1  if the check passed (no failed rows)
+check score = 0  if the check failed (any failed row)
+```
+
+**Example.** An aggregate "average amount must stay below 10,000" check fails →
+score = **0**, regardless of whether the table has 10 rows or 10 million.
+
+Typical table-level built-ins include: is unique, foreign key / reference-table
+lookups, aggregate bounds (`is_aggr_*`), schema validation, compare datasets,
+freshness windows, outlier aggregates, and custom SQL queries with **no** merge
+keys (**Applies to: Table-level**).
+
+### Custom SQL: which formula applies?
+
+| How you authored the SQL | Score formula |
+| ------------------------ | ------------- |
+| Plain boolean condition (always row-level) | Row pass rate |
+| Full query with **Applies to: Row-level** (merge keys set) | Row pass rate |
+| Full query with **Applies to: Table-level** (no merge keys) | Binary 0 / 1 |
+
+See [Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level)
+and [Cross-table rules](/docs/studio/authoring/cross-table-rules) for how to
+author each shape.
+
+## From checks to a table score
+
+### Step 1 — average checks that share a rule
+
+One reusable rule can fan out into several checks when you apply it to multiple
+columns (or mapping groups). Those checks first average into **one rule
+score**, so applying "is never blank" to both `email` and `phone` still counts
+as **one** rule in the table score — not two.
+
+```
+rule score = mean(check scores for that rule)
+```
+
+### Step 2 — mean of all rules on the table
+
+```
+table score = mean(rule scores)
+```
+
+**Worked example**
+
+| Rule | Checks | Check scores | Rule score |
+| ---- | ------ | ------------ | ---------- |
+| Email is present (row) | `email` is not null | 0.95 | **0.95** |
+| Amount is positive (row) | `amount` > 0 | 0.80 | **0.80** |
+| Customer exists (table / FK) | foreign key | 0 (failed) | **0.00** |
+
+Table score = `(0.95 + 0.80 + 0.00) / 3` = **0.583** → **58.3%**.
+
+If "Email is present" had also been applied to `phone` at 1.00, the rule score
+would become `(0.95 + 1.00) / 2` = 0.975 — still **one** weight in the table
+mean.
+
+### Step 3 — collection score
+
+A collection (data product) score is the unweighted mean of its member tables'
+latest scores. A tiny reference table and a billion-row fact table count
+equally.
+
+```
+collection score = mean(member table scores)
+```
+
+## What does *not* change the score
+
+| Factor | Effect on the numeric DQ score |
+| ------ | ------------------------------ |
+| **Pass threshold** (`< 70%`, and so on) | **None.** Thresholds decide when a check is *flagged* as failing in the UI (the red badge / breach state). The score still uses the raw pass rate (or binary verdict). See [Quality thresholds](/docs/studio/monitoring/quality-thresholds). |
+| **Severity** (Low / Medium / High / Critical) | **None.** Severity drives triage and DQX `warn`/`error` criticality, not the score weight. Every rule still counts equally. |
+| **Dimension** (Completeness, Validity, …) | **None** for the overall score. Dimensions are used for *breakdown* charts on the Results page. |
+| **Row filter** on a check | Approximate. The denominator is always the **table-wide** row count, not just the filtered subset. A filtered check can look slightly more optimistic than its failure rate inside the filter. |
+
+## When the score is empty
+
+The score is **undefined** (`—` / null) when:
+
+- the run has **no rows** (`input_row_count` ≤ 0), or
+- the run has **no check metrics** (nothing evaluated).
+
+An empty table or a run that never produced checks does not show as 100% or
+0% — it shows as missing.
+
+## How this shows up on Results
+
+- The headline **DQ score** is the table (or collection) score above.
+- Breakdowns by **dimension**, **severity**, **rule**, and **column** reuse
+  the same per-check / per-rule math, grouped differently for investigation.
+- **Failed / total tests** counters are row-test diagnostics (how many
+  individual evaluations failed). They are useful for drill-down, but they are
+  **not** the same as reconstructing the equal-rule-weight score by hand —
+  table-level checks and multi-column rules would skew that arithmetic.
+
+## Related
+
+- [Results page](/docs/studio/running/results) — reading the score and
+  investigating failures
+- [Quality thresholds](/docs/studio/monitoring/quality-thresholds) — when a
+  check is flagged (separate from the score formula)
+- [Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level) —
+  how authoring chooses the formula
+- [Key concepts](/docs/studio/start-here/key-concepts#rules-checks-and-tests) —
+  rules, checks, and tests

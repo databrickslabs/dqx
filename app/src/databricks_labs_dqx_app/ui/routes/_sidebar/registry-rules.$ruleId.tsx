@@ -344,7 +344,10 @@ function RegistryRuleDetailPage() {
           </Button>
         </>
       )}
-      {canRevokeSubmission && !canApproveReject && (
+      {/* Revoke is available to the submitter (and to approvers/admins) even
+          when Approve/Reject are also shown — pulling a pending submission
+          back is distinct from rejecting it. Matching the MT detail banner. */}
+      {canRevokeSubmission && (
         <Button
           variant="outline"
           size="sm"

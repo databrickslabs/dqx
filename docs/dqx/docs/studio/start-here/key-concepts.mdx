@@ -30,6 +30,11 @@ run of one check over a million rows is a million tests. That's why a score can
 read **"421,121 failed of 2,350,000 tests"** — it's counting individual
 row-level evaluations, not rules.
 
+The headline **DQ score** is not that raw failed/total ratio. It gives every
+applied rule equal weight, and treats table-level checks as a single
+pass/fail. See
+[How the quality score is calculated](/docs/studio/running/quality-score).
+
 <Admonition type="tip" title="Rule → check → test, in one sentence">
 You **write a rule**, **apply it to a table as a check**, and each time it runs
 it produces one **test** per row.
