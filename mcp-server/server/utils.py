@@ -629,11 +629,16 @@ def sweep_stale_views(
 
 
 def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
-    """Delete result files older than *ttl_seconds* from the results volume. Best-effort.
+    """Delete stale ``<run_id>.json`` result files from the results volume. Best-effort.
 
     Backstop for result files whose caller never polled get_run_result. Uses each file's
     last-modified time (the runner names files <run_id>.json, which carries no timestamp).
     Never raises — logs and moves on so cleanup can't break request handling.
+
+    Only ``*.json`` results are swept. The same volume also holds ``staged_*`` inputs written by
+    stage_bytes_to_results_volume (e.g. an inline data contract) which a *pending* job has not read
+    yet: deleting one by age would fail that job with "Contract file not found", since a queued job
+    can start well after the file was staged.
     """
     import time
 
@@ -649,6 +654,8 @@ def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> i
     for entry in entries:
         if getattr(entry, "is_directory", False):
             continue
+        if not (entry.path or "").endswith(".json"):
+            continue  # staged job inputs — see the docstring
         last_modified = getattr(entry, "last_modified", None)  # epoch millis
         age = now - (last_modified / 1000) if last_modified else 0
         if age > ttl_seconds:

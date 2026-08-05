@@ -637,6 +637,50 @@ class TestSweepStaleViews:
         assert dropped == 0
         mock_drop.assert_not_called()
 
+
+class TestSweepStaleResultFiles:
+    """The results volume holds two kinds of file and only one may be swept by age."""
+
+    @staticmethod
+    def _entry(path: str, age_seconds: int) -> MagicMock:
+        import time
+
+        entry = MagicMock()
+        entry.path = path
+        entry.is_directory = False
+        entry.last_modified = int((time.time() - age_seconds) * 1000)  # epoch millis
+        return entry
+
+    def test_sweeps_stale_results_but_never_staged_job_inputs(self):
+        from server.utils import sweep_stale_result_files
+
+        ws = create_autospec(WorkspaceClient)
+        volume = "/Volumes/cat/dqx_mcp_tmp/mcp_results"
+        ws.files.list_directory_contents.return_value = [
+            self._entry(f"{volume}/111.json", 100_000),  # stale result -> delete
+            self._entry(f"{volume}/222.json", 5),  # fresh result -> keep
+            # A staged job input: a queued job may not have read it yet, so deleting it by age
+            # would fail that run with "Contract file not found".
+            self._entry(f"{volume}/staged_abc123.yaml", 100_000),
+        ]
+
+        with patch("server.utils._get_results_volume", return_value=volume):
+            dropped = sweep_stale_result_files(ws, ttl_seconds=3600)
+
+        assert dropped == 1
+        ws.files.delete.assert_called_once_with(f"{volume}/111.json")
+
+    def test_returns_zero_when_listing_fails(self):
+        from server.utils import sweep_stale_result_files
+
+        ws = create_autospec(WorkspaceClient)
+        ws.files.list_directory_contents.side_effect = RuntimeError("volume gone")
+        with patch("server.utils._get_results_volume", return_value="/Volumes/cat/s/v"):
+            dropped = sweep_stale_result_files(ws, ttl_seconds=1)
+
+        assert dropped == 0
+        ws.files.delete.assert_not_called()
+
     def test_still_running_returns_running(self):
         from server.utils import get_run_status, _user_email_var
 
