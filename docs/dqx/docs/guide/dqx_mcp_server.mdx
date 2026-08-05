@@ -297,6 +297,7 @@ If you only ever use the read/analyze tools (profile, generate, validate, run), 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `bundle deploy`: `databricks: command not found` | CLI missing / too old | Install Databricks CLI 0.279.0+ (`databricks --version`). |
+| `bundle deploy` warns *"Deployment engine "direct" … does not match the existing state (engine "terraform")"* | Stale local bundle state from an earlier deploy of a revision that used Terraform | Delete the cached state and redeploy: `rm -rf mcp-server/.databricks/bundle/<target>` (usually `dev`). The bundle uses the direct engine; the stale state silently overrides it. |
 | Deploy fails creating the app | Apps not enabled, or you lack app-create permission | Ask an admin to enable Apps / grant app-create (see [Prerequisites](/docs/installation#mcp-prerequisites)). |
 | Deploy: `CREATE SCHEMA` or `GRANT` denied | Missing catalog permissions | You must own the catalog or hold `MANAGE` on it — the deploy creates a schema in it and grants on it (see [Prerequisites](/docs/installation#mcp-prerequisites)). |
 | Deploy: `SCHEMA_ALREADY_EXISTS` on `dqx_mcp_tmp` | A schema of that name already exists in the catalog; the bundle creates it rather than adopting it | Deploy with `--var tmp_schema_name=<another-name>`, or drop the existing schema if it is not needed. |
