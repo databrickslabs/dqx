@@ -88,17 +88,25 @@ jobs:
           DQX_MCP_COVERAGE_DIR: "1"
 
       - name: Merge remote coverage and convert to XML
+        # `always()`: publish whatever the run produced even when the test FAILED — that is exactly
+        # when the coverage (and the volume's data files) are most useful, and without it GitHub
+        # skips these steps on failure and the run's data is lost.
+        #
         # The test downloaded the remote .coverage.* files into the repo root; combine must run from
         # there, because a [paths] rule whose rewritten target does not exist on disk is silently
-        # skipped. `--keep` preserves the inputs so a bad merge stays debuggable, and `|| true` on
-        # combine keeps a legitimately skipped suite from failing the job for the wrong reason.
+        # skipped. `--keep` preserves the inputs so a bad merge stays debuggable, and the tolerant
+        # exits keep a legitimately data-less run (e.g. the suite skipped, or it failed before the
+        # download) from failing the job for the wrong reason.
+        if: always()
         run: |
           ls -la .coverage.* 2>/dev/null || echo "no remote coverage data files were downloaded"
           uv run coverage combine --rcfile=tests/integration_mcp/.coveragerc --keep || true
-          uv run coverage xml --rcfile=tests/integration_mcp/.coveragerc -o coverage-combined.xml
-          uv run coverage report --rcfile=tests/integration_mcp/.coveragerc
+          uv run coverage xml --rcfile=tests/integration_mcp/.coveragerc -o coverage-combined.xml || true
+          uv run coverage report --rcfile=tests/integration_mcp/.coveragerc || true
 
       - name: Publish test coverage
+        # Also always(), for the same reason; the action tolerates a missing file.
+        if: always()
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true

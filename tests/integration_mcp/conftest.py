@@ -225,6 +225,9 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     try:
         yield deployment
     finally:
+        # Collect coverage BEFORE teardown destroys the app, and do it here rather than at the end of
+        # the test body so a FAILING test still yields its data — that is when it is most useful.
+        collect_remote_coverage(deployment["app_name"])
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
 
@@ -639,9 +642,15 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
 
     # The same contract as a *workspace* file. The tools accept either backend and read them
     # differently (Files API download vs workspace export + base64), so the test covers both.
+    #
+    # It goes under /Shared, NOT the seeding identity's /Users home: the app reads the file with the
+    # *caller's* OBO token, and in CI the caller (an OAuth SP) is a different principal from the one
+    # that seeds, so it cannot read another identity's home folder ("Path doesn't exist"). Locally
+    # both are the same user, which is why a /Users path passed on a dev workspace and failed in CI.
+    #
     # ImportFormat.AUTO with a .yml path keeps it a plain file (mirrors tests/conftest.py's
     # make_check_file); without an explicit format the SDK tries to treat the bytes as an archive.
-    ws_contract_dir = f"/Users/{client.current_user.me().user_name}/dqx_mcp_it"
+    ws_contract_dir = "/Shared/dqx_mcp_it"
     ws_contract_path = f"{ws_contract_dir}/{schema}_contract.yml"
     client.workspace.mkdirs(ws_contract_dir)
     client.workspace.upload(
