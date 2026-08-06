@@ -582,7 +582,7 @@ def stage_bytes_to_results_volume(content: bytes, suffix: str = "") -> str:
 
 # View names are v_<epoch>_<uuid>. The runner job drops its own view in a finally,
 # so this sweeper only catches orphans: views whose job never started or was killed
-# before cleanup. It runs as the SP, which owns the temp schema (see setup.py).
+# before cleanup. It runs as the SP, which owns the temp schema.
 _VIEW_NAME_RE = re.compile(r"^v_(\d+)_[0-9a-f]+$")
 # Overridable so the integration test can exercise the sweepers within a single run: the defaults
 # are deliberately long (an orphan is harmless for an hour), which no test can wait out. Only the
@@ -605,17 +605,26 @@ def sweep_stale_views(
     import time
 
     safe_catalog = _validate_sql_identifier(catalog, "catalog")
-    safe_schema = _validate_sql_identifier(schema, "schema")
+    # Validated for its guard effect: the schema is compared as a string LITERAL below, not
+    # interpolated as an identifier, so the backtick-quoted form is not what is needed — but the
+    # charset check (alphanumeric + underscore) still has to run before the name reaches the query.
+    _validate_sql_identifier(schema, "schema")
     now = int(time.time())
     dropped = 0
     try:
-        rows = execute_sql(ws, f"SHOW VIEWS IN {safe_catalog}.{safe_schema}", warehouse_id=warehouse_id)
+        # Query information_schema rather than SHOW VIEWS: `SHOW VIEWS IN <catalog>.<schema>` is
+        # rejected outright with CROSS_CATALOG_SCHEMA_REFERENCE_NOT_SUPPORTED ("Run 'USE CATALOG'
+        # first"), because SHOW resolves the schema against the session's current catalog only. This
+        # runs statelessly against a shared warehouse, so there is no session to set a catalog on —
+        # information_schema takes the catalog as the first level of the name and needs no USE.
+        query = f"SELECT table_name FROM {safe_catalog}.information_schema.views WHERE table_schema = '{schema}'"
+        rows = execute_sql(ws, query, warehouse_id=warehouse_id)
     except Exception:
         logger.warning(f"View sweep: failed to list views in {sanitize_for_log(f'{catalog}.{schema}')}", exc_info=True)
         return 0
 
     for row in rows:
-        view_name = row.get("viewName") or row.get("tableName") or ""
+        view_name = row.get("table_name") or ""
         match = _VIEW_NAME_RE.match(view_name)
         if not match:
             continue

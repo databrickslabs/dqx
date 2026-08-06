@@ -610,9 +610,9 @@ class TestSweepStaleViews:
         now = int(time.time())
         ws = create_autospec(WorkspaceClient)
         rows = [
-            {"viewName": f"v_{now - 100000}_abc123"},  # stale -> drop
-            {"viewName": f"v_{now}_def456"},  # fresh -> keep
-            {"viewName": "some_other_table"},  # not a temp view -> ignore
+            {"table_name": f"v_{now - 100000}_abc123"},  # stale -> drop
+            {"table_name": f"v_{now}_def456"},  # fresh -> keep
+            {"table_name": "some_other_table"},  # not a temp view -> ignore
         ]
 
         with (
@@ -623,6 +623,30 @@ class TestSweepStaleViews:
 
         assert dropped == 1
         mock_drop.assert_called_once_with(ws, f"cat.dqx_mcp_tmp.v_{now - 100000}_abc123", warehouse_id="wh")
+
+    def test_lists_views_without_a_cross_catalog_show(self):
+        """The listing query must be executable against a shared, session-less warehouse.
+
+        `SHOW VIEWS IN <catalog>.<schema>` parses but Databricks rejects it at runtime with
+        CROSS_CATALOG_SCHEMA_REFERENCE_NOT_SUPPORTED ("Run 'USE CATALOG <c>' first"), since SHOW
+        resolves the schema against the session's current catalog. The sweeper has no session to set
+        one on, so it must qualify through information_schema instead. Asserted here because the
+        failure is otherwise invisible: sweep_stale_views swallows it and returns 0, which looks
+        exactly like "no stale views".
+        """
+        from server.utils import sweep_stale_views
+
+        ws = create_autospec(WorkspaceClient)
+        with patch("server.utils.execute_sql", return_value=[]) as mock_sql:
+            sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh")
+
+        query = mock_sql.call_args.args[1]
+        assert "SHOW VIEWS" not in query.upper(), f"cross-catalog SHOW is rejected at runtime: {query}"
+        # The catalog arrives backtick-quoted from _validate_sql_identifier; information_schema and
+        # the view name are fixed, so the catalog is the only level that varies.
+        assert "information_schema.views" in query, query
+        assert "`cat`." in query, query
+        assert "'dqx_mcp_tmp'" in query, query
 
     def test_returns_zero_when_listing_fails(self):
         from server.utils import sweep_stale_views
