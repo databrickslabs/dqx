@@ -35,6 +35,8 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_national_id,
     is_valid_country_code,
     is_valid_currency_code,
+    is_valid_subdivision_code,
+    is_valid_language_code,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -2530,6 +2532,246 @@ def test_col_is_valid_currency_code_numeric_int_column(spark):
     checked_data = [
         [None],
         ["Value '8' in Column 'a' is not a valid ISO 4217 currency code"],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code(spark):
+    schema_sub = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 3166-2 codes
+            ["US-CA"],
+            ["GB-ENG"],
+            ["DE-BY"],
+            # Invalid - unassigned pairing, lowercase (case-sensitive), no separator, or empty
+            ["US-ZZ"],
+            ["us-ca"],
+            ["USCA"],
+            [""],
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("US-ZZ")],
+        [violation("us-ca")],
+        [violation("USCA")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_case_insensitive(spark):
+    schema_sub = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["us-ca"],  # lowercase accepted when case_sensitive is False
+            ["Gb-Eng"],  # mixed case accepted
+            ["DE-BY"],  # canonical case still accepted
+            ["US-ZZ"],  # not an assigned pairing, still invalid
+            [""],
+            [None],
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", case_sensitive=False))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("US-ZZ")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_with_country_column(spark):
+    schema_sub = "a: string, country: string"
+    test_df = spark.createDataFrame(
+        [
+            ["US-CA", "US"],  # valid code, matches country
+            ["US-CA", "GB"],  # valid code, but does not belong to the given country
+            ["US-ZZ", "US"],  # invalid code, regardless of country match
+            ["US-CA", None],  # null country - nothing to cross-check, passes
+            [None, "US"],  # null code - passes regardless of country
+            ["US-ZZ", None],  # invalid code with a null country - still flagged, message shows 'null'
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", country_column="country"))
+
+    def violation(value: str, country: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code for country '{country}' in Column 'country'"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [violation("US-CA", "GB")],
+        [violation("US-ZZ", "US")],
+        [None],
+        [None],
+        [violation("US-ZZ", "null")],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_case_insensitive_with_country_column(spark):
+    schema_sub = "a: string, country: string"
+    test_df = spark.createDataFrame(
+        [
+            ["us-ca", "us"],  # lowercase code and country both accepted, still match
+            ["us-ca", "gb"],  # lowercase code valid, but does not belong to the given country
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", case_sensitive=False, country_column="country"))
+
+    def violation(value: str, country: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code for country '{country}' in Column 'country'"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [violation("us-ca", "gb")],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_language_code_alpha_2(spark):
+    schema_lang = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 639-1 alpha-2 codes
+            ["en"],
+            ["fr"],
+            ["de"],
+            # Invalid - alpha-3 code, uppercase (case-sensitive), unassigned, or empty
+            ["eng"],
+            ["EN"],
+            ["xx"],
+            [""],
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_lang,
+    )
+
+    actual = test_df.select(is_valid_language_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 639 language code"
+
+    checked_schema = "a_is_not_a_valid_language_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("eng")],
+        [violation("EN")],
+        [violation("xx")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_language_code_alpha_3(spark):
+    schema_lang = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["eng"],
+            ["fra"],
+            ["deu"],
+            ["en"],  # alpha-2 code, not alpha-3
+            ["ger"],  # legacy ISO 639-2 bibliographic code for German, not accepted
+            ["xxx"],  # not an assigned code
+            [""],
+            [None],
+        ],
+        schema_lang,
+    )
+
+    # Column-expression input with the alpha-3 representation
+    actual = test_df.select(is_valid_language_code(F.col("a"), code_format="alpha-3"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 639 language code"
+
+    checked_schema = "a_is_not_a_valid_language_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("en")],
+        [violation("ger")],
+        [violation("xxx")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_language_code_case_insensitive(spark):
+    schema_lang = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["EN"],  # uppercase accepted when case_sensitive is False
+            ["Fr"],  # mixed case accepted
+            ["de"],  # canonical case still accepted
+            ["xx"],  # not an assigned code, still invalid
+            [""],
+            [None],
+        ],
+        schema_lang,
+    )
+
+    actual = test_df.select(is_valid_language_code("a", case_sensitive=False))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 639 language code"
+
+    checked_schema = "a_is_not_a_valid_language_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("xx")],
+        [violation("")],
         [None],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)

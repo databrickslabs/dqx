@@ -463,10 +463,29 @@ checked_df = engine.apply_checks_by_metadata(df, checks_list)
 
 ### Add a new built-in check function
 
-1. Add to `src/databricks/labs/dqx/check_funcs.py` with `@register_rule("row")` or `@register_rule("dataset")`
-2. Return a PySpark `Column`
-3. Add to `__all__` if public
-4. Add unit tests in `tests/unit/test_check_funcs_<category>.py`
+Adding a check touches code, tests, resources, and docs. Complete **all** of these so the check is
+discoverable, tested end-to-end, and covered by the repo's consistency guards:
+
+1. **Implement** in `src/databricks/labs/dqx/check_funcs.py` (or `geo/check_funcs.py` for geospatial,
+   `pii/pii_detection_funcs.py` for PII) with `@register_rule("row")` or `@register_rule("dataset")`,
+   returning a PySpark `Column` (row-level) or the `(condition, closure)` shape (dataset-level). Add to
+   `__all__` if public.
+2. **Unit tests** — add positive + negative cases in the matching file: `tests/unit/test_row_checks.py`
+   (row-level) or `tests/unit/test_dataset_checks.py` (dataset-level); geo/PII have their own test files.
+3. **Parameter-order contract** — add the check to `EXPECTED_PARAMETER_ORDER` in
+   `tests/unit/test_check_func_signatures.py`. The coverage test fails if a registered check is missing
+   from the contract; the entry encodes the *intended public parameter order* (guards positional callers).
+4. **Integration tests** — add end-to-end coverage (e.g. `tests/integration/test_apply_checks.py`,
+   `tests/integration/test_row_checks.py`) exercising the check against a real Spark session.
+5. **All-checks metadata resources** — add the check to the relevant `tests/resources/` fixture so the
+   "apply every check" tests include it: `all_row_checks.yaml`, `all_dataset_checks.yaml`,
+   `all_row_geo_checks.yaml`, or `all_dateset_geo_checks.yaml`.
+6. **`test_apply_checks_all_checks_using_classes`** — extend this test in
+   `tests/integration/test_apply_checks.py` (the programmatic counterpart to the YAML fixtures above) so
+   the new check is applied via the DQX classes too.
+7. **Performance test** — add the check to the benchmark in `tests/perf/test_apply_checks.py`.
+8. **Reference docs** — document the check (name, arguments, example) in
+   `docs/dqx/docs/reference/quality_checks.mdx`.
 
 ### Add a new CLI command
 

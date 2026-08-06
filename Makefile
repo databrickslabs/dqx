@@ -309,8 +309,11 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 	yarn --cwd app install
 	perl -ni -e 'print unless /^  resolved /' app/yarn.lock
 	cd app && uv lock --exclude-newer "7 days"
-	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' app/uv.lock
-	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g; s|url = "https://[^/"]+/packages/|url = "https://files.pythonhosted.org/packages/|g; s|, size = \d+||g' app/uv.lock
+	# UV_FROZEN=1 for the helper below: this target sets UV_FROZEN=0 to re-lock app/uv.lock, but the
+	# `uv run` here executes from the repo root and would otherwise re-lock (and proxy-taint) the root
+	# uv.lock as a side effect. Frozen keeps it read-only against the existing root env.
+	UV_FROZEN=1 $(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > app/build-constraints-new.txt
 	mv app/build-constraints-new.txt app/.build-constraints.txt
 
@@ -320,7 +323,7 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 lock-mcp-dependencies: export UV_FROZEN := 0
 lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
 	cd mcp-server && uv lock --exclude-newer "7 days"
-	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' mcp-server/uv.lock
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g; s|url = "https://[^/"]+/packages/|url = "https://files.pythonhosted.org/packages/|g; s|, size = \d+||g' mcp-server/uv.lock
 
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt
