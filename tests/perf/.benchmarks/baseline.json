@@ -7526,6 +7526,80 @@
       }
     },
     {
+      "group": "test_benchmark_is_valid_subdivision_code col1_subdivision_code",
+      "name": "test_benchmark_is_valid_subdivision_code[col1_subdivision_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_subdivision_code[col1_subdivision_code]",
+      "params": {
+        "column": "col1_subdivision_code"
+      },
+      "param": "col1_subdivision_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.49147982399972534,
+        "max": 0.6098282740003924,
+        "mean": 0.5319815038001252,
+        "stddev": 0.04673627434295752,
+        "rounds": 5,
+        "median": 0.5191910359999383,
+        "iqr": 0.05494445275076032,
+        "q1": 0.4999694302498483,
+        "q3": 0.5549138830006086,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.49147982399972534,
+        "hd15iqr": 0.6098282740003924,
+        "ops": 1.8797646024470007,
+        "total": 2.659907519000626,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_subdivision_code col2_subdivision_code",
+      "name": "test_benchmark_is_valid_subdivision_code[col2_subdivision_code]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_subdivision_code[col2_subdivision_code]",
+      "params": {
+        "column": "col2_subdivision_code"
+      },
+      "param": "col2_subdivision_code",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.5761933190005948,
+        "max": 0.8297541850006382,
+        "mean": 0.6447543636002593,
+        "stddev": 0.1044699058527213,
+        "rounds": 5,
+        "median": 0.6111774390001301,
+        "iqr": 0.07721306525081673,
+        "q1": 0.5896294834997207,
+        "q3": 0.6668425487505374,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.5761933190005948,
+        "hd15iqr": 0.8297541850006382,
+        "ops": 1.5509782584736242,
+        "total": 3.223771818001296,
+        "iterations": 1
+      }
+    },
+    {
       "group": null,
       "name": "test_benchmark_is_valid_timestamp",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_timestamp",
