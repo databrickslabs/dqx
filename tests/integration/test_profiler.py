@@ -81,9 +81,9 @@ def test_profiler(spark, ws):
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='t1',
-            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            name="has_no_outliers",
+            column="t1",
+            description="Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.",
             parameters=None,
             filter=None,
         ),
@@ -140,25 +140,54 @@ def test_profiler_is_in_large_table_few_distinct_values(spark, ws):
     assert set(is_in_profiles[0].parameters["in"]) == {"active", "inactive", "pending"}
 
 
-def test_profiler_timestamp_ntz_column(spark, ws):
-    # Verifies that TimestampNTZType is included in _supports_min_max and produces a min_max profile.
-    schema = T.StructType([T.StructField("created_at", T.TimestampNTZType())])
+@pytest.mark.parametrize(
+    "timestamp_type",
+    [T.TimestampType(), T.TimestampNTZType()],
+    ids=["timestamp", "timestamp_ntz"],
+)
+@pytest.mark.parametrize(
+    ("rounding", "expected_parameters"),
+    [
+        (
+            False,
+            {
+                "min": datetime(2024, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc),
+                "max": datetime(2024, 12, 31, 23, 59, 59, 654321, tzinfo=timezone.utc),
+            },
+        ),
+        (
+            True,
+            {
+                "min": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                "max": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+        ),
+    ],
+    ids=["rounding_disabled", "rounding_enabled"],
+)
+def test_profiler_timestamp_precision_and_rounding(
+    spark, ws, set_utc_timezone, timestamp_type, rounding, expected_parameters
+):
+    schema = T.StructType([T.StructField("created_at", timestamp_type)])
     input_df = spark.createDataFrame(
         [
-            [datetime(2024, 1, 1, 0, 0, 0)],
-            [datetime(2024, 6, 15, 12, 0, 0)],
-            [datetime(2024, 12, 31, 23, 59, 59)],
+            [datetime(2024, 1, 1, 0, 0, 0, 123456)],
+            # An interior value between the min and max, so the assertion checks min/max actually
+            # select the extremes rather than just echoing a two-row dataset.
+            [datetime(2024, 6, 15, 12, 30, 30, 500000)],
+            [datetime(2024, 12, 31, 23, 59, 59, 654321)],
         ],
         schema=schema,
     )
 
     profiler = DQProfiler(ws)
-    _, profiles = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    _, profiles = profiler.profile(
+        input_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "round": rounding}
+    )
 
     min_max_profiles = [p for p in profiles if p.name == "min_max" and p.column == "created_at"]
     assert len(min_max_profiles) == 1
-    assert min_max_profiles[0].parameters["min"] is not None
-    assert min_max_profiles[0].parameters["max"] is not None
+    assert min_max_profiles[0].parameters == expected_parameters
 
 
 def test_profiler_column_metrics_flow_into_generated_profiles(spark, ws):
@@ -194,7 +223,7 @@ def test_profiler_high_null_ratio_column_skips_is_not_null(spark, ws):
     assert not [p for p in profiles if p.name == "is_not_null" and p.column == "sparse"]
 
 
-def test_profiler_rounding_midnight_behavior(spark, ws):
+def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -262,9 +291,9 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='t1',
-            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            name="has_no_outliers",
+            column="t1",
+            description="Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.",
             parameters=None,
             filter=None,
         ),
@@ -392,9 +421,9 @@ def test_profiler_non_default_profile_options(spark, ws):
             filter="t1 > 0",
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='t1',
-            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            name="has_no_outliers",
+            column="t1",
+            description="Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.",
             parameters=None,
             filter="t1 > 0",
         ),
@@ -511,9 +540,9 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='t1',
-            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            name="has_no_outliers",
+            column="t1",
+            description="Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.",
             parameters=None,
             filter=None,
         ),
@@ -525,10 +554,12 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
             name="min_max",
             column="s1.ns1",
             # 9999-12-31 is an outlier; with num_sigmas=1 max is capped at avg+1σ (real min kept).
-            description="Real min value was used. Max was capped by 1 sigmas. avg=85582778411.0, stddev=145335926001.69772, max=253402250411",
+            # Timestamps now flow through a double epoch (sub-second precision preserved), so the
+            # aggregates read as floats (max=...411.0) and the capped max carries fractional seconds.
+            description="Real min value was used. Max was capped by 1 sigmas. avg=85582778411.0, stddev=145335926001.69772, max=253402250411.0",
             parameters={
                 "min": datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc),
-                "max": datetime(9287, 7, 10, 4, 33, 32, tzinfo=timezone.utc),
+                "max": datetime(9287, 7, 10, 4, 33, 32, 697723, tzinfo=timezone.utc),
             },
         ),
         DQProfile(
@@ -622,9 +653,9 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='t1',
-            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            name="has_no_outliers",
+            column="t1",
+            description="Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.",
             parameters=None,
             filter=None,
         ),
@@ -1791,9 +1822,9 @@ def test_profile_with_dataset_filter(spark, ws):
             description="Real min/max values were used",
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='cost',
-            description='Column cost has 0.0% of outliers (allowed: 1.0%). Lower boundary - -25.0, upper boundary - 325.0.',
+            name="has_no_outliers",
+            column="cost",
+            description="Column cost has 0.0% of outliers (allowed: 1.0%). Lower boundary - -25.0, upper boundary - 325.0.",
             parameters=None,
             filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
@@ -2008,9 +2039,9 @@ def test_profiler_with_pk_detection(spark, ws):
             parameters={"max": 5, "min": 1},
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='order_id',
-            description='Column order_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - -0.5, upper boundary - 6.5.',
+            name="has_no_outliers",
+            column="order_id",
+            description="Column order_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - -0.5, upper boundary - 6.5.",
             parameters=None,
             filter=None,
         ),
@@ -2022,9 +2053,9 @@ def test_profiler_with_pk_detection(spark, ws):
             parameters={"max": 102, "min": 100},
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='customer_id',
-            description='Column customer_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - 97.5, upper boundary - 104.5.',
+            name="has_no_outliers",
+            column="customer_id",
+            description="Column customer_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - 97.5, upper boundary - 104.5.",
             parameters=None,
             filter=None,
         ),
@@ -2036,9 +2067,9 @@ def test_profiler_with_pk_detection(spark, ws):
             parameters={"max": 90, "min": 45},
         ),
         DQProfile(
-            name='has_no_outliers',
-            column='amount',
-            description='Column amount has 0.0% of outliers (allowed: 1.0%). Lower boundary - 7.5, upper boundary - 112.5.',
+            name="has_no_outliers",
+            column="amount",
+            description="Column amount has 0.0% of outliers (allowed: 1.0%). Lower boundary - 7.5, upper boundary - 112.5.",
             parameters=None,
             filter=None,
         ),

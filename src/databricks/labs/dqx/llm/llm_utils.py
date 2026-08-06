@@ -23,7 +23,80 @@ __all__ = [
     "create_optimizer_training_set",
     "create_optimizer_training_set_with_stats",
     "get_column_metadata",
+    "extract_json_rules",
 ]
+
+
+def _strip_opening_code_fence(text: str) -> str:
+    """Strip a leading ```json / ``` markdown fence, if present.
+
+    Only the opening fence is removed; the closing fence is left in place because *raw_decode* ignores
+    everything after the JSON value, so stripping it here would risk cutting a JSON string value that
+    legitimately contains triple backticks.
+    """
+    if not text.startswith("```"):
+        return text
+    text = text[3:]
+    if text[:4].lower() == "json":
+        text = text[4:]
+    return text.strip()
+
+
+def _first_rules_array(text: str) -> list | None:
+    """Return the first JSON array in *text* that looks like a rules array, or None.
+
+    Scans every *[* position and attempts *raw_decode* at each (passing the index rather than slicing
+    to avoid re-allocating the tail). A decoded list with at least one dict is the rules array — a stray
+    *[* in prose fails to decode and is skipped, and an incidental non-dict array such as ``["a", "b"]``
+    is not mistaken for rules. A decoded empty ``[]`` is returned only if no dict-bearing array is found
+    (the "model produced no rules" fallback).
+    """
+    decoder = json.JSONDecoder()
+    empty_fallback: list | None = None
+    for idx, char in enumerate(text):
+        if char != "[":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list):
+            if any(isinstance(item, dict) for item in value):
+                return value
+            if not value:
+                empty_fallback = []
+    return empty_fallback
+
+
+def extract_json_rules(raw: str) -> object:
+    """Extract the DQX rules JSON value from an LLM rules response, tolerating surrounding noise.
+
+    Smaller serving models frequently wrap the rules array in a markdown code fence, prepend a prose
+    preamble, or append a trailing explanation after the closing bracket. A strict *json.loads* rejects
+    all of these (for example with *Extra data* when text trails a valid array) and discards
+    otherwise-valid rules.
+
+    The DQX rules payload is always a JSON array of rule objects, so this helper strips a code fence and
+    returns the first array (via *_first_rules_array*) that decodes to a list containing at least one
+    dict. An array that mixes valid rule dicts with malformed entries is still returned (dropping the
+    junk is *_filter_unsafe_sql_rules*' job, not the extractor's). An empty ``[]`` is accepted as a
+    fallback; genuinely truncated or non-array output yields no qualifying list and raises, so broken
+    responses are not silently salvaged into a meaningless fragment.
+
+    Args:
+        raw: The raw *quality_rules* string returned by the model.
+
+    Returns:
+        The decoded rules list.
+
+    Raises:
+        json.JSONDecodeError: if no JSON array can be located.
+    """
+    text = _strip_opening_code_fence(raw.strip())
+    rules = _first_rules_array(text)
+    if rules is not None:
+        return rules
+    raise json.JSONDecodeError("No JSON array of rules found in model output", text, 0)
 
 
 def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
