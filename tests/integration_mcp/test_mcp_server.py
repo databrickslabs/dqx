@@ -413,12 +413,13 @@ def _assert_failed_run_surfaces_error(client: McpClient) -> None:
         time.sleep(4)
 
     assert state == "failed", f"a malformed profile should fail the job, not succeed: {status}"
-    # The whole point of the task-error lookup: the message must name the actual cause, not just
-    # "Workload failed". The runner's error names the missing key.
-    detail = json.dumps(status).lower()
-    assert "column" in detail, f"the failure did not explain what was wrong: {status}"
-    # And it must stay actionable — a run URL to open.
-    assert status.get("run_url") or "run_page_url" in detail, status
+    # The whole point of the task-error lookup: the message must name the actual cause, not just the
+    # generic "Workload failed, see run output for details." The runner's error names the missing key.
+    error = str(status.get("error") or "")
+    assert "column" in error.lower(), f"the failure did not explain what was wrong: {status}"
+    # And it must stay actionable. The run URL is embedded in the error string ("Debug at: <url>"),
+    # not exposed as a separate field — assert what the server actually returns.
+    assert "#job/" in error and "/run/" in error, f"the failure carries no run URL to open: {status}"
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
