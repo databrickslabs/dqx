@@ -265,15 +265,22 @@ def _log_deployment(deployment: dict) -> None:
 # --- MCP-over-HTTP client used by the integration test ---------------------------------------
 
 
-def _mcp_request(url: str, token: str, method: str, params: dict) -> dict:
-    """Issue one JSON-RPC call to the app's /mcp endpoint and return the ``result`` payload."""
+def _mcp_request(url: str, token: str, method: str, params: dict, headers: dict | None = None) -> dict:
+    """Issue one JSON-RPC call to the app's /mcp endpoint and return the ``result`` payload.
+
+    *headers* overrides/adds request headers. Used to exercise the server's identity handling — the
+    Apps front door normally injects the X-Forwarded-* OBO headers, so overriding them is the only
+    way a black-box test can present a caller with no identity.
+    """
+    request_headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    request_headers.update(headers or {})
     resp = requests.post(
         f"{url}/mcp",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
+        headers=request_headers,
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
         timeout=120,
     )

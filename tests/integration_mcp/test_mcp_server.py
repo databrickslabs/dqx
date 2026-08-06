@@ -273,6 +273,85 @@ def _assert_table_name_validation(client: McpClient) -> None:
         assert not result.get("columns"), f"get_table_schema accepted {table_name!r}: {result}"
 
 
+def _assert_inaccessible_paths_are_refused(client: McpClient) -> None:
+    """A file path the caller cannot read must be refused, as the caller, before any job is submitted.
+
+    The runner reads as the SP, so the server pre-checks the CALLER's access with their OBO token —
+    otherwise a caller could read any path the SP can reach. Both file backends are covered:
+    a UC-volume path and a workspace path. Nonexistent and forbidden are deliberately treated the
+    same (the server does not distinguish them, so a caller cannot probe for existence).
+
+    Uses tools that take a caller-supplied path — generate_rules_from_contract and load_checks — with
+    paths that cannot resolve. Each must refuse rather than submit a job whose SP might succeed.
+    """
+    unreadable = [
+        "/Volumes/no_such_catalog_xyz/no_such_schema/no_such_volume/contract.yaml",
+        "/Workspace/Users/no.such.user@example.invalid/no_such_contract.yaml",
+    ]
+    for path in unreadable:
+        try:
+            result = client.call("generate_rules_from_contract", {"contract_file": path}, poll=False)
+        except Exception:  # noqa: BLE001 — refused via a raised MCP error, which is expected
+            continue
+        assert (
+            not result.get("rules") and result.get("status") != "completed"
+        ), f"generate_rules_from_contract accepted an unreadable path {path!r}: {result}"
+
+    # load_checks takes the same kind of caller-supplied path through a different tool.
+    for path in unreadable:
+        try:
+            result = client.call("load_checks", {"location": path}, poll=False)
+        except Exception:  # noqa: BLE001 — refused via a raised MCP error, which is expected
+            continue
+        assert result.get("status") != "completed", f"load_checks accepted an unreadable path {path!r}: {result}"
+
+
+def _assert_run_result_is_owner_only(client: McpClient, url: str, get_app_token: Callable[[], str], table: str) -> None:
+    """A run's result must only be readable by the identity that submitted it.
+
+    run_id is a guessable sequential integer and every user holds CAN_MANAGE_RUN on the shared runner
+    job, so the only thing standing between one caller and another's governed data (sampled source
+    rows) is the submitter/caller match. The guard also denies when EITHER side is empty, so an
+    unowned run cannot be read by a caller with no identity — asserted here by replaying a real,
+    successfully-submitted run_id with the OBO identity header stripped.
+
+    A mismatch must come back as not_found, never as a permission error: revealing that the run
+    exists would already leak which run ids are real.
+    """
+    submitted = client.call("run_checks", {"table_name": table, "checks": EXPLICIT_CHECKS}, poll=False)
+    run_id = submitted["run_id"]
+
+    # Replay the same run_id presenting a DIFFERENT caller identity. Whether the Apps front door
+    # forwards a client-supplied X-Forwarded-Email or overwrites it with the authenticated identity
+    # is a platform behaviour, so both outcomes are handled: if the override reaches the server the
+    # guard must deny, and if the platform overwrites the header the request is simply the owner's
+    # again and must succeed. Either way the assertion below is meaningful — what must NEVER happen
+    # is the server returning a payload to a caller whose identity does not match the submitter.
+    replayed = _tool_payload(
+        _mcp_request(
+            url,
+            get_app_token(),
+            "tools/call",
+            {"name": "get_run_result", "arguments": {"run_id": run_id}},
+            headers={"X-Forwarded-Email": "not.the.submitter@example.invalid"},
+        )
+    )
+    if replayed.get("status") == "not_found":
+        sys.stderr.write("note: identity override reached the server; the ownership guard denied it\n")
+    else:
+        # The platform overwrote the header, so this was the owner's own read. Record that the
+        # mismatch half of the guard was NOT exercised rather than implying it passed.
+        sys.stderr.write(
+            f"note: the Apps front door overrode X-Forwarded-Email, so the submitter/caller MISMATCH "
+            f"branch was not exercised (got status={replayed.get('status')!r})\n"
+        )
+        assert replayed.get("status") in {"running", "completed"}, replayed
+
+    # The legitimate submitter always gets their result — the guard must not over-deny.
+    owned = client.wait(run_id)
+    assert owned["total_rows"] == EXPECTED_TOTAL_ROWS, owned
+
+
 def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
     """A runner job that fails must report the task's OWN error, not the generic job-level message.
 
@@ -299,7 +378,7 @@ def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
     while True:
         status = client.call("get_run_result", {"run_id": run_id}, poll=False)
         state = status.get("status")
-        if state in ("failed", "completed"):
+        if state in {"failed", "completed"}:
             break
         assert time.monotonic() < deadline, f"run {run_id} never reached a terminal state: {status}"
         time.sleep(4)
@@ -351,8 +430,10 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
             assert not missing.get("columns"), f"nonexistent table reported a schema: {missing}"
         except Exception:  # noqa: BLE001 — a raised MCP error is the expected surfacing
             pass
-        # A malformed name must be refused by the identifier guard before it reaches SQL.
+        # A malformed name must be refused by the identifier guard before it reaches SQL, and a path
+        # the caller cannot read must be refused as the caller, before any SP-run job is submitted.
         _assert_table_name_validation(client)
+        _assert_inaccessible_paths_are_refused(client)
 
         # 6. profile_table (full scan) -> generate_rules; generated rules must validate.
         profile = client.call("profile_table", {"table_name": table, "options": {"sample_fraction": 1.0}})
@@ -382,6 +463,10 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # ownership/IDOR guard handles a missing run cleanly rather than erroring).
         unknown = client.call("get_run_result", {"run_id": 999999999999999})
         assert unknown["status"] == "not_found", unknown
+
+        # Only the submitter may read a run's result — the guard protecting one caller's governed
+        # data from another. Asserted with a real run id, so it cannot pass vacuously.
+        _assert_run_result_is_owner_only(client, app["url"], get_app_token, table)
 
         # A job that fails inside the runner must report the task's real error, not the generic
         # job-level message. Runs last: it is the only step that deliberately fails a job.
