@@ -241,6 +241,10 @@ mcp-grant-prereqs: ## Apply the one-time catalog grants the bundle cannot. Requi
 # `findstring` guard keeps an explicit --var in BUNDLE_VARS working: the CLI rejects a variable
 # assigned twice ("variable has already been assigned value"), so it must not be added again.
 mcp_runner_var = $(if $(RUNNER_SP),$(if $(findstring runner_service_principal_id,$(BUNDLE_VARS)),,--var runner_service_principal_id=$(RUNNER_SP)))
+# The tmp schema for the verify hint below. Only echoed, never passed to the CLI: an override
+# arrives inside BUNDLE_VARS, so parse it out rather than printing the bundle default and sending
+# the user to a path that does not exist.
+mcp_tmp_schema = $(if $(findstring tmp_schema_name=,$(BUNDLE_VARS)),$(firstword $(subst tmp_schema_name=,,$(filter tmp_schema_name=%,$(BUNDLE_VARS)))),dqx_mcp_tmp)
 mcp_bundle_flags = -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(mcp_runner_var) $(BUNDLE_VARS)
 
 mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
@@ -257,7 +261,7 @@ mcp-deploy: ## Deploy the MCP server end to end: bundle, catalog grants, then st
 	cd mcp-server && databricks bundle run mcp-dqx $(mcp_bundle_flags)
 	@echo ""
 	@echo "Deployed. The app publishes the runner wheel at startup; verify with:"
-	@echo "  databricks fs ls dbfs:/Volumes/$(CATALOG)/dqx_mcp_tmp/dqx_artifacts -p $(PROFILE)"
+	@echo "  databricks fs ls dbfs:/Volumes/$(CATALOG)/$(mcp_tmp_schema)/dqx_artifacts -p $(PROFILE)"
 
 # One command: the schema and both volumes are bundle resources now, so destroy removes them too
 # (it previously left the schema behind and needed a separate `volumes delete`). Per-user

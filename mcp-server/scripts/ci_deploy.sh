@@ -36,11 +36,29 @@ PROFILE_ARG=()
 # otherwise default to the *deploying identity* — whoever the CLI authenticates as — so run_as ==
 # the job's creator and Databricks needs no servicePrincipal.user grant to bind it (pinning a
 # *different* SP requires that grant, which is what made a hard-coded runner SP 403 in CI).
+#
+# The fallback only works when the deploying identity is a SERVICE PRINCIPAL, which is the case in
+# CI. The bundle declares run_as.service_principal_name, and DAB has no way to switch that key to
+# user_name from a variable — so handing it a human's email produces
+#   "'<email>' cannot be set as run_as service principal, because it doesn't exist"
+# which reads like a missing SP rather than the wrong field. `current-user me` reports an SP's
+# application id in userName, so detect the human case by shape (an email has an '@') and fail with
+# a message that names the fix.
 RUNNER_SP="${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID:-}"
 if [ -z "$RUNNER_SP" ]; then
   RUNNER_SP="$(databricks current-user me "${PROFILE_ARG[@]}" -o json \
     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("userName",""))')"
   echo "runner_service_principal_id unset; defaulting run_as to the deploying identity: ${RUNNER_SP}"
+  case "$RUNNER_SP" in
+    *@*)
+      echo "ERROR: the deploying identity (${RUNNER_SP}) is a USER, not a service principal." >&2
+      echo "The runner job's run_as must be a service principal, so there is nothing to fall back" >&2
+      echo "to here. Create a workspace service principal, grant yourself the 'User' role on it," >&2
+      echo "and set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to its application id (see the 'Create the" >&2
+      echo "runner service principal' section of the DQX MCP Server installation docs)." >&2
+      exit 1
+      ;;
+  esac
 fi
 : "${RUNNER_SP:?could not resolve the runner run_as SP (set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID, or ensure the deploy identity is resolvable via 'databricks current-user me')}"
 

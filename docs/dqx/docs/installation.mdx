@@ -597,7 +597,13 @@ If you're a workspace admin with your own catalog, you already meet 1–3; just 
 The runner job runs as a dedicated, least-privilege **workspace service principal** — *not* the app's auto-created SP (which is app-scoped and cannot be a job's `run_as`) and *not* the deploying user. Create it once:
 
 1. Create a workspace service principal (**Settings → Identity and access → Service principals → Add**, or the SCIM API). Note its **Application ID**.
-2. Grant yourself (the deploying identity) the **User** role on it (**Settings → that SP → Permissions**) — otherwise `bundle deploy` fails with *"User is not authorized to use this service principal"*. Workspace admins usually have this implicitly.
+2. Grant yourself (the deploying identity) the **User** role on it (**Settings → that SP → Permissions**). Do this even if you are a workspace admin — admin membership alone does **not** confer it, and without it `bundle deploy` fails partway through with:
+
+   ```
+   Cannot bind the service principal provided in 'run_as' field (<sp-name>) to the job.
+   The user creating or updating the job must have 'servicePrincipal.user' role on the
+   service principal. (403 PERMISSION_DENIED)
+   ```
 3. Give the SP the **workspace-access** entitlement so it can run serverless jobs.
 
 The deploy grants this SP every UC privilege it needs automatically — no manual grants required.
