@@ -247,6 +247,56 @@ def _assert_persisting_tools(client: McpClient, table: str) -> None:
         assert not res.get("saved") and res.get("status") != "completed", f"save_checks accepted {arguments}: {res}"
 
 
+def _assert_table_name_validation(client: McpClient) -> None:
+    """A caller-supplied table name must be rejected before it reaches SQL.
+
+    Every tool that takes a *table_name* interpolates it into a statement, so the identifier guard
+    (fully qualified, and each part alphanumeric/underscore only) is the boundary that keeps a
+    crafted name out of the generated SQL. Exercised through get_table_schema because it validates
+    synchronously and returns in-process — the same guard protects run_checks and profile_table via
+    create_temp_view. Tolerate either surfacing: a raised MCP error or a non-successful payload.
+    """
+    rejected = [
+        "not_qualified",  # missing catalog/schema
+        "catalog.schema",  # two parts
+        "catalog.schema.table.extra",  # four parts
+        "catalog.schema.tab`le",  # backtick-breakout attempt
+        "catalog.schema.tab le",  # whitespace
+        "",
+    ]
+    for table_name in rejected:
+        try:
+            result = client.call("get_table_schema", {"table_name": table_name})
+        except Exception:  # noqa: BLE001 — rejected via a raised MCP error, which is expected
+            continue
+        assert not result.get("columns"), f"get_table_schema accepted {table_name!r}: {result}"
+
+
+def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
+    """A runner job that fails must come back as a failed run WITH the task's own error message.
+
+    The job-level state_message is generic ("Workload failed, see run output for details"), so
+    get_run_result reaches into the task run's output to find the real cause. Without that an agent
+    sees a failure it cannot act on. Induced with a check that validates but cannot execute: the
+    column does not exist in the table, so DQX raises inside the job rather than at submit time.
+    """
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "no_such_column_xyz"}},
+        }
+    ]
+    try:
+        result = client.call("run_checks", {"table_name": table, "checks": checks})
+    except Exception as exc:  # noqa: BLE001 — a raised MCP error is an acceptable surfacing
+        sys.stderr.write(f"note: run_checks on a bad column raised rather than returning: {exc}\n")
+        return
+    assert result.get("status") != "completed", f"a check on a nonexistent column should not succeed: {result}"
+    # The failure detail is what makes this actionable — assert it names something the caller can use.
+    detail = json.dumps(result).lower()
+    assert "no_such_column_xyz" in detail or "error" in detail, result
+
+
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
@@ -286,6 +336,8 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
             assert not missing.get("columns"), f"nonexistent table reported a schema: {missing}"
         except Exception:  # noqa: BLE001 — a raised MCP error is the expected surfacing
             pass
+        # A malformed name must be refused by the identifier guard before it reaches SQL.
+        _assert_table_name_validation(client)
 
         # 6. profile_table (full scan) -> generate_rules; generated rules must validate.
         profile = client.call("profile_table", {"table_name": table, "options": {"sample_fraction": 1.0}})
@@ -315,6 +367,10 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # ownership/IDOR guard handles a missing run cleanly rather than erroring).
         unknown = client.call("get_run_result", {"run_id": 999999999999999})
         assert unknown["status"] == "not_found", unknown
+
+        # A job that fails inside the runner must report the task's real error, not the generic
+        # job-level message. Runs last: it is the only step that deliberately fails a job.
+        _assert_failed_run_surfaces_error(client, table)
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):

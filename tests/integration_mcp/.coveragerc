@@ -43,3 +43,9 @@ exclude_lines =
     if __name__ == .__main__.:
     # Defensive re-raise/guard branches for platform failures a test cannot induce.
     raise NotImplementedError
+    # Type-checking-only imports never execute at runtime, by design. (The DQX library marks these
+    # with `# pragma: no cover` at the source line instead — see
+    # src/databricks/labs/dqx/datacontract/contract_rules_generator.py. Excluding by pattern here
+    # keeps the MCP server source free of coverage awareness, since the same source is what a
+    # production deploy ships.)
+    if TYPE_CHECKING:

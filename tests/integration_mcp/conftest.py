@@ -190,6 +190,9 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     the long test, so a token minted at deploy time would be expired by then.
     """
     name_prefix = f"mcp-dqx-it-{uuid4().hex[:6]}"
+    # Recorded BEFORE the deploy so every data file this run produces is at or after it. Coverage
+    # collection uses it to tell this run's files from earlier runs' leftovers on the shared volume.
+    started_at = time.time()
 
     def env() -> dict[str, str]:
         return _script_env(name_prefix, host, get_token())
@@ -227,7 +230,7 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     finally:
         # Collect coverage BEFORE teardown destroys the app, and do it here rather than at the end of
         # the test body so a FAILING test still yields its data — that is when it is most useful.
-        collect_remote_coverage(deployment["app_name"])
+        collect_remote_coverage(deployment["app_name"], started_at)
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
 
@@ -391,8 +394,8 @@ class McpClient:
         return f"\n  run URL: {self._workspace_host}/#job/{self._job_id}/run/{run_id}"
 
 
-def collect_remote_coverage(app_name: str) -> list[str]:
-    """CI/test-only: stop the app (forcing its final flush) and download all remote data files.
+def collect_remote_coverage(app_name: str, since: float) -> list[str]:
+    """CI/test-only: stop the app (forcing its final flush) and download this run's data files.
 
     No-op unless DQX_MCP_COVERAGE_DIR is set. On a coverage-enabled deploy the app and every runner
     job carry a test-only bootstrap wheel whose ``.pth`` traces from interpreter start and writes
@@ -403,6 +406,11 @@ def collect_remote_coverage(app_name: str) -> list[str]:
     exceeded. Files land in the REPO ROOT, which is where ``coverage combine`` must run (a [paths]
     rule whose rewritten target does not exist on disk is silently skipped). Best-effort
     throughout: coverage collection must never fail the test run.
+
+    *since* is the epoch second this deployment began: only files written at or after it belong to
+    this run, so the merged report describes THIS code and no other. The volume outlives any single
+    deployment, so without that bound `coverage combine` silently merges every prior run's data —
+    which is how a report ends up citing lines that the current source no longer has.
     """
     if not os.environ.get("DQX_MCP_COVERAGE_DIR"):
         return []
@@ -414,10 +422,10 @@ def collect_remote_coverage(app_name: str) -> list[str]:
         sys.stderr.write(f"coverage: app stop failed (non-fatal): {exc}\n")
     downloaded: list[str] = []
     try:
-        downloaded = _download_coverage_files(ws, _coverage_dir())
+        downloaded = _download_coverage_files(ws, _coverage_dir(), since)
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
-    sys.stderr.write(f"coverage files downloaded: {downloaded}\n")
+    sys.stderr.write(f"coverage files downloaded: {len(downloaded)}\n{chr(10).join(downloaded)}\n")
     return downloaded
 
 
@@ -433,18 +441,37 @@ def _coverage_dir() -> str:
     return f"/Volumes/{CATALOG}/dqx_mcp_tmp/mcp_results/coverage"
 
 
-def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str) -> list[str]:
-    """Download every ``.coverage*`` data file from the UC volume dir into the repo root."""
+def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float) -> list[str]:
+    """Download this run's ``.coverage*`` data files from the UC volume dir into the repo root.
+
+    Files older than *since* belong to an earlier run (concurrent runs each write their own, and
+    nothing else prunes the directory); they are deleted rather than downloaded so the volume does
+    not grow without bound. A delete that loses a race with a concurrent run's writer is ignored —
+    this is opportunistic housekeeping, never a correctness dependency.
+    """
     downloaded: list[str] = []
+    stale = 0
     for entry in ws.files.list_directory_contents(coverage_dir):
         path = entry.path or ""
         name = path.rsplit("/", 1)[-1]
         if not path or not name.startswith(".coverage"):
             continue
+        # last_modified is epoch millis; treat an absent value as current (download it) rather than
+        # risk discarding this run's data over missing metadata.
+        last_modified = getattr(entry, "last_modified", None)
+        if last_modified is not None and last_modified / 1000 < since:
+            stale += 1
+            try:
+                ws.files.delete(path)
+            except Exception:  # noqa: BLE001 — housekeeping only; a concurrent writer may win
+                pass
+            continue
         body = ws.files.download(path).contents
         dest = _REPO_ROOT / name
         dest.write_bytes(body.read() if body is not None else b"")
         downloaded.append(str(dest))
+    if stale:
+        sys.stderr.write(f"coverage: pruned {stale} data file(s) from earlier runs\n")
     return downloaded
 
 
