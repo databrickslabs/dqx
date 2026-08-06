@@ -196,3 +196,4 @@ app/package-lock.json
 
 # Superpowers brainstorm scratch (mockups, session state)
 .superpowers/
+docs/superpowers/
