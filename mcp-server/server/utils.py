@@ -272,13 +272,18 @@ def _statement_state(result: Any) -> str:
     return str(getattr(state, "value", state))
 
 
-def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
+def execute_sql(ws: Any, query: str, warehouse_id: str, parameters: list[Any] | None = None) -> list[dict[str, Any]]:
     """Execute a SQL query using the Databricks SQL Statement API.
 
     Args:
         ws: WorkspaceClient (OBO or SP).
         query: SQL query string.
         warehouse_id: SQL warehouse ID to execute against.
+        parameters: Optional bound parameters for *:name* markers in *query*. Prefer these over
+            interpolating a value into the statement — the server binds them, so no quoting or
+            escaping is needed and a value can never alter the statement's structure. Identifiers
+            (catalog/schema/table names) still have to be interpolated, since markers may only
+            stand in for values; validate those with *_validate_sql_identifier*.
 
     Returns:
         List of row dicts.
@@ -290,6 +295,7 @@ def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
         statement=query,
         warehouse_id=warehouse_id,
         wait_timeout="30s",
+        **({"parameters": parameters} if parameters else {}),
     )
 
     # on_wait_timeout defaults to CONTINUE, so a slow statement can still be PENDING/RUNNING when the
@@ -591,7 +597,25 @@ _VIEW_TTL_SECONDS = int(os.environ.get("DQX_SWEEP_TTL_SECONDS", "3600"))  # drop
 _SWEEP_INTERVAL_SECONDS = int(
     os.environ.get("DQX_SWEEP_INTERVAL_SECONDS", "600")
 )  # sweep at most once per 10 minutes per replica
+
+# Floor on the view TTL, regardless of configuration. A view is created moments before its job is
+# submitted, and the job may sit QUEUED for minutes on a busy workspace before it reads the view —
+# so a TTL shorter than the worst-case queue wait would delete a live run's input and fail it with
+# TABLE_OR_VIEW_NOT_FOUND. The configured TTL can only ever be raised above this floor, never below:
+# an operator (or a test) tuning the threshold must not be able to introduce data loss.
+_MIN_VIEW_TTL_SECONDS = 900
 _last_sweep_at = 0.0
+
+
+def _effective_view_ttl(ttl_seconds: int) -> int:
+    """Clamp a requested view TTL to the safe floor, warning when the request is overridden."""
+    if ttl_seconds < _MIN_VIEW_TTL_SECONDS:
+        logger.warning(
+            f"View sweep: requested TTL of {ttl_seconds}s is below the {_MIN_VIEW_TTL_SECONDS}s floor "
+            f"(a queued job could still be waiting to read its view); using the floor instead"
+        )
+        return _MIN_VIEW_TTL_SECONDS
+    return ttl_seconds
 
 
 def sweep_stale_views(
@@ -601,14 +625,17 @@ def sweep_stale_views(
 
     Identifies age from the v_<epoch>_<uuid> name. Returns the number of views dropped.
     Never raises — logs and moves on so cleanup can't break request handling.
+
+    *ttl_seconds* is clamped up to a safe floor: this sweep runs on the job-submission path, so a
+    view belonging to a job that is still QUEUED must never be treated as an orphan.
     """
     import time
 
+    # The catalog is a NAME, so it must be interpolated (a parameter marker cannot stand in for an
+    # identifier) — hence the charset validation. The schema is compared as a VALUE and is bound as a
+    # parameter below, so it never becomes part of the statement's structure.
     safe_catalog = _validate_sql_identifier(catalog, "catalog")
-    # Validated for its guard effect: the schema is compared as a string LITERAL below, not
-    # interpolated as an identifier, so the backtick-quoted form is not what is needed — but the
-    # charset check (alphanumeric + underscore) still has to run before the name reaches the query.
-    _validate_sql_identifier(schema, "schema")
+    ttl_seconds = _effective_view_ttl(ttl_seconds)
     now = int(time.time())
     dropped = 0
     try:
@@ -617,8 +644,17 @@ def sweep_stale_views(
         # first"), because SHOW resolves the schema against the session's current catalog only. This
         # runs statelessly against a shared warehouse, so there is no session to set a catalog on —
         # information_schema takes the catalog as the first level of the name and needs no USE.
-        query = f"SELECT table_name FROM {safe_catalog}.information_schema.views WHERE table_schema = '{schema}'"
-        rows = execute_sql(ws, query, warehouse_id=warehouse_id)
+        # Imported here, not at module scope: this module is imported by the app at startup and
+        # keeps SDK types out of its import graph (see the other local `from databricks.sdk`
+        # imports).
+        from databricks.sdk.service.sql import StatementParameterListItem
+
+        rows = execute_sql(
+            ws,
+            f"SELECT table_name FROM {safe_catalog}.information_schema.views WHERE table_schema = :schema_name",
+            warehouse_id=warehouse_id,
+            parameters=[StatementParameterListItem(name="schema_name", value=schema, type="STRING")],
+        )
     except Exception:
         logger.warning(f"View sweep: failed to list views in {sanitize_for_log(f'{catalog}.{schema}')}", exc_info=True)
         return 0

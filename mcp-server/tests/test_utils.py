@@ -642,11 +642,59 @@ class TestSweepStaleViews:
 
         query = mock_sql.call_args.args[1]
         assert "SHOW VIEWS" not in query.upper(), f"cross-catalog SHOW is rejected at runtime: {query}"
-        # The catalog arrives backtick-quoted from _validate_sql_identifier; information_schema and
-        # the view name are fixed, so the catalog is the only level that varies.
+        # The catalog is an identifier, so it is interpolated (backtick-quoted by
+        # _validate_sql_identifier); a parameter marker cannot stand in for an identifier.
         assert "information_schema.views" in query, query
         assert "`cat`." in query, query
-        assert "'dqx_mcp_tmp'" in query, query
+
+    def test_never_drops_a_view_young_enough_to_belong_to_a_queued_job(self):
+        """A short configured TTL must not delete the view of a job that has not started yet.
+
+        The sweep runs on the job-SUBMISSION path, moments after create_temp_view, so it sees the
+        view of the job being submitted right now. A queued job can start minutes later on a busy
+        workspace. Before the floor existed, DQX_SWEEP_TTL_SECONDS=1 (set by the coverage bundle
+        target to exercise the sweeper) deleted live views and failed runs with
+        TABLE_OR_VIEW_NOT_FOUND.
+        """
+        import time
+
+        from server.utils import sweep_stale_views
+
+        now = int(time.time())
+        ws = create_autospec(WorkspaceClient)
+        rows = [
+            {"table_name": f"v_{now - 2}_aaaaaaaaaaaa"},  # just submitted — must survive
+            {"table_name": f"v_{now - 300}_bbbbbbbbbbbb"},  # 5 min old, could still be queued
+            {"table_name": f"v_{now - 100000}_cccccccccccc"},  # genuinely orphaned
+        ]
+        with (
+            patch("server.utils.execute_sql", return_value=rows),
+            patch("server.utils.drop_view") as mock_drop,
+        ):
+            dropped = sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh", ttl_seconds=1)
+
+        assert dropped == 1, "only the genuinely orphaned view may be dropped"
+        dropped_names = [call.args[1] for call in mock_drop.call_args_list]
+        assert dropped_names == [f"cat.dqx_mcp_tmp.v_{now - 100000}_cccccccccccc"], dropped_names
+
+    def test_binds_the_schema_as_a_parameter(self):
+        """The schema is a VALUE in the query, so it must be bound, not interpolated.
+
+        Binding keeps the schema name out of the statement's structure entirely — no quoting or
+        escaping to get right, and a name can never alter the query even if the identifier
+        validation upstream were ever weakened or removed.
+        """
+        from server.utils import sweep_stale_views
+
+        ws = create_autospec(WorkspaceClient)
+        with patch("server.utils.execute_sql", return_value=[]) as mock_sql:
+            sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh")
+
+        query = mock_sql.call_args.args[1]
+        assert "'dqx_mcp_tmp'" not in query, f"the schema must not be interpolated as a literal: {query}"
+        assert ":schema_name" in query, query
+        bound = {p.name: p.value for p in mock_sql.call_args.kwargs["parameters"]}
+        assert bound == {"schema_name": "dqx_mcp_tmp"}, bound
 
     def test_returns_zero_when_listing_fails(self):
         from server.utils import sweep_stale_views

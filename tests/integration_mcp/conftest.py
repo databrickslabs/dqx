@@ -448,25 +448,38 @@ def _coverage_dir() -> str:
     return f"/Volumes/{CATALOG}/dqx_mcp_tmp/mcp_results/coverage"
 
 
+# Tolerance applied to the "is this file from an earlier run?" cut-off. `since` is measured on the
+# test runner's clock, while last_modified is stamped by the Databricks control plane, so the two are
+# only as aligned as NTP keeps them. The asymmetry matters: keeping one stale file slightly inflates
+# the report, whereas discarding one of THIS run's files silently understates coverage and cannot be
+# detected after the fact. So bias the comparison toward keeping, generously — an hour of slack still
+# prunes anything from a previous CI run (runs are ~30min apart at worst and the volume is per-run
+# in CI), while absorbing any plausible clock disagreement.
+_COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS = 3600
+
+
 def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float) -> list[str]:
     """Download this run's ``.coverage*`` data files from the UC volume dir into the repo root.
 
-    Files older than *since* belong to an earlier run (concurrent runs each write their own, and
-    nothing else prunes the directory); they are deleted rather than downloaded so the volume does
-    not grow without bound. A delete that loses a race with a concurrent run's writer is ignored —
-    this is opportunistic housekeeping, never a correctness dependency.
+    Files older than *since* (less a clock-skew tolerance) belong to an earlier run — concurrent runs
+    each write their own and nothing else prunes the directory — so they are deleted rather than
+    downloaded, keeping the volume from growing without bound and keeping a prior run's data out of
+    this run's merged report. A delete that loses a race with a concurrent writer is ignored: this is
+    opportunistic housekeeping, never a correctness dependency.
     """
     downloaded: list[str] = []
     stale = 0
+    cutoff = since - _COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS
     for entry in ws.files.list_directory_contents(coverage_dir):
         path = entry.path or ""
         name = path.rsplit("/", 1)[-1]
         if not path or not name.startswith(".coverage"):
             continue
-        # last_modified is epoch millis; treat an absent value as current (download it) rather than
-        # risk discarding this run's data over missing metadata.
+        # last_modified is epoch MILLIS on this API (files.get_metadata returns an HTTP date string
+        # instead — do not mix them). An absent or non-numeric value is treated as current, so
+        # missing metadata can never cost this run its data.
         last_modified = getattr(entry, "last_modified", None)
-        if last_modified is not None and last_modified / 1000 < since:
+        if isinstance(last_modified, (int, float)) and last_modified / 1000 < cutoff:
             stale += 1
             try:
                 ws.files.delete(path)

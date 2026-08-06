@@ -311,10 +311,16 @@ targets:
       dqx_mcp_coverage_bootstrap_wheel:
         build: uv build ../tests/integration_mcp/coverage_bootstrap --wheel --out-dir ./.build
     variables:
-      # Short sweep thresholds so a single test run exercises the stale-view / stale-result-file
-      # sweepers, which the hour-long production defaults make untestable. Only the thresholds
-      # differ; the sweep logic is identical. (Repeats the base list — target overrides replace
-      # a list rather than merging into it.)
+      # Sweep every submission (interval 0) so a single test run exercises the stale-view and
+      # stale-result-file sweepers, which the hour-long production interval makes untestable. Only
+      # the thresholds differ; the sweep logic is identical. (Repeats the base list — target
+      # overrides replace a list rather than merging into it.)
+      #
+      # The TTL is NOT shortened below the server's floor. The sweep runs on the job-submission
+      # path, so a very short TTL deletes the temp view of the job being submitted right now and
+      # fails it with TABLE_OR_VIEW_NOT_FOUND once it dequeues — server/utils.py clamps the TTL up
+      # for exactly that reason, so a smaller value here would be silently ignored anyway. The
+      # result-file sweeper is unaffected by the floor and still exercised on every submission.
       app_environment:
         default:
           - name: DQX_CATALOG
@@ -323,8 +329,6 @@ targets:
             value: "dqx_mcp_tmp"
           - name: DQX_RUNNER_JOB_ID
             value_from: "dqx-runner-job"
-          - name: DQX_SWEEP_TTL_SECONDS
-            value: "1"
           - name: DQX_SWEEP_INTERVAL_SECONDS
             value: "0"
       # Overrides the dependency-list variable — DAB target overrides don't merge into an
