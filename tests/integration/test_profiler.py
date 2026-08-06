@@ -190,6 +190,39 @@ def test_profiler_timestamp_precision_and_rounding(
     assert min_max_profiles[0].parameters == expected_parameters
 
 
+def test_profiler_column_metrics_flow_into_generated_profiles(spark, ws):
+    # Exercises the _build_column_metrics → _build_profiles_for_column flow through the public profile() API.
+    # The generated is_not_null + min_max profiles depend on count_non_null, count_null, min and max being
+    # correctly aggregated and merged for the column.
+    schema = T.StructType([T.StructField("amount", T.IntegerType())])
+    input_df = spark.createDataFrame([[10], [20], [30], [40], [50]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    _, profiles = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+    )
+
+    assert DQProfile(name="is_not_null", column="amount", description=None, parameters=None) in profiles
+    min_max = next(p for p in profiles if p.name == "min_max" and p.column == "amount")
+    assert min_max.parameters == {"min": 10, "max": 50}
+
+
+def test_profiler_high_null_ratio_column_skips_is_not_null(spark, ws):
+    # Exercises the count_null derivation in _build_column_metrics (total_count - count_non_null): with
+    # null_ratio above max_null_ratio the null_or_empty builder must skip is_not_null generation for the column.
+    schema = T.StructType([T.StructField("sparse", T.IntegerType())])
+    input_df = spark.createDataFrame([[None], [None], [None], [None], [1]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    _, profiles = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "max_null_ratio": 0.1},
+    )
+
+    assert not [p for p in profiles if p.name == "is_not_null" and p.column == "sparse"]
+
+
 def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):
     inp_schema = T.StructType(
         [
