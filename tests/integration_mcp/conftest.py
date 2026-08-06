@@ -387,7 +387,16 @@ class McpClient:
             if last == "completed":
                 return status.get("result", {})
             if last == "failed":
-                raise AssertionError(f"run {run_id} failed: {status.get('error')}{self._run_hint(run_id)}")
+                # The acceptance harness truncates a failing test to ONE line, and the server's
+                # error begins with a generic "Job failed: Task ... Workload failed, see run output
+                # for details." prefix — so the runner's actual message, which is appended after it,
+                # is exactly what gets cut off. Lead with the tail (where the real cause lives) and
+                # keep the run URL, so a CI failure is diagnosable without workspace access.
+                error = str(status.get("error") or "")
+                cause = error.rsplit("details.", 1)[-1].strip() or error
+                raise AssertionError(
+                    f"run {run_id} failed: {cause[:400]}{self._run_hint(run_id)} | full: {error[:300]}"
+                )
             if time.monotonic() >= deadline:
                 raise AssertionError(
                     f"run {run_id} not finished within {timeout:.0f}s (last status={last}){self._run_hint(run_id)}"

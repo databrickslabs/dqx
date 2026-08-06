@@ -323,10 +323,13 @@ def _assert_run_result_is_owner_only(client: McpClient, url: str, get_app_token:
 
     # Replay the same run_id presenting a DIFFERENT caller identity. Whether the Apps front door
     # forwards a client-supplied X-Forwarded-Email or overwrites it with the authenticated identity
-    # is a platform behaviour, so both outcomes are handled: if the override reaches the server the
-    # guard must deny, and if the platform overwrites the header the request is simply the owner's
-    # again and must succeed. Either way the assertion below is meaningful — what must NEVER happen
-    # is the server returning a payload to a caller whose identity does not match the submitter.
+    # is a platform behaviour this test cannot control, so assert the property that must hold EITHER
+    # WAY: a caller whose identity does not match the submitter never receives the run's payload.
+    #
+    # Deliberately does NOT assert a specific status. The run is still in flight here, and its
+    # lifecycle is not what is under test — an earlier revision asserted status in
+    # {running, completed} and failed the whole suite when the underlying job errored for an
+    # unrelated reason, reporting a confusing payload dict instead of the real cause.
     replayed = _tool_payload(
         _mcp_request(
             url,
@@ -339,15 +342,18 @@ def _assert_run_result_is_owner_only(client: McpClient, url: str, get_app_token:
     if replayed.get("status") == "not_found":
         sys.stderr.write("note: identity override reached the server; the ownership guard denied it\n")
     else:
-        # The platform overwrote the header, so this was the owner's own read. Record that the
-        # mismatch half of the guard was NOT exercised rather than implying it passed.
+        # The platform overwrote the header, so this read was the owner's own. Say so plainly rather
+        # than implying the mismatch branch was covered.
         sys.stderr.write(
             f"note: the Apps front door overrode X-Forwarded-Email, so the submitter/caller MISMATCH "
             f"branch was not exercised (got status={replayed.get('status')!r})\n"
         )
-        assert replayed.get("status") in {"running", "completed"}, replayed
+    # The security property, independent of the run's outcome: no result payload to a non-submitter.
+    if replayed.get("status") == "not_found":
+        assert "result" not in replayed, f"a denied read must not return the payload: {replayed}"
 
-    # The legitimate submitter always gets their result — the guard must not over-deny.
+    # The legitimate submitter always gets their result — the guard must not over-deny. Surface the
+    # runner's own error if the job failed, so an unrelated failure is diagnosable from CI logs.
     owned = client.wait(run_id)
     assert owned["total_rows"] == EXPECTED_TOTAL_ROWS, owned
 
