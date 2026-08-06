@@ -234,16 +234,27 @@ mcp-grant-prereqs: ## Apply the one-time catalog grants the bundle cannot. Requi
 #
 # Granting BEFORE the app starts is what avoids a "grant, then restart" second pass: the app's first
 # startup already has the access it needs to publish the wheel. This mirrors scripts/ci_deploy.sh.
+# RUNNER_SP is the single source of truth for the runner service principal: it is BOTH granted on
+# the catalog and passed to the bundle as runner_service_principal_id. Passing it twice used to be
+# required, and passing it only via BUNDLE_VARS deployed a working bundle whose runner SP had no
+# catalog grants — surfacing much later as a CREATE_SCHEMA denial on the first save_checks. The
+# `findstring` guard keeps an explicit --var in BUNDLE_VARS working: the CLI rejects a variable
+# assigned twice ("variable has already been assigned value"), so it must not be added again.
+mcp_runner_var = $(if $(RUNNER_SP),$(if $(findstring runner_service_principal_id,$(BUNDLE_VARS)),,--var runner_service_principal_id=$(RUNNER_SP)))
+mcp_bundle_flags = -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(mcp_runner_var) $(BUNDLE_VARS)
+
 mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
 mcp-deploy: ## Deploy the MCP server end to end: bundle, catalog grants, then start the app
-	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [RUNNER_SP=<app-id>] [BUNDLE_VARS=...]"; exit 1)
-	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [RUNNER_SP=<app-id>] [BUNDLE_VARS=...]"; exit 1)
-	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(RUNNER_SP)$(findstring runner_service_principal_id,$(BUNDLE_VARS))" || (echo "RUNNER_SP is required: the runner job needs a dedicated service principal to run as, and it must be granted USE CATALOG + CREATE_SCHEMA on $(CATALOG). See the 'Create the runner service principal' section of the MCP install docs."; exit 1)
+	@test -n "$(RUNNER_SP)" || echo "WARNING: the runner SP was supplied via BUNDLE_VARS, not RUNNER_SP, so it will NOT be granted USE CATALOG + CREATE_SCHEMA on $(CATALOG). Pass RUNNER_SP=<application-id> instead, or run 'make mcp-grant-prereqs' afterwards, otherwise save_checks fails with a CREATE_SCHEMA denial."
+	cd mcp-server && databricks bundle deploy $(mcp_bundle_flags)
 	cd mcp-server && DATABRICKS_PROFILE=$(PROFILE) DQX_MCP_CATALOG=$(CATALOG) \
 	  DQX_MCP_USERS_GROUP="$(USERS_GROUP)" DQX_MCP_RUNNER_SP="$(RUNNER_SP)" \
 	  DQX_MCP_APP_NAME="$(if $(NAME_PREFIX),$(NAME_PREFIX),mcp-dqx)" \
 	  ./scripts/grant_catalog_prereqs.sh
-	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run mcp-dqx $(mcp_bundle_flags)
 	@echo ""
 	@echo "Deployed. The app publishes the runner wheel at startup; verify with:"
 	@echo "  databricks fs ls dbfs:/Volumes/$(CATALOG)/dqx_mcp_tmp/dqx_artifacts -p $(PROFILE)"

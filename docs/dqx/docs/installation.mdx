@@ -615,8 +615,7 @@ databricks auth login --host https://<your-workspace-url> --profile <profile>
 Pass your **catalog** and the **runner SP Application ID** from the prerequisites:
 
 ```bash
-make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id> \
-  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id>
 ```
 
 That is the whole deploy, in one command. It runs three steps in an order that matters:
@@ -635,7 +634,7 @@ Pass these at deploy time (as `--var name=value`, or via `BUNDLE_VARS=` with `ma
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `catalog_name` | **Required.** Catalog the bundle creates its schema and volumes in, and where per-user output schemas live. Passed into the app config as `DQX_CATALOG` — no secret scope (a catalog name isn't sensitive; UC grants govern access). | `""` |
-| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Create the runner service principal](#mcp-runner-sp)). The placeholder default is not a real SP. | `00000000-…` |
+| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Create the runner service principal](#mcp-runner-sp)). The placeholder default is not a real SP. With `make mcp-deploy`, pass `RUNNER_SP=` instead — it sets this variable *and* grants the SP on the catalog, which passing the variable directly does not. | `00000000-…` |
 | `name_prefix` | Prefix for all resource names (app + job). Override to deploy an isolated second copy. | `mcp-dqx` |
 | `tmp_schema_name` | Schema holding the temp views, the results volume and the runner-wheel volume. Override (together with `name_prefix`) for a fully isolated second deployment. Must be a valid identifier — no `-`. | `dqx_mcp_tmp` |
 | `users_group` | Group granted `CAN_USE` on the app, plus `USE CATALOG` and temp-schema access. | `account users` |
@@ -782,8 +781,7 @@ If a deploy step is rejected, this table tells you which grant is missing (typic
 
 ```bash
 git pull
-make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id> \
-  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id>
 ```
 
 **Uninstall** — teardown is a single command:
