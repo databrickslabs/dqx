@@ -272,7 +272,7 @@ mcp-destroy: ## Tear down the MCP server (app, job, schema, volumes). Requires P
 	@test -n "$(CATALOG)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
 	cd mcp-server && databricks bundle destroy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --auto-approve --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
 	@echo ""
-	@echo "Destroyed the MCP app, the runner job, AND the bundle-managed $(CATALOG).dqx_mcp_tmp schema"
+	@echo "Destroyed the MCP app, the runner job, AND the bundle-managed $(CATALOG).$(mcp_tmp_schema) schema"
 	@echo "with its mcp_results + dqx_artifacts volumes — these are bundle resources now, so destroy"
 	@echo "removes them (it previously left the schema in place). Any $(CATALOG).dqx_mcp_<user> output"
 	@echo "schemas are not bundle-managed and survive; drop them manually for a full wipe."
