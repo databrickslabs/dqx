@@ -419,7 +419,7 @@ class DQProfiler(DQEngineBase):
         df_cols: list[T.StructField],
         dq_rules: list[DQProfile],
         opts: dict[str, Any],
-        summary_stats: dict[str, int | float],
+        summary_stats: dict[str, Any],
         total_count: int,
     ) -> None:
         """
@@ -437,24 +437,28 @@ class DQProfiler(DQEngineBase):
             summary_stats: Summary statistics dictionary to update with profiler results.
             total_count: Total number of rows in the input DataFrame.
         """
-        trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
-
         for field in self.get_columns_or_fields(df_cols):
-            field_name = field.name
-            field_type = field.dataType
-
-            column_df = df.select(field_name).dropna()
-            column_label = column_df.columns[0]
-            if is_text(field_type) and trim_strings:
-                column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
-
+            column_df, column_label = self._prepare_column_df(df, field, opts)
             metrics = self._build_column_metrics(column_df, column_label, field, summary_stats, total_count)
+            summary_stats[field.name] = metrics
 
-            self._build_profiles_for_column(column_df, field_name, field_type, metrics, opts, dq_rules)
+            self._build_profiles_for_column(column_df, field, metrics, opts, dq_rules)
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
 
+    def _prepare_column_df(self, df: DataFrame, field: T.StructField, opts: dict[str, Any]) -> tuple[DataFrame, str]:
+        trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
+        field_name = field.name
+        field_type = field.dataType
+
+        column_df = df.select(field_name).dropna()
+        column_label = column_df.columns[0]
+        if is_text(field_type) and trim_strings:
+            column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
+        return column_df, column_label
+
     def _build_column_metrics(
+        self,
         column_df: DataFrame,
         column_label: str,
         field: T.StructField,
@@ -467,18 +471,22 @@ class DQProfiler(DQEngineBase):
             if metric_col is not None:
                 field_metric_aggregations.append(metric_col.alias(metric_name))
 
-        field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
-        field_aggregation_stats = field_aggregation_row.asDict() if field_aggregation_row else {}
+        field_aggregation_stats: dict[str, Any] = {}
+        if field_metric_aggregations:
+            field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
+            if field_aggregation_row:
+                field_aggregation_stats = field_aggregation_row.asDict()
+
         field_summary_stats = summary_stats.get(field.name, {})
-        base_metrics = {**field_summary_stats, **field_aggregation_stats}
-        metrics = {**base_metrics, "count_null": total_count - base_metrics["count_non_null"]}
+        metrics: dict[str, Any] = {**field_summary_stats, **field_aggregation_stats}
+        metrics["count"] = total_count
+        metrics["count_null"] = total_count - metrics.get("count_non_null", 0)
         return metrics
 
     def _build_profiles_for_column(
         self,
         column_df: DataFrame,
-        field_name: str,
-        field_type: T.DataType,
+        field: T.StructField,
         metrics: dict[str, Any],
         opts: dict[str, Any],
         dq_rules: list[DQProfile],
@@ -496,7 +504,7 @@ class DQProfiler(DQEngineBase):
         without triggering a second Spark action.
         """
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
-            profile = profile_type.builder(column_df, field_name, field_type, metrics, opts)
+            profile = profile_type.builder(column_df, field.name, field.dataType, metrics, opts)
             if not profile:
                 continue
             dq_rules.append(profile)
