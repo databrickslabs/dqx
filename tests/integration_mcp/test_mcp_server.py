@@ -13,6 +13,7 @@ agent-in-the-loop check runs last (skipped if the serving endpoint is unreachabl
 
 import json
 import sys
+import time
 from collections.abc import Callable
 
 import requests
@@ -273,12 +274,16 @@ def _assert_table_name_validation(client: McpClient) -> None:
 
 
 def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
-    """A runner job that fails must come back as a failed run WITH the task's own error message.
+    """A runner job that fails must report the task's OWN error, not the generic job-level message.
 
-    The job-level state_message is generic ("Workload failed, see run output for details"), so
-    get_run_result reaches into the task run's output to find the real cause. Without that an agent
-    sees a failure it cannot act on. Induced with a check that validates but cannot execute: the
-    column does not exist in the table, so DQX raises inside the job rather than at submit time.
+    The job-level state_message is only "Workload failed, see run output for details", so
+    get_run_result reaches into the task run's output for the real cause — without it an agent sees a
+    failure it cannot act on. Induced with a check that validates but cannot execute: the column does
+    not exist, so DQX raises inside the job rather than at submit time.
+
+    Polls with ``poll=False`` and reads get_run_result directly, because ``client.call``'s polling
+    helper raises AssertionError on a failed run (correctly — every other call site wants that). Here
+    the failure IS the assertion target, so the terminal payload has to be inspected instead.
     """
     checks = [
         {
@@ -286,15 +291,25 @@ def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
             "check": {"function": "is_not_null", "arguments": {"column": "no_such_column_xyz"}},
         }
     ]
-    try:
-        result = client.call("run_checks", {"table_name": table, "checks": checks})
-    except Exception as exc:  # noqa: BLE001 — a raised MCP error is an acceptable surfacing
-        sys.stderr.write(f"note: run_checks on a bad column raised rather than returning: {exc}\n")
-        return
-    assert result.get("status") != "completed", f"a check on a nonexistent column should not succeed: {result}"
-    # The failure detail is what makes this actionable — assert it names something the caller can use.
-    detail = json.dumps(result).lower()
-    assert "no_such_column_xyz" in detail or "error" in detail, result
+    submitted = client.call("run_checks", {"table_name": table, "checks": checks}, poll=False)
+    run_id = submitted.get("run_id")
+    assert run_id, f"run_checks should submit a job even for a doomed check: {submitted}"
+
+    deadline = time.monotonic() + 300
+    while True:
+        status = client.call("get_run_result", {"run_id": run_id}, poll=False)
+        state = status.get("status")
+        if state in ("failed", "completed"):
+            break
+        assert time.monotonic() < deadline, f"run {run_id} never reached a terminal state: {status}"
+        time.sleep(4)
+
+    assert state == "failed", f"a check on a nonexistent column should fail, not succeed: {status}"
+    # The whole point of the task-error lookup: the message must name the actual cause.
+    detail = json.dumps(status).lower()
+    assert "no_such_column_xyz" in detail, f"the failure did not name the offending column: {status}"
+    # And it must stay actionable — a run URL to open.
+    assert status.get("run_url") or "run_page_url" in detail, status
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):

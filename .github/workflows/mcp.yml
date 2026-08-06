@@ -102,7 +102,7 @@ jobs:
           ls -la .coverage.* 2>/dev/null || echo "no remote coverage data files were downloaded"
           uv run coverage combine --rcfile=tests/integration_mcp/.coveragerc --keep || true
           uv run coverage xml --rcfile=tests/integration_mcp/.coveragerc -o coverage-combined.xml || true
-          uv run coverage report --rcfile=tests/integration_mcp/.coveragerc || true
+          uv run coverage report --rcfile=tests/integration_mcp/.coveragerc -m || true
 
       - name: Publish test coverage
         # Also always(), for the same reason; the action tolerates a missing file.
