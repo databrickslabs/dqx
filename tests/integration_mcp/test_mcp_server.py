@@ -352,17 +352,13 @@ def _assert_run_result_is_owner_only(client: McpClient, url: str, get_app_token:
     assert owned["total_rows"] == EXPECTED_TOTAL_ROWS, owned
 
 
-def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
-    """A runner job that fails must report the task's OWN error, not the generic job-level message.
+def _assert_missing_column_is_reported_as_skipped(client: McpClient, table: str) -> None:
+    """A check naming a column the table does not have is SKIPPED per row, not failed.
 
-    The job-level state_message is only "Workload failed, see run output for details", so
-    get_run_result reaches into the task run's output for the real cause — without it an agent sees a
-    failure it cannot act on. Induced with a check that validates but cannot execute: the column does
-    not exist, so DQX raises inside the job rather than at submit time.
-
-    Polls with ``poll=False`` and reads get_run_result directly, because ``client.call``'s polling
-    helper raises AssertionError on a failed run (correctly — every other call site wants that). Here
-    the failure IS the assertion target, so the terminal payload has to be inspected instead.
+    DQX evaluates such a check to a skipped result rather than erroring, so the run completes and
+    every row carries an _errors entry with skipped=True. That distinction matters to an agent: the
+    rule did not pass, and it did not fail either — it never ran, and the reason has to survive into
+    the result rather than looking like a clean run.
     """
     checks = [
         {
@@ -370,9 +366,36 @@ def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
             "check": {"function": "is_not_null", "arguments": {"column": "no_such_column_xyz"}},
         }
     ]
-    submitted = client.call("run_checks", {"table_name": table, "checks": checks}, poll=False)
+    result = client.call("run_checks", {"table_name": table, "checks": checks})
+    assert result["total_rows"] == EXPECTED_TOTAL_ROWS, result
+    # Every row is flagged, because the check could not be evaluated for any of them.
+    assert result["invalid_rows"] == EXPECTED_TOTAL_ROWS, result
+    first_error = result["error_sample"][0]["_errors"][0]
+    assert first_error["skipped"] is True, first_error
+    assert "no_such_column_xyz" in first_error["columns"], first_error
+
+
+def _assert_failed_run_surfaces_error(client: McpClient) -> None:
+    """A runner job that fails must report the task's OWN error, not the generic job-level message.
+
+    The job-level state_message is only "Workload failed, see run output for details", so
+    get_run_result reaches into the task run's output for the real cause — without it an agent sees a
+    failure it cannot act on.
+
+    Induced through generate_rules with a malformed profile: the runner validates caller-supplied
+    profiles and raises InvalidParameterError inside the job, which is a genuine task failure. (A
+    check on a nonexistent column does NOT work here — DQX skips such a check and the run completes;
+    see _assert_missing_column_is_reported_as_skipped.)
+
+    Polls with ``poll=False`` and reads get_run_result directly, because ``client.call``'s polling
+    helper raises AssertionError on a failed run (correctly — every other call site wants that). Here
+    the failure IS the assertion target, so the terminal payload has to be inspected instead.
+    """
+    # 'column' is required by the runner's profile validation; omitting it fails the job.
+    bad_profiles = [{"name": "is_not_null"}]
+    submitted = client.call("generate_rules", {"profiles": bad_profiles}, poll=False)
     run_id = submitted.get("run_id")
-    assert run_id, f"run_checks should submit a job even for a doomed check: {submitted}"
+    assert run_id, f"generate_rules should submit a job even for a doomed profile: {submitted}"
 
     deadline = time.monotonic() + 300
     while True:
@@ -383,10 +406,11 @@ def _assert_failed_run_surfaces_error(client: McpClient, table: str) -> None:
         assert time.monotonic() < deadline, f"run {run_id} never reached a terminal state: {status}"
         time.sleep(4)
 
-    assert state == "failed", f"a check on a nonexistent column should fail, not succeed: {status}"
-    # The whole point of the task-error lookup: the message must name the actual cause.
+    assert state == "failed", f"a malformed profile should fail the job, not succeed: {status}"
+    # The whole point of the task-error lookup: the message must name the actual cause, not just
+    # "Workload failed". The runner's error names the missing key.
     detail = json.dumps(status).lower()
-    assert "no_such_column_xyz" in detail, f"the failure did not name the offending column: {status}"
+    assert "column" in detail, f"the failure did not explain what was wrong: {status}"
     # And it must stay actionable — a run URL to open.
     assert status.get("run_url") or "run_page_url" in detail, status
 
@@ -468,9 +492,13 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # data from another. Asserted with a real run id, so it cannot pass vacuously.
         _assert_run_result_is_owner_only(client, app["url"], get_app_token, table)
 
+        # A check on a column the table lacks is skipped per row, not failed — assert the skip
+        # reason survives into the result rather than looking like a clean run.
+        _assert_missing_column_is_reported_as_skipped(client, table)
+
         # A job that fails inside the runner must report the task's real error, not the generic
         # job-level message. Runs last: it is the only step that deliberately fails a job.
-        _assert_failed_run_surfaces_error(client, table)
+        _assert_failed_run_surfaces_error(client)
 
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):
