@@ -8,7 +8,7 @@ The DQX Studio is a **UI for authoring and managing data quality rules**. It low
 
 **Not in scope:** Running rules as part of customer production data pipelines (the app's runs target dev/UAT data and write results to the app's own catalog).
 
-**What's new:** when you ship a major, user-facing Studio feature or improvement, add a short entry (a bold headline + 1–2 sentences) to the What's new page at `docs/dqx/docs/studio/whats-new/index.mdx`. It's the single place users look to see what changed, and it's part of the Definition of Done in the contributing guide.
+**What's new:** major, user-facing Studio features are summarized in the pull request that ships them, for the release notes. There is no in-docs "What's new" page.
 
 ## Deployment
 

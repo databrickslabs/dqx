@@ -134,7 +134,7 @@ const config: Config = {
             },
             {
               id: 'dqx-studio',
-              name: 'DQX Studio',
+              name: 'DQX Studio (Beta)',
               description: 'The no-code web app for authoring, reviewing, running, and monitoring data quality rules',
               position: 3,
               routes: [

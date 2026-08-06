@@ -22,7 +22,7 @@ amount stays in bounds", or "there are no orphaned orders anywhere".
 A row-level failure points you at the bad records. A table-level failure tells
 you the table failed the check, without listing every row. Choose based on how
 you want to investigate later — see
-[Results](/docs/studio/running/results).
+[Review results](/docs/studio/running/).
 </Admonition>
 
 ## How authoring decides the level
@@ -77,9 +77,9 @@ If your SQL is a boolean expression (not a full `SELECT`), it always runs
 
 You can still add a join in **Advanced → Joins** for a cross-table predicate;
 results remain per row. See
-[Cross-table rules](/docs/studio/authoring/cross-table-rules).
+[Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules).
 
-## SQL — full query
+## SQL — full query {#sql-full-query}
 
 When you write a full query (`SELECT … FROM {{input_view}} …`), the Condition
 header shows **Applies to**. Pick the level that matches what the query means.
@@ -122,21 +122,13 @@ don't ignore those messages.
 
 ## How this shows up in quality scores
 
-When a run finishes, the quality score gives **every rule equal weight**. A
-table-level check contributes **one** pass/fail verdict (it does not count once
-per row of the table). A row-level check contributes its row pass rate. That
-keeps a large table from drowning out — or exaggerating — a single table-wide
-expectation.
-
-The full formulas, worked examples, and notes on thresholds / multi-column
-rules are in
-[How the quality score is calculated](/docs/studio/running/quality-score). For
-reading scores and drill-downs in the UI, see
-[Results](/docs/studio/running/results).
+A row-level check contributes its **row pass rate**, while a table-level check
+contributes a **single pass/fail verdict** (it doesn't count once per row) — so a
+large table can't drown out, or exaggerate, one table-wide expectation. For how
+that rolls up into the DQ score, see [Review results](/docs/studio/running/#read-the-score).
 
 ## Related
 
 - [Create a rule](/docs/studio/authoring/create-a-rule) — end-to-end authoring
-- [Cross-table rules](/docs/studio/authoring/cross-table-rules) — joins and
+- [Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules) — joins and
   multi-table SQL
-- [Key concepts](/docs/studio/start-here/key-concepts) — rules, checks, and tests

@@ -70,7 +70,7 @@ to real columns. The joined table is already named in the rule.
 Adding a join in the builder does **not** turn the rule into a single
 table-wide verdict. Results are still matched back to individual rows using the
 join keys. See
-[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).
 </Admonition>
 
 ## Custom SQL
@@ -182,7 +182,7 @@ JOIN catalog.schema.products p ON i.{{product_id}} = p.id
 **Row-level** without merge keys, or **Table-level** without a single aggregated
 row, fails when the rule runs. The editor warns about these cases — don't ignore
 those messages. For more on when to pick each level, see
-[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).
 </Admonition>
 
 ### Write or improve SQL with AI
@@ -226,4 +226,4 @@ Cross-table rules follow the same path as any other rule: test on sample data,
 save as draft or submit for approval, then
 [apply the rule](/docs/studio/monitoring/assign-rules) to the monitored table.
 To understand how row-level vs table-level choices show up in results, see
-[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).

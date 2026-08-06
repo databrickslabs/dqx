@@ -10,7 +10,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Monitor your tables
 
 This section is for stewards who want to put real, ongoing data-quality checks on
-a table. It's where the reusable rules in your [Rules Registry](/docs/studio/start-here/key-concepts)
+a table. It's where the reusable rules in your [Rules Registry](/docs/studio/)
 stop being definitions and start doing work.
 
 When you apply rules to a Unity Catalog table, that table becomes a **monitored
@@ -41,8 +41,8 @@ A monitored table has four tabs:
 - **Apply Rules** — where you turn rules into live checks. See
   [Assign rules](/docs/studio/monitoring/assign-rules).
 - **Results** — the table's data-quality score, its trend over time, and a
-  breakdown you can drill into down to the failing rows. See the
-  [Results page](/docs/studio/running/results).
+  breakdown you can drill into down to the failing rows. See
+  [Review results](/docs/studio/running/).
 - **Profile** — a scan of the table's shape that can suggest candidate rules. See
   [Profiling](/docs/studio/monitoring/profiling).
 
@@ -57,10 +57,12 @@ A monitored table has four tabs:
 ## In this section
 
 - **[Assign rules](/docs/studio/monitoring/assign-rules)** — attach rules from
-  your registry to a table's columns and tune them per table.
-- **[Set quality thresholds](/docs/studio/monitoring/quality-thresholds)** —
-  require, say, 95% of rows to pass and improve quality gradually.
+  your registry to a table's columns, tune them per table, and set
+  [quality thresholds](/docs/studio/monitoring/assign-rules#quality-thresholds)
+  to require, say, 95% of rows to pass and improve quality gradually.
 - **[Profiling](/docs/studio/monitoring/profiling)** — scan a table and let the
   data suggest candidate rules.
 - **[Collections](/docs/studio/monitoring/collections)** — group related tables
   into a data product and see quality across all of them at once.
+- **[Run checks & schedule](/docs/studio/monitoring/run-and-schedule)** — run on
+  demand or on a schedule, and see past runs.

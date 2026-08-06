@@ -10,7 +10,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Assign rules
 
 Assigning rules is where the reusable definitions in your
-[Rules Registry](/docs/studio/start-here/key-concepts) start doing work: you
+[Rules Registry](/docs/studio/) start doing work: you
 attach them to a [monitored table](/docs/studio/monitoring/)'s columns and tune
 them for that table. Each rule you apply to a column becomes a **check** — a
 single rule can become many checks across your tables and columns.
@@ -37,11 +37,10 @@ underlying rule:
   **Low**, **Medium**, **High**, or **Critical**. The rule carries a default
   severity; you can override it here. Severity is a priority for triage and
   reporting, not what decides pass or fail. See
-  [Key concepts](/docs/studio/start-here/key-concepts#severity).
+  [Severity](/docs/studio/#severity).
 - **Set a pass threshold.** Instead of demanding every row pass, you can require,
-  say, 70% of rows to pass for the check to count as healthy. This is what decides
-  whether a check is green. Useful when you're improving quality gradually. See
-  [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
+  say, 70% of rows to pass for the check to count as healthy. See
+  [Quality thresholds](#quality-thresholds) below.
 
 ## Pin a rule version
 
@@ -57,6 +56,29 @@ Each check on your table shows a **version selector** (for example, *Latest
 
 Pinning is per check, so you can let most checks follow the latest while holding a
 sensitive one steady.
+
+## Quality thresholds {#quality-thresholds}
+
+Real data is rarely perfect. By default a check is either passing or failing — but
+if a column is 88% clean and you demand 100%, that check stays red forever, and a
+check that's always red is one everyone learns to ignore. A **pass threshold**
+sets how many rows must pass for the check to count as green. Set it to `< 90%`
+and the check needs 90% of rows to pass; a small badge on the check shows the bar.
+
+This turns quality into a dial instead of a pass/fail cliff. Set the threshold
+just below where the data is today so the check goes green, then raise it — to
+95%, then 98% — each time the data improves. A steadily rising threshold is a much
+clearer signal of progress than a check stuck on red. Thresholds are set per rule
+and per column, right here on the Apply Rules tab, and admins can set a sensible
+org-wide default that authors override per check (see
+[Set up for your org](/docs/studio/governance/)).
+
+<Admonition type="note" title="Thresholds change flagging, not the score or your data">
+A pass threshold only decides when a check is *flagged* as failing in the UI. It
+never edits or deletes rows, and it doesn't change the numeric DQ score — a check
+at 82% still contributes 0.82 whether or not it clears its threshold. See
+[how the score works](/docs/studio/running/#read-the-score).
+</Admonition>
 
 ## Suggest rules with AI
 
@@ -84,7 +106,7 @@ not a decision made for you.
 If a rule's column is marked with a governed tag (for example `class.location`),
 that rule is applied automatically to any column on this table carrying the same
 tag — so tagged rules land on the right columns without you mapping them by hand.
-See [Governed tags](/docs/studio/authoring/governed-tags).
+See [Governed tags](/docs/studio/authoring/create-a-rule#governed-tags).
 </Admonition>
 
 <Admonition type="info" title="Your data is never changed">
@@ -101,4 +123,4 @@ actively monitored and its checks run on the schedule set for it.
 
 - Learn how review and approval works in the
   [Approval workflow](/docs/studio/governance/approval-workflow).
-- Learn how and when checks run in [Run checks & schedule](/docs/studio/running/run-and-schedule).
+- Learn how and when checks run in [Run checks & schedule](/docs/studio/monitoring/run-and-schedule).

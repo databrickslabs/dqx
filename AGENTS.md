@@ -41,7 +41,7 @@ make lock-app-dependencies    # refresh app/uv.lock + app/yarn.lock
 
 App docs (read these before touching `app/`): [`app/CLAUDE.md`](app/CLAUDE.md), [`app/DEPLOYMENT.md`](app/DEPLOYMENT.md), [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md), [`app/README.md`](app/README.md), and the backend / UI CLAUDEs under `app/src/databricks_labs_dqx_app/`.
 
-**What's new:** when you ship a major, user-facing DQX Studio feature or improvement, add a short entry (a bold headline + 1–2 sentences) to the What's new page at `docs/dqx/docs/studio/whats-new/index.mdx`. It's the single place users look to see what changed, and it's part of the [Definition of Done](docs/dqx/docs/dev/contributing.mdx).
+**What's new:** major, user-facing DQX Studio features are summarized in the pull request that ships them, for the release notes. There is no in-docs "What's new" page.
 
 ### Dependency installs and lock files
 

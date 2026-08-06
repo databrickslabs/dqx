@@ -54,7 +54,12 @@ const Hero = (): JSX.Element => {
           className="group flex flex-col items-start text-left p-6 rounded-xl border-2 border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 shadow-sm hover:shadow-xl hover:border-red-500 transition-all no-underline"
         >
           <AppWindow className="w-8 h-8 text-red-500 mb-3" />
-          <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white">DQX Studio</h2>
+          <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white flex items-center gap-2">
+            DQX Studio
+            <span className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[0.65rem] font-semibold uppercase tracking-wide px-2 py-0.5 align-middle">
+              Beta
+            </span>
+          </h2>
           <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
             The no-code web app. Author, run, and monitor quality rules from your browser —
             no code required.
@@ -90,7 +95,7 @@ const studioFeatures = [
   { title: 'Monitor tables & thresholds', description: 'Apply rules to tables, set pass thresholds, and improve quality gradually.', icon: BarChart2, link: '/docs/studio/monitoring/assign-rules' },
   { title: 'Suggest rules with AI', description: 'Point the app at a table and it proposes a tailored set of checks for its columns and data.', icon: Sparkles, link: '/docs/studio/monitoring/assign-rules#suggest-rules-with-ai' },
   { title: 'Data products with Collections', description: 'Group related tables into a data product and see quality across all of them at once.', icon: Boxes, link: '/docs/studio/monitoring/collections' },
-  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/results' },
+  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/' },
   { title: 'Governed by design', description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog.', icon: ShieldCheck, link: '/docs/studio/governance/approval-workflow' },
 ];
 
@@ -216,7 +221,7 @@ const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'cor
             <div className="text-center mt-8 flex flex-wrap gap-3 justify-center">
               <Button
                 variant="primary"
-                link="/docs/studio/start-here/quickstart"
+                link="/docs/studio/quickstart"
                 size="medium"
                 label="Get started in 10 minutes"
                 className="bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600 transition-all"

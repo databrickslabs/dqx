@@ -11,8 +11,8 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 The **Marketplace** is a catalogue of ready-made, reusable data-quality rules —
 so you don't have to write the common ones from scratch. Browse rules grouped by
-domain, tick the ones you want, and import them straight into your Rules
-Registry as reusable templates you can map onto your tables.
+domain, tick the ones you want, and import them into your Rules Registry as
+reusable templates you can map onto your tables.
 
 <Admonition type="info" title="Admin only">
 The Marketplace is available to workspace **admins**. Find it in the sidebar,
@@ -27,52 +27,37 @@ just above **Documentation**.
   }}
 />
 
-## Browse and filter
+## Browse, preview, and import
 
 Rules are grouped into **domain packs** — Contacts & People, Addresses & Geo,
-Pricing & Money, Dates & Freshness, Codes & Classifications, Standard checks, and
-more. Expand a pack to see its rules; each shows its **quality dimension** and
-**severity**.
-
-Two filters narrow what's shown:
-
-- **Industry** — e.g. Banking, Retail, Healthcare, Telco. Rules tagged for that
-  industry (plus general rules) show.
-- **Region** — e.g. Global, EU, UK, US. Regions are hierarchical: choosing **EU**
-  shows every EU rule (including per-country ones like France or Germany), while
-  choosing **France** narrows to just that country.
-
-Use the **search** box to find a rule by name across every pack.
-
-## Preview a rule
+Pricing & Money, and more. Two filters narrow what's shown: **Industry** (e.g.
+Banking, Retail, Healthcare) and **Region** (hierarchical — choosing **EU** shows
+every EU rule, choosing **France** narrows to that country). The **search** box
+finds a rule by name across every pack.
 
 Click a rule to expand it and see exactly what it does — its logic, parameters,
-and whether the row **passes** or **fails** when the condition is true.
-
-### Try it out
-
-Not sure a rule does what you expect? Hit **Try it out** on any rule to open a
-test panel. Type a few sample values (or point at one of your tables) and see
-per-row pass/fail before you import anything.
-
-## Import rules
+and whether the row passes or fails when the condition is true. Not sure a rule
+behaves as you expect? Hit **Try it out** to open a test panel, type a few sample
+values (or point at one of your tables), and see per-row pass/fail before you
+import anything.
 
 Tick the rules you want — individually, or a whole pack via its header
-checkbox — then click **Import _N_ selected**. The rules land in your Rules
-Registry as reusable templates, ready to [assign to your
-tables](/docs/studio/monitoring/assign-rules).
+checkbox — then click **Import _N_ selected**. They land in your Rules Registry,
+ready to [assign to your tables](/docs/studio/monitoring/assign-rules).
 
 <Admonition type="tip" title="Imported rules arrive approved">
-Because Marketplace packs are curated and the Marketplace is admin-only,
-imported rules are **published on import** — they don't sit in the approval
-queue. Re-importing is safe: a rule you already have is reused, not duplicated.
+Because Marketplace packs are curated and the Marketplace is admin-only, imported
+rules are **published on import** — they don't sit in the approval queue.
+Re-importing is safe: a rule you already have is reused, not duplicated.
 </Admonition>
 
 ## Deploy demo content
 
 The Marketplace is also home to **Deploy demo content** — the first row on the
 page. It fills the workspace with example tables, rules, and past run results so
-you can explore the Studio with realistic data.
+you can explore the Studio with realistic data. Click the row, confirm (the
+default wipes existing Studio data for a clean slate), and it seeds in the
+background — it takes a while, so leave it to run.
 
 <ThemedImage
   alt="Deploy demo content row at the top of the Marketplace, with a Deploy button"
@@ -82,13 +67,10 @@ you can explore the Studio with realistic data.
   }}
 />
 
-Click the row, confirm (the default wipes existing Studio data for a clean
-slate), and it seeds in the background — it takes a while, so leave it to run.
-
 ## Contribute a pack
 
 The rule packs are DQX-YAML files in the
 [DQX repository](https://github.com/databrickslabs/dqx/tree/main/app/src/databricks_labs_dqx_app/backend/marketplace/packs).
-To add a rule or a whole new domain pack, open a pull request — see the README
-in that directory for the format. There's a **Contribute on GitHub** link in the
+To add a rule or a whole new domain pack, open a pull request — see the README in
+that directory for the format. There's a **Contribute on GitHub** link in the
 Marketplace header too.

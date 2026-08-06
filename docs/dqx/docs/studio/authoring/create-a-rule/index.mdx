@@ -29,44 +29,54 @@ Open **Rules** in the sidebar and click **New rule**. The rule editor opens on
 the **About** tab, where you describe what the rule is. You'll fill in the
 *details* here, and the *logic* on the Implementation tab next.
 
-<ThemedImage
-  alt="The New rule editor, About tab: name, description, default severity, dimension, and tags"
-  sources={{
-    light: useBaseUrl('/img/studio/create_rule_about_light.png'),
-    dark: useBaseUrl('/img/studio/create_rule_about_dark.png'),
-  }}
-/>
-
 Fill in:
 
 - **Name** — a short, human name. Say what good looks like, not what's wrong:
   *"Email is present"*, not *"email null check"*.
 - **Description** — one line on what the rule checks and why it matters.
 - **Default severity** — how much a failure of this rule matters:
-  [**Low**, **Medium**, **High**, or **Critical**](/docs/studio/start-here/key-concepts#severity)
+  [**Low**, **Medium**, **High**, or **Critical**](/docs/studio/#severity)
   (your organization can customize these levels). Severity is a priority for
   triage and reporting, not a pass/fail switch — it's the starting point, and you
   can override it for a specific table when you apply the rule.
 - **Dimension** — which
-  [aspect of quality](/docs/studio/start-here/key-concepts#quality-dimensions)
+  [aspect of quality](/docs/studio/#quality-dimensions)
   this measures (completeness, validity, accuracy, and so on). This is what lets
   you later report quality *by category*.
 - **Tags** *(optional)* — labels for organizing and filtering rules. Some tags
-  are [governed tags](/docs/studio/authoring/governed-tags) that help the app
-  suggest which columns a rule applies to.
+  are [governed tags](#governed-tags) that make a rule apply automatically
+  wherever that kind of data appears.
+
+### Governed tags: apply a rule automatically {#governed-tags}
+
+A **governed tag** is a label your organization agrees on for a *kind* of data —
+`pii`, `region`, `class.location`, and so on. Governed tags are defined in
+**Unity Catalog**, not in DQX Studio, and are the shared vocabulary you already
+use to classify columns.
+
+Instead of pointing a rule at a named column, you can point one of its columns at
+a **tag**: on the column, click **+ Apply to a tag** and pick from the searchable
+list of Unity Catalog tags. The rule then **auto-applies** to any table column
+carrying that tag — a rule scoped to `pii` lands on every `pii` column across your
+tables, and picks up new ones the moment they're tagged. No hunting down an
+`email` column that's called `email_address` on one table and `contact_email` on
+another.
+
+Checks that arrive this way are marked with a **matched-tag chip** on the table's
+[Apply Rules tab](/docs/studio/monitoring/assign-rules), so you can tell they came
+from a governed tag rather than being mapped by hand.
+
+<Admonition type="note" title="Governed tags vs. rule labels">
+Governed tags attach to a **column** inside a rule and drive auto-apply. They're
+different from the plain **Tags** field above, which just helps you organize and
+find rules. Admins manage the organization's tags under
+[Governance](/docs/studio/governance/).
+</Admonition>
 
 ## Define what the rule checks
 
 Switch to the **Implementation** tab. This is where you say *what* makes data
 pass or fail — without writing code.
-
-<ThemedImage
-  alt="The Implementation tab: a column placeholder and a plain-language condition builder"
-  sources={{
-    light: useBaseUrl('/img/studio/create_rule_implementation_light.png'),
-    dark: useBaseUrl('/img/studio/create_rule_implementation_dark.png'),
-  }}
-/>
 
 ### Columns are placeholders, not real columns
 
@@ -173,7 +183,7 @@ Expand it when your rule needs more than a plain condition:
   This is how referential checks work — for example "every `product_id` in orders
   must exist in the products table". You point at the reference table and the
   columns to match on, and DQX Studio compares against it when the rule runs.
-  See [Cross-table rules](/docs/studio/authoring/cross-table-rules) for the full
+  See [Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules) for the full
   picture (built-in check, visual join, and SQL).
 
 Most rules never need the Advanced box — reach for it when a rule has to target a
@@ -185,12 +195,12 @@ For advanced users: when even the condition builder can't express what you need,
 choose **SQL** under Custom condition. You can write either:
 
 - a **plain condition** over placeholders (always
-  [row-level](/docs/studio/authoring/row-and-table-level)), or
+  [row-level](/docs/studio/authoring/create-a-rule/row-and-table-level)), or
 - a **full query** (`SELECT … FROM {{input_view}} …`), where you set
   **Applies to** to **Row-level** or **Table-level**.
 
 This is also the path for complex
-[cross-table](/docs/studio/authoring/cross-table-rules) comparisons. The query
+[cross-table](/docs/studio/authoring/create-a-rule/cross-table-rules) comparisons. The query
 must be a single read-only `SELECT` — DQX Studio rejects anything that writes or
 runs multiple statements.
 
@@ -213,9 +223,9 @@ There are three ways to write one:
 
 Step-by-step examples (including row-level vs table-level SQL, permissions, and
 common pitfalls) live on
-[Cross-table rules](/docs/studio/authoring/cross-table-rules). For when to use
+[Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules). For when to use
 **Row-level** vs **Table-level**, see
-[Row-level vs table-level rules](/docs/studio/authoring/row-and-table-level).
+[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).
 
 ## Generate a rule with AI
 
@@ -284,20 +294,9 @@ its own yet — the next step is to
 [apply it to a table](/docs/studio/monitoring/assign-rules), which turns your
 reusable rule into a live check.
 
-## Get a head start by profiling a table
-
-If you're not sure what to check yet, let DQX Studio look at the data first. When
-you open a table, you can run a quick **profile** — the app scans a sample and
-suggests candidate rules based on what it finds (a column that's never blank →
-"is not null"; values that all look like emails → a pattern check; a small set of
-repeated values → "is in list"). Keep the suggestions you like; they're saved as
-drafts you can refine and submit like any other rule.
-
-It's a convenient starting point, not a replacement for authoring — you'll still
-review and tidy the suggestions. Profiling lives on the table itself; see
-[Profiling](/docs/studio/monitoring/profiling).
-
 ## Other ways to create rules
 
 You can also [import rules](/docs/studio/authoring/import-rules) you already have,
-from DQX YAML or an Open Data Contract.
+from DQX YAML or an Open Data Contract. And if you're not sure what to check yet,
+[profiling](/docs/studio/monitoring/profiling) scans a table and suggests
+candidate rules from the data.

@@ -1,21 +1,72 @@
 ---
 sidebar_position: 0
-title: Run & review
+title: Review results
 ---
 
-# Run & review
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
-Once a table is monitored, you **run** its checks to see how the data is doing,
-then **review** the results and act on anything that's failing.
+# Review results
 
-- **[Run checks & schedule](/docs/studio/running/run-and-schedule)** — run on
-  demand with **Run now**, or put a table or collection on an hourly, daily,
-  weekly, or custom schedule. See past runs in Runs History.
-- **[Results page](/docs/studio/running/results)** — read the DQ score and
-  trend, break results down by dimension, severity, rule, and column, and drill
-  into the failing records.
-- **[How the quality score is calculated](/docs/studio/running/quality-score)** —
-  row-level vs table-level contributions, equal rule weight, and collection
-  roll-ups.
-- **[Ask Genie](/docs/studio/running/genie)** — ask questions about your results
-  in plain English and get an answer with a chart.
+After a [run](/docs/studio/monitoring/run-and-schedule) finishes, its results
+show up here — the place to see how your data is doing, find what's failing, and
+decide what to do about it. Every monitored table and collection has a
+**Results** view.
+
+## Read the score
+
+At the top is the **DQ score** — a 0–100% summary of the latest run. A rule
+becomes a **check** when you apply it to a column, and each check produces one
+**test** per row when it runs; the score is the **average test pass rate** across
+all of them. A **collection** score is the average DQ score across its member
+tables. Below the score, breakdowns split the results by **dimension**,
+**severity**, **rule**, and **column**, so you can see where quality is slipping.
+
+A check is **flagged as failing** when its pass rate drops below its
+[pass threshold](/docs/studio/monitoring/assign-rules#quality-thresholds) (the
+`< 70%` badge) — that's separate from the numeric score, which always uses the
+raw pass rate.
+
+## Investigate and act on a failure {#investigate-and-act-on-a-failure}
+
+The breakdowns are interactive: select a **dimension**, **severity**, **rule**,
+or **column** to filter down to just those results, and on a collection you can
+**drill into a member table** to open its own Results and keep going. To see what
+actually went wrong, open the **Failed records** table and **hover a failing
+cell** — a popup lists every check that row failed, each with its severity and
+reason.
+
+<ThemedImage
+  alt="Failed records table with a hovered row showing a popup of the checks that row failed, each with severity and reason"
+  sources={{
+    light: useBaseUrl('/img/studio/failed_record_popup_light.png'),
+    dark: useBaseUrl('/img/studio/failed_record_popup_dark.png'),
+  }}
+/>
+
+A failing check is a prompt to act, not always a problem with the rule. You can
+**fix the data at source**, **adjust the threshold** if the target was
+unrealistic, **change the severity** to reprioritize, **refine the rule**, or
+**escalate** to the team that owns the data. The **Show comments** control opens
+a notes thread so you can record what you found and hand it off — each comment
+keeps its author and timestamp.
+
+<Admonition type="info" title="Your data is never changed">
+Failing a check never deletes or edits your data. The failing rows shown here are
+a **sample** copied into a quarantine view purely so you can inspect them.
+</Admonition>
+
+## Ask Genie {#ask-genie}
+
+**Ask Genie** turns your results into a conversation. Open the panel on any
+Results view and ask a question in plain English — "which columns have the most
+failures?", "why did my score drop?" — and Genie answers with a short
+explanation and, where it helps, a chart. There's no SQL to write; it's built on
+Databricks Genie and reads the same results you're already looking at.
+
+Not sure what to ask? Genie opens with **suggested questions** grouped by what
+you're trying to do — Basic stats, Drilldown, Trends over time, and Diagnose.
+Every conversation stays with the table or collection you opened it from, and you
+can start a **New conversation** or revisit an earlier one from **History** at
+any time.
