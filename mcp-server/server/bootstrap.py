@@ -74,7 +74,7 @@ def _read_remote_hash(ws, volume: str) -> str | None:
     try:
         resp = ws.files.download(f"{volume}/{_HASH_MARKER}")
         return resp.contents.read().decode().strip() if resp.contents is not None else None
-    except Exception:  # noqa: BLE001 — a missing/unreadable marker just means "publish again"
+    except Exception:  # a missing/unreadable marker just means "publish again"
         return None
 
 
@@ -118,7 +118,7 @@ def publish_runner_wheel() -> str | None:
         ws.files.upload(f"{volume}/{_HASH_MARKER}", io.BytesIO(local_hash.encode()), overwrite=True)
         logger.info(f"Published runner wheel to {destination} ({local_hash[:12]}…)")
         return destination
-    except Exception as exc:  # noqa: BLE001 — never prevent the app from serving
+    except Exception as exc:  # never prevent the app from serving
         logger.warning(
             f"Could not publish the runner wheel to {destination}: {exc}. Data tools will fail to "
             "install the runner until this succeeds — check that the app's service principal has "
@@ -132,5 +132,5 @@ async def run_startup_tasks() -> None:
     """Run the app's startup work off the event loop. Never raises."""
     try:
         await asyncio.to_thread(publish_runner_wheel)
-    except Exception as exc:  # noqa: BLE001 — belt and braces; publish_runner_wheel already guards
+    except Exception as exc:  # belt and braces; publish_runner_wheel already guards
         logger.warning(f"Startup tasks failed (continuing): {exc}", exc_info=True)
