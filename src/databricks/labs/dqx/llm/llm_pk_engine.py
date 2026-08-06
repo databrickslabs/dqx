@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-import dspy  # type: ignore
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import LLMModelConfig
@@ -32,12 +31,39 @@ class DQLLMPrimaryKeyEngine:
 
         Args:
             model_config: Configuration for the LLM model.
-            spark: Optional Spark session. If None, a new session is created.
-            detector: Optional primary key detector. If None, one is created using *spark*.
+            spark: Optional Spark session. If not provided, a new session will be created on first use.
+            detector: Optional primary key detector. If None, one is created on first use using *spark*.
         """
-        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+        self._spark = spark
         self._configurator = LLMModelConfigurator(model_config)
-        self._llm_pk_detector = detector or LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
+        self._detector = detector
+
+    @property
+    def spark(self) -> SparkSession:
+        """
+        Gets a Spark session. Gets an available one or creates a new one if none was provided.
+
+        Returns:
+            Spark session instance.
+        """
+        if self._spark is None:
+            self._spark = SparkSession.builder.getOrCreate()
+        return self._spark
+
+    @property
+    def detector(self) -> LLMPrimaryKeyDetector:
+        """
+        Gets the primary key detector, creating one on first use if none was provided.
+
+        Resolved lazily so that constructing the engine does not require a Spark session before any
+        detection is actually requested.
+
+        Returns:
+            Primary key detector instance.
+        """
+        if self._detector is None:
+            self._detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
+        return self._detector
 
     def detect_primary_keys_with_llm(self, table: str) -> dict[str, Any]:
         """
@@ -59,5 +85,5 @@ class DQLLMPrimaryKeyEngine:
             - duplicate_count: Number of duplicate combinations (if validation performed)
             - error: Error message (if failed)
         """
-        with dspy.settings.context(lm=self._configurator.create_lm()):
-            return self._llm_pk_detector.detect_primary_keys_with_llm(table=table)
+        with self._configurator.lm_context():
+            return self.detector.detect_primary_keys_with_llm(table=table)

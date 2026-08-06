@@ -10,12 +10,12 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.io import UC_TABLE_PATTERN
+from databricks.labs.dqx.io import STORAGE_PATH_PATTERN, TABLE_PATTERN, UC_TABLE_PATTERN
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.errors import MissingParameterError
-from databricks.labs.dqx.utils import get_table_column_metadata
+from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
+from databricks.labs.dqx.utils import get_table_column_metadata, sanitize_for_logging
 
 # Conditional imports for LLM-assisted rules generation
 try:
@@ -139,6 +139,11 @@ class DQGenerator(DQEngineBase):
 
         Raises:
             MissingParameterError: If DSPy compiler is not available.
+
+        Note:
+            A Spark session is required when using this method with an *input_config* that is not a Unity Catalog
+            table (e.g. files or temporary views). Schemas can be read without a Spark Session for tables with a
+            valid 3-level name (e.g. catalog.schema.table).
         """
         if self.llm_engine is None:
             raise MissingParameterError(
@@ -178,18 +183,35 @@ class DQGenerator(DQEngineBase):
         """
         Gets the input schema as JSON for use as LLM context.
 
-        Unity Catalog tables are resolved through a Databricks workspace client. Other locations
-        (e.g. storage paths, files, or temporary views) are read using a Spark session.
+        The input location determines how the schema is read:
+        * Unity Catalog tables with a 3-level namespace are read using a Databricks workspace client.
+        * Storage paths and 2-level (Hive Metastore) table names are read using a Spark session.
 
         Args:
             input_config: Input config providing the input data location.
 
         Returns:
             A JSON string containing the column metadata with columns wrapped in a "columns" key.
+
+        Raises:
+            InvalidConfigError: If the input location is neither a table name nor a storage path.
         """
-        if UC_TABLE_PATTERN.match(input_config.location):
-            return get_table_column_metadata(self.ws, input_config.location)
-        return get_column_metadata(self.spark, input_config)
+        location = input_config.location
+        if not location:
+            raise InvalidConfigError("Input location not configured")
+
+        if UC_TABLE_PATTERN.match(location):
+            logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
+            return get_table_column_metadata(self.ws, location)
+
+        if TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location):
+            logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
+            return get_column_metadata(self.spark, input_config)
+
+        raise InvalidConfigError(
+            "Invalid input location. It must be a 2 or 3-level table namespace or storage path, "
+            f"given {sanitize_for_logging(location)}"
+        )
 
     def _filter_valid_rules(self, rules: list[dict]) -> list[dict]:
         """Return only rules that pass ``DQEngine.validate_checks``.

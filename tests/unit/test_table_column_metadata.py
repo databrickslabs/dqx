@@ -37,6 +37,27 @@ def test_get_table_column_metadata_handles_table_without_columns(mock_workspace_
     assert json.loads(result) == {"columns": []}
 
 
+def test_get_table_column_metadata_normalizes_type_case(mock_workspace_client):
+    """Unity Catalog returns DDL type text, which must match Spark's lowercase simpleString form."""
+    mock_workspace_client.tables.get.return_value = TableInfo(
+        columns=[
+            ColumnInfo(name="tags", type_text="ARRAY<INT>"),
+            ColumnInfo(name="address", type_text="STRUCT<city: STRING>"),
+            ColumnInfo(name="amount", type_text="DECIMAL(10,2)"),
+        ]
+    )
+
+    result = get_table_column_metadata(mock_workspace_client, "main.default.users")
+
+    assert json.loads(result) == {
+        "columns": [
+            {"name": "tags", "type": "array<int>"},
+            {"name": "address", "type": "struct<city: string>"},
+            {"name": "amount", "type": "decimal(10,2)"},
+        ]
+    }
+
+
 def test_get_table_column_metadata_tolerates_missing_field_values(mock_workspace_client):
     """Unity Catalog may omit a name or type; those become empty strings rather than nulls."""
     mock_workspace_client.tables.get.return_value = TableInfo(columns=[ColumnInfo(name="user_id")])
@@ -52,6 +73,9 @@ def test_get_table_column_metadata_tolerates_missing_field_values(mock_workspace
         "main.default.users",
         "catalog1.schema1.customers",
         "cat_1.sch_2.tbl_3",
+        "`my-catalog`.schema.table",  # backtick-quoted names are valid UC tables
+        "main.`my-schema`.tbl",
+        "`my-catalog`.`my-schema`.`my-table`",
     ],
 )
 def test_uc_table_pattern_matches_three_level_names(location):
@@ -64,7 +88,6 @@ def test_uc_table_pattern_matches_three_level_names(location):
         "default.users",  # two-level, resolved against the session catalog
         "users",  # bare name or temporary view
         "temp_from_dataframe_1_abcdef",
-        "`my-catalog`.schema.table",  # backtick-quoted, not accepted by the tables API
         "/Volumes/main/default/data",
         "s3://bucket/path",
         "main.default.users.extra",

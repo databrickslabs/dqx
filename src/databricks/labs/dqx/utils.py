@@ -691,7 +691,8 @@ def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> 
 
     Args:
         workspace_client: Databricks WorkspaceClient instance.
-        table: Fully qualified table name (e.g. *catalog.schema.table*).
+        table: Fully qualified table name (e.g. *catalog.schema.table*). Backtick-quoted identifiers
+            are accepted and unquoted before the lookup.
 
     Returns:
         A JSON string containing the column metadata with columns wrapped in a "columns" key.
@@ -699,8 +700,8 @@ def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> 
     Raises:
         NotFound: If the table does not exist or is not accessible.
     """
-    table_info = workspace_client.tables.get(table)
-    columns = [{"name": col.name or "", "type": col.type_text or ""} for col in (table_info.columns or [])]
+    table_info = workspace_client.tables.get(table.replace("`", ""))
+    columns = [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
     return json.dumps({"columns": columns})
 
 

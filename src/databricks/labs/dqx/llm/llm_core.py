@@ -1,6 +1,7 @@
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import cached_property
 
 import dspy  # type: ignore
@@ -94,6 +95,20 @@ class LLMModelConfigurator:
             timeout=self._model_config.timeout,
             max_retries=self._model_config.max_retries,
         )
+
+    @contextmanager
+    def lm_context(self) -> Iterator[None]:
+        """
+        Scope a block of work to a freshly created LM instance.
+
+        Each call creates a new LM so that the current credentials are picked up, rather than relying
+        on a globally configured model. Use this to wrap any DSPy module invocation.
+
+        Yields:
+            None. The LM is active for the duration of the *with* block.
+        """
+        with dspy.settings.context(lm=self.create_lm()):
+            yield
 
 
 class DspySchemaGuesserSignature(dspy.Signature):

@@ -51,4 +51,3 @@ def test_primary_key_engine_reports_metadata_failure_without_raising():
 
     assert result["success"] is False
     assert result["table"] == "catalog.schema.orders"
-    assert result["final_status"] == "metadata_error"

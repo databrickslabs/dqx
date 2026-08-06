@@ -68,7 +68,7 @@ class DQLLMEngine:
                 - assumptions_bullets: Assumptions made (if schema was inferred)
                 - schema_info: The final schema used (if schema was inferred)
         """
-        with dspy.settings.context(lm=self._configurator.create_lm()):
+        with self._configurator.lm_context():
             if summary_stats is not None:
                 return self._llm_rule_compiler.model_using_data_stats(
                     business_description=user_input or None,

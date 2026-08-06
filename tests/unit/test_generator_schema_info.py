@@ -5,6 +5,7 @@ import pytest
 from databricks.sdk.service.catalog import ColumnInfo, TableInfo
 
 from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.profiler.generator import DQGenerator
 
 UC_COLUMNS = {"columns": [{"name": "user_id", "type": "string"}, {"name": "age", "type": "int"}]}
@@ -44,6 +45,34 @@ def test_generate_for_uc_table_reads_schema_without_spark(uc_workspace_client):
 
     assert json.loads(captured["schema_info"]) == UC_COLUMNS
     uc_workspace_client.tables.get.assert_called_once_with("main.default.users")
+
+
+def test_generate_for_backticked_uc_table_reads_schema_without_spark(uc_workspace_client):
+    """Special-char UC names are still UC tables, so they must take the workspace client path."""
+    captured: dict = {}
+    generator = DQGenerator(workspace_client=uc_workspace_client, spark=None)
+    generator.llm_engine = _stub_llm_engine(captured)
+
+    generator.generate_dq_rules_ai_assisted(
+        user_input="age must be positive", input_config=InputConfig(location="`my-catalog`.`my-schema`.users")
+    )
+
+    assert json.loads(captured["schema_info"]) == UC_COLUMNS
+    uc_workspace_client.tables.get.assert_called_once_with("my-catalog.my-schema.users")
+
+
+@pytest.mark.parametrize("location", ["not a location", "users", "main..users"])
+def test_generate_rejects_unsupported_input_location(mock_workspace_client, location):
+    """An unclassifiable location fails with a clear error instead of falling through to Spark."""
+    generator = DQGenerator(workspace_client=mock_workspace_client, spark=None)
+    generator.llm_engine = _stub_llm_engine({})
+
+    with pytest.raises(InvalidConfigError, match="Invalid input location"):
+        generator.generate_dq_rules_ai_assisted(
+            user_input="age must be positive", input_config=InputConfig(location=location)
+        )
+
+    assert not mock_workspace_client.tables.get.called
 
 
 def test_generate_for_storage_path_reads_schema_with_spark(mock_workspace_client, mock_spark):
