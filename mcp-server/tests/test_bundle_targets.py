@@ -93,6 +93,23 @@ class TestCoverageTargetMirrorsBase:
             "target is pointless — no remote coverage is produced."
         )
 
+    def test_reported_dqx_version_matches_the_installed_pin(self):
+        """The version reported to telemetry must be the one the runner actually installs.
+
+        `dqx_version` feeds the `dqx/<version>` User-Agent token that the telemetry pipeline reads
+        into release_version. If it drifts from the databricks-labs-dqx pin, adoption data is
+        attributed to a release that never ran — worse than having no version at all, because it is
+        wrong rather than absent.
+        """
+        text = _BUNDLE.read_text()
+        reported = re.search(r"^\s*dqx_version:\s*\n\s*default:\s*\"([^\"]+)\"", text, re.MULTILINE)
+        assert reported, "dqx_version variable not found in databricks.yml"
+        pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", text))
+        assert pins == {reported.group(1)}, (
+            f"dqx_version reports {reported.group(1)!r} but the runner installs {sorted(pins)}. "
+            "Telemetry would attribute MCP usage to a DQX release that never ran."
+        )
+
     def test_dqx_pin_is_identical_in_every_target(self):
         """The DQX pin appears in several places; production and CI must never test different versions."""
         pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", _BUNDLE.read_text()))

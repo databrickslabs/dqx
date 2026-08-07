@@ -43,6 +43,23 @@ _sent_telemetry: "OrderedDict[tuple[str, str], None]" = OrderedDict()
 # Namespaces the signal so MCP usage is separable from direct DQX library usage.
 TELEMETRY_KEY = "dqx_mcp"
 
+# Fallback when DQX_VERSION is not injected. Reported rather than omitted: an unknown-but-present
+# version still satisfies the pipeline's `release_version IS NOT NULL` filter, so the signal is
+# counted instead of silently dropped, and the placeholder makes a missing deploy-time value obvious
+# in the data rather than invisible.
+_UNKNOWN_VERSION = "0.0.0"
+
+
+def _dqx_version() -> str:
+    """The DQX release this deployment runs against.
+
+    Sourced from the DQX_VERSION app config value, which the bundle sets from the same pin the runner
+    job installs — so the reported version is the one that actually executes the checks, not the
+    server's own build number. The MCP server cannot read it from the library the way DQX does,
+    because it deliberately does not depend on DQX.
+    """
+    return os.environ.get("DQX_VERSION", "").strip() or _UNKNOWN_VERSION
+
 
 def reset_telemetry_cache() -> None:
     """Clear the per-process dedup cache so previously sent signals can be sent again (tests)."""
@@ -78,6 +95,13 @@ def log_telemetry(ws, key: str, value: str) -> None:
 
     try:
         new_config = ws.config.copy().with_user_agent_extra(key, value)
+        # Also stamp dqx/<version>, which is what the telemetry pipeline reads into its
+        # `release_version` column. The DQX library gets this from its own package
+        # (src/databricks/labs/dqx/__init__.py calls ua.with_product/with_extra at import time), but
+        # the MCP server does not import DQX, so its User-Agent would otherwise carry no dqx token at
+        # all — leaving release_version NULL. Every chart on the DQX Telemetry dashboard filters
+        # `release_version IS NOT NULL`, so without this the signal is collected and then discarded.
+        new_config = new_config.with_user_agent_extra("dqx", _dqx_version())
         new_config.retry_timeout_seconds = _TELEMETRY_TIMEOUT_SECONDS
         new_config.http_timeout_seconds = _TELEMETRY_TIMEOUT_SECONDS
         logger.debug(f"Added User-Agent extra {key}={value}")

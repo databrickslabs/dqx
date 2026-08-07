@@ -50,6 +50,13 @@ variables:
     default: "dqx_mcp_coverage_bootstrap-0.1.0-py3-none-any.whl"
   # The app's runtime environment, as a complex variable so the dev-coverage target can extend it
   # (DAB target overrides don't merge into a list). The default is what every real deploy gets.
+  # DQX release the runner job installs. Reported as the `dqx/<version>` User-Agent token so the
+  # telemetry pipeline can populate its release_version column — every chart on the DQX Telemetry
+  # dashboard filters `release_version IS NOT NULL`, so a signal without it is collected and then
+  # discarded. Must match the databricks-labs-dqx pin in the runner dependency lists below; a unit
+  # test enforces that.
+  dqx_version:
+    default: "0.15.0"
   app_environment:
     type: complex
     default:
@@ -329,6 +336,8 @@ targets:
             value: "dqx_mcp_tmp"
           - name: DQX_RUNNER_JOB_ID
             value_from: "dqx-runner-job"
+          - name: DQX_VERSION
+            value: "${var.dqx_version}"
           - name: DQX_SWEEP_INTERVAL_SECONDS
             value: "0"
       # Overrides the dependency-list variable — DAB target overrides don't merge into an

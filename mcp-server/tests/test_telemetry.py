@@ -36,7 +36,8 @@ class TestLogTelemetry:
         with patch("server.telemetry.type", create=True):
             log_telemetry(ws, "dqx_mcp", "run_checks")
 
-        ws.config.with_user_agent_extra.assert_called_once_with("dqx_mcp", "run_checks")
+        extras = {c.args for c in ws.config.with_user_agent_extra.call_args_list}
+        assert ("dqx_mcp", "run_checks") in extras, extras
 
     def test_sends_each_signal_at_most_once_per_process(self):
         """Adoption signal, not an invocation counter — the library dedups the same way."""
@@ -46,7 +47,8 @@ class TestLogTelemetry:
         for _ in range(5):
             log_telemetry(ws, "dqx_mcp", "run_checks")
 
-        assert ws.config.with_user_agent_extra.call_count == 1
+        signals = [c.args for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx_mcp"]
+        assert signals == [("dqx_mcp", "run_checks")], signals
 
     def test_distinct_values_are_sent_separately(self):
         from server.telemetry import log_telemetry
@@ -55,7 +57,8 @@ class TestLogTelemetry:
         log_telemetry(ws, "dqx_mcp", "run_checks")
         log_telemetry(ws, "dqx_mcp", "profile_table")
 
-        assert ws.config.with_user_agent_extra.call_count == 2
+        signals = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx_mcp"]
+        assert sorted(signals) == ["profile_table", "run_checks"], signals
 
     def test_a_failed_ping_is_swallowed(self):
         """Telemetry must never surface in a tool response."""
@@ -96,6 +99,32 @@ class TestLogTelemetry:
             tel.log_telemetry(ws, "dqx_mcp", f"tool_{i}")
 
         assert len(tel._sent_telemetry) <= 3
+
+
+class TestReleaseVersion:
+    """The dqx/<version> token the telemetry pipeline reads into its release_version column."""
+
+    def test_stamps_the_configured_dqx_version(self, monkeypatch):
+        from server.telemetry import log_telemetry
+
+        monkeypatch.setenv("DQX_VERSION", "0.15.0")
+        ws = _client()
+        log_telemetry(ws, "dqx_mcp", "run_checks")
+
+        extras = {c.args for c in ws.config.with_user_agent_extra.call_args_list}
+        assert ("dqx", "0.15.0") in extras, extras
+        assert ("dqx_mcp", "run_checks") in extras, extras
+
+    def test_reports_a_placeholder_rather_than_omitting_the_version(self, monkeypatch):
+        """A NULL release_version is filtered out of every dashboard chart, so never omit it."""
+        from server.telemetry import log_telemetry
+
+        monkeypatch.delenv("DQX_VERSION", raising=False)
+        ws = _client()
+        log_telemetry(ws, "dqx_mcp", "run_checks")
+
+        versions = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx"]
+        assert versions == ["0.0.0"], versions
 
 
 class TestWithTelemetry:
