@@ -471,13 +471,13 @@ def test_col_is_not_null_and_is_in_list(spark):
     )
 
     actual = test_df.select(
-        is_not_null_and_is_in_list("a", ["str1"]),
+        is_not_null_and_is_in_list("a", ["'str1'"]),
         is_not_null_and_is_in_list("b", [F.lit(3)]),
         is_not_null_and_is_in_list(F.col("c").getItem("val"), [F.lit("a")]),
-        is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["b"]),
-        is_not_null_and_is_in_list("a", ["str1"], case_sensitive=False),
+        is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["'b'"]),
+        is_not_null_and_is_in_list("a", ["'str1'"], case_sensitive=False),
         is_not_null_and_is_in_list(F.col("c").getItem("val"), [F.lit("a")], case_sensitive=False),
-        is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["b"], case_sensitive=False),
+        is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["'b'"], case_sensitive=False),
         is_not_null_and_is_in_list("d", [["a", "b"], ["B", "c"]]),
         is_not_null_and_is_in_list("d", [["a", "b"], ["B", "c"]], case_sensitive=False),
     )
@@ -571,13 +571,13 @@ def test_col_is_not_in_list(spark):
         input_schema,
     )
     actual = test_df.select(
-        is_in_list("a", ["str1"]),
+        is_in_list("a", ["'str1'"]),
         is_in_list("b", [F.lit(3)]),
         is_in_list(F.col("c").getItem("val"), [F.lit("a")]),
-        is_in_list(F.try_element_at("d", F.lit(2)), ["b"]),
-        is_in_list("a", ["str1"], case_sensitive=False),
+        is_in_list(F.try_element_at("d", F.lit(2)), ["'b'"]),
+        is_in_list("a", ["'str1'"], case_sensitive=False),
         is_in_list(F.col("c").getItem("val"), [F.lit("a")], case_sensitive=False),
-        is_in_list(F.try_element_at("d", F.lit(2)), ["b"], case_sensitive=False),
+        is_in_list(F.try_element_at("d", F.lit(2)), ["'b'"], case_sensitive=False),
         is_in_list("d", [["a", "b"], ["B", "c"]]),
         is_in_list("d", [["a", "b"], ["B", "c"]], case_sensitive=False),
     )
@@ -692,13 +692,13 @@ def test_is_not_in_list(spark):
 
     # Test with forbidden values - should fail when value IS in the forbidden list
     actual = test_df.select(
-        is_not_in_list("a", ["banned", "suspended", "deleted"]),
+        is_not_in_list("a", ["'banned'", "'suspended'", "'deleted'"]),
         is_not_in_list("b", [F.lit(99), F.lit(100)]),
         is_not_in_list(F.col("c").getItem("status"), [F.lit("banned"), F.lit("error")]),
-        is_not_in_list(F.try_element_at("d", F.lit(1)), ["admin", "root"]),
-        is_not_in_list("a", ["banned", "suspended"], case_sensitive=False),
+        is_not_in_list(F.try_element_at("d", F.lit(1)), ["'admin'", "'root'"]),
+        is_not_in_list("a", ["'banned'", "'suspended'"], case_sensitive=False),
         is_not_in_list(F.col("c").getItem("status"), [F.lit("ok")], case_sensitive=False),
-        is_not_in_list(F.try_element_at("d", F.lit(1)), ["admin"], case_sensitive=False),
+        is_not_in_list(F.try_element_at("d", F.lit(1)), ["'admin'"], case_sensitive=False),
         is_not_in_list("d", [["admin", "root"], ["DELETE", "write"]]),
         is_not_in_list("d", [["admin", "root"], ["DELETE", "write"]], case_sensitive=False),
     )
@@ -4607,5 +4607,25 @@ def test_has_valid_json_schema_with_complex_nested_structure(spark):
     )
     actual = test_df.select(
         has_valid_json_schema("json_data", json_schema),
+    )
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_in_list_bare_string_resolves_as_column(spark):
+    """Test that a bare string in the allowed list resolves as a column reference, not a literal."""
+    input_schema = "value: string, allowed: string"
+    test_df = spark.createDataFrame(
+        [("foo", "foo"), ("bar", "foo"), ("baz", "baz")],
+        input_schema,
+    )
+    actual = test_df.select(is_in_list("value", ["allowed"]))
+    checked_schema = "value_is_not_in_the_list: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["Value 'bar' in Column 'value' is not in the allowed list: [foo]"],
+            [None],
+        ],
+        checked_schema,
     )
     assertDataFrameEqual(actual, expected)
