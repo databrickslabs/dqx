@@ -21,7 +21,7 @@ PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9._%+\-@]+$")
 _MAX_SCHEMA_USER_PART = 40
 
 
-def output_schema_for_user(email: str) -> str:
+def output_schema_for_user(email: str | None) -> str:
     """Derive a collision-safe, per-user output schema name from a caller's email.
 
     Each caller's MCP outputs (saved rule sets, applied-check result tables) live in their own
@@ -30,8 +30,13 @@ def output_schema_for_user(email: str) -> str:
     parts sanitize to the same string). The runner SP owns the schema and grants only that caller
     access, so users can neither see nor collide with each other's outputs.
 
+    Accepts None because *email* originates from an HTTP header (X-Forwarded-Email) that may be
+    absent, not just blank — the annotation states what the body already handles, so callers do not
+    have to pre-coerce and no type suppression is needed at any call site.
+
     Raises:
-        ValueError: If *email* is empty (a caller identity is required to namespace outputs).
+        ValueError: If *email* is empty or absent (a caller identity is required to namespace
+            outputs).
     """
     normalized = (email or "").strip().lower()
     if not normalized:

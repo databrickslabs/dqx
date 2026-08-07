@@ -584,7 +584,7 @@ The [DQX MCP Server](/docs/guide/dqx_mcp_server) exposes DQX as Model Context Pr
 
 ### Prerequisites {#mcp-prerequisites}
 
-Before deploying, set up the following. That's all you need — the deploy creates the app and jobs and applies every UC grant for you.
+Before deploying, set up the following. That's all you need — the deploy creates the app, the job and its UC objects, and applies every grant for you, including the catalog-level ones the bundle cannot declare itself.
 
 1. **Databricks CLI 0.279.0+** — check with `databricks --version` (the bundle uses the [direct deployment engine](https://docs.databricks.com/aws/en/dev-tools/bundles/direct), which needs this version).
 2. **Workspace features enabled** (ask a workspace admin if any are off): **Databricks Apps**, **Serverless compute**, and **Unity Catalog**.
@@ -600,7 +600,13 @@ If you're a workspace admin with your own catalog, you already meet 1–3; just 
 The runner job runs as a dedicated, least-privilege **workspace service principal** — *not* the app's auto-created SP (which is app-scoped and cannot be a job's `run_as`) and *not* the deploying user. Create it once:
 
 1. Create a workspace service principal (**Settings → Identity and access → Service principals → Add**, or the SCIM API). Note its **Application ID**.
-2. Grant yourself (the deploying identity) the **User** role on it (**Settings → that SP → Permissions**) — otherwise `bundle deploy` fails with *"User is not authorized to use this service principal"*. Workspace admins usually have this implicitly.
+2. Grant yourself (the deploying identity) the **User** role on it (**Settings → that SP → Permissions**). Do this even if you are a workspace admin — admin membership alone does **not** confer it, and without it `bundle deploy` fails partway through with:
+
+   ```
+   Cannot bind the service principal provided in 'run_as' field (<sp-name>) to the job.
+   The user creating or updating the job must have 'servicePrincipal.user' role on the
+   service principal. (403 PERMISSION_DENIED)
+   ```
 3. Give the SP the **workspace-access** entitlement so it can run serverless jobs.
 
 The deploy grants this SP every UC privilege it needs automatically — no manual grants required.
@@ -618,11 +624,17 @@ databricks auth login --host https://<your-workspace-url> --profile <profile>
 Pass your **catalog** and the **runner SP Application ID** from the prerequisites:
 
 ```bash
-make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
-  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id>
 ```
 
-That's the whole deploy: it creates the runner-wheel volume, deploys the bundle (app + both jobs), runs the setup job (all UC grants), and starts the app. Re-running it is safe (idempotent). Add `TARGET=<target>` for a non-default bundle target.
+That is the whole deploy, in one command. It runs three steps in an order that matters:
+
+1. **`bundle deploy`** creates the schema, both UC volumes, the runner job and the app, and applies every grant *on those objects* natively.
+2. **catalog grants** — the bundle cannot grant on your catalog because it does not own it, so the deploy applies those itself (`USE CATALOG` for your users group, the runner SP and the app's service principal; plus `CREATE SCHEMA` for the runner SP, which creates each caller's private output schema). The app's service principal only exists once the app does, which is why this comes after step 1.
+3. **`bundle run`** starts the app, which publishes the runner wheel to the volume the runner job installs it from.
+
+Granting before the app first starts is what keeps this a single pass — the app already holds the access it needs to publish the wheel, so there is no "grant, then restart" second step. Re-running is safe (idempotent). Add `TARGET=<target>` for a non-default bundle target.
+
 
 ##### Bundle variables {#mcp-bundle-variables}
 
@@ -630,10 +642,12 @@ Pass these at deploy time (as `--var name=value`, or via `BUNDLE_VARS=` with `ma
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `catalog_name` | **Required.** Catalog for temp views, per-user output schemas, and the runner-wheel volume (`workspace.artifact_path` = `/Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts`). Passed into the app config as `DQX_CATALOG` — no secret scope (a catalog name isn't sensitive; UC grants govern access). | `""` |
-| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Create the runner service principal](#mcp-runner-sp)). The placeholder default is not a real SP. | `00000000-…` |
-| `name_prefix` | Prefix for all resource names (app + jobs). Override to deploy an isolated second copy. | `mcp-dqx` |
-| `users_group` | Group granted `CAN_USE` on the app and `USE CATALOG` + temp-schema access. | `account users` |
+| `catalog_name` | **Required.** Catalog the bundle creates its schema and volumes in, and where per-user output schemas live. Passed into the app config as `DQX_CATALOG` — no secret scope (a catalog name isn't sensitive; UC grants govern access). | `""` |
+| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Create the runner service principal](#mcp-runner-sp)). The placeholder default is not a real SP. With `make mcp-deploy`, pass `RUNNER_SP=` instead — it sets this variable *and* grants the SP on the catalog, which passing the variable directly does not. | `00000000-…` |
+| `name_prefix` | Prefix for all resource names (app + job). Override to deploy an isolated second copy. | `mcp-dqx` |
+| `tmp_schema_name` | Schema holding the temp views, the results volume and the runner-wheel volume. Override (together with `name_prefix`) for a fully isolated second deployment. Must be a valid identifier — no `-`. | `dqx_mcp_tmp` |
+| `users_group` | Group granted `CAN_USE` on the app, plus `USE CATALOG` and temp-schema access. | `account users` |
+| `runner_wheel_filename` | Filename of the runner wheel the app publishes and the runner job installs. Bump together with the version in `mcp-server/runner/pyproject.toml` — a unit test enforces that they match. | `dqx_mcp_runner-<version>-py3-none-any.whl` |
 
 For example, to override the users group:
 
@@ -642,25 +656,30 @@ databricks bundle deploy --var users_group="users" --profile <profile>
 ```
 
 <details>
-<summary>Don't have <code>make</code> (e.g. on Windows)? You can run these Databricks CLI commands instead</summary>
+<summary>Don't have <code>make</code> (e.g. on Windows)? Run these Databricks CLI commands instead</summary>
 
-`make mcp-deploy` is just a shortcut for the four commands below. If `make` isn't available (for example on Windows), run them yourself from the `mcp-server/` directory — the result is identical:
+`make mcp-deploy` is a shortcut for the commands below — only the Databricks CLI is needed, so they work in PowerShell or `cmd` as well as a POSIX shell. Run them from the `mcp-server/` directory. The **order matters**: the app's service principal does not exist until the app is created, and it needs `USE CATALOG` before it first starts, or it cannot publish the runner wheel.
 
 ```bash
-# 1. Create the runner-wheel volume. Required BEFORE 'bundle deploy', which uploads the wheels
-#    into it (the volume is not a bundle-managed resource, so it must pre-exist). Idempotent.
-databricks schemas create dqx_mcp_tmp <catalog> --profile <profile>
-databricks volumes create <catalog> dqx_mcp_tmp dqx_artifacts MANAGED --profile <profile>
-
-# 2. Deploy the bundle (app + runner job + setup job)
+# 1. Deploy the bundle: schema, both volumes, the runner job and the app, with their native grants.
 databricks bundle deploy --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
 
-# 3. Run the one-time setup job (UC grants; idempotent)
-databricks bundle run dqx_setup --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+# 2. Look up the app's service principal (created with the app in step 1).
+databricks apps get mcp-dqx --profile <profile> -o json
+#    -> copy "service_principal_client_id" from the output
 
-# 4. Deploy and start the app
+# 3. Grant the catalog privileges the bundle cannot (it does not own your catalog).
+#    Idempotent, and no SQL warehouse needed. Replace the three principals.
+databricks grants update catalog <catalog> --profile <profile> --json "{\"changes\":[{\"principal\":\"account users\",\"add\":[\"USE_CATALOG\"]},{\"principal\":\"<runner-sp-application-id>\",\"add\":[\"USE_CATALOG\",\"CREATE_SCHEMA\"]},{\"principal\":\"<app-service-principal-client-id>\",\"add\":[\"USE_CATALOG\"]}]}"
+
+# 4. Start the app. It publishes the runner wheel to the volume on startup.
 databricks bundle run mcp-dqx --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+
+# 5. Confirm the wheel was published (should list dqx_mcp_runner-<version>-py3-none-any.whl).
+databricks fs ls dbfs:/Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts --profile <profile>
 ```
+
+If step 5 lists nothing, check `databricks apps logs mcp-dqx --profile <profile>` — a failed publish is almost always a missing `USE CATALOG` grant from step 3. Apply it and re-run step 4.
 </details>
 
 #### 3. Find your MCP endpoint
@@ -670,6 +689,25 @@ The MCP endpoint is `https://<app-url>/mcp`. Find `<app-url>` in the Databricks 
 ```bash
 databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
 ```
+
+#### 4. Verify the deployment {#mcp-verify}
+
+```bash
+# a) The app is running.
+databricks apps get mcp-dqx --profile <profile> -o json | jq -r '.compute_status.state, .app_status.state'
+
+# b) The app published the runner wheel — every data tool needs this.
+databricks fs ls dbfs:/Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts --profile <profile>
+
+# c) The catalog grants are in place (users group, runner SP, app SP).
+databricks grants get catalog <catalog> --profile <profile>
+
+# d) The bundle applied its own grants on the schema and volumes.
+databricks grants get schema <catalog>.dqx_mcp_tmp --profile <profile>
+databricks grants get volume <catalog>.dqx_mcp_tmp.mcp_results --profile <profile>
+```
+
+Then call a tool through the endpoint. `save_checks` is the most complete check — it exercises the runner SP's `CREATE SCHEMA` grant and the per-user output schema.
 
 ### Reference {#mcp-reference}
 
@@ -684,9 +722,11 @@ The bundle creates these in your workspace (all prefixed by `name_prefix`, defau
 | Databricks App | `mcp-dqx` | The MCP server (serves `/mcp`); runs as its own app service principal. |
 | App service principal | auto-named | **Auto-created by the platform** when the app is deployed — its application id is assigned at deploy time (not known beforehand). The identity the app process runs as. |
 | Job | `mcp-dqx-runner` | Serverless **wheel-task** job that installs a **pinned, published `databricks-labs-dqx` release** from the registry; **runs as the runner SP**. Tools submit work to it. See [DQX version](#mcp-dqx-version). |
-| Job | `mcp-dqx-setup` | One-time setup: temp schema, results volume, and all UC grants. |
+| Schema | `<catalog>.dqx_mcp_tmp` | Bundle-managed, with its grants declared natively. Holds the two volumes below and short-lived temp views. |
+| Volume | `…dqx_mcp_tmp.mcp_results` | Bundle-managed. Each run's JSON result plus staged job inputs. |
+| Volume | `…dqx_mcp_tmp.dqx_artifacts` | Bundle-managed. The runner wheel, published by the app at startup. |
 
-The catalog is injected into the app as a plain `DQX_CATALOG` config value (no secret scope — a catalog name isn't sensitive; UC grants govern access). Nothing is destroy-protected, so `databricks bundle destroy` removes all of it (see [Upgrade and uninstall](#mcp-upgrade-uninstall)). The runner service principal is the exception: you create it yourself before deploying (it is not part of the bundle), so `bundle destroy` leaves it in place — delete it manually if you no longer need it.
+The catalog is injected into the app as a plain `DQX_CATALOG` config value (no secret scope — a catalog name isn't sensitive; UC grants govern access). Nothing is destroy-protected, so `databricks bundle destroy` removes all of it — **including the schema and both volumes** (see [Upgrade and uninstall](#mcp-upgrade-uninstall)). Two things are not part of the bundle and survive: the runner service principal (you create it yourself) and any `dqx_mcp_<user>` output schemas.
 
 #### DQX version {#mcp-dqx-version}
 
@@ -701,37 +741,36 @@ The catalog you provide is used as the MCP server's working area. The deploy and
 
 | Object | Type | Created by | Purpose & lifecycle |
 |---|---|---|---|
-| `<catalog>.dqx_mcp_tmp` | Schema | deploy (setup job) | Owned by the deploying principal. Holds the two volumes below plus short-lived temp views. |
-| `<catalog>.dqx_mcp_tmp.dqx_artifacts` | Volume | deploy (before `bundle deploy`) | Hosts the runner-job wheels. Written at each deploy. |
-| `<catalog>.dqx_mcp_tmp.mcp_results` | Volume | deploy (setup job) | Holds each tool run's JSON result, keyed by `run_id`. The app reads results back from here. |
+| `<catalog>.dqx_mcp_tmp` | Schema | `bundle deploy` | Bundle-managed, with native grants. Holds the two volumes below plus short-lived temp views. Removed by `bundle destroy`. |
+| `<catalog>.dqx_mcp_tmp.dqx_artifacts` | Volume | `bundle deploy` | Hosts the runner wheel, which the **app publishes at startup** (skipped when unchanged). Removed by `bundle destroy`. |
+| `<catalog>.dqx_mcp_tmp.mcp_results` | Volume | `bundle deploy` | Each tool run's JSON result keyed by `run_id`, plus staged job inputs. The app reads results back from here. Removed by `bundle destroy`. |
 | Temporary views under `<catalog>.dqx_mcp_tmp` | View | **at runtime**, per data-tool call | Definer's-rights views created as the calling user for `profile_table` / `run_checks` / `apply_checks_and_save_to_table`. Dropped by the runner job after each run (a periodic sweeper reaps any orphans). |
 | `<catalog>.dqx_mcp_<user>` | Schema (one per user) | **at runtime**, on demand | Created + owned by the runner SP the first time a user calls a persisting tool. Holds that user's `save_checks` / `apply_checks_and_save_to_table` output tables. Access is granted only to that user; users never see each other's schemas. See [Write access](/docs/guide/dqx_mcp_server#write-access). |
 
-So beyond the one deployer-owned `dqx_mcp_tmp` schema (with two volumes), the catalog accumulates **one `dqx_mcp_<user>` schema per user** who persists checks or results, plus transient temp views that clean themselves up. `databricks bundle destroy` removes the app and jobs but **not** the `dqx_mcp_tmp` schema or any `dqx_mcp_<user>` schemas — drop those manually if you want the catalog fully cleaned (see [Upgrade and uninstall](#mcp-upgrade-uninstall)).
+So beyond the bundle-managed `dqx_mcp_tmp` schema (with two volumes), the catalog accumulates **one `dqx_mcp_<user>` schema per user** who persists checks or results, plus transient temp views that clean themselves up. `databricks bundle destroy` removes the app, the runner job **and** the `dqx_mcp_tmp` schema with both volumes; the `dqx_mcp_<user>` schemas are not bundle-managed and survive — drop those manually for a fully clean catalog (see [Upgrade and uninstall](#mcp-upgrade-uninstall)).
 
 <Admonition type="warning" title="If a `dqx_mcp_tmp` schema already exists in the catalog">
-The working schema is named `dqx_mcp_tmp` (DQX-namespaced to avoid clashing with a generic schema name). If a schema of that name **already exists** in your catalog, the setup job **adopts it**: it runs `CREATE SCHEMA IF NOT EXISTS` and then `ALTER SCHEMA … OWNER TO <deploying-principal>`, reassigning ownership to the deployer and granting the users group and service principals access to it. Re-running your own deploy is safe (idempotent), but if that name is used by something unrelated, deploying will take it over. Deploy into a catalog where `dqx_mcp_tmp` is free or already belongs to DQX.
+The working schema is named `dqx_mcp_tmp` (DQX-namespaced to avoid clashing with a generic schema name). The bundle **creates** it, so a pre-existing schema of that name makes the deploy stop with `SCHEMA_ALREADY_EXISTS` rather than silently taking it over. That is deliberate — adopting a schema the bundle did not create, then deleting it on `bundle destroy`, would be worse than a clear error. Deploy with `--var tmp_schema_name=<another-name>` to use a different schema, or drop the existing one if it is not needed.
 </Admonition>
 
-#### Grants the setup job applies
+#### Catalog grants the deploy applies
 
-The setup job applies all of these automatically (this is why the deploying user needs `MANAGE`/ownership on the catalog):
+Everything on the objects the bundle owns (the schema, both volumes, the runner job's ACL) is declared **natively in the bundle** and applied by `bundle deploy`. The catalog itself is not bundle-managed — the bundle cannot grant on a catalog it does not own — so `make mcp-deploy` applies these catalog-level grants itself via `mcp-server/scripts/grant_catalog_prereqs.sh` (idempotent; this is why the deploying user needs `MANAGE`/ownership on the catalog):
 
-| Grantee | Grant | On |
-|---|---|---|
-| Deploying principal | schema ownership | `<catalog>.dqx_mcp_tmp` |
-| Users group | `USE CATALOG` | catalog |
-| Users group | `USE SCHEMA`, `CREATE TABLE` | `<catalog>.dqx_mcp_tmp` |
-| App SP | `USE CATALOG` | catalog |
-| App SP | `USE SCHEMA`, `SELECT`, `MANAGE` | `<catalog>.dqx_mcp_tmp` |
-| App SP | `READ VOLUME`, `WRITE VOLUME` | `<catalog>.dqx_mcp_tmp.mcp_results` |
-| App SP | `CAN_MANAGE_RUN` | the runner job |
-| Runner SP | `USE CATALOG`, `CREATE SCHEMA` | catalog |
-| Runner SP | `USE SCHEMA`, `SELECT`, `MANAGE` | `<catalog>.dqx_mcp_tmp` |
-| Runner SP | `READ VOLUME`, `WRITE VOLUME` | `<catalog>.dqx_mcp_tmp.mcp_results` |
-| Runner SP | `READ VOLUME` | `<catalog>.dqx_mcp_tmp.dqx_artifacts` |
+| Grantee | Grant | On | Applied by |
+|---|---|---|---|
+| Users group | `USE CATALOG` | catalog | script (catalog not bundle-managed) |
+| Runner SP | `USE CATALOG`, `CREATE SCHEMA` | catalog | script |
+| App SP | `USE CATALOG` | catalog | script (after the app exists) |
+| Users group | `USE SCHEMA`, `CREATE TABLE` | `<catalog>.dqx_mcp_tmp` | **native** (`bundle deploy`) |
+| App SP | `USE SCHEMA`, `SELECT`, `MODIFY` | `<catalog>.dqx_mcp_tmp` | **native** |
+| App SP | `READ VOLUME`, `WRITE VOLUME` | both volumes | **native** |
+| App SP | `CAN_MANAGE_RUN` | the runner job | **native** |
+| Runner SP | `USE SCHEMA`, `SELECT`, `MODIFY` | `<catalog>.dqx_mcp_tmp` | **native** |
+| Runner SP | `READ VOLUME`, `WRITE VOLUME` | `…mcp_results` | **native** |
+| Runner SP | `READ VOLUME` | `…dqx_artifacts` | **native** |
 
-Notes: `CREATE SCHEMA` on the catalog lets the runner SP create each caller's private per-user output schema (`dqx_mcp_<user>`) on demand. `MANAGE` on `dqx_mcp_tmp` lets the SPs drop OBO-created temp views without owning the schema.
+Notes: `CREATE SCHEMA` on the catalog lets the runner SP create each caller's private per-user output schema (`dqx_mcp_<user>`) on demand — it is a catalog-level grant, so it cannot be native. The app is deliberately given `CAN_MANAGE_RUN` and **not** `CAN_MANAGE` on the runner job: it only submits runs and polls results, and `CAN_MANAGE` would let it rewrite the job definition (including its `run_as`) and so escape the least-privilege boundary the dedicated runner SP exists to enforce.
 
 #### Deploying-user permissions
 
@@ -740,22 +779,21 @@ If a deploy step is rejected, this table tells you which grant is missing (typic
 | Permission | On | Used by | Symptom if missing |
 |---|---|---|---|
 | Allow to **create/manage Apps** | workspace | `bundle deploy` (the app) | app creation rejected |
-| **Allow cluster create** / serverless entitlement | workspace | runner + setup jobs | job creation rejected |
-| **USE CATALOG** + **CREATE SCHEMA** | the target catalog | setup job (creates `<catalog>.dqx_mcp_tmp` + volumes) | `User does not have CREATE SCHEMA` |
-| **MANAGE** (or owner) on the catalog | the target catalog | setup job's catalog-level `GRANT`s and `ALTER SCHEMA OWNER` | `User does not have MANAGE on Catalog` |
+| **Allow cluster create** / serverless entitlement | workspace | the runner job | job creation rejected |
+| **USE CATALOG** + **CREATE SCHEMA** | the target catalog | `bundle deploy` (creates `<catalog>.dqx_mcp_tmp` + both volumes) | `User does not have CREATE SCHEMA` |
+| **MANAGE** (or owner) on the catalog | the target catalog | the catalog-level `GRANT`s the deploy applies (the bundle cannot declare them) | `User does not have MANAGE on Catalog` |
 | **Service Principal: User** role on the runner SP | the runner SP | `bundle deploy` sets the job's `run_as` | `User is not authorized to use this service principal` |
 
 ### Upgrade and uninstall {#mcp-upgrade-uninstall}
 
-**Upgrade** — pull the latest code and re-deploy; the bundle updates the app and jobs in place:
+**Upgrade** — pull the latest code and re-deploy; the bundle updates the app and job in place, and the app republishes the runner wheel if it changed (an unchanged wheel is skipped via a content hash):
 
 ```bash
 git pull
-make mcp-deploy PROFILE=<profile> CATALOG=<catalog> \
-  BUNDLE_VARS='--var runner_service_principal_id=<runner-sp-application-id>'
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id>
 ```
 
-**Uninstall** — none of the bundle resources are destroy-protected, so teardown is a single command:
+**Uninstall** — teardown is a single command:
 
 ```bash
 # macOS / Linux (make)
@@ -763,13 +801,16 @@ make mcp-destroy PROFILE=<profile> CATALOG=<catalog>
 
 # Any platform (Databricks CLI only)
 cd mcp-server
-databricks bundle destroy --auto-approve --var catalog_name=<catalog> --profile <profile>   # removes the app + both jobs
-databricks volumes delete <catalog>.dqx_mcp_tmp.dqx_artifacts --profile <profile>            # drop the runner-wheel volume
+databricks bundle destroy --auto-approve --var catalog_name=<catalog> --profile <profile>
 ```
 
-`bundle destroy` only removes resources **this** bundle deployment tracks — if the workspace also has an `mcp-dqx` app or `mcp-dqx-runner`/`-setup` jobs from a *separate* deploy (e.g. a colleague's, or an isolated `name_prefix` copy), remove those separately.
+<Admonition type="warning" title="What destroy removes">
+The schema and its volumes are bundle-managed, so `bundle destroy` deletes the app, the runner job, **and** `<catalog>.dqx_mcp_tmp` together with the `mcp_results` and `dqx_artifacts` volumes inside it — including any result files still in `mcp_results`. Earlier versions left the schema behind. Back up anything you need first.
+</Admonition>
 
-The `<catalog>.dqx_mcp_tmp` schema (temp views + results volume) and any `dqx_mcp_<user>` output schemas are **not** part of the bundle — remove them manually if desired (`DROP SCHEMA <catalog>.dqx_mcp_tmp CASCADE`, and any `<catalog>.dqx_mcp_*`). The runner service principal is also not part of the bundle — delete it separately if no longer needed.
+What survives, because it is not part of the bundle: any `<catalog>.dqx_mcp_<user>` output schemas (they hold user data), the catalog and its grants, and the runner service principal — delete those separately if no longer needed.
+
+`bundle destroy` only removes resources **this** bundle deployment tracks. If the workspace has an `mcp-dqx` app or `mcp-dqx-runner` job from a *separate* deploy (a colleague's, or an isolated `name_prefix` copy), remove those separately.
 
 ## Installing Dashboard
 
