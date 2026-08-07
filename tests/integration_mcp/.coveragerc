@@ -30,6 +30,19 @@ runner =
     */site-packages/dqx_mcp_runner
 
 [report]
+# Report ONLY the MCP server's own source. Without this the report is whatever happens to be in the
+# combined data, which includes the test process's own modules (tests/integration_mcp/conftest.py,
+# the test module itself, tests/conftest.py …) because the acceptance harness runs pytest under
+# coverage from tests/integration_mcp. Those are not product code, no other DQX suite reports them,
+# and their ~975 lines at ~58% dragged the repo total down by tens of percent on Codecov.
+#
+# Every other suite pins its tree the same way — the integration and anomaly workflows write
+# `source = ../../src` into a generated .coveragerc, so only src/ is ever reported. `include` is
+# used here rather than `[run] source` because the paths are post-[paths] remapped repo paths, and
+# the measuring happens remotely (the bootstrap ships its own [run] config with source_pkgs).
+include =
+    mcp-server/server/*
+    mcp-server/runner/src/dqx_mcp_runner/*
 omit =
     # The test-only bootstrap itself is not part of the product surface.
     */dqx_mcp_coverage_bootstrap/*
