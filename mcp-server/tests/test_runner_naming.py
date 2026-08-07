@@ -1,20 +1,14 @@
 """Unit tests for the runner's pure naming/validation helpers.
 
 ``dqx_mcp_runner.naming`` is dependency-free (stdlib only), so it imports and runs in the
-mcp-server test environment without pyspark or the DQX library. We add the runner package's ``src``
-to ``sys.path`` since it is a sibling sub-project, not an installed dependency of the server.
+mcp-server test environment without pyspark or the DQX library. The runner is a sibling
+sub-project rather than an installed dependency of the server, so its ``src`` is put on the path by
+``pythonpath`` in mcp-server/pyproject.toml.
 """
-
-import pathlib
-import sys
 
 import pytest
 
-_RUNNER_SRC = pathlib.Path(__file__).resolve().parent.parent / "runner" / "src"
-if str(_RUNNER_SRC) not in sys.path:
-    sys.path.insert(0, str(_RUNNER_SRC))
-
-from dqx_mcp_runner.naming import (  # noqa: E402  (path insert must precede import)
+from dqx_mcp_runner.naming import (
     IDENTIFIER_RE,
     output_schema_for_user,
     qualify_output,
@@ -43,10 +37,13 @@ class TestOutputSchemaForUser:
         # Same local part, different domain → the sha8 (over the full email) keeps them distinct.
         assert output_schema_for_user("me@a.com") != output_schema_for_user("me@b.com")
 
+    # None is included deliberately: the caller identity comes from an HTTP header, so at runtime it
+    # can be absent as well as blank. output_schema_for_user handles that — `(email or "")` — so the
+    # None case must reach it unaltered rather than being coerced here, which would stop testing it.
     @pytest.mark.parametrize("empty", ["", "   ", None])
-    def test_empty_email_rejected(self, empty):
+    def test_empty_email_rejected(self, empty: str | None):
         with pytest.raises(ValueError, match="caller identity"):
-            output_schema_for_user(empty)  # type: ignore[arg-type]
+            output_schema_for_user(empty)
 
 
 class TestQualifyOutput:

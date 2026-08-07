@@ -492,5 +492,5 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
     finally:
         try:
             run_sql(f"DROP SCHEMA IF EXISTS {fq_schema} CASCADE")
-        except Exception:  # noqa: BLE001 — best-effort cleanup, never fail the session on teardown
+        except Exception:  # best-effort cleanup, never fail the session on teardown
             sys.stderr.write(f"warning: failed to drop schema {fq_schema}\n")
