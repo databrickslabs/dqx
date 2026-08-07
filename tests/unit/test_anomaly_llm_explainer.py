@@ -5,8 +5,6 @@ resolution, segment redaction, SQL-literal escaping, the structured-output schem
 pattern-column threading through ExplanationContext.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

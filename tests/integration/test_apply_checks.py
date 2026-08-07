@@ -67,6 +67,29 @@ def test_apply_checks_and_split_on_empty_checks(ws, spark):
     assert_df_equality(bad, expected_df)
 
 
+def test_apply_checks_with_mixed_type_user_metadata(ws, spark):
+    # Regression: user_metadata with mixed value types (str + int) must materialize without a
+    # CAST_INVALID_INPUT error. The result column is MAP<STRING, STRING>, so values are stringified.
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
+
+    checks = [
+        DQRowRule(
+            name="a_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="a",
+            user_metadata={"key1": "value1", "key2": 2},
+        )
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+    # Materializing the result must not raise; the numeric value is stored as its string form.
+    row = checked.collect()[0]
+    metadata = row["_errors"][0]["user_metadata"]
+    assert metadata == {"key1": "value1", "key2": "2"}
+
+
 def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_timezone):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     schema = "event_ts timestamp, val int"
