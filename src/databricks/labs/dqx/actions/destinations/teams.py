@@ -8,8 +8,10 @@ Microsoft retired the legacy Office 365 Connector incoming webhooks
 (*webhook.office.com*) in May 2026; the Workflows webhook is the supported
 replacement. Workflows still accepts MessageCard payloads — text and facts
 render — but interactive elements such as buttons do not. Delivery is restricted
-to the *logic.azure.com* Workflows webhook domain, whose URLs carry their
-authorization in the URL signature so an anonymous POST works.
+to the two Workflows webhook hosts, *logic.azure.com* and
+*environment.api.powerplatform.com*; a manual-trigger Workflows URL carries its
+authorization in the URL signature (the *sig=* query parameter), so an anonymous
+POST works on either host.
 """
 
 from typing import ClassVar, Literal
@@ -32,15 +34,17 @@ class DQTeamsAlertDestination(WebhookAlertDestination):
     interactive buttons.
 
     Note:
-        Workflows webhook URLs on *logic.azure.com* carry their authorization in
-        the URL (a signature query parameter), so an anonymous POST works. Newer
-        *environment.api.powerplatform.com* endpoints require an Entra bearer
-        token, which this destination does not send, so those endpoints are not
-        supported and are not on the allowlist.
+        Manual-trigger Workflows webhook URLs carry their authorization in the URL
+        (a *sig=* signature query parameter), so an anonymous POST works — on both
+        the classic *logic.azure.com* URLs and the newer Power Automate "direct"
+        trigger URLs on *environment.api.powerplatform.com*. Both hosts are
+        allowed. Only a Workflows URL explicitly configured to require Entra auth
+        would need a bearer token this destination does not send; that is a
+        URL-level choice, not something the host allowlist can distinguish.
 
     Class attributes:
-        allowed_host_suffixes: Restricts delivery to the *logic.azure.com*
-            Workflows webhook host.
+        allowed_host_suffixes: Restricts delivery to the *logic.azure.com* and
+            *environment.api.powerplatform.com* Workflows webhook hosts.
 
     Attributes:
         type: Discriminator literal, always *"teams"*.
@@ -49,10 +53,14 @@ class DQTeamsAlertDestination(WebhookAlertDestination):
     """
 
     type: Literal["teams"] = "teams"
-    # Only logic.azure.com is supported: Workflows webhooks there carry auth in the URL signature so
-    # an anonymous POST works. environment.api.powerplatform.com endpoints require an Entra bearer
-    # token that this destination does not send, so they are intentionally not allowed.
-    allowed_host_suffixes: ClassVar[list[str] | None] = ["logic.azure.com"]
+    # Both Workflows webhook hosts are supported. Whether an anonymous POST works is a property of the
+    # URL, not the host: a manual-trigger Workflows URL carries its authorization in the query-string
+    # signature (the `sig=` parameter), so DQX can POST to it without a bearer token. This is true for
+    # the classic prod-*.logic.azure.com URLs AND the newer Power Automate "direct" trigger URLs on
+    # environment.api.powerplatform.com (same `sig=` scheme). Only a Workflows URL configured to
+    # require Entra auth would need a bearer token DQX does not send — that is a URL-level choice, not
+    # a host the allowlist can distinguish, so both hosts are allowed and the signed URL does the work.
+    allowed_host_suffixes: ClassVar[list[str] | None] = ["logic.azure.com", "environment.api.powerplatform.com"]
     url_contains_secret: ClassVar[bool] = True  # Teams Workflows URL embeds a signature; prefer DQSecret
 
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:

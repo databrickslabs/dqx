@@ -644,7 +644,7 @@ alert = DQAlert(
 <Admonition type="note" title="Use a Workflows webhook — Office 365 Connectors are retired">
 Microsoft **retired the legacy Office 365 Connector incoming webhooks** (`webhook.office.com`) in May 2026. Create a **Workflows** webhook instead: in Teams, use the *Workflows* app → template **"Post to a channel when a webhook request is received"**, and use the generated URL as `webhook_url`. See Microsoft's [Post a workflow when a webhook request is received](https://support.microsoft.com/en-us/office/create-incoming-webhooks-with-workflows-for-microsoft-teams-8ae491c7-0394-4861-ba59-055e33f75498) guide for step-by-step instructions. Workflows renders the MessageCard text and facts, but **not interactive buttons**.
 
-Anonymous Workflows URLs on `logic.azure.com` carry their authorization in the URL (a signature query parameter), so DQX can POST to them directly. Newer `environment.api.powerplatform.com` endpoints may require an Entra bearer token, which this destination does not send — those are not currently supported.
+A manual-trigger Workflows URL carries its authorization in the URL itself (the `sig=` signature query parameter), so DQX can POST to it anonymously — on both the classic `logic.azure.com` URLs and the newer Power Automate "direct" trigger URLs on `environment.api.powerplatform.com`. Only a Workflows URL explicitly configured to require Entra authentication would need a bearer token this destination does not send; that is a per-URL choice, so paste the URL your Workflows trigger generates and it will work on either host.
 </Admonition>
 
 <Tabs>
@@ -657,7 +657,10 @@ alert = DQAlert(
     destinations=[
         DQTeamsAlertDestination(
             name="teams-dq-channel",
-            webhook_url="https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…",
+            # Paste whichever URL your Workflows trigger generated — both hosts work. This is the
+            # newer Power Automate "direct" form; the classic form is
+            # https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…
+            webhook_url="https://…env….environment.api.powerplatform.com:443/powerautomate/automations/direct/…/triggers/manual/paths/invoke?api-version=1&sig=…",
         )
     ]
 )
@@ -672,7 +675,10 @@ alert = DQAlert(
     destinations:
       - type: teams
         name: teams-dq-channel
-        webhook_url: https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…
+        # Both hosts work — paste whichever URL your Workflows trigger generated. Power Automate
+        # "direct" form shown here; the classic form is
+        # https://prod-00.westus.logic.azure.com:443/workflows/…/triggers/manual/paths/invoke?sig=…
+        webhook_url: https://…env….environment.api.powerplatform.com:443/powerautomate/automations/direct/…/triggers/manual/paths/invoke?api-version=1&sig=…
 ```
 
   </TabItem>

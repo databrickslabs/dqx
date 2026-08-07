@@ -22,7 +22,7 @@ import pytest
 
 from databricks.labs.dqx.actions import DQAction, DQAlert
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
-from databricks.labs.dqx.actions.delivery import WebhookAuth, WebhookClient
+from databricks.labs.dqx.actions.delivery import WebhookAuth, WebhookClient, validate_webhook_url
 from databricks.labs.dqx.actions.destinations import (
     AlertDestination,
     DQSlackAlertDestination,
@@ -33,7 +33,7 @@ from databricks.labs.dqx.actions.destinations import (
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.config import DQSecret
-from databricks.labs.dqx.errors import InvalidActionError
+from databricks.labs.dqx.errors import InvalidActionError, UnsafeWebhookUrlError
 
 
 # ---------------------------------------------------------------------------
@@ -277,9 +277,90 @@ def test_teams_allowed_host_suffixes():
 
     suffixes = client.calls[0].allowed_host_suffixes
     assert suffixes is not None
+    # Both Workflows webhook hosts are allowed: a manual-trigger URL carries its auth in the `sig=`
+    # signature on either host, so an anonymous POST works (classic logic.azure.com and the newer
+    # Power Automate "direct" trigger URLs on environment.api.powerplatform.com).
     assert "logic.azure.com" in suffixes
-    # powerplatform endpoints require an Entra bearer token DQX does not send, so they are not allowed.
-    assert "environment.api.powerplatform.com" not in suffixes
+    assert "environment.api.powerplatform.com" in suffixes
+
+
+def test_teams_powerplatform_host_passes_the_real_ssrf_allowlist():
+    """A Power Automate "direct" trigger URL on environment.api.powerplatform.com must be delivered.
+
+    The real allowlist is enforced by validate_webhook_url (not the fake client), so drive it with the
+    destination's declared suffixes and a real-shaped powerplatform host — this is the regression for
+    the host being wrongly rejected with "not in the allowed-host-suffix list". A dot-anchored
+    lookalike (evil-powerplatform.com) must still be rejected.
+    """
+    suffixes = DQTeamsAlertDestination.allowed_host_suffixes
+
+    powerplatform_url = (
+        "https://example00000000.ff.environment.api.powerplatform.com:443/powerautomate/automations/"
+        "direct/cu/00/workflows/abc/triggers/manual/paths/invoke?api-version=1&sig=xyz"
+    )
+    # Passes: a genuine environment.api.powerplatform.com subdomain.
+    validate_webhook_url(powerplatform_url, suffixes)
+    # Passes: the classic Workflows host still works.
+    validate_webhook_url("https://prod-00.westus.logic.azure.com/workflows/abc?sig=xyz", suffixes)
+
+    # Rejected: a dot-anchored lookalike must not slip past the suffix match.
+    with pytest.raises(UnsafeWebhookUrlError):
+        validate_webhook_url("https://evil-environment.api.powerplatform.com.attacker.test/x", suffixes)
+
+
+class _Ok200:
+    """Minimal 200 response usable as a context manager (mirrors urllib's response object)."""
+
+    status = 200
+
+    def __enter__(self) -> "_Ok200":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+class _RecordingOpener:
+    """Minimal urllib opener that records the request URL and returns a 200, no network I/O.
+
+    Satisfies the WebhookClient opener protocol; lets a test drive the REAL WebhookClient (and thus
+    the real validate_webhook_url SSRF/allowlist gate) end-to-end without hitting the network.
+    """
+
+    def __init__(self) -> None:
+        self.opened_urls: list[str] = []
+        self.handlers: list[object] = []
+
+    def open(self, fullurl: object, data: object = None, timeout: object = None) -> _Ok200:
+        _ = data, timeout
+        self.opened_urls.append(fullurl.full_url if hasattr(fullurl, "full_url") else str(fullurl))
+        return _Ok200()
+
+
+def test_teams_powerplatform_url_delivers_end_to_end_through_the_real_client():
+    """End-to-end: DQTeamsAlertDestination.deliver() must POST a powerplatform URL, not reject it.
+
+    Unlike the validator-level test above (which reads the class's suffixes and so would move with a
+    regression that narrows them), this drives the whole path — deliver() -> real WebhookClient.post
+    -> validate_webhook_url with self.allowed_host_suffixes. If the class allowlist is ever narrowed
+    back to logic.azure.com only, the delivery raises UnsafeWebhookUrlError and this fails, pinning the
+    end-to-end contract the bug was about.
+    """
+    opener = _RecordingOpener()
+    real_client = WebhookClient(opener=opener, sleeper=lambda _delay: None)
+    spec_resolver = create_autospec(SecretResolver, instance=True)
+    spec_resolver.resolve.side_effect = lambda value: value  # plain-string passthrough
+    services = ActionServices(secret_resolver=spec_resolver, webhook_client=real_client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    powerplatform_url = (
+        "https://example00000000.ff.environment.api.powerplatform.com:443/powerautomate/automations/"
+        "direct/cu/00/workflows/abc/triggers/manual/paths/invoke?api-version=1&sig=xyz"
+    )
+    dest = DQTeamsAlertDestination(name="teams_test", webhook_url=powerplatform_url)
+    dest.deliver(_make_message(), context, services)  # must not raise UnsafeWebhookUrlError
+
+    assert opener.opened_urls == [powerplatform_url], opener.opened_urls
 
 
 def test_teams_payload_has_message_card_type():
