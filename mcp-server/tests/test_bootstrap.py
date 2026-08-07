@@ -213,8 +213,15 @@ class TestPublishRunnerWheel:
         with patch("databricks.sdk.WorkspaceClient", return_value=ws):
             assert publish_runner_wheel() is None
 
-    def test_warns_on_version_drift(self, tmp_path, monkeypatch, caplog):
-        """A built wheel whose name differs from the job's pinned filename must be called out."""
+    def test_publishes_nothing_on_version_drift(self, tmp_path, monkeypatch, caplog):
+        """A wheel whose name differs from the job's pinned filename must NOT be published.
+
+        The job installs the pinned name by absolute path, so a differently-named wheel cannot be
+        used — and uploading it would write the hash marker for the wrong wheel, after which a
+        restart with the same .build/ short-circuits as "unchanged, already published" and never
+        re-uploads. That blocks the deploy from self-healing once the pin is corrected, so refusing
+        is strictly better than publishing.
+        """
         from server.bootstrap import publish_runner_wheel
 
         self._wheel(tmp_path, "dqx_mcp_runner-9.9.9-py3-none-any.whl")
@@ -224,7 +231,9 @@ class TestPublishRunnerWheel:
         ws = create_autospec(WorkspaceClient, instance=True)
         ws.files.download.side_effect = RuntimeError("no marker")
 
-        with patch("databricks.sdk.WorkspaceClient", return_value=ws), caplog.at_level("WARNING"):
-            publish_runner_wheel()
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), caplog.at_level("ERROR"):
+            assert publish_runner_wheel() is None
 
         assert "version drift" in caplog.text
+        # Neither the wheel nor the marker may be written: the marker is what blocks self-healing.
+        ws.files.upload.assert_not_called()

@@ -115,13 +115,20 @@ def publish_runner_wheel() -> str | None:
 
     expected = _expected_wheel_name()
     if expected and wheel.name != expected:
-        # The runner job installs `expected` by absolute path, so a mismatch means every data tool
-        # will fail on library install. Name both sides — the fix is to bump the bundle's
-        # runner_wheel_filename var to match runner/pyproject.toml (a unit test guards this too).
-        logger.warning(
+        # Publish nothing on drift. The runner job installs `expected` by absolute path, so that path
+        # stays absent either way and every data tool fails on library install — publishing a wheel
+        # the job cannot install is strictly worse than publishing none, because it also poisons the
+        # hash marker: the marker records the hash of what WAS uploaded, so a later restart with the
+        # same .build/ short-circuits as "unchanged, already published" and never re-uploads, which
+        # blocks the deploy from self-healing once the pin is corrected. Same contract as the
+        # ambiguous-.build/ path in find_runner_wheel: refuse rather than guess.
+        logger.error(
             f"Runner wheel version drift: built {wheel.name} but the runner job expects {expected}. "
-            "Update the runner_wheel_filename bundle variable to match runner/pyproject.toml."
+            "Publishing nothing — the job installs the expected filename by absolute path, so a "
+            "differently-named wheel cannot be used and would only mask the mismatch. Bump the "
+            "runner_wheel_filename bundle variable to match runner/pyproject.toml and redeploy."
         )
+        return None
 
     from databricks.sdk import WorkspaceClient  # app SP credentials are injected by the platform
 
