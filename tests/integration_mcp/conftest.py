@@ -457,27 +457,30 @@ def _coverage_dir() -> str:
     return f"/Volumes/{CATALOG}/dqx_mcp_tmp/mcp_results/coverage"
 
 
-# Tolerance applied to the "is this file from an earlier run?" cut-off. `since` is measured on the
-# test runner's clock, while last_modified is stamped by the Databricks control plane, so the two are
-# only as aligned as NTP keeps them. The asymmetry matters: keeping one stale file slightly inflates
-# the report, whereas discarding one of THIS run's files silently understates coverage and cannot be
-# detected after the fact. So bias the comparison toward keeping, generously — an hour of slack still
-# prunes anything from a previous CI run (runs are ~30min apart at worst and the volume is per-run
-# in CI), while absorbing any plausible clock disagreement.
+# Cut-off for treating a data file as belonging to an earlier run. `since` is the deploy's start on
+# the test runner's clock, while last_modified is stamped by the control plane, so a tolerance absorbs
+# any NTP disagreement. It is generous on purpose: the errors are asymmetric — keeping a stale file
+# only inflates the report slightly, whereas discarding a live one silently understates coverage and
+# cannot be detected afterwards.
 _COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS = 3600
 
 
 def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float) -> list[str]:
     """Download this run's ``.coverage*`` data files from the UC volume dir into the repo root.
 
-    Files older than *since* (less a clock-skew tolerance) belong to an earlier run — concurrent runs
-    each write their own and nothing else prunes the directory — so they are deleted rather than
-    downloaded, keeping the volume from growing without bound and keeping a prior run's data out of
-    this run's merged report. A delete that loses a race with a concurrent writer is ignored: this is
-    opportunistic housekeeping, never a correctness dependency.
+    Only files this run produced are downloaded, and only files it downloaded are deleted. That
+    coupling matters because the coverage directory is genuinely shared: it is derived from the
+    catalog plus a fixed schema, not from ``name_prefix``, so every concurrent CI run writes into the
+    same place. Deleting purely by age could therefore reap a *live* file belonging to a run that
+    started earlier and is still checkpointing — losing that run's coverage silently, which is the
+    exact failure this whole mechanism exists to prevent.
+
+    Age is still used, but only to decide what NOT to download (a previous run's leftovers must stay
+    out of this run's merged report). Reaping those leftovers is left to the run that owns them, and
+    to `bundle destroy` removing the volume with the schema.
     """
     downloaded: list[str] = []
-    stale = 0
+    skipped = 0
     cutoff = since - _COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS
     for entry in ws.files.list_directory_contents(coverage_dir):
         path = entry.path or ""
@@ -489,18 +492,20 @@ def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: floa
         # missing metadata can never cost this run its data.
         last_modified = getattr(entry, "last_modified", None)
         if isinstance(last_modified, (int, float)) and last_modified / 1000 < cutoff:
-            stale += 1
-            try:
-                ws.files.delete(path)
-            except Exception:  # noqa: BLE001 — housekeeping only; a concurrent writer may win
-                pass
+            skipped += 1
             continue
         body = ws.files.download(path).contents
         dest = _REPO_ROOT / name
         dest.write_bytes(body.read() if body is not None else b"")
         downloaded.append(str(dest))
-    if stale:
-        sys.stderr.write(f"coverage: pruned {stale} data file(s) from earlier runs\n")
+        # Safe to delete now: this process holds the bytes, so nothing is lost, and the volume does
+        # not accumulate. A failure here is ignored — the file is merely left for teardown.
+        try:
+            ws.files.delete(path)
+        except Exception:  # noqa: BLE001 — housekeeping only, never a correctness dependency
+            pass
+    if skipped:
+        sys.stderr.write(f"coverage: ignored {skipped} data file(s) from earlier runs (left in place)\n")
     return downloaded
 
 

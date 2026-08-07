@@ -224,6 +224,17 @@ def _get_sp_client():
     return _sp_client
 
 
+def get_sp_client_for_telemetry():
+    """The app SP client, for telemetry's User-Agent signal only.
+
+    A named public accessor so ``server.telemetry`` does not reach into a private helper. Uses the
+    app's own identity rather than the caller's OBO client deliberately: the signal records which
+    tools this *deployment* exposes and uses, so it needs no user context, and it keeps telemetry off
+    the caller's credentials entirely.
+    """
+    return _get_sp_client()
+
+
 # ── SQL helpers (OBO) ────────────────────────────────────────────────
 
 
@@ -295,7 +306,9 @@ def execute_sql(ws: Any, query: str, warehouse_id: str, parameters: list[Any] | 
         statement=query,
         warehouse_id=warehouse_id,
         wait_timeout="30s",
-        **({"parameters": parameters} if parameters else {}),
+        # `is not None`, not truthiness: an explicit empty list means "the caller supplied bindings",
+        # and silently dropping the kwarg would hide that rather than honour it.
+        **({"parameters": parameters} if parameters is not None else {}),
     )
 
     # on_wait_timeout defaults to CONTINUE, so a slow statement can still be PENDING/RUNNING when the
@@ -604,6 +617,12 @@ _SWEEP_INTERVAL_SECONDS = int(
 # TABLE_OR_VIEW_NOT_FOUND. The configured TTL can only ever be raised above this floor, never below:
 # an operator (or a test) tuning the threshold must not be able to introduce data loss.
 _MIN_VIEW_TTL_SECONDS = 900
+
+# TTL for `staged_*` job inputs on the results volume. Deliberately far longer than any plausible
+# queue wait: a queued job has not read its staged input yet, and deleting it fails that run with
+# "Contract file not found". 24h means an input is only reclaimed once its job could not possibly
+# still be pending, while the volume no longer grows without bound.
+_STAGED_TTL_SECONDS = int(os.environ.get("DQX_STAGED_TTL_SECONDS", str(24 * 60 * 60)))
 _last_sweep_at = 0.0
 
 
@@ -649,11 +668,17 @@ def sweep_stale_views(
         # imports).
         from databricks.sdk.service.sql import StatementParameterListItem
 
+        # Compare case-insensitively: Unity Catalog folds identifiers to lower case in
+        # information_schema, so an equality against a mixed-case schema name matches nothing and the
+        # sweep silently returns 0 — indistinguishable from "no stale views", which is exactly how the
+        # previous SHOW VIEWS bug stayed hidden. SHOW resolved the identifier case-insensitively; this
+        # preserves that rather than relying on every caller pre-normalising.
         rows = execute_sql(
             ws,
-            f"SELECT table_name FROM {safe_catalog}.information_schema.views WHERE table_schema = :schema_name",
+            f"SELECT table_name FROM {safe_catalog}.information_schema.views "
+            "WHERE lower(table_schema) = :schema_name",
             warehouse_id=warehouse_id,
-            parameters=[StatementParameterListItem(name="schema_name", value=schema, type="STRING")],
+            parameters=[StatementParameterListItem(name="schema_name", value=schema.lower(), type="STRING")],
         )
     except Exception:
         logger.warning(f"View sweep: failed to list views in {sanitize_for_log(f'{catalog}.{schema}')}", exc_info=True)
@@ -674,16 +699,22 @@ def sweep_stale_views(
 
 
 def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
-    """Delete stale ``<run_id>.json`` result files from the results volume. Best-effort.
+    """Delete stale files from the results volume. Best-effort.
 
     Backstop for result files whose caller never polled get_run_result. Uses each file's
     last-modified time (the runner names files <run_id>.json, which carries no timestamp).
     Never raises — logs and moves on so cleanup can't break request handling.
 
-    Only ``*.json`` results are swept. The same volume also holds ``staged_*`` inputs written by
-    stage_bytes_to_results_volume (e.g. an inline data contract) which a *pending* job has not read
-    yet: deleting one by age would fail that job with "Contract file not found", since a queued job
-    can start well after the file was staged.
+    Two kinds of file live here and they get different TTLs:
+
+    * ``<run_id>.json`` results — swept at *ttl_seconds*. Once a run is finished its result is only
+      waiting to be polled, so the normal TTL applies.
+    * ``staged_*`` job inputs written by stage_bytes_to_results_volume (e.g. an inline data contract)
+      — swept only after :data:`_STAGED_TTL_SECONDS`, which is far longer than any plausible queue
+      wait. A *pending* job has not read its input yet, so deleting one by the normal TTL failed that
+      job with "Contract file not found". Excluding them from cleanup entirely was the previous fix
+      and it leaked: nothing else reclaims them, so every inline-contract call left a file on the
+      volume forever.
     """
     import time
 
@@ -699,16 +730,23 @@ def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> i
     for entry in entries:
         if getattr(entry, "is_directory", False):
             continue
-        if not (entry.path or "").endswith(".json"):
-            continue  # staged job inputs — see the docstring
+        path = entry.path or ""
+        name = path.rsplit("/", 1)[-1]
+        if name.startswith("staged_"):
+            # A queued job may still be waiting to read this; only reclaim long-abandoned inputs.
+            threshold = max(ttl_seconds, _STAGED_TTL_SECONDS)
+        elif name.endswith(".json"):
+            threshold = ttl_seconds
+        else:
+            continue  # unknown file: not ours to delete
         last_modified = getattr(entry, "last_modified", None)  # epoch millis
         age = now - (last_modified / 1000) if last_modified else 0
-        if age > ttl_seconds:
+        if age > threshold:
             try:
-                ws.files.delete(entry.path)
+                ws.files.delete(path)
                 dropped += 1
             except Exception:
-                logger.warning(f"Result-file sweep: failed to delete {sanitize_for_log(entry.path)}", exc_info=True)
+                logger.warning(f"Result-file sweep: failed to delete {sanitize_for_log(path)}", exc_info=True)
     if dropped:
         logger.info(f"Result-file sweep: deleted {dropped} stale result file(s)")
     return dropped
