@@ -34,11 +34,33 @@ PROFILE_ARG=()
 # and why the install needs no second "grant, then restart" pass. A missing app (first run before
 # any deploy) is fine: the grants for users and the runner SP still apply.
 if [ -z "${APP_SP}" ] && [ -n "${APP_NAME}" ]; then
-  APP_SP="$(databricks apps get "${APP_NAME}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json 2>/dev/null \
-    | python3 -c 'import sys,json
+  # Capture stderr and the exit status separately, so "the app does not exist yet" (fine — the
+  # pre-deploy pass) can be told apart from a transient API/auth failure or malformed JSON. Lumping
+  # them together made a real error look like the expected first-run case: the script printed its
+  # reassuring NOTE, skipped the app SP's grant, and the deploy reported success — then every data
+  # tool failed later because the app could not publish the runner wheel.
+  APP_GET_ERR="$(mktemp)"
+  if APP_GET_JSON="$(databricks apps get "${APP_NAME}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json 2>"${APP_GET_ERR}")"; then
+    APP_SP="$(printf '%s' "${APP_GET_JSON}" | python3 -c 'import sys,json
 try: print(json.load(sys.stdin).get("service_principal_client_id",""))
-except Exception: print("")' 2>/dev/null || true)"
-  [ -n "${APP_SP}" ] && echo "Resolved the app service principal from app '${APP_NAME}': ${APP_SP}"
+except Exception: print("")')"
+    if [ -z "${APP_SP}" ]; then
+      echo "ERROR: app '${APP_NAME}' exists but returned no service_principal_client_id." >&2
+      echo "Cannot grant it USE CATALOG, and without that the app cannot publish the runner wheel." >&2
+      rm -f "${APP_GET_ERR}"
+      exit 1
+    fi
+    echo "Resolved the app service principal from app '${APP_NAME}': ${APP_SP}"
+  elif grep -qiE "does not exist|not found|RESOURCE_DOES_NOT_EXIST" "${APP_GET_ERR}"; then
+    # Expected on the pre-deploy pass: the app is created by `bundle deploy`, which has not run yet.
+    echo "App '${APP_NAME}' does not exist yet; skipping the app SP grant for now."
+  else
+    echo "ERROR: could not look up app '${APP_NAME}' (not a 'does not exist' error):" >&2
+    sed 's/^/  /' "${APP_GET_ERR}" >&2
+    rm -f "${APP_GET_ERR}"
+    exit 1
+  fi
+  rm -f "${APP_GET_ERR}"
 fi
 
 # USE_CATALOG for everyone who touches the catalog, plus CREATE_SCHEMA for the runner SP: it creates
@@ -64,10 +86,12 @@ databricks grants update catalog "${DQX_MCP_CATALOG}" ${PROFILE_ARG[@]+"${PROFIL
 echo "Done. Verify with: databricks grants get catalog ${DQX_MCP_CATALOG}"
 
 if [ -z "$APP_SP" ]; then
+  # Only reachable now when the app genuinely does not exist yet (a real lookup failure exits above),
+  # so this is a status note rather than a possible-error warning.
   echo ""
-  echo "NOTE: the app's service principal could not be resolved (app '${APP_NAME:-<unset>}' not found"
-  echo "yet?), so it has NOT been granted USE CATALOG. That is expected when running this before the"
-  echo "first deploy — 'make mcp-deploy' runs it again after the app exists. If you are deploying by"
-  echo "hand, re-run this after 'bundle deploy' and before starting the app, otherwise the app cannot"
-  echo "publish the runner wheel and every data tool fails to install it."
+  echo "NOTE: app '${APP_NAME:-<unset>}' does not exist yet, so its service principal has NOT been"
+  echo "granted USE CATALOG. That is expected before the first deploy — 'make mcp-deploy' runs this"
+  echo "again after the app exists. If you are deploying by hand, re-run this after 'bundle deploy'"
+  echo "and before starting the app, otherwise the app cannot publish the runner wheel and every"
+  echo "data tool fails to install it."
 fi

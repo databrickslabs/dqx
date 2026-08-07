@@ -114,14 +114,19 @@ echo "::group::wait for the app to publish the runner wheel"
 # that volume path, so a tool call before the publish completes would fail on library install.
 # Fail loudly here rather than let the test fail later with a confusing error.
 WHEEL_DIR="dbfs:/Volumes/${DQX_MCP_TEST_CATALOG}/${TMP_SCHEMA}/dqx_artifacts"
+# Record the outcome in a flag rather than re-running `fs ls` after the loop: a fresh call could hit
+# a transient API error moments after the wheel was seen, and the re-check would then abort an
+# otherwise healthy deploy.
+WHEEL_PUBLISHED=0
 for _ in $(seq 1 36); do
   if databricks fs ls "${WHEEL_DIR}" "${PROFILE_ARG[@]}" 2>/dev/null | grep -q 'dqx_mcp_runner-.*\.whl'; then
     echo "runner wheel published under ${WHEEL_DIR}"
+    WHEEL_PUBLISHED=1
     break
   fi
   sleep 5
 done
-if ! databricks fs ls "${WHEEL_DIR}" "${PROFILE_ARG[@]}" 2>/dev/null | grep -q 'dqx_mcp_runner-.*\.whl'; then
+if [ "${WHEEL_PUBLISHED}" -ne 1 ]; then
   echo "ERROR: the app did not publish the runner wheel to ${WHEEL_DIR} within 3 minutes." >&2
   echo "Check 'databricks apps logs ${NAME_PREFIX}' for the reason (usually a missing USE CATALOG" >&2
   echo "grant for the app's service principal ${APP_SP_ID:-<unresolved>})." >&2

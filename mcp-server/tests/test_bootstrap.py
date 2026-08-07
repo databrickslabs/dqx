@@ -35,6 +35,25 @@ class TestRunnerWheelVersionPin:
             "Bump the runner_wheel_filename bundle variable to match."
         )
 
+    def test_bundle_pins_the_repo_dqx_version(self):
+        """The runner job's DQX pin must track this repo's version.
+
+        The job installs an exact `databricks-labs-dqx[...]==<version>` from PyPI (mirroring the DQX
+        Studio task runner) rather than building the parent wheel. Nothing else couples that pin to
+        src/databricks/labs/dqx/__about__.py, so without this guard a DQX release silently leaves the
+        MCP runner on the previous version — the tools keep working, against stale library code.
+        """
+        about = (_MCP_SERVER.parent / "src" / "databricks" / "labs" / "dqx" / "__about__.py").read_text()
+        repo_version = re.search(r'__version__\s*=\s*"([^"]+)"', about)
+        assert repo_version, "could not read __version__ from src/databricks/labs/dqx/__about__.py"
+
+        pins = re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", _bundle_text())
+        assert pins, "no pinned databricks-labs-dqx dependency found in databricks.yml"
+        assert set(pins) == {repo_version.group(1)}, (
+            f"the repo is DQX {repo_version.group(1)} but databricks.yml pins {sorted(set(pins))}. "
+            "Bump the runner job's databricks-labs-dqx pin to match (both targets, if overridden)."
+        )
+
     def test_runner_job_installs_the_pinned_filename(self):
         """The job must install the wheel via the pinned var, not a relative glob."""
         text = _bundle_text()
@@ -57,17 +76,60 @@ class TestFindRunnerWheel:
 
         assert find_runner_wheel() == wheel
 
-    def test_prefers_highest_version_when_several_exist(self, tmp_path, monkeypatch):
+    def test_prefers_the_wheel_the_runner_job_installs(self, tmp_path, monkeypatch):
+        """With several wheels present, the pinned filename wins — not a name sort.
+
+        The runner job installs DQX_RUNNER_WHEEL_FILENAME by absolute path, so publishing any other
+        wheel guarantees a library-install failure. Uses 0.9.0 vs 0.10.0 deliberately: a name sort
+        picks 0.9.0 (strings, not versions), so this fails if selection reverts to sorting.
+        """
         from server.bootstrap import find_runner_wheel
 
         build = tmp_path / ".build"
         build.mkdir()
-        (build / "dqx_mcp_runner-0.1.0-py3-none-any.whl").write_bytes(b"old")
-        newer = build / "dqx_mcp_runner-0.2.0-py3-none-any.whl"
-        newer.write_bytes(b"new")
+        (build / "dqx_mcp_runner-0.9.0-py3-none-any.whl").write_bytes(b"sorts-last")
+        pinned = build / "dqx_mcp_runner-0.10.0-py3-none-any.whl"
+        pinned.write_bytes(b"pinned")
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DQX_RUNNER_WHEEL_FILENAME", "dqx_mcp_runner-0.10.0-py3-none-any.whl")
 
-        assert find_runner_wheel() == newer
+        assert find_runner_wheel() == pinned
+
+    def test_publishes_nothing_when_several_wheels_and_none_is_pinned(self, tmp_path, monkeypatch):
+        """An ambiguous .build/ is reported, not resolved by guesswork.
+
+        Publishing the wrong wheel fails every data tool at library-install time, and name order is
+        not version order — so there is no safe guess. Returning None leaves the previously published
+        wheel in place (the volume is not overwritten) and logs what to fix.
+        """
+        from server.bootstrap import find_runner_wheel
+
+        build = tmp_path / ".build"
+        build.mkdir()
+        (build / "dqx_mcp_runner-0.1.0-py3-none-any.whl").write_bytes(b"a")
+        (build / "dqx_mcp_runner-0.2.0-py3-none-any.whl").write_bytes(b"b")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DQX_RUNNER_WHEEL_FILENAME", "dqx_mcp_runner-9.9.9-py3-none-any.whl")
+
+        assert find_runner_wheel() is None
+
+    def test_single_wheel_is_used_even_if_the_pin_disagrees(self, tmp_path, monkeypatch):
+        """One wheel and a mismatched pin still publishes: the drift warning covers that case.
+
+        publish_runner_wheel logs the name mismatch loudly; refusing here would leave the volume
+        empty on a first deploy whose pin is merely stale, which is a worse failure than publishing
+        the only wheel that was built.
+        """
+        from server.bootstrap import find_runner_wheel
+
+        build = tmp_path / ".build"
+        build.mkdir()
+        only = build / "dqx_mcp_runner-0.3.0-py3-none-any.whl"
+        only.write_bytes(b"only")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DQX_RUNNER_WHEEL_FILENAME", "dqx_mcp_runner-0.1.0-py3-none-any.whl")
+
+        assert find_runner_wheel() == only
 
     def test_returns_none_when_absent(self, tmp_path, monkeypatch):
         """No wheel anywhere on the search path ⇒ None (and a warning), not an exception.

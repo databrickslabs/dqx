@@ -42,18 +42,38 @@ def find_runner_wheel() -> Path | None:
     Databricks Apps run with the working directory set to the deployed source, and the bundle syncs
     ``.build/`` (see ``sync.include``), so the wheel is normally at ``./.build/``. Walking up from
     this file covers a local ``uvicorn server.app:combined_app`` where the cwd is elsewhere.
+
+    When several wheels are present, the one the runner job actually installs wins — the job lists
+    ``DQX_RUNNER_WHEEL_FILENAME`` by absolute path, so publishing anything else guarantees a library
+    install failure. Only if that exact name is absent does this fall back to the sole match, and a
+    genuinely ambiguous directory is reported rather than resolved by guesswork: picking by name sort
+    is not version order (``0.9.0`` sorts after ``0.10.0``), so there is no correct guess to make.
     """
     roots: list[Path] = [Path.cwd(), Path.cwd() / ".build"]
     for parent in Path(__file__).resolve().parents:
         if (parent / "requirements.txt").exists():
             roots.extend([parent, parent / ".build"])
             break
+    expected = _expected_wheel_name()
     for root in roots:
         if not root.is_dir():
             continue
         matches = sorted(root.glob("dqx_mcp_runner-*.whl"))
-        if matches:
-            return matches[-1]  # highest version if several builds are present
+        if not matches:
+            continue
+        if expected:
+            exact = [m for m in matches if m.name == expected]
+            if exact:
+                return exact[0]
+        if len(matches) > 1:
+            logger.warning(
+                f"Found {len(matches)} runner wheels in {root} and none matches the expected "
+                f"{expected or '<DQX_RUNNER_WHEEL_FILENAME unset>'}: {[m.name for m in matches]}. "
+                "Publishing none of them — rebuild with a clean .build/, or align the "
+                "runner_wheel_filename bundle variable with runner/pyproject.toml."
+            )
+            return None
+        return matches[0]
     logger.warning(f"No runner wheel found; searched {[str(r) for r in roots]}")
     return None
 

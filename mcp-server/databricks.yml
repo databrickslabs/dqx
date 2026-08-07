@@ -87,12 +87,21 @@ resources:
         # Users create definer's-rights temp views here through their own OBO token.
         - principal: ${var.users_group}
           privileges: [USE_SCHEMA, CREATE_TABLE]
+        # MANAGE (not MODIFY) for both SPs, and specifically for DROP: the temp views are created by
+        # each *user* through their OBO token, so the user owns them and the SPs are non-owners. In
+        # UC, MANAGE is what lets a non-owner "delete an object without being the owner"; MODIFY is
+        # data DML (insert/update/delete rows) and does NOT confer DROP. Without MANAGE the runner's
+        # end-of-run view drop and the app's stale-view sweeper both fail and orphan views in this
+        # schema. The schema stays owned by the deploying identity — MANAGE avoids handing the SPs
+        # ownership while still permitting exactly the cleanup they perform.
+        #
         # The app reads through those views and drops stale ones (the in-app sweeper).
         - principal: ${resources.apps.mcp-dqx.service_principal_client_id}
-          privileges: [USE_SCHEMA, SELECT, MODIFY]
-        # The runner job reads the views and writes results as its own least-privilege identity.
+          privileges: [USE_SCHEMA, SELECT, MANAGE]
+        # The runner job reads the views, drops its own view when the run ends, and writes results as
+        # its own least-privilege identity.
         - principal: ${var.runner_service_principal_id}
-          privileges: [USE_SCHEMA, SELECT, MODIFY]
+          privileges: [USE_SCHEMA, SELECT, MANAGE]
   volumes:
     # Result files (<run_id>.json) plus staged job inputs, written by the runner and read by the app.
     mcp_results:
@@ -233,7 +242,7 @@ resources:
           # Where the app publishes the runner wheel at startup, and the exact filename the runner
           # job expects there (see server/bootstrap.py and the job's dependencies above).
           - name: DQX_WHEELS_VOLUME
-            value: "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts"
+            value: "/Volumes/${resources.volumes.dqx_artifacts.catalog_name}/${resources.volumes.dqx_artifacts.schema_name}/${resources.volumes.dqx_artifacts.name}"
           - name: DQX_RUNNER_WHEEL_FILENAME
             value: "${var.runner_wheel_filename}"
 

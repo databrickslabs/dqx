@@ -241,11 +241,17 @@ mcp-grant-prereqs: ## Apply the one-time catalog grants the bundle cannot. Requi
 # `findstring` guard keeps an explicit --var in BUNDLE_VARS working: the CLI rejects a variable
 # assigned twice ("variable has already been assigned value"), so it must not be added again.
 mcp_runner_var = $(if $(RUNNER_SP),$(if $(findstring runner_service_principal_id,$(BUNDLE_VARS)),,--var runner_service_principal_id=$(RUNNER_SP)))
+# USERS_GROUP has the same split-source problem: it feeds the catalog grants below, while the
+# schema-level USE_SCHEMA/CREATE_TABLE grant comes from the bundle's users_group var. Feeding only
+# one of them grants a non-default group USE CATALOG but leaves its schema access on the default, so
+# a member can enter the catalog but cannot create the temp views every data tool needs. Same
+# findstring guard: an explicit --var in BUNDLE_VARS must not be duplicated.
+mcp_users_var = $(if $(USERS_GROUP),$(if $(findstring users_group,$(BUNDLE_VARS)),,--var users_group=$(USERS_GROUP)))
 # The tmp schema for the verify hint below. Only echoed, never passed to the CLI: an override
 # arrives inside BUNDLE_VARS, so parse it out rather than printing the bundle default and sending
 # the user to a path that does not exist.
 mcp_tmp_schema = $(if $(findstring tmp_schema_name=,$(BUNDLE_VARS)),$(firstword $(subst tmp_schema_name=,,$(filter tmp_schema_name=%,$(BUNDLE_VARS)))),dqx_mcp_tmp)
-mcp_bundle_flags = -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(mcp_runner_var) $(BUNDLE_VARS)
+mcp_bundle_flags = -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(mcp_runner_var) $(mcp_users_var) $(BUNDLE_VARS)
 
 mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
 mcp-deploy: ## Deploy the MCP server end to end: bundle, catalog grants, then start the app
