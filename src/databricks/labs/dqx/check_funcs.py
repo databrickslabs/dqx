@@ -348,6 +348,10 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
     return make_condition(condition, message, f"{col_str_norm}_has_invalid_{case}_string_case")
 
 
+def _get_limit_exprs(values: list[Any]) -> list[Column]:
+    return [item if isinstance(item, Column) else get_limit_expr(item) for item in values]
+
+
 @register_rule("row")
 def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
@@ -373,7 +377,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
 
-    allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+    allowed_cols = _get_limit_exprs(allowed)
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
@@ -431,7 +435,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
 
-    allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+    allowed_cols = _get_limit_exprs(allowed)
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
@@ -488,7 +492,7 @@ def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool =
     if not forbidden:
         raise InvalidParameterError("forbidden list must not be empty.")
 
-    forbidden_cols = [item if isinstance(item, Column) else F.lit(item) for item in forbidden]
+    forbidden_cols = _get_limit_exprs(forbidden)
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
