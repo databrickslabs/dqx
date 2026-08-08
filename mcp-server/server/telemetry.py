@@ -23,6 +23,7 @@ other caller's without this.
 import functools
 import logging
 import os
+import re
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
@@ -49,6 +50,13 @@ TELEMETRY_KEY = "dqx_mcp"
 # in the data rather than invisible.
 _UNKNOWN_VERSION = "0.0.0"
 
+# Characters a release version may contain. Deliberately strict: this value is interpolated into an
+# HTTP header, and a header value containing a newline is rejected outright by the HTTP client
+# (InvalidHeader) — which would disable telemetry for every tool rather than mis-report one field.
+# `.strip()` alone does not protect against that: it removes surrounding whitespace but leaves an
+# interior newline intact.
+_SEMVER_ISH_RE = re.compile(r"^[0-9A-Za-z.+_-]{1,64}$")
+
 
 def _dqx_version() -> str:
     """The DQX release this deployment runs against.
@@ -57,8 +65,14 @@ def _dqx_version() -> str:
     job installs — so the reported version is the one that actually executes the checks, not the
     server's own build number. The MCP server cannot read it from the library the way DQX does,
     because it deliberately does not depend on DQX.
+
+    A value that is not version-shaped falls back to the placeholder rather than being sent as-is: see
+    _SEMVER_ISH_RE for why a malformed value is worse than a missing one. The placeholder still
+    satisfies the telemetry pipeline's `release_version IS NOT NULL` filter, so the signal is counted
+    either way.
     """
-    return os.environ.get("DQX_VERSION", "").strip() or _UNKNOWN_VERSION
+    raw = os.environ.get("DQX_VERSION", "").strip()
+    return raw if _SEMVER_ISH_RE.match(raw) else _UNKNOWN_VERSION
 
 
 def reset_telemetry_cache() -> None:

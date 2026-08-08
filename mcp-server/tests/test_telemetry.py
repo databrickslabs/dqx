@@ -115,6 +115,22 @@ class TestReleaseVersion:
         assert ("dqx", "0.15.0") in extras, extras
         assert ("dqx_mcp", "run_checks") in extras, extras
 
+    def test_rejects_a_version_that_could_break_the_header(self, monkeypatch):
+        """A newline in DQX_VERSION would make the HTTP client reject the whole request.
+
+        The value is interpolated into a User-Agent header, and an interior newline survives
+        .strip() — an InvalidHeader would then disable telemetry for every tool rather than
+        mis-report one field. Verified against the real SDK that such a header does raise.
+        """
+        from server.telemetry import log_telemetry
+
+        monkeypatch.setenv("DQX_VERSION", "0.15\n0")
+        ws = _client()
+        log_telemetry(ws, "dqx_mcp", "run_checks")
+
+        versions = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx"]
+        assert versions == ["0.0.0"], versions
+
     def test_reports_a_placeholder_rather_than_omitting_the_version(self, monkeypatch):
         """A NULL release_version is filtered out of every dashboard chart, so never omit it."""
         from server.telemetry import log_telemetry
