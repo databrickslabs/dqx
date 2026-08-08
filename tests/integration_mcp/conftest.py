@@ -223,6 +223,9 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
         "app_name": _emitted(result.stdout, "DQX_MCP_APP_NAME") or name_prefix,
         "runner_job_id": _emitted(result.stdout, "DQX_MCP_RUNNER_JOB_ID"),
         "workspace_host": _emitted(result.stdout, "DQX_MCP_WORKSPACE_HOST") or host,
+        # The deployed temp schema, so a test can plant state the tools cannot reach (e.g. an
+        # already-stale temp view for the sweeper).
+        "tmp_schema": _emitted(result.stdout, "DQX_MCP_TMP_SCHEMA"),
     }
     _log_deployment(deployment)
     try:
@@ -650,6 +653,24 @@ def _resolve_warehouse_id(client: WorkspaceClient) -> str:
     warehouse_id = (running[0] if running else warehouses[0]).id
     assert warehouse_id, "resolved warehouse has no id"
     return warehouse_id
+
+
+def execute_sql(statement: str, *, client: WorkspaceClient | None = None) -> list[list]:
+    """Run one SQL statement against a resolved warehouse and return its rows. Raises on failure.
+
+    Module-level so a test can set up or inspect state the tools cannot reach — planting a stale temp
+    view for the sweeper, for instance. ``seed_demo_data`` keeps its own closure version because it
+    already holds a client and a warehouse id.
+    """
+    client = client or WorkspaceClient()
+    resp = client.statement_execution.execute_statement(
+        statement=statement, warehouse_id=_resolve_warehouse_id(client), wait_timeout="50s"
+    )
+    state = resp.status.state.value if resp.status and resp.status.state else "UNKNOWN"
+    if state != "SUCCEEDED":
+        err = resp.status.error if resp.status else None
+        raise RuntimeError(f"SQL {state}: {err} :: {statement[:160]}")
+    return list((resp.result.data_array or []) if resp.result else [])
 
 
 @contextlib.contextmanager

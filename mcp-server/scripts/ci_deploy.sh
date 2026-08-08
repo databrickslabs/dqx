@@ -178,6 +178,9 @@ jobs=d if isinstance(d,list) else d.get("jobs",[])
 print(jobs[0]["job_id"] if jobs else "")' 2>/dev/null || true)"
 echo "DQX_MCP_RUNNER_JOB_ID=${RUNNER_JOB_ID}"
 echo "DQX_MCP_WORKSPACE_HOST=${DATABRICKS_HOST%/}"
+# The per-run temp schema. Tests that verify the sweepers need it: they plant an already-stale
+# temp view directly, which the tool interface cannot do.
+echo "DQX_MCP_TMP_SCHEMA=${TMP_SCHEMA}"
 # Use if-blocks (not `[ ] && echo`): the latter returns non-zero when the var is unset (local
 # runs), which would make this script exit 1 on an otherwise successful deploy.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"; fi

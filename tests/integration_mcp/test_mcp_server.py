@@ -17,14 +17,17 @@ import time
 from collections.abc import Callable
 
 import requests
+from databricks.sdk import WorkspaceClient
 
 from tests.integration_mcp.conftest import (
     AI_QUERY_ENDPOINT,
+    CATALOG,
     CONTRACT_YAML,
     McpClient,
     _mcp_request,
     _tool_payload,
     deploy_mcp_app,
+    execute_sql,
     seed_demo_data,
     wait_until_ready,
 )
@@ -422,6 +425,97 @@ def _assert_failed_run_surfaces_error(client: McpClient) -> None:
     assert "#job/" in error and "/run/" in error, f"the failure carries no run URL to open: {status}"
 
 
+def _assert_stale_view_sweeper_reaps_orphans(client: McpClient, tmp_schema: str, table: str) -> None:
+    """The backstop sweeper must actually drop an orphaned temp view.
+
+    Worth exercising for real because this path was broken for weeks and looked healthy: the sweep
+    swallows its own errors and returns 0, which is indistinguishable from "nothing to sweep". The
+    only reason it is testable at all is that a view's age comes from its NAME (``v_<epoch>_<hex>``),
+    so a view can be planted that is already older than the TTL floor without waiting.
+
+    Plants the view as the caller (the same identity that creates real temp views), then triggers a
+    tool call — the sweep runs on the job-submission path — and asserts the orphan is gone while a
+    freshly created view from that same call survives.
+    """
+    old_epoch = int(time.time()) - 7200  # 2h: past the 900s floor, well past any TTL
+    orphan = f"v_{old_epoch}_ffffffffffff"
+    orphan_fqn = f"{CATALOG}.{tmp_schema}.{orphan}"
+    execute_sql(f"CREATE OR REPLACE VIEW {orphan_fqn} AS SELECT 1 AS x")
+
+    listed = execute_sql(
+        f"SELECT table_name FROM {CATALOG}.information_schema.views "
+        f"WHERE lower(table_schema) = '{tmp_schema.lower()}'"
+    )
+    assert any(orphan == r[0] for r in listed), f"planted view not visible: {listed}"
+
+    # Any table-backed tool submits a job, and submission is where the throttled sweep runs.
+    client.call("run_checks", {"table_name": table, "checks": EXPLICIT_CHECKS})
+
+    remaining = {
+        r[0]
+        for r in execute_sql(
+            f"SELECT table_name FROM {CATALOG}.information_schema.views "
+            f"WHERE lower(table_schema) = '{tmp_schema.lower()}'"
+        )
+    }
+    assert orphan not in remaining, (
+        f"the stale-view sweeper left {orphan} behind. It swallows its own errors and returns 0, so "
+        f"check the app logs for 'View sweep: failed to list views'. Remaining: {sorted(remaining)}"
+    )
+
+
+def _assert_inline_contract_stages_a_file(client: McpClient, tmp_schema: str) -> None:
+    """An inline contract is staged to the results volume for the runner to read.
+
+    The runner SP cannot read arbitrary caller paths, so ``contract_content`` is written to the
+    results volume as ``staged_<uuid>`` first. Asserting the staged file exists covers that path and
+    pins the naming the result-file sweeper depends on — it gives staged inputs a much longer TTL
+    than results precisely because a queued job may not have read one yet.
+    """
+    ws = WorkspaceClient()
+    volume = f"/Volumes/{CATALOG}/{tmp_schema}/mcp_results"
+    before = {e.path for e in ws.files.list_directory_contents(volume)}
+
+    result = client.call("generate_rules_from_contract", {"contract_content": CONTRACT_YAML})
+    assert result["count"] > 0, result
+
+    after = {e.path for e in ws.files.list_directory_contents(volume)}
+    staged = [p for p in (after - before) if (p or "").rsplit("/", 1)[-1].startswith("staged_")]
+    assert staged, (
+        "no staged_* file appeared on the results volume; inline contracts must be staged there for "
+        f"the runner SP to read. New paths: {sorted(after - before)}"
+    )
+
+
+def _assert_foreign_job_run_is_not_readable(client: McpClient, runner_job_id: str) -> None:
+    """A run_id belonging to a different job must come back not_found.
+
+    The app SP can see runs of other jobs in the workspace, and run ids are guessable integers — so
+    without this guard a caller could read another job's output through get_run_result. Uses a real
+    run from some other job in the workspace, which is the only way to exercise it: a fabricated id
+    hits the "does not exist" path instead, which is a different branch.
+
+    Skips rather than fails when the workspace has no other visible run, so the suite stays usable on
+    an empty workspace.
+    """
+    ws = WorkspaceClient()
+    foreign = next(
+        (r.run_id for r in ws.jobs.list_runs(limit=25) if r.run_id and str(r.job_id or "") != str(runner_job_id)),
+        None,
+    )
+    if foreign is None:
+        sys.stderr.write("note: no foreign job run visible; skipped the cross-job get_run_result guard\n")
+        return
+
+    result = client.call("get_run_result", {"run_id": foreign}, poll=False)
+    assert result.get("status") == "not_found", (
+        f"get_run_result returned {result.get('status')!r} for run {foreign}, which belongs to another "
+        "job — it must be indistinguishable from a nonexistent run so callers cannot probe or read "
+        f"other jobs' output: {result}"
+    )
+    assert "result" not in result, f"a foreign run must never return a payload: {result}"
+
+
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
@@ -502,6 +596,19 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # A check on a column the table lacks is skipped per row, not failed — assert the skip
         # reason survives into the result rather than looking like a clean run.
         _assert_missing_column_is_reported_as_skipped(client, table)
+
+        # An inline contract must be staged to the results volume for the runner SP to read.
+        tmp_schema = app.get("tmp_schema") or ""
+        if tmp_schema:
+            _assert_inline_contract_stages_a_file(client, tmp_schema)
+            # The backstop sweeper must actually reap an orphaned view — a path that silently
+            # returned 0 for weeks. Needs a planted view, so it only runs when the schema is known.
+            _assert_stale_view_sweeper_reaps_orphans(client, tmp_schema, table)
+        else:
+            sys.stderr.write("note: tmp_schema not reported by the deploy; skipped the sweeper assertions\n")
+
+        # A run belonging to another job must be indistinguishable from a nonexistent one.
+        _assert_foreign_job_run_is_not_readable(client, app.get("runner_job_id", ""))
 
         # A job that fails inside the runner must report the task's real error, not the generic
         # job-level message. Runs last: it is the only step that deliberately fails a job.
