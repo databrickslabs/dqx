@@ -367,7 +367,11 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 
 # Regenerate the MCP server lockfile and scrub private-proxy URLs so the
 # committed file resolves against whatever registry the install environment
-# is configured for (JFrog in CI, public in fork PRs).
+# is configured for (JFrog in CI, public in fork PRs). Same normalization as
+# lock-dependencies: rewrite the registry index AND every per-package
+# "/packages/..." download URL to the public hosts, and drop the "size" field
+# (a private proxy never reports it) — a proxy mirrors PyPI with identical
+# paths, so the sha256-pinned entries stay verifiable everywhere.
 lock-mcp-dependencies: export UV_FROZEN := 0
 lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
 	cd mcp-server && uv lock --exclude-newer "7 days"

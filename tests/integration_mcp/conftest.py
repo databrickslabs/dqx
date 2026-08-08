@@ -27,10 +27,12 @@ from uuid import uuid4
 import pytest
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.workspace import ImportFormat
 
 from tests.constants import TEST_CATALOG
 
-_MCP_SCRIPTS = Path(__file__).resolve().parents[2] / "mcp-server" / "scripts"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_MCP_SCRIPTS = _REPO_ROOT / "mcp-server" / "scripts"
 
 # Reuse the same Model Serving endpoint the anomaly AI-explanation tests use.
 AI_QUERY_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-claude-sonnet-4-5")
@@ -188,6 +190,9 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     the long test, so a token minted at deploy time would be expired by then.
     """
     name_prefix = f"mcp-dqx-it-{uuid4().hex[:6]}"
+    # Recorded BEFORE the deploy so every data file this run produces is at or after it. Coverage
+    # collection uses it to tell this run's files from earlier runs' leftovers on the shared volume.
+    started_at = time.time()
 
     def env() -> dict[str, str]:
         return _script_env(name_prefix, host, get_token())
@@ -207,30 +212,78 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
 
     url = _emitted(result.stdout, "DQX_MCP_SERVER_URL")
     assert url, "ci_deploy.sh did not emit DQX_MCP_SERVER_URL"
+    deployment = {
+        "url": url,
+        "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL"),
+        # The SP the runner job actually runs as (the deploying identity when no override is set).
+        # The seed grants it READ on the contract volume so generate_rules_from_contract can read it.
+        "runner_service_principal": _emitted(result.stdout, "DQX_MCP_RUNNER_SERVICE_PRINCIPAL"),
+        # The deployed app's name — a coverage-enabled run stops it before teardown so its
+        # graceful shutdown flushes the final coverage data (see collect_remote_coverage).
+        "app_name": _emitted(result.stdout, "DQX_MCP_APP_NAME") or name_prefix,
+        "runner_job_id": _emitted(result.stdout, "DQX_MCP_RUNNER_JOB_ID"),
+        "workspace_host": _emitted(result.stdout, "DQX_MCP_WORKSPACE_HOST") or host,
+        # The deployed temp schema, so a test can plant state the tools cannot reach (e.g. an
+        # already-stale temp view for the sweeper).
+        "tmp_schema": _emitted(result.stdout, "DQX_MCP_TMP_SCHEMA"),
+    }
+    _log_deployment(deployment)
     try:
-        yield {
-            "url": url,
-            "service_principal": _emitted(result.stdout, "DQX_MCP_APP_SERVICE_PRINCIPAL"),
-            # The SP the runner job actually runs as (the deploying identity when no override is set).
-            # The seed grants it READ on the contract volume so generate_rules_from_contract can read it.
-            "runner_service_principal": _emitted(result.stdout, "DQX_MCP_RUNNER_SERVICE_PRINCIPAL"),
-        }
+        yield deployment
     finally:
+        # Collect coverage BEFORE teardown destroys the app, and do it here rather than at the end of
+        # the test body so a FAILING test still yields its data — that is when it is most useful.
+        collect_remote_coverage(deployment["app_name"], started_at, deployment.get("tmp_schema") or "")
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
+
+
+def _log_deployment(deployment: dict) -> None:
+    """Print the deployed resources' identities and clickable URLs, once, up front.
+
+    The acceptance harness truncates a failing test's traceback to a single line, so without this
+    banner a CI failure gives you nothing to investigate with. Everything here is non-sensitive
+    (names, ids, URLs — no tokens).
+    """
+    host = (deployment.get("workspace_host") or "").rstrip("/")
+    job_id = deployment.get("runner_job_id") or ""
+    lines = [
+        "=" * 78,
+        "MCP integration deployment",
+        f"  app name        : {deployment.get('app_name')}",
+        f"  app url         : {deployment.get('url')}",
+        f"  app SP          : {deployment.get('service_principal')}",
+        f"  runner run_as SP: {deployment.get('runner_service_principal')}",
+        f"  runner job id   : {job_id or '(not resolved)'}",
+        f"  catalog         : {CATALOG}",
+    ]
+    if host and job_id:
+        lines.append(f"  runner job URL  : {host}/#job/{job_id}")
+    if host and deployment.get("app_name"):
+        lines.append(f"  app logs        : databricks apps logs {deployment['app_name']}")
+    lines.append("=" * 78)
+    sys.stderr.write("\n".join(lines) + "\n")
+    sys.stderr.flush()
 
 
 # --- MCP-over-HTTP client used by the integration test ---------------------------------------
 
 
-def _mcp_request(url: str, token: str, method: str, params: dict) -> dict:
-    """Issue one JSON-RPC call to the app's /mcp endpoint and return the ``result`` payload."""
+def _mcp_request(url: str, token: str, method: str, params: dict, headers: dict | None = None) -> dict:
+    """Issue one JSON-RPC call to the app's /mcp endpoint and return the ``result`` payload.
+
+    *headers* overrides/adds request headers. Used to exercise the server's identity handling — the
+    Apps front door normally injects the X-Forwarded-* OBO headers, so overriding them is the only
+    way a black-box test can present a caller with no identity.
+    """
+    request_headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    request_headers.update(headers or {})
     resp = requests.post(
         f"{url}/mcp",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
+        headers=request_headers,
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
         timeout=120,
     )
@@ -238,10 +291,33 @@ def _mcp_request(url: str, token: str, method: str, params: dict) -> dict:
     text = resp.text
     if "data:" in text[:32]:  # FastMCP can answer as an SSE event; unwrap the JSON line
         text = text.split("data:", 1)[1].strip()
-    body = json.loads(text)
+    try:
+        body = json.loads(text)
+    except json.JSONDecodeError as exc:
+        # A 2xx with a body we can't parse (commonly an EMPTY body) says nothing on its own, and the
+        # acceptance harness shows only the exception's first line — so name the request and quote
+        # what actually came back. Redacted: the body is app-controlled, never a credential store.
+        raise AssertionError(
+            f"MCP response was not JSON for method={method!r} "
+            f"params={_summarise_params(params)} status={resp.status_code} "
+            f"content-type={resp.headers.get('Content-Type')!r} len={len(resp.text)} "
+            f"body[:400]={_redact(resp.text[:400])!r}"
+        ) from exc
     if "error" in body:
-        raise RuntimeError(f"MCP error: {body['error']}")
+        raise RuntimeError(f"MCP error for method={method!r} params={_summarise_params(params)}: {body['error']}")
+    if "result" not in body:
+        raise AssertionError(f"MCP response has no 'result' for method={method!r}: {_redact(str(body)[:400])}")
     return body["result"]
+
+
+def _summarise_params(params: dict) -> str:
+    """Compact, non-sensitive description of a JSON-RPC params dict for error messages."""
+    name = params.get("name")
+    args = params.get("arguments")
+    if name:
+        keys = sorted(args) if isinstance(args, dict) else type(args).__name__
+        return f"tool={name!r} arg_keys={keys}"
+    return f"keys={sorted(params)}"
 
 
 def _tool_payload(call_result: dict) -> dict:
@@ -249,7 +325,18 @@ def _tool_payload(call_result: dict) -> dict:
     if call_result.get("structuredContent"):
         return call_result["structuredContent"]
     content = call_result.get("content") or []
-    return json.loads(content[0]["text"]) if content else call_result
+    if not content:
+        return call_result
+    text = content[0].get("text") if isinstance(content[0], dict) else None
+    try:
+        return json.loads(text or "")
+    except (json.JSONDecodeError, TypeError) as exc:
+        # Same rationale as _mcp_request: quote what the tool actually returned. An empty `text`
+        # here is the difference between "the tool failed" and "the transport hiccuped".
+        raise AssertionError(
+            f"tool content was not JSON: type={type(text).__name__} len={len(text or '')} "
+            f"text[:400]={_redact(str(text)[:400])!r} keys={sorted(call_result)}"
+        ) from exc
 
 
 class McpClient:
@@ -261,9 +348,12 @@ class McpClient:
     — ``call`` handles both.
     """
 
-    def __init__(self, url: str, get_token: Callable[[], str]):
+    def __init__(self, url: str, get_token: Callable[[], str], job_id: str = "", workspace_host: str = ""):
         self._url = url
         self._get_token = get_token  # mint a fresh bearer per request (no expiry over a long run)
+        # Used only to build clickable job/run URLs when something fails — never for auth.
+        self._job_id = job_id
+        self._workspace_host = (workspace_host or os.environ.get("DATABRICKS_HOST", "")).rstrip("/")
 
     @property
     def url(self) -> str:
@@ -300,10 +390,143 @@ class McpClient:
             if last == "completed":
                 return status.get("result", {})
             if last == "failed":
-                raise AssertionError(f"run {run_id} failed: {status.get('error')}")
+                # The acceptance harness truncates a failing test to ONE line, and the server's
+                # error begins with a generic "Job failed: Task ... Workload failed, see run output
+                # for details." prefix — so the runner's actual message, which is appended after it,
+                # is exactly what gets cut off. Lead with the tail (where the real cause lives) and
+                # keep the run URL, so a CI failure is diagnosable without workspace access.
+                error = str(status.get("error") or "")
+                cause = error.rsplit("details.", 1)[-1].strip() or error
+                raise AssertionError(
+                    f"run {run_id} failed: {cause[:400]}{self._run_hint(run_id)} | full: {error[:300]}"
+                )
             if time.monotonic() >= deadline:
-                raise AssertionError(f"run {run_id} not finished within {timeout:.0f}s (last status={last})")
+                raise AssertionError(
+                    f"run {run_id} not finished within {timeout:.0f}s (last status={last}){self._run_hint(run_id)}"
+                )
             time.sleep(interval)
+
+    def _run_hint(self, run_id: int) -> str:
+        """A clickable run URL, so a failed run is one click from its driver logs."""
+        if not (self._workspace_host and self._job_id):
+            return ""
+        return f"\n  run URL: {self._workspace_host}/#job/{self._job_id}/run/{run_id}"
+
+
+def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -> list[str]:
+    """CI/test-only: stop the app (forcing its final flush) and download this run's data files.
+
+    No-op unless DQX_MCP_COVERAGE_DIR is set. On a coverage-enabled deploy the app and every runner
+    job carry a test-only bootstrap wheel whose ``.pth`` traces from interpreter start and writes
+    ``.coverage.*`` files into ``<results_volume>/coverage`` (see
+    tests/integration_mcp/coverage_bootstrap). Stopping the app sends SIGTERM, so uvicorn drains and
+    the interpreter exits normally, running the bootstrap's atexit hook that saves + uploads the
+    app's complete data; a checkpoint thread bounds the loss if the platform's ~15s budget is
+    exceeded. Files land in the REPO ROOT, which is where ``coverage combine`` must run (a [paths]
+    rule whose rewritten target does not exist on disk is silently skipped). Best-effort
+    throughout: coverage collection must never fail the test run.
+
+    *since* is the epoch second this deployment began: only files written at or after it belong to
+    this run, so the merged report describes THIS code and no other. The volume outlives any single
+    deployment, so without that bound `coverage combine` silently merges every prior run's data —
+    which is how a report ends up citing lines that the current source no longer has.
+    """
+    if not os.environ.get("DQX_MCP_COVERAGE_DIR"):
+        return []
+    ws = WorkspaceClient()
+    try:
+        ws.apps.stop_and_wait(app_name)
+        sys.stderr.write(f"coverage: app {app_name} stopped (final flush)\n")
+    except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
+        sys.stderr.write(f"coverage: app stop failed (non-fatal): {exc}\n")
+    downloaded: list[str] = []
+    coverage_dir = _coverage_dir(tmp_schema)
+    try:
+        downloaded = _download_coverage_files(ws, coverage_dir, since)
+    except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
+        sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
+    if not downloaded:
+        # Say so loudly and name the directory. A silent empty download is how a wrong path went
+        # unnoticed: the workflow just logged "no remote coverage data" and skipped the upload, so
+        # the flag stopped reporting while every job still passed.
+        sys.stderr.write(
+            f"coverage: WARNING downloaded 0 data files from {coverage_dir} — the mcp flag will not "
+            "be uploaded. Check the app/runner actually installed the bootstrap wheel (dev-coverage "
+            "target) and that this path matches the deployed tmp schema.\n"
+        )
+    else:
+        sys.stderr.write(f"coverage files downloaded: {len(downloaded)} from {coverage_dir}\n")
+    return downloaded
+
+
+def _coverage_dir(tmp_schema: str = "") -> str:
+    """UC-volume directory the remote data files are written to.
+
+    Mirrors the bootstrap's own derivation: ``<results_volume>/coverage``. DQX_MCP_COVERAGE_DIR may
+    name that directory directly (it is forwarded to the app/runner as an explicit override).
+
+    *tmp_schema* must be the schema the deploy actually used, which ci_deploy.sh derives per run from
+    NAME_PREFIX and reports back. Defaulting to the bundle's ``dqx_mcp_tmp`` would look in a schema
+    that does not exist for a CI deploy, and the only symptom is an empty download — "no remote
+    coverage data" and a silently missing upload.
+    """
+    explicit = os.environ.get("DQX_MCP_COVERAGE_DIR", "").rstrip("/")
+    if explicit and explicit != "1":
+        return explicit
+    schema = tmp_schema or "dqx_mcp_tmp"
+    return f"/Volumes/{CATALOG}/{schema}/mcp_results/coverage"
+
+
+# Cut-off for treating a data file as belonging to an earlier run. `since` is the deploy's start on
+# the test runner's clock, while last_modified is stamped by the control plane, so a tolerance absorbs
+# any NTP disagreement. It is generous on purpose: the errors are asymmetric — keeping a stale file
+# only inflates the report slightly, whereas discarding a live one silently understates coverage and
+# cannot be detected afterwards.
+_COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS = 3600
+
+
+def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float) -> list[str]:
+    """Download this run's ``.coverage*`` data files from the UC volume dir into the repo root.
+
+    Only files this run produced are downloaded, and only files it downloaded are deleted. That
+    coupling matters because the coverage directory is genuinely shared: it is derived from the
+    catalog plus a fixed schema, not from ``name_prefix``, so every concurrent CI run writes into the
+    same place. Deleting purely by age could therefore reap a *live* file belonging to a run that
+    started earlier and is still checkpointing — losing that run's coverage silently, which is the
+    exact failure this whole mechanism exists to prevent.
+
+    Age is still used, but only to decide what NOT to download (a previous run's leftovers must stay
+    out of this run's merged report). Reaping those leftovers is left to the run that owns them, and
+    to `bundle destroy` removing the volume with the schema.
+    """
+    downloaded: list[str] = []
+    skipped = 0
+    cutoff = since - _COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS
+    for entry in ws.files.list_directory_contents(coverage_dir):
+        path = entry.path or ""
+        name = path.rsplit("/", 1)[-1]
+        if not path or not name.startswith(".coverage"):
+            continue
+        # last_modified is epoch MILLIS on this API (files.get_metadata returns an HTTP date string
+        # instead — do not mix them). An absent or non-numeric value is treated as current, so
+        # missing metadata can never cost this run its data.
+        last_modified = getattr(entry, "last_modified", None)
+        if isinstance(last_modified, (int, float)) and last_modified / 1000 < cutoff:
+            skipped += 1
+            continue
+        body = ws.files.download(path).contents
+        dest = _REPO_ROOT / name
+        dest.write_bytes(body.read() if body is not None else b"")
+        downloaded.append(str(dest))
+        # Safe to delete now: this process holds the bytes, so nothing is lost, and the volume does
+        # not accumulate. A failure here is ignored — the file is merely left for teardown.
+        try:
+            ws.files.delete(path)
+        except Exception:  # noqa: BLE001 — housekeeping only, never a correctness dependency
+            pass
+    if skipped:
+        sys.stderr.write(f"coverage: ignored {skipped} data file(s) from earlier runs (left in place)\n")
+    return downloaded
 
 
 def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: float = 5.0) -> None:
@@ -378,7 +601,9 @@ _CUSTOMERS_ROWS = """
  (NULL, 'Peggy',   'peggy@example.com',   39,  'US', DATE'2024-01-05', 180.00)
 """
 
-_CONTRACT_YAML = """\
+# Public so the test can also pass it as inline `contract_content` (the tool accepts either a
+# volume path or the contract text) without reaching into a private name.
+CONTRACT_YAML = """\
 kind: DataContract
 apiVersion: v3.0.2
 id: urn:datacontract:dqx_mcp_it:customers
@@ -424,13 +649,45 @@ def _resolve_warehouse_id(client: WorkspaceClient) -> str:
     env_wh = os.environ.get("DATABRICKS_WAREHOUSE_ID")
     if env_wh:
         return env_wh
-    warehouses = list(client.warehouses.list())
+    try:
+        warehouses = list(client.warehouses.list())
+    except Exception as exc:
+        # Self-diagnosing: surface WHICH identity/token shape the SDK actually used (claims only —
+        # never the raw token) so an auth failure here is attributable, not a mystery.
+        try:
+            claims = _decode_jwt_claims(_bearer_from(client.config))
+        except Exception as diag:  # noqa: BLE001 — diagnostics must not mask the original error
+            claims = {"diag_error": str(diag)}
+        sys.stderr.write(
+            f"seed: warehouses.list failed: {exc}\n"
+            f"seed: SDK auth_type={client.config.auth_type} host={client.config.host}\n"
+            f"seed: token RCA={claims}\n"
+        )
+        raise
     if not warehouses:
         pytest.skip("no SQL warehouse available to seed the demo dataset")
     running = [w for w in warehouses if w.state and w.state.value == "RUNNING"]
     warehouse_id = (running[0] if running else warehouses[0]).id
     assert warehouse_id, "resolved warehouse has no id"
     return warehouse_id
+
+
+def execute_sql(statement: str, *, client: WorkspaceClient | None = None) -> list[list]:
+    """Run one SQL statement against a resolved warehouse and return its rows. Raises on failure.
+
+    Module-level so a test can set up or inspect state the tools cannot reach — planting a stale temp
+    view for the sweeper, for instance. ``seed_demo_data`` keeps its own closure version because it
+    already holds a client and a warehouse id.
+    """
+    client = client or WorkspaceClient()
+    resp = client.statement_execution.execute_statement(
+        statement=statement, warehouse_id=_resolve_warehouse_id(client), wait_timeout="50s"
+    )
+    state = resp.status.state.value if resp.status and resp.status.state else "UNKNOWN"
+    if state != "SUCCEEDED":
+        err = resp.status.error if resp.status else None
+        raise RuntimeError(f"SQL {state}: {err} :: {statement[:160]}")
+    return list((resp.result.data_array or []) if resp.result else [])
 
 
 @contextlib.contextmanager
@@ -480,13 +737,31 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
         run_sql(f"GRANT USE SCHEMA ON SCHEMA {fq_schema} TO `{runner_sp}`")
         run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{runner_sp}`")
     contract_path = f"/Volumes/{CATALOG}/{schema}/contracts/customers_contract.yaml"
-    client.files.upload(contract_path, io.BytesIO(_CONTRACT_YAML.encode()), overwrite=True)
+    client.files.upload(contract_path, io.BytesIO(CONTRACT_YAML.encode()), overwrite=True)
+
+    # The same contract as a *workspace* file. The tools accept either backend and read them
+    # differently (Files API download vs workspace export + base64), so the test covers both.
+    #
+    # It goes under /Shared, NOT the seeding identity's /Users home: the app reads the file with the
+    # *caller's* OBO token, and in CI the caller (an OAuth SP) is a different principal from the one
+    # that seeds, so it cannot read another identity's home folder ("Path doesn't exist"). Locally
+    # both are the same user, which is why a /Users path passed on a dev workspace and failed in CI.
+    #
+    # ImportFormat.AUTO with a .yml path keeps it a plain file (mirrors tests/conftest.py's
+    # make_check_file); without an explicit format the SDK tries to treat the bytes as an archive.
+    ws_contract_dir = "/Shared/dqx_mcp_it"
+    ws_contract_path = f"{ws_contract_dir}/{schema}_contract.yml"
+    client.workspace.mkdirs(ws_contract_dir)
+    client.workspace.upload(
+        path=ws_contract_path, format=ImportFormat.AUTO, content=CONTRACT_YAML.encode(), overwrite=True
+    )
 
     try:
         yield {
             "table": table,
             "schema": fq_schema,
             "contract": contract_path,
+            "workspace_contract": ws_contract_path,
             "service_principal": app_sp,
         }
     finally:
@@ -494,3 +769,7 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
             run_sql(f"DROP SCHEMA IF EXISTS {fq_schema} CASCADE")
         except Exception:  # best-effort cleanup, never fail the session on teardown
             sys.stderr.write(f"warning: failed to drop schema {fq_schema}\n")
+        try:
+            client.workspace.delete(ws_contract_path)
+        except Exception:  # noqa: BLE001 — best-effort cleanup, never fail the session on teardown
+            sys.stderr.write(f"warning: failed to delete {ws_contract_path}\n")

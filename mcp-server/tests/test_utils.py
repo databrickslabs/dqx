@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -610,9 +611,9 @@ class TestSweepStaleViews:
         now = int(time.time())
         ws = create_autospec(WorkspaceClient)
         rows = [
-            {"viewName": f"v_{now - 100000}_abc123"},  # stale -> drop
-            {"viewName": f"v_{now}_def456"},  # fresh -> keep
-            {"viewName": "some_other_table"},  # not a temp view -> ignore
+            {"table_name": f"v_{now - 100000}_abc123"},  # stale -> drop
+            {"table_name": f"v_{now}_def456"},  # fresh -> keep
+            {"table_name": "some_other_table"},  # not a temp view -> ignore
         ]
 
         with (
@@ -623,6 +624,78 @@ class TestSweepStaleViews:
 
         assert dropped == 1
         mock_drop.assert_called_once_with(ws, f"cat.dqx_mcp_tmp.v_{now - 100000}_abc123", warehouse_id="wh")
+
+    def test_lists_views_without_a_cross_catalog_show(self):
+        """The listing query must be executable against a shared, session-less warehouse.
+
+        `SHOW VIEWS IN <catalog>.<schema>` parses but Databricks rejects it at runtime with
+        CROSS_CATALOG_SCHEMA_REFERENCE_NOT_SUPPORTED ("Run 'USE CATALOG <c>' first"), since SHOW
+        resolves the schema against the session's current catalog. The sweeper has no session to set
+        one on, so it must qualify through information_schema instead. Asserted here because the
+        failure is otherwise invisible: sweep_stale_views swallows it and returns 0, which looks
+        exactly like "no stale views".
+        """
+        from server.utils import sweep_stale_views
+
+        ws = create_autospec(WorkspaceClient)
+        with patch("server.utils.execute_sql", return_value=[]) as mock_sql:
+            sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh")
+
+        query = mock_sql.call_args.args[1]
+        assert "SHOW VIEWS" not in query.upper(), f"cross-catalog SHOW is rejected at runtime: {query}"
+        # The catalog is an identifier, so it is interpolated (backtick-quoted by
+        # _validate_sql_identifier); a parameter marker cannot stand in for an identifier.
+        assert "information_schema.views" in query, query
+        assert "`cat`." in query, query
+
+    def test_never_drops_a_view_young_enough_to_belong_to_a_queued_job(self):
+        """A short configured TTL must not delete the view of a job that has not started yet.
+
+        The sweep runs on the job-SUBMISSION path, moments after create_temp_view, so it sees the
+        view of the job being submitted right now. A queued job can start minutes later on a busy
+        workspace. Before the floor existed, DQX_SWEEP_TTL_SECONDS=1 (set by the coverage bundle
+        target to exercise the sweeper) deleted live views and failed runs with
+        TABLE_OR_VIEW_NOT_FOUND.
+        """
+        import time
+
+        from server.utils import sweep_stale_views
+
+        now = int(time.time())
+        ws = create_autospec(WorkspaceClient)
+        rows = [
+            {"table_name": f"v_{now - 2}_aaaaaaaaaaaa"},  # just submitted — must survive
+            {"table_name": f"v_{now - 300}_bbbbbbbbbbbb"},  # 5 min old, could still be queued
+            {"table_name": f"v_{now - 100000}_cccccccccccc"},  # genuinely orphaned
+        ]
+        with (
+            patch("server.utils.execute_sql", return_value=rows),
+            patch("server.utils.drop_view") as mock_drop,
+        ):
+            dropped = sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh", ttl_seconds=1)
+
+        assert dropped == 1, "only the genuinely orphaned view may be dropped"
+        dropped_names = [call.args[1] for call in mock_drop.call_args_list]
+        assert dropped_names == [f"cat.dqx_mcp_tmp.v_{now - 100000}_cccccccccccc"], dropped_names
+
+    def test_binds_the_schema_as_a_parameter(self):
+        """The schema is a VALUE in the query, so it must be bound, not interpolated.
+
+        Binding keeps the schema name out of the statement's structure entirely — no quoting or
+        escaping to get right, and a name can never alter the query even if the identifier
+        validation upstream were ever weakened or removed.
+        """
+        from server.utils import sweep_stale_views
+
+        ws = create_autospec(WorkspaceClient)
+        with patch("server.utils.execute_sql", return_value=[]) as mock_sql:
+            sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh")
+
+        query = mock_sql.call_args.args[1]
+        assert "'dqx_mcp_tmp'" not in query, f"the schema must not be interpolated as a literal: {query}"
+        assert ":schema_name" in query, query
+        bound = {p.name: p.value for p in mock_sql.call_args.kwargs["parameters"]}
+        assert bound == {"schema_name": "dqx_mcp_tmp"}, bound
 
     def test_returns_zero_when_listing_fails(self):
         from server.utils import sweep_stale_views
@@ -636,6 +709,112 @@ class TestSweepStaleViews:
 
         assert dropped == 0
         mock_drop.assert_not_called()
+
+
+class TestSweepStaleResultFiles:
+    """The results volume holds two kinds of file and only one may be swept by age."""
+
+    @staticmethod
+    def _entry(path: str, age_seconds: int) -> MagicMock:
+        import time
+
+        entry = MagicMock()
+        entry.path = path
+        entry.is_directory = False
+        entry.last_modified = int((time.time() - age_seconds) * 1000)  # epoch millis
+        return entry
+
+    def test_sweeps_stale_results_but_not_staged_inputs_a_queued_job_may_read(self):
+        """A staged input must survive the normal TTL: its job may still be queued."""
+        from server.utils import sweep_stale_result_files
+
+        ws = create_autospec(WorkspaceClient)
+        volume = "/Volumes/cat/dqx_mcp_tmp/mcp_results"
+        ws.files.list_directory_contents.return_value = [
+            self._entry(f"{volume}/111.json", 100_000),  # stale result -> delete
+            self._entry(f"{volume}/222.json", 5),  # fresh result -> keep
+            # Older than the result TTL but well inside the staged TTL: a queued job may not have
+            # read it yet, so deleting it would fail that run with "Contract file not found".
+            # (3600 < age < 24h — 100_000s would be past the staged TTL and legitimately swept.)
+            self._entry(f"{volume}/staged_abc123.yaml", 7_200),
+        ]
+
+        with patch("server.utils._get_results_volume", return_value=volume):
+            dropped = sweep_stale_result_files(ws, ttl_seconds=3600)
+
+        assert dropped == 1
+        ws.files.delete.assert_called_once_with(f"{volume}/111.json")
+
+    def test_eventually_reclaims_long_abandoned_staged_inputs(self):
+        """Staged inputs are not exempt forever — excluding them entirely leaked the volume.
+
+        Beyond the staged TTL no job could still be pending, so the input is abandoned and must be
+        reclaimed; otherwise every inline-contract call leaves a file behind permanently.
+        """
+        from server.utils import _STAGED_TTL_SECONDS, sweep_stale_result_files
+
+        ws = create_autospec(WorkspaceClient)
+        volume = "/Volumes/cat/dqx_mcp_tmp/mcp_results"
+        ws.files.list_directory_contents.return_value = [
+            self._entry(f"{volume}/staged_old.yaml", _STAGED_TTL_SECONDS + 60),  # abandoned -> delete
+            self._entry(f"{volume}/staged_recent.yaml", 120),  # maybe queued -> keep
+        ]
+
+        with patch("server.utils._get_results_volume", return_value=volume):
+            dropped = sweep_stale_result_files(ws, ttl_seconds=3600)
+
+        assert dropped == 1
+        ws.files.delete.assert_called_once_with(f"{volume}/staged_old.yaml")
+
+    def test_leaves_unrecognised_files_alone(self):
+        """Only files this server creates are swept; anything else is not ours to delete."""
+        from server.utils import sweep_stale_result_files
+
+        ws = create_autospec(WorkspaceClient)
+        volume = "/Volumes/cat/dqx_mcp_tmp/mcp_results"
+        ws.files.list_directory_contents.return_value = [
+            self._entry(f"{volume}/someone_elses_notes.txt", 10_000_000),
+        ]
+
+        with patch("server.utils._get_results_volume", return_value=volume):
+            dropped = sweep_stale_result_files(ws, ttl_seconds=1)
+
+        assert dropped == 0
+        ws.files.delete.assert_not_called()
+
+    def test_returns_zero_when_listing_fails(self):
+        from server.utils import sweep_stale_result_files
+
+        ws = create_autospec(WorkspaceClient)
+        ws.files.list_directory_contents.side_effect = RuntimeError("volume gone")
+        with patch("server.utils._get_results_volume", return_value="/Volumes/cat/s/v"):
+            dropped = sweep_stale_result_files(ws, ttl_seconds=1)
+
+        assert dropped == 0
+        ws.files.delete.assert_not_called()
+
+    def test_unreadable_run_is_not_found_not_permission_denied(self):
+        """A run the app SP cannot see must look identical to one that does not exist.
+
+        Found by an integration test: the job ACL denies reading a foreign job's run before the
+        job_id guard can, and the raw PERMISSION_DENIED was surfacing to the caller. That confirms
+        the run EXISTS, which is the disclosure the ownership guard exists to prevent — run ids are
+        guessable integers.
+        """
+        from databricks.sdk.errors.base import DatabricksError
+
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        err = DatabricksError("User ... does not have View or Manage Run permissions on job 123")
+        err.error_code = "PERMISSION_DENIED"
+        ws.jobs.get_run.side_effect = err
+
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict(os.environ, _JOB_ID_ENV):
+            result = get_run_status(999)
+
+        assert result["status"] == "not_found", result
+        assert "permission" not in json.dumps(result).lower(), f"leaked the denial reason: {result}"
 
     def test_still_running_returns_running(self):
         from server.utils import get_run_status, _user_email_var

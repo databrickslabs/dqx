@@ -5,8 +5,27 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 
 from server import utils
+from server.telemetry import with_telemetry
 
 logger = logging.getLogger(__name__)
+
+
+class _TelemetryRegistrar:
+    """Stands in for the FastMCP server during registration, wrapping each tool with telemetry.
+
+    Only ``.tool`` is intercepted — the decorator is used bare (``@mcp_server.tool``), so this
+    receives the function, instruments it, and hands the result to the real registrar. Everything
+    else is delegated untouched, so this cannot change how the server behaves.
+    """
+
+    def __init__(self, server) -> None:
+        self._server = server
+
+    def tool(self, fn):
+        return self._server.tool(with_telemetry(fn))
+
+    def __getattr__(self, name):
+        return getattr(self._server, name)
 
 
 def _get_tmp_view_config() -> tuple[str, str]:
@@ -46,6 +65,11 @@ def load_tools(mcp_server):
     Long-running tools (profile_table, run_checks, generate_rules, etc.) return
     a run_id immediately. Use get_run_result to poll for results.
     """
+    # Instrument every tool by construction: wrapping the registrar (rather than annotating each
+    # tool) means a tool added later is covered without anyone remembering to. `with_telemetry`
+    # preserves the wrapped function's name, signature and docstring via functools.wraps, which
+    # FastMCP relies on to derive the tool's name and input schema.
+    mcp_server = _TelemetryRegistrar(mcp_server)
 
     @mcp_server.tool
     def get_table_schema(table_name: str):
