@@ -233,7 +233,7 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     finally:
         # Collect coverage BEFORE teardown destroys the app, and do it here rather than at the end of
         # the test body so a FAILING test still yields its data — that is when it is most useful.
-        collect_remote_coverage(deployment["app_name"], started_at)
+        collect_remote_coverage(deployment["app_name"], started_at, deployment.get("tmp_schema") or "")
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
 
@@ -413,7 +413,7 @@ class McpClient:
         return f"\n  run URL: {self._workspace_host}/#job/{self._job_id}/run/{run_id}"
 
 
-def collect_remote_coverage(app_name: str, since: float) -> list[str]:
+def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -> list[str]:
     """CI/test-only: stop the app (forcing its final flush) and download this run's data files.
 
     No-op unless DQX_MCP_COVERAGE_DIR is set. On a coverage-enabled deploy the app and every runner
@@ -440,24 +440,41 @@ def collect_remote_coverage(app_name: str, since: float) -> list[str]:
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage: app stop failed (non-fatal): {exc}\n")
     downloaded: list[str] = []
+    coverage_dir = _coverage_dir(tmp_schema)
     try:
-        downloaded = _download_coverage_files(ws, _coverage_dir(), since)
+        downloaded = _download_coverage_files(ws, coverage_dir, since)
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
-    sys.stderr.write(f"coverage files downloaded: {len(downloaded)}\n{chr(10).join(downloaded)}\n")
+    if not downloaded:
+        # Say so loudly and name the directory. A silent empty download is how a wrong path went
+        # unnoticed: the workflow just logged "no remote coverage data" and skipped the upload, so
+        # the flag stopped reporting while every job still passed.
+        sys.stderr.write(
+            f"coverage: WARNING downloaded 0 data files from {coverage_dir} — the mcp flag will not "
+            "be uploaded. Check the app/runner actually installed the bootstrap wheel (dev-coverage "
+            "target) and that this path matches the deployed tmp schema.\n"
+        )
+    else:
+        sys.stderr.write(f"coverage files downloaded: {len(downloaded)} from {coverage_dir}\n")
     return downloaded
 
 
-def _coverage_dir() -> str:
+def _coverage_dir(tmp_schema: str = "") -> str:
     """UC-volume directory the remote data files are written to.
 
     Mirrors the bootstrap's own derivation: ``<results_volume>/coverage``. DQX_MCP_COVERAGE_DIR may
     name that directory directly (it is forwarded to the app/runner as an explicit override).
+
+    *tmp_schema* must be the schema the deploy actually used, which ci_deploy.sh derives per run from
+    NAME_PREFIX and reports back. Defaulting to the bundle's ``dqx_mcp_tmp`` would look in a schema
+    that does not exist for a CI deploy, and the only symptom is an empty download — "no remote
+    coverage data" and a silently missing upload.
     """
     explicit = os.environ.get("DQX_MCP_COVERAGE_DIR", "").rstrip("/")
     if explicit and explicit != "1":
         return explicit
-    return f"/Volumes/{CATALOG}/dqx_mcp_tmp/mcp_results/coverage"
+    schema = tmp_schema or "dqx_mcp_tmp"
+    return f"/Volumes/{CATALOG}/{schema}/mcp_results/coverage"
 
 
 # Cut-off for treating a data file as belonging to an earlier run. `since` is the deploy's start on
