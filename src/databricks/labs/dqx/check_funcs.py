@@ -459,6 +459,57 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
         f"{col_str_norm}_is_not_in_the_list",
     )
 
+@register_rule("dataset")
+def is_in_list_distribuion(column: str | Column,
+                           distribution: dict[Any, float],
+                           distance: float,
+                           case_sensitive: bool = True,
+                           impute: bool = True) -> Column:
+    """
+    Check whether the discrete values distributions of the column is within a distance less then or equal to given distnace
+    comparing to the given values distribution. The distance distance is calculated **Total variation distance of probability measures**
+    (https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures) method.
+
+    The sum of the supplied distribution values must be less then or equals to 1. The distance must be less then or equals to 1 as well.
+    The values distribution has no size limitation, but its highly recommended to keep it reasonably small as the check intended to be used
+    for enumerated data.
+    This check is suited for a primitive type of columns, such as boolean, string, integer. However, in the same type it does not validate
+    or limit in this.
+    The distribution is not allowed to have `None` values in it. Please, consider using corresponding completeness functions for this purpose.
+    The distribution dict is not allowed to have `inf`, `-inf` or `nan` among values.
+
+    Values distribution can cover a subset of all values in the checked dataframe. Handing the difference of distribution keys depends on the
+    `impute` boolean parameter. If its `True` then, the distance will be calculated for a merge between two distributions: intersation of actual
+    and given distribution combinted with 0 distribution values for the actual distribution.
+    If its `False` then whole check would fail indicating which keys are missing among target distribution.
+    **NOTE**: the unknown or unexpected values in the target distribution compared to given distribution will be ignored. Consider using
+    `is_in_list` row level for checking individual values.
+
+    For string columns, case normalisation can be applied if `case_sensitive` is `True`.
+
+    This check aim to suplement `is_in_list` at dataset level, by verifying that column not just stays in boundaries of enumerated values,
+    but also that these values have expected distribution.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        distribution: expected distribution of literal values to compare with.
+        distance: max distance between target and given values distribution.
+        case_sensitive: whether to perform a case-sensitive comparison (default: True)
+        impute: whether substitue missing values in target distribution with 0 or fail the check.
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: If the distribution or distance is not provided.
+        InvalidParameterError: If the distribution parameter is not a dict or empty.
+        InvalidParameterError: If the distribution parameter dict contains `None` value.
+        InvalidParameterError: If sum of the distribution parameter values is greater then 1.
+        InvalidParameterError: If the distance parameter value is greater then 1.
+    """
+    pass
+
+
 
 @register_rule("row")
 def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool = True) -> Column:
