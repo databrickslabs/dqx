@@ -24,6 +24,7 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_uuid,
     has_valid_string_case,
     is_ipv4_address_in_cidr,
     is_not_less_than,
@@ -253,6 +254,7 @@ def test_build_rules():
             criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
         ),
         DQRowRule(criticality="warn", check_func=is_valid_email, column="g"),
+        DQRowRule(criticality="warn", check_func=is_valid_uuid, column="g"),
         DQDatasetRule(
             criticality="error",
             check_func=sql_query,
@@ -517,6 +519,12 @@ def test_build_rules():
             check_func=is_valid_email,
             column="g",
         ),
+        DQRowRule(
+            name="g_does_not_match_pattern_uuid",
+            criticality="warn",
+            check_func=is_valid_uuid,
+            column="g",
+        ),
         DQDatasetRule(
             criticality="error",
             check_func=sql_query,
@@ -773,6 +781,11 @@ def test_build_rules_by_metadata():
             "name": "a_is_valid_email",
             "criticality": "error",
             "check": {"function": "is_valid_email", "arguments": {"column": "a"}},
+        },
+        {
+            "name": "a_is_valid_uuid",
+            "criticality": "error",
+            "check": {"function": "is_valid_uuid", "arguments": {"column": "a"}},
         },
         {
             "criticality": "error",
@@ -1051,6 +1064,12 @@ def test_build_rules_by_metadata():
             name="a_is_valid_email",
             criticality="error",
             check_func=is_valid_email,
+            column="a",
+        ),
+        DQRowRule(
+            name="a_is_valid_uuid",
+            criticality="error",
+            check_func=is_valid_uuid,
             column="a",
         ),
         DQRowRule(
