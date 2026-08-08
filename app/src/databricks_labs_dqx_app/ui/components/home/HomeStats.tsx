@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/tooltip";
 import { ScoreTrendChart } from "@/components/results/ScoreTrendChart";
 import { useGetHomeStatsSuspense } from "@/lib/api";
-import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { cn } from "@/lib/utils";
 import { countUpValue, deltaDirection, deltaPoints, formatCount, formatScorePercent } from "./statFormat";
@@ -154,9 +153,7 @@ function StatCard({
         {/* B2-1: the "?" explainer is pinned to the card's top-right corner
             (rather than sitting inline after the label) so a long label +
             the trigger can never push the big score value onto a second
-            line. B2-20: only rendered when the global Results tab is enabled
-            — the explainer describes a global-results-vs-home divergence
-            that's moot when there's no global results screen. */}
+            line. */}
         {infoText && (
           <TooltipProvider>
             <Tooltip>
@@ -218,10 +215,6 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
   });
   const { rule_count, monitored_table_count, table_space_count, score, score_delta } = data;
   const trend = data.score_trend ?? [];
-  // B2-20: the score "?" explains a global-results-vs-home divergence, so it's
-  // only shown when the global Results surface is actually enabled.
-  const globalResultsEnabled = useGlobalResultsEnabled();
-
   // "At a Glance" entrance: a staggered count-up of each number that runs once
   // per mount, so a fresh Home visit replays it (like the trend chart below).
   // Because each count-up is keyed on its target value, the skeleton→data swap
@@ -253,7 +246,7 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
               icon={c.icon}
               inverted={c.inverted}
               delta={c.key === "score" ? score_delta : undefined}
-              infoText={c.key === "score" && globalResultsEnabled ? t("home.stats.scoreInfo") : undefined}
+              infoText={c.key === "score" ? t("home.stats.scoreInfo") : undefined}
             />
           ))}
         </CardGrid>

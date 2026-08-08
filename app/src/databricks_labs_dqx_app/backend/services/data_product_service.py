@@ -73,7 +73,15 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
-_UPDATABLE_FIELDS = ("name", "description", "steward", "steward_display_name", "schedule_cron", "schedule_tz")
+_UPDATABLE_FIELDS = (
+    "name",
+    "description",
+    "notes",
+    "steward",
+    "steward_display_name",
+    "schedule_cron",
+    "schedule_tz",
+)
 
 
 class DuplicateDataProductNameError(ValueError):
@@ -293,6 +301,7 @@ class DataProductService:
         steward: str | None,
         created_by: str,
         steward_display_name: str | None = None,
+        notes: str | None = None,
     ) -> DataProduct:
         """Create a new data product in ``draft`` status (no approver gate — design spec §3.3).
 
@@ -314,6 +323,7 @@ class DataProductService:
             product_id=uuid4().hex,
             name=name,
             description=description,
+            notes=notes,
             steward=resolved_steward,
             steward_display_name=steward_display_name,
             schedule_cron=None,
@@ -327,10 +337,11 @@ class DataProductService:
         )
         self._sql.execute(
             f"INSERT INTO {self._products_table} "
-            "(product_id, name, description, steward, steward_display_name, schedule_cron, schedule_tz, "
+            "(product_id, name, description, notes, steward, steward_display_name, schedule_cron, schedule_tz, "
             "schedule_kind, status, version, created_by, created_at, updated_by, updated_at) VALUES ("
             f"'{escape_sql_string(product.product_id)}', '{escape_sql_string(product.name)}', "
-            f"{self._opt_str(product.description)}, {self._opt_str(product.steward)}, "
+            f"{self._opt_str(product.description)}, {self._opt_str(product.notes)}, "
+            f"{self._opt_str(product.steward)}, "
             f"{self._opt_str(product.steward_display_name)}, NULL, NULL, "
             f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
@@ -507,7 +518,7 @@ class DataProductService:
     # Review lifecycle (submit / approve / reject) — P21 item 30
     # ------------------------------------------------------------------
 
-    def submit(self, product_id: str, updated_by: str) -> DataProduct:
+    def submit(self, product_id: str, updated_by: str, rationale: str | None = None) -> DataProduct:
         """Submit a Table Space for review: ``draft``/``rejected`` -> ``pending_approval``.
 
         Idempotent for an already-``pending_approval`` space (no-op re-submit).
@@ -535,9 +546,16 @@ class DataProductService:
             raise InvalidStatusTransitionError(
                 f"Cannot submit Table Space {product_id}: already approved with no changes to submit"
             )
-        return self._set_status(product_id, "pending_approval", updated_by, _prefetched=product)
+        return self._set_status(
+            product_id,
+            "pending_approval",
+            updated_by,
+            _prefetched=product,
+            set_pending_rationale=True,
+            pending_rationale=rationale,
+        )
 
-    def approve(self, product_id: str, updated_by: str) -> DataProduct:
+    def approve(self, product_id: str, updated_by: str, rationale: str | None = None) -> DataProduct:
         """Approve a Table Space: ``pending_approval`` -> ``approved``, bumping ``version`` by 1.
 
         The ONLY operation that bumps a space's version (mirrors monitored-table
@@ -559,6 +577,7 @@ class DataProductService:
         e = escape_sql_string(product_id)
         self._sql.execute(
             f"UPDATE {self._products_table} SET status = 'approved', version = {new_version}, "
+            f"pending_rationale = NULL, last_decision_rationale = {self._opt_str(rationale)}, "
             f"updated_by = {self._opt_str(updated_by)}, updated_at = now() WHERE product_id = '{e}'"
         )
         logger.info("Approved data product %s at version %d", product_id, new_version)
@@ -566,12 +585,14 @@ class DataProductService:
             update={
                 "status": "approved",
                 "version": new_version,
+                "pending_rationale": None,
+                "last_decision_rationale": rationale,
                 "updated_by": updated_by,
                 "updated_at": datetime.now(timezone.utc),
             }
         )
 
-    def reject(self, product_id: str, updated_by: str) -> DataProduct:
+    def reject(self, product_id: str, updated_by: str, rationale: str | None = None) -> DataProduct:
         """Reject a Table Space: ``pending_approval`` -> ``rejected``.
 
         Guards against rejecting a non-pending space out of band.
@@ -587,7 +608,16 @@ class DataProductService:
             raise InvalidStatusTransitionError(
                 f"Cannot reject Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
             )
-        return self._set_status(product_id, "rejected", updated_by, _prefetched=product)
+        return self._set_status(
+            product_id,
+            "rejected",
+            updated_by,
+            _prefetched=product,
+            set_pending_rationale=True,
+            pending_rationale=None,
+            set_last_decision_rationale=True,
+            last_decision_rationale=rationale,
+        )
 
     def revert(self, product_id: str, updated_by: str) -> DataProduct:
         """Withdraw a pending submission: ``pending_approval`` -> ``draft``.
@@ -608,23 +638,52 @@ class DataProductService:
             raise InvalidStatusTransitionError(
                 f"Cannot revert Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
             )
-        return self._set_status(product_id, "draft", updated_by, _prefetched=product)
+        return self._set_status(
+            product_id,
+            "draft",
+            updated_by,
+            _prefetched=product,
+            set_pending_rationale=True,
+            pending_rationale=None,
+        )
 
     def _set_status(
-        self, product_id: str, status: str, updated_by: str, _prefetched: DataProduct | None = None
+        self,
+        product_id: str,
+        status: str,
+        updated_by: str,
+        _prefetched: DataProduct | None = None,
+        *,
+        set_pending_rationale: bool = False,
+        pending_rationale: str | None = None,
+        set_last_decision_rationale: bool = False,
+        last_decision_rationale: str | None = None,
     ) -> DataProduct:
         product = _prefetched or self._fetch_product(product_id)
         if product is None:
             raise LookupError(f"Data product not found: {product_id}")
         e = escape_sql_string(product_id)
+        set_clauses = [
+            f"status = '{status}'",
+            f"updated_by = {self._opt_str(updated_by)}",
+            "updated_at = now()",
+        ]
+        updates: dict[str, Any] = {
+            "status": status,
+            "updated_by": updated_by,
+            "updated_at": datetime.now(timezone.utc),
+        }
+        if set_pending_rationale:
+            set_clauses.append(f"pending_rationale = {self._opt_str(pending_rationale)}")
+            updates["pending_rationale"] = pending_rationale
+        if set_last_decision_rationale:
+            set_clauses.append(f"last_decision_rationale = {self._opt_str(last_decision_rationale)}")
+            updates["last_decision_rationale"] = last_decision_rationale
         self._sql.execute(
-            f"UPDATE {self._products_table} SET status = '{status}', "
-            f"updated_by = {self._opt_str(updated_by)}, updated_at = now() WHERE product_id = '{e}'"
+            f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'"
         )
         logger.info("Set data product %s status to %s", product_id, status)
-        return product.model_copy(
-            update={"status": status, "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
-        )
+        return product.model_copy(update=updates)
 
     # ------------------------------------------------------------------
     # Run fan-out (design spec §4.2)
@@ -636,6 +695,7 @@ class DataProductService:
         source: RunSetSource,
         user_email: str,
         trigger: RunSetTrigger = "manual",
+        sample_size: int | None = None,
     ) -> DataProductRunResult:
         """Resolve every member's checks and submit through a shared run set.
 
@@ -706,6 +766,7 @@ class DataProductService:
                     user_email=user_email,
                     trigger=trigger,
                     run_set_id=run_set_id,
+                    sample_size=sample_size,
                 )
             except Exception as exc:  # collect-and-continue: one member's failure must not abort the fan-out
                 logger.error(
@@ -991,10 +1052,11 @@ class DataProductService:
             # schedule_kind (B2-52) appended; score-join columns follow at +1..+4.
             f"{prefix}schedule_kind, "
             # steward_display_name appended after schedule_kind (row[13]).
-            # NOTE: score-join cols are appended AFTER steward_display_name in
-            # ``_score_joined_select``, so the score tuple offset shifts by 1
-            # (was row[13..16]; now row[14..17]).
-            f"{prefix}steward_display_name"
+            f"{prefix}steward_display_name, "
+            # notes + lifecycle rationale (row[14..16]).
+            # NOTE: score-join cols are appended AFTER these in
+            # ``_score_joined_select``, so the score tuple offset is row[17..20].
+            f"{prefix}notes, {prefix}pending_rationale, {prefix}last_decision_rationale"
         )
 
     def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
@@ -1054,14 +1116,14 @@ class DataProductService:
         if not rows:
             return None
         row = rows[0]
-        # steward_display_name is now row[13]; score cols shifted to row[14..17].
-        return self._row_to_product(row), parse_cached_score(row[14], row[15], row[16], row[17])
+        # Base cols end at last_decision_rationale (row[16]); score cols at row[17..20].
+        return self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])
 
     def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
         sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
         rows = self._sql.query(sql)
-        # steward_display_name is now row[13]; score cols shifted to row[14..17].
-        return [(self._row_to_product(row), parse_cached_score(row[14], row[15], row[16], row[17])) for row in rows]
+        # Base cols end at last_decision_rationale (row[16]); score cols at row[17..20].
+        return [(self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(
@@ -1083,6 +1145,9 @@ class DataProductService:
                 else SCHEDULE_KIND_DEFAULT
             ),
             steward_display_name=row[13] if len(row) > 13 else None,
+            notes=row[14] if len(row) > 14 else None,
+            pending_rationale=row[15] if len(row) > 15 else None,
+            last_decision_rationale=row[16] if len(row) > 16 else None,
         )
 
     @staticmethod

@@ -83,6 +83,7 @@ import {
   PRIV_MODIFY,
   PRIV_APPLY,
   PRIV_EXECUTE,
+  PRIV_MANAGE,
   PRIV_ALL,
   isUsersGroupGrant,
   isOwnerDefaultGrant,
@@ -163,10 +164,18 @@ function PrivilegeBadges({ privileges }: { privileges: string[] }) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
   if (isAllPrivileges(privileges)) {
+    // MANAGE is independent of ALL PRIVILEGES (UC semantics) — surface both.
     return (
-      <Badge variant="secondary" className={PRIVILEGE_TAG_CLASS}>
-        {privilegeTagLabel(PRIV_ALL)}
-      </Badge>
+      <div className="flex flex-wrap gap-1">
+        <Badge variant="secondary" className={PRIVILEGE_TAG_CLASS}>
+          {privilegeTagLabel(PRIV_ALL)}
+        </Badge>
+        {privileges.includes(PRIV_MANAGE) && (
+          <Badge variant="outline" className={PRIVILEGE_TAG_CLASS}>
+            {privilegeTagLabel(PRIV_MANAGE)}
+          </Badge>
+        )}
+      </div>
     );
   }
   return (
@@ -214,6 +223,7 @@ interface GrantDraft {
   modify: boolean;
   apply: boolean;
   execute: boolean;
+  manage: boolean;
   inherit: boolean;
 }
 
@@ -257,6 +267,7 @@ function GrantDialog({
     modify: false,
     apply: false,
     execute: false,
+    manage: false,
     inherit: defaultInherit,
   });
 
@@ -264,8 +275,8 @@ function GrantDialog({
   // The draft state persists across opens, so a new-grant dialog would briefly
   // paint the previous/stale toggle state before an effect could reset it.
   // `useLayoutEffect` reseeds synchronously *before* paint, so the "inherit to
-  // child objects" toggle shows the admin `permissions_default_inherit` default
-  // the instant the dialog appears (B2-122) — no transient off-state flash.
+  // child objects" toggle shows ON (cascade default) the instant the dialog
+  // appears (B2-122) — no transient off-state flash.
   useLayoutEffect(() => {
     if (!open) return;
     if (editing) {
@@ -281,6 +292,8 @@ function GrantDialog({
         modify: all || privs.includes(PRIV_MODIFY),
         apply: all || privs.includes(PRIV_APPLY),
         execute: all || privs.includes(PRIV_EXECUTE),
+        // MANAGE is independent of ALL PRIVILEGES (like UC).
+        manage: privs.includes(PRIV_MANAGE),
         inherit: initialGrantInherit(editing, defaultInherit),
       });
     } else {
@@ -290,13 +303,15 @@ function GrantDialog({
         modify: false,
         apply: false,
         execute: false,
+        manage: false,
         inherit: initialGrantInherit(null, defaultInherit),
       });
     }
   }, [open, editing, defaultInherit]);
 
-  const noPrivileges = !draft.view && !draft.modify && !draft.apply && !draft.execute;
-  const lockSelect = draft.modify || draft.apply || draft.execute;
+  const noPrivileges =
+    !draft.view && !draft.modify && !draft.apply && !draft.execute && !draft.manage;
+  const lockSelect = draft.modify || draft.apply || draft.execute || draft.manage;
   const canSave = !!draft.principal && (!noPrivileges || allowEmpty) && !saving;
 
   return (
@@ -379,6 +394,16 @@ function GrantDialog({
                   <span className="select-none text-xs text-muted-foreground">{t("permissions.executeHint")}</span>
                 </label>
               )}
+              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+                <Checkbox
+                  checked={draft.manage}
+                  onCheckedChange={(c) =>
+                    setDraft((d) => forceSelectWhenOthers({ ...d, manage: c === true }))
+                  }
+                />
+                <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_MANAGE)}</span>
+                <span className="select-none text-xs text-muted-foreground">{t("permissions.manageHint")}</span>
+              </label>
             </div>
           </div>
 
@@ -543,7 +568,7 @@ export function PermissionsTab({
   const data: ObjectGrantsOut | undefined = grantsData;
   const grants = data?.grants ?? [];
   const canManage = data?.can_manage ?? false;
-  const defaultInherit = data?.default_inherit ?? false;
+  const defaultInherit = data?.default_inherit ?? true;
 
   // Project the staged steward change (L2) onto the real grants so the table
   // shows the RESULT immediately — as if the change had already been made
@@ -585,6 +610,8 @@ export function PermissionsTab({
     if (draft.modify) privileges.push(PRIV_MODIFY);
     if (draft.apply) privileges.push(PRIV_APPLY);
     if (draft.execute) privileges.push(PRIV_EXECUTE);
+    // MANAGE is independent of ALL PRIVILEGES — always emit explicitly.
+    if (draft.manage) privileges.push(PRIV_MANAGE);
     try {
       await setMut.mutateAsync({
         objectType,

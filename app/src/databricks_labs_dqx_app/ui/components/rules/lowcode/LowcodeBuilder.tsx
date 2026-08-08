@@ -12,6 +12,9 @@ type Props = {
   onChange: (next: LowcodeAstV2) => void;
   declaredColumns: LowcodeColumnRef[];
   readOnly?: boolean;
+  /** When false, aggregated condition rows only offer the table-wide
+   * cardinality aggregates; setting Group by unlocks the full set. */
+  hasGroupBy?: boolean;
   /** Renders the operator cell for EACH condition row (row + aggregated) via the
    * registry editor's merged condition selector. Receives this row's family +
    * operator getter/setter and whether it's the first row (row 0 hosts
@@ -31,7 +34,7 @@ function defaultColumnRef(declared: LowcodeColumnRef[]): string {
 
 // Ported 1:1 from dqlake's LowcodeBuilder — the row stack with "Add
 // condition" / "Add aggregated condition" actions.
-export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, renderOperator }: Props) {
+export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, hasGroupBy = false, renderOperator }: Props) {
   const { t } = useTranslation();
 
   const addRow = () => {
@@ -94,6 +97,7 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, rende
           onDelete={() => deleteRow(i)}
           readOnly={readOnly}
           renderOperator={renderOperator}
+          hasGroupBy={hasGroupBy}
           // Condition Builder uses the compact layout (content-sized operator
           // that shrinks from the right, capped value box); row filters
           // (FilterBuilder) keep the default fixed-operator / full-width value.

@@ -747,7 +747,7 @@ export interface CheckFunctionDef {
 export type CheckFunctionParamDefault = string | null;
 
 /**
- * For a column-kind parameter ('column' / 'columns'), the slot family the check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', or 'any'). A specific (non-'any') family is locked in the authoring UI and narrows the apply-time column picker. None for non-column parameters.
+ * For a column-kind parameter ('column' / 'columns'), the slot family the check's semantics imply ('numeric', 'text', 'temporal', 'boolean', or 'any'). A specific (non-'any') family is locked in the authoring UI and narrows the apply-time column picker. None for non-column parameters.
  */
 export type CheckFunctionParamFamily = string | null;
 
@@ -770,7 +770,7 @@ export interface CheckFunctionParam {
   default?: CheckFunctionParamDefault;
   /** Verbatim Python type annotation (best-effort string repr) */
   annotation?: string;
-  /** For a column-kind parameter ('column' / 'columns'), the slot family the check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', or 'any'). A specific (non-'any') family is locked in the authoring UI and narrows the apply-time column picker. None for non-column parameters. */
+  /** For a column-kind parameter ('column' / 'columns'), the slot family the check's semantics imply ('numeric', 'text', 'temporal', 'boolean', or 'any'). A specific (non-'any') family is locked in the authoring UI and narrows the apply-time column picker. None for non-column parameters. */
   family?: CheckFunctionParamFamily;
 }
 
@@ -919,6 +919,11 @@ export interface ContractSchemaRulesOut {
 export type CreateDataProductInDescription = string | null;
 
 /**
+ * Sticky operational notes (separate from description)
+ */
+export type CreateDataProductInNotes = string | null;
+
+/**
  * Defaults to the creator's email when omitted
  */
 export type CreateDataProductInSteward = string | null;
@@ -934,6 +939,8 @@ export type CreateDataProductInStewardDisplayName = string | null;
 export interface CreateDataProductIn {
   name: string;
   description?: CreateDataProductInDescription;
+  /** Sticky operational notes (separate from description) */
+  notes?: CreateDataProductInNotes;
   /** Defaults to the creator's email when omitted */
   steward?: CreateDataProductInSteward;
   /** Human-readable display name for the steward; sourced from the principal picker. */
@@ -1004,6 +1011,8 @@ export interface CreateRegistryRuleIn {
   steward?: CreateRegistryRuleInSteward;
   /** Human-readable display name for the steward; sourced from the principal picker. */
   steward_display_name?: CreateRegistryRuleInStewardDisplayName;
+  /** When false (default), creating a rule whose definition matches a published rule returns HTTP 409 so the UI can ask the steward to confirm. Set true after the steward confirms (or for batch/seed paths that intentionally allow copies). */
+  allow_duplicate?: boolean;
 }
 
 /**
@@ -1084,6 +1093,11 @@ export interface DataProductMemberOut {
 
 export type DataProductOutDescription = string | null;
 
+/**
+ * Sticky operational notes (separate from description)
+ */
+export type DataProductOutNotes = string | null;
+
 export type DataProductOutSteward = string | null;
 
 /**
@@ -1116,6 +1130,16 @@ export const DataProductOutStatus = {
   rejected: 'rejected',
 } as const;
 
+/**
+ * Author's change rationale while status is pending_approval
+ */
+export type DataProductOutPendingRationale = string | null;
+
+/**
+ * Approver's rationale from the most recent approve/reject decision
+ */
+export type DataProductOutLastDecisionRationale = string | null;
+
 export type DataProductOutLastRunAt = string | null;
 
 /**
@@ -1147,6 +1171,8 @@ export interface DataProductOut {
   product_id: string;
   name: string;
   description?: DataProductOutDescription;
+  /** Sticky operational notes (separate from description) */
+  notes?: DataProductOutNotes;
   steward?: DataProductOutSteward;
   /** Human-readable display name for the steward; falls back to the steward email when null. */
   steward_display_name?: DataProductOutStewardDisplayName;
@@ -1155,6 +1181,10 @@ export interface DataProductOut {
   schedule_kind?: DataProductOutScheduleKind;
   status: DataProductOutStatus;
   version: number;
+  /** Author's change rationale while status is pending_approval */
+  pending_rationale?: DataProductOutPendingRationale;
+  /** Approver's rationale from the most recent approve/reject decision */
+  last_decision_rationale?: DataProductOutLastDecisionRationale;
   /** 'approved' | 'pending_approval' | 'rejected' | 'modified' | 'draft' — review lifecycle display */
   display_status: string;
   members?: DataProductMemberOut[];
@@ -1640,8 +1670,6 @@ export interface GenerateRulesFromContractIn {
   contract_text: string;
   /** Generate rules from schema property constraints (required, pattern, min/max, etc.) */
   generate_predefined_rules?: boolean;
-  /** Process natural-language quality expectations via LLM (requires [llm] extras) */
-  process_text_rules?: boolean;
   /** Emit a has_valid_schema dataset rule per ODCS schema */
   generate_schema_validation?: boolean;
   /** If true, schema check requires exact columns/order/types */
@@ -1816,9 +1844,9 @@ export interface GlobalResultsSettingsIn {
  * Effective global-Results-tab gating settings.
  */
 export interface GlobalResultsSettingsOut {
-  /** Whether the app-wide, all-tables Results surface (nav item + homepage overall-score explainer) is enabled. Defaults to False (hidden). */
+  /** Whether the app-wide, all-tables Results surface (nav item + homepage overall-score explainer) is enabled. Defaults to True (always on in the UI). */
   global_results_enabled: boolean;
-  /** Whether the per-rule Results tab is shown inside the Rules Registry rule dialog. Distinct from global_results_enabled. Defaults to False (hidden). */
+  /** Whether the per-rule Results tab is shown inside the Rules Registry rule dialog. Distinct from global_results_enabled. Defaults to True (always on in the UI). */
   rules_results_tab_enabled?: boolean;
 }
 
@@ -2068,6 +2096,19 @@ export interface LabelDefinitionsOut {
   definitions: LabelDefinition[];
 }
 
+/**
+ * Change rationale: author's reason on submit, approver's reason on approve/reject.
+ */
+export type LifecycleRationaleInRationale = string | null;
+
+/**
+ * Optional body for submit / approve / reject lifecycle endpoints.
+ */
+export interface LifecycleRationaleIn {
+  /** Change rationale: author's reason on submit, approver's reason on approve/reject. */
+  rationale?: LifecycleRationaleInRationale;
+}
+
 export interface MarketplacePackOut {
   id: string;
   title: string;
@@ -2098,6 +2139,59 @@ export interface MarketplaceRuleOut {
   check: MarketplaceRuleOutCheck;
   slot_families?: MarketplaceRuleOutSlotFamilies;
   imported?: boolean;
+}
+
+/**
+ * Body of ``POST /monitored-tables/{binding_id}/match-rules`` (describe-a-rule).
+ */
+export interface MatchRulesIn {
+  /**
+   * Natural-language description of the rule the steward wants.
+   * @minLength 1
+   * @maxLength 4000
+   */
+  query: string;
+  /**
+   * Max retrieval hits to consider.
+   * @minimum 1
+   * @maximum 20
+   */
+  top_k?: number;
+}
+
+/**
+ * Response of ``POST /monitored-tables/{binding_id}/match-rules``.
+
+Same deploy-safe contract as SuggestRulesOut: always HTTP 200;
+``available=False`` + ``reason`` covers every degraded path.
+ */
+export interface MatchRulesOut {
+  available: boolean;
+  matches?: MatchedRuleOut[];
+  reason?: string;
+}
+
+export type MatchedRuleOutRuleName = string | null;
+
+export type MatchedRuleOutDimension = string | null;
+
+export type MatchedRuleOutSeverity = string | null;
+
+export type MatchedRuleOutColumnMappingAnyOf = {[key: string]: string};
+
+export type MatchedRuleOutColumnMapping = MatchedRuleOutColumnMappingAnyOf | null;
+
+/**
+ * One NL-matched published registry rule, optionally with a stageable column mapping.
+ */
+export interface MatchedRuleOut {
+  rule_id: string;
+  rule_name?: MatchedRuleOutRuleName;
+  dimension?: MatchedRuleOutDimension;
+  severity?: MatchedRuleOutSeverity;
+  score: number;
+  column_mapping?: MatchedRuleOutColumnMapping;
+  explanation?: string;
 }
 
 export type MetricSnapshotOutRunType = string | null;
@@ -2230,6 +2324,21 @@ export type MonitoredTableOutLastProfiledAt = string | null;
  */
 export type MonitoredTableOutLastRunAt = string | null;
 
+/**
+ * Sticky operational notes
+ */
+export type MonitoredTableOutNotes = string | null;
+
+/**
+ * Author's change rationale while status is pending_approval
+ */
+export type MonitoredTableOutPendingRationale = string | null;
+
+/**
+ * Approver's rationale from the most recent approve/reject decision
+ */
+export type MonitoredTableOutLastDecisionRationale = string | null;
+
 export type MonitoredTableOutCreatedBy = string | null;
 
 export type MonitoredTableOutCreatedAt = string | null;
@@ -2259,6 +2368,12 @@ export interface MonitoredTableOut {
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
   /** Newest terminal validation-run instant for this table (either trigger surface); drives the overview 'Last run' column. */
   last_run_at?: MonitoredTableOutLastRunAt;
+  /** Sticky operational notes */
+  notes?: MonitoredTableOutNotes;
+  /** Author's change rationale while status is pending_approval */
+  pending_rationale?: MonitoredTableOutPendingRationale;
+  /** Approver's rationale from the most recent approve/reject decision */
+  last_decision_rationale?: MonitoredTableOutLastDecisionRationale;
   created_by?: MonitoredTableOutCreatedBy;
   created_at?: MonitoredTableOutCreatedAt;
   updated_by?: MonitoredTableOutUpdatedBy;
@@ -2438,7 +2553,7 @@ export interface ObjectGrantOut {
   principal_type: string;
   /** Human-readable principal name */
   principal_name?: ObjectGrantOutPrincipalName;
-  /** Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES) */
+  /** Granted privileges (SELECT/MODIFY/APPLY/EXECUTE/MANAGE or ALL_PRIVILEGES) */
   privileges?: string[];
   /** Whether this grant flows down to child objects */
   inherit?: boolean;
@@ -2467,24 +2582,8 @@ export interface ObjectGrantsOut {
   grants?: ObjectGrantOut[];
   /** Whether the caller may add/remove grants on this object */
   can_manage?: boolean;
-  /** Admin default for the per-grant inheritance toggle on new grants */
+  /** Default for the per-grant inheritance toggle on new grants (always ON) */
   default_inherit?: boolean;
-}
-
-export type OptimizeSettingsInOptimizeIntervalHours = number | null;
-
-export interface OptimizeSettingsIn {
-  optimize_interval_hours?: OptimizeSettingsInOptimizeIntervalHours;
-}
-
-/**
- * Effective OPTIMIZE cadence + the default/min the scheduler falls back to.
- */
-export interface OptimizeSettingsOut {
-  optimize_interval_hours: number;
-  optimize_interval_hours_default?: number;
-  optimize_interval_hours_min?: number;
-  optimize_interval_hours_set: boolean;
 }
 
 export type OutputConfigOptions = {[key: string]: string};
@@ -2885,6 +2984,16 @@ export type RegistryRuleOutStewardDisplayName = string | null;
 
 export type RegistryRuleOutSource = string | null;
 
+/**
+ * Author's change rationale while status is pending_approval.
+ */
+export type RegistryRuleOutPendingRationale = string | null;
+
+/**
+ * Approver's rationale from the most recent approve/reject decision.
+ */
+export type RegistryRuleOutLastDecisionRationale = string | null;
+
 export type RegistryRuleOutCreatedBy = string | null;
 
 export type RegistryRuleOutCreatedAt = string | null;
@@ -2927,6 +3036,10 @@ export interface RegistryRuleOut {
   steward_display_name?: RegistryRuleOutStewardDisplayName;
   is_builtin?: boolean;
   source?: RegistryRuleOutSource;
+  /** Author's change rationale while status is pending_approval. */
+  pending_rationale?: RegistryRuleOutPendingRationale;
+  /** Approver's rationale from the most recent approve/reject decision. */
+  last_decision_rationale?: RegistryRuleOutLastDecisionRationale;
   created_by?: RegistryRuleOutCreatedBy;
   created_at?: RegistryRuleOutCreatedAt;
   updated_by?: RegistryRuleOutUpdatedBy;
@@ -3205,6 +3318,11 @@ export type RuleHistoryEntryOutChangedBy = string | null;
 export type RuleHistoryEntryOutChangedAt = string | null;
 
 /**
+ * Optional change rationale recorded with this history entry (when captured).
+ */
+export type RuleHistoryEntryOutRationale = string | null;
+
+/**
  * One recorded change from the ``dq_quality_rules_history`` audit log.
 
 Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
@@ -3224,6 +3342,8 @@ export interface RuleHistoryEntryOut {
   new_status?: RuleHistoryEntryOutNewStatus;
   changed_by?: RuleHistoryEntryOutChangedBy;
   changed_at?: RuleHistoryEntryOutChangedAt;
+  /** Optional change rationale recorded with this history entry (when captured). */
+  rationale?: RuleHistoryEntryOutRationale;
 }
 
 /**
@@ -3297,7 +3417,6 @@ export const RuleSlotFamily = {
   text: 'text',
   temporal: 'temporal',
   boolean: 'boolean',
-  array: 'array',
   any: 'any',
 } as const;
 
@@ -3429,7 +3548,7 @@ export interface RulesRegistrySettingsIn {
  * Effective Rules Registry governance settings.
  */
 export interface RulesRegistrySettingsOut {
-  /** Re-approval behaviour: silently re-approve a following application's re-rendered check (True, default) vs. send it back to pending_approval (False). */
+  /** Compatibility field; always False because automatic rule upgrades require approval. */
   auto_upgrade_without_approval: boolean;
   /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
   default_auto_upgrade: boolean;
@@ -3507,11 +3626,18 @@ export const RunDataProductInSource = {
 } as const;
 
 /**
+ * Rows to sample for draft runs (0 = full table). Ignored for approved/published runs. When omitted on a draft run, defaults to 1000. Applied to every member.
+ */
+export type RunDataProductInSampleSize = number | null;
+
+/**
  * Body of ``POST /data-products/{id}/run`` (``runDataProduct``).
  */
 export interface RunDataProductIn {
   /** 'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state */
   source: RunDataProductInSource;
+  /** Rows to sample for draft runs (0 = full table). Ignored for approved/published runs. When omitted on a draft run, defaults to 1000. Applied to every member. */
+  sample_size?: RunDataProductInSampleSize;
 }
 
 /**
@@ -3562,6 +3688,11 @@ export type RunMonitoredTableInVersion = number | null;
 export type RunMonitoredTableInRuleIds = string[] | null;
 
 /**
+ * Rows to sample for draft runs (0 = full table). Ignored for approved/published runs, which always scan the whole table. When omitted on a draft run, defaults to 1000.
+ */
+export type RunMonitoredTableInSampleSize = number | null;
+
+/**
  * Body of ``POST /monitored-tables/{binding_id}/run`` (``runMonitoredTable``).
  */
 export interface RunMonitoredTableIn {
@@ -3571,6 +3702,8 @@ export interface RunMonitoredTableIn {
   version?: RunMonitoredTableInVersion;
   /** Optional registry rule ids to run. Omit to run every applied rule on the binding. */
   rule_ids?: RunMonitoredTableInRuleIds;
+  /** Rows to sample for draft runs (0 = full table). Ignored for approved/published runs, which always scan the whole table. When omitted on a draft run, defaults to 1000. */
+  sample_size?: RunMonitoredTableInSampleSize;
 }
 
 /**
@@ -3956,6 +4089,21 @@ export interface SeverityOut {
   rank: number;
 }
 
+/**
+ * Update payload for the share-tables-with-workspace-users setting.
+ */
+export interface ShareTablesWithWorkspaceUsersIn {
+  share_tables_with_workspace_users: boolean;
+}
+
+/**
+ * Effective share-tables-with-workspace-users setting.
+ */
+export interface ShareTablesWithWorkspaceUsersOut {
+  /** Whether newly created monitored tables and collections get a default grant to the workspace users group. Defaults to False (private). Registry rules always seed the users-group grant regardless of this setting. */
+  share_tables_with_workspace_users: boolean;
+}
+
 export interface SlotIn {
   name: string;
   family?: string;
@@ -4247,6 +4395,11 @@ export type UpdateDataProductInName = string | null;
 
 export type UpdateDataProductInDescription = string | null;
 
+/**
+ * Sticky operational notes (separate from description)
+ */
+export type UpdateDataProductInNotes = string | null;
+
 export type UpdateDataProductInSteward = string | null;
 
 /**
@@ -4271,12 +4424,27 @@ back to ``draft`` without bumping ``version`` (P21 item 30).
 export interface UpdateDataProductIn {
   name?: UpdateDataProductInName;
   description?: UpdateDataProductInDescription;
+  /** Sticky operational notes (separate from description) */
+  notes?: UpdateDataProductInNotes;
   steward?: UpdateDataProductInSteward;
   /** Human-readable display name for the steward; sourced from the principal picker. */
   steward_display_name?: UpdateDataProductInStewardDisplayName;
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
   schedule_kind?: UpdateDataProductInScheduleKind;
+}
+
+/**
+ * Sticky operational notes; null clears
+ */
+export type UpdateMonitoredTableNotesInNotes = string | null;
+
+/**
+ * Request body for PATCH ``/monitored-tables/{id}/notes``.
+ */
+export interface UpdateMonitoredTableNotesIn {
+  /** Sticky operational notes; null clears */
+  notes?: UpdateMonitoredTableNotesInNotes;
 }
 
 /**
@@ -4693,6 +4861,12 @@ tag?: string | null;
 
 export type DeleteRegistryRule200 = {[key: string]: string};
 
+export type SubmitRegistryRuleBody = LifecycleRationaleIn | null;
+
+export type ApproveRegistryRuleBody = LifecycleRationaleIn | null;
+
+export type RejectRegistryRuleBody = LifecycleRationaleIn | null;
+
 export type ListMonitoredTablesParams = {
 /**
  * Filter by status
@@ -4719,6 +4893,12 @@ name?: string | null;
 export type DeleteMonitoredTable200 = {[key: string]: string};
 
 export type RemoveAppliedRule200 = {[key: string]: string};
+
+export type SubmitMonitoredTableBody = LifecycleRationaleIn | null;
+
+export type ApproveMonitoredTableBody = LifecycleRationaleIn | null;
+
+export type RejectMonitoredTableBody = LifecycleRationaleIn | null;
 
 export type ListValidationRunsParams = {
 /**
@@ -4900,6 +5080,12 @@ limit?: number;
 };
 
 export type DeleteDataProduct200 = {[key: string]: string};
+
+export type SubmitDataProductBody = LifecycleRationaleIn | null;
+
+export type ApproveDataProductBody = LifecycleRationaleIn | null;
+
+export type RejectDataProductBody = LifecycleRationaleIn | null;
 
 export type ExportRegistryRulesParams = {
 /**
@@ -6387,216 +6573,6 @@ export const useSaveRetentionSettings = <TError = AxiosError<HTTPValidationError
       > => {
 
       const mutationOptions = getSaveRetentionSettingsMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
-/**
- * Return the current OPTIMIZE cadence + defaults (admin only).
- * @summary Get Optimize Settings
- */
-export const getOptimizeSettings = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<OptimizeSettingsOut>> => {
-    
-    
-    return axios.default.get(
-      `/api/v1/config/optimize`,options
-    );
-  }
-
-
-
-
-export const getGetOptimizeSettingsQueryKey = () => {
-    return [
-    `/api/v1/config/optimize`
-    ] as const;
-    }
-
-    
-export const getGetOptimizeSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
-
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetOptimizeSettingsQueryKey();
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOptimizeSettings>>> = ({ signal }) => getOptimizeSettings({ signal, ...axiosOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type GetOptimizeSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getOptimizeSettings>>>
-export type GetOptimizeSettingsQueryError = AxiosError<HTTPValidationError>
-
-
-export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getOptimizeSettings>>,
-          TError,
-          Awaited<ReturnType<typeof getOptimizeSettings>>
-        > , 'initialData'
-      >, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getOptimizeSettings>>,
-          TError,
-          Awaited<ReturnType<typeof getOptimizeSettings>>
-        > , 'initialData'
-      >, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * @summary Get Optimize Settings
- */
-
-export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getGetOptimizeSettingsQueryOptions(options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-export const getGetOptimizeSettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
-
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetOptimizeSettingsQueryKey();
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOptimizeSettings>>> = ({ signal }) => getOptimizeSettings({ signal, ...axiosOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type GetOptimizeSettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getOptimizeSettings>>>
-export type GetOptimizeSettingsSuspenseQueryError = AxiosError<HTTPValidationError>
-
-
-export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * @summary Get Optimize Settings
- */
-
-export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient 
- ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getGetOptimizeSettingsSuspenseQueryOptions(options)
-
-  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-
-/**
- * Update the OPTIMIZE cadence (admin only). Omitted field = leave unchanged.
- * @summary Save Optimize Settings
- */
-export const saveOptimizeSettings = (
-    optimizeSettingsIn: OptimizeSettingsIn, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<OptimizeSettingsOut>> => {
-    
-    
-    return axios.default.put(
-      `/api/v1/config/optimize`,
-      optimizeSettingsIn,options
-    );
-  }
-
-
-
-export const getSaveOptimizeSettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveOptimizeSettings>>, TError,{data: OptimizeSettingsIn}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof saveOptimizeSettings>>, TError,{data: OptimizeSettingsIn}, TContext> => {
-
-const mutationKey = ['saveOptimizeSettings'];
-const {mutation: mutationOptions, axios: axiosOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, axios: undefined};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveOptimizeSettings>>, {data: OptimizeSettingsIn}> = (props) => {
-          const {data} = props ?? {};
-
-          return  saveOptimizeSettings(data,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SaveOptimizeSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveOptimizeSettings>>>
-    export type SaveOptimizeSettingsMutationBody = OptimizeSettingsIn
-    export type SaveOptimizeSettingsMutationError = AxiosError<HTTPValidationError>
-
-    /**
- * @summary Save Optimize Settings
- */
-export const useSaveOptimizeSettings = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveOptimizeSettings>>, TError,{data: OptimizeSettingsIn}, TContext>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof saveOptimizeSettings>>,
-        TError,
-        {data: OptimizeSettingsIn},
-        TContext
-      > => {
-
-      const mutationOptions = getSaveOptimizeSettingsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -9055,6 +9031,216 @@ export const useSaveRequireDraftRunSettings = <TError = AxiosError<HTTPValidatio
       > => {
 
       const mutationOptions = getSaveRequireDraftRunSettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return whether new tables/collections are shared with workspace users (defaults to False).
+ * @summary Get Share Tables With Workspace Users
+ */
+export const getShareTablesWithWorkspaceUsers = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ShareTablesWithWorkspaceUsersOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/share-tables-with-workspace-users`,options
+    );
+  }
+
+
+
+
+export const getGetShareTablesWithWorkspaceUsersQueryKey = () => {
+    return [
+    `/api/v1/config/share-tables-with-workspace-users`
+    ] as const;
+    }
+
+    
+export const getGetShareTablesWithWorkspaceUsersQueryOptions = <TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetShareTablesWithWorkspaceUsersQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>> = ({ signal }) => getShareTablesWithWorkspaceUsers({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetShareTablesWithWorkspaceUsersQueryResult = NonNullable<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>>
+export type GetShareTablesWithWorkspaceUsersQueryError = AxiosError<unknown>
+
+
+export function useGetShareTablesWithWorkspaceUsers<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>,
+          TError,
+          Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetShareTablesWithWorkspaceUsers<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>,
+          TError,
+          Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetShareTablesWithWorkspaceUsers<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Share Tables With Workspace Users
+ */
+
+export function useGetShareTablesWithWorkspaceUsers<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetShareTablesWithWorkspaceUsersQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetShareTablesWithWorkspaceUsersSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetShareTablesWithWorkspaceUsersQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>> = ({ signal }) => getShareTablesWithWorkspaceUsers({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetShareTablesWithWorkspaceUsersSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>>
+export type GetShareTablesWithWorkspaceUsersSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetShareTablesWithWorkspaceUsersSuspense<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetShareTablesWithWorkspaceUsersSuspense<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetShareTablesWithWorkspaceUsersSuspense<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Share Tables With Workspace Users
+ */
+
+export function useGetShareTablesWithWorkspaceUsersSuspense<TData = Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getShareTablesWithWorkspaceUsers>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetShareTablesWithWorkspaceUsersSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Enable or disable sharing new tables/collections with workspace users (admin only).
+ * @summary Save Share Tables With Workspace Users
+ */
+export const saveShareTablesWithWorkspaceUsers = (
+    shareTablesWithWorkspaceUsersIn: ShareTablesWithWorkspaceUsersIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ShareTablesWithWorkspaceUsersOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/share-tables-with-workspace-users`,
+      shareTablesWithWorkspaceUsersIn,options
+    );
+  }
+
+
+
+export const getSaveShareTablesWithWorkspaceUsersMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveShareTablesWithWorkspaceUsers>>, TError,{data: ShareTablesWithWorkspaceUsersIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveShareTablesWithWorkspaceUsers>>, TError,{data: ShareTablesWithWorkspaceUsersIn}, TContext> => {
+
+const mutationKey = ['saveShareTablesWithWorkspaceUsers'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveShareTablesWithWorkspaceUsers>>, {data: ShareTablesWithWorkspaceUsersIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveShareTablesWithWorkspaceUsers(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveShareTablesWithWorkspaceUsersMutationResult = NonNullable<Awaited<ReturnType<typeof saveShareTablesWithWorkspaceUsers>>>
+    export type SaveShareTablesWithWorkspaceUsersMutationBody = ShareTablesWithWorkspaceUsersIn
+    export type SaveShareTablesWithWorkspaceUsersMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Share Tables With Workspace Users
+ */
+export const useSaveShareTablesWithWorkspaceUsers = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveShareTablesWithWorkspaceUsers>>, TError,{data: ShareTablesWithWorkspaceUsersIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveShareTablesWithWorkspaceUsers>>,
+        TError,
+        {data: ShareTablesWithWorkspaceUsersIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveShareTablesWithWorkspaceUsersMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -13569,8 +13755,10 @@ export function useListRegistryRulesSuspense<TData = Awaited<ReturnType<typeof l
 /**
  * Create a new draft registry rule.
 
-A dedup warning (never a hard error) is returned when a published rule
-already shares this rule's structural fingerprint.
+By default, a published rule that shares this rule's structural fingerprint
+blocks creation (HTTP 409) so the UI can ask the steward to confirm. Pass
+``allow_duplicate=true`` after confirmation (or for non-interactive callers).
+When a duplicate is allowed, ``dedup_warning`` still carries the advisory text.
  * @summary Create Registry Rule
  */
 export const createRegistryRule = (
@@ -14158,20 +14346,22 @@ submit paths and the per-table applied-rule submit — not here.
  * @summary Submit Registry Rule
  */
 export const submitRegistryRule = (
-    ruleId: string, options?: AxiosRequestConfig
+    ruleId: string,
+    submitRegistryRuleBody: SubmitRegistryRuleBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<RegistryRuleOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/registry-rules/${ruleId}/submit`,undefined,options
+      `/api/v1/registry-rules/${ruleId}/submit`,
+      submitRegistryRuleBody,options
     );
   }
 
 
 
 export const getSubmitRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string;data: SubmitRegistryRuleBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string;data: SubmitRegistryRuleBody}, TContext> => {
 
 const mutationKey = ['submitRegistryRule'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -14183,10 +14373,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitRegistryRule>>, {ruleId: string}> = (props) => {
-          const {ruleId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitRegistryRule>>, {ruleId: string;data: SubmitRegistryRuleBody}> = (props) => {
+          const {ruleId,data} = props ?? {};
 
-          return  submitRegistryRule(ruleId,axiosOptions)
+          return  submitRegistryRule(ruleId,data,axiosOptions)
         }
 
         
@@ -14195,18 +14385,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type SubmitRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof submitRegistryRule>>>
-    
+    export type SubmitRegistryRuleMutationBody = SubmitRegistryRuleBody
     export type SubmitRegistryRuleMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Submit Registry Rule
  */
 export const useSubmitRegistryRule = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitRegistryRule>>, TError,{ruleId: string;data: SubmitRegistryRuleBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof submitRegistryRule>>,
         TError,
-        {ruleId: string},
+        {ruleId: string;data: SubmitRegistryRuleBody},
         TContext
       > => {
 
@@ -14243,20 +14433,22 @@ re-freeze failure never turns a successful publish into a 5xx.
  * @summary Approve Registry Rule
  */
 export const approveRegistryRule = (
-    ruleId: string, options?: AxiosRequestConfig
+    ruleId: string,
+    approveRegistryRuleBody: ApproveRegistryRuleBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<RegistryRuleOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/registry-rules/${ruleId}/approve`,undefined,options
+      `/api/v1/registry-rules/${ruleId}/approve`,
+      approveRegistryRuleBody,options
     );
   }
 
 
 
 export const getApproveRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string;data: ApproveRegistryRuleBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string;data: ApproveRegistryRuleBody}, TContext> => {
 
 const mutationKey = ['approveRegistryRule'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -14268,10 +14460,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveRegistryRule>>, {ruleId: string}> = (props) => {
-          const {ruleId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveRegistryRule>>, {ruleId: string;data: ApproveRegistryRuleBody}> = (props) => {
+          const {ruleId,data} = props ?? {};
 
-          return  approveRegistryRule(ruleId,axiosOptions)
+          return  approveRegistryRule(ruleId,data,axiosOptions)
         }
 
         
@@ -14280,18 +14472,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ApproveRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof approveRegistryRule>>>
-    
+    export type ApproveRegistryRuleMutationBody = ApproveRegistryRuleBody
     export type ApproveRegistryRuleMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Approve Registry Rule
  */
 export const useApproveRegistryRule = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveRegistryRule>>, TError,{ruleId: string;data: ApproveRegistryRuleBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof approveRegistryRule>>,
         TError,
-        {ruleId: string},
+        {ruleId: string;data: ApproveRegistryRuleBody},
         TContext
       > => {
 
@@ -14305,20 +14497,22 @@ export const useApproveRegistryRule = <TError = AxiosError<HTTPValidationError>,
  * @summary Reject Registry Rule
  */
 export const rejectRegistryRule = (
-    ruleId: string, options?: AxiosRequestConfig
+    ruleId: string,
+    rejectRegistryRuleBody: RejectRegistryRuleBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<RegistryRuleOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/registry-rules/${ruleId}/reject`,undefined,options
+      `/api/v1/registry-rules/${ruleId}/reject`,
+      rejectRegistryRuleBody,options
     );
   }
 
 
 
 export const getRejectRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string;data: RejectRegistryRuleBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string;data: RejectRegistryRuleBody}, TContext> => {
 
 const mutationKey = ['rejectRegistryRule'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -14330,10 +14524,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectRegistryRule>>, {ruleId: string}> = (props) => {
-          const {ruleId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectRegistryRule>>, {ruleId: string;data: RejectRegistryRuleBody}> = (props) => {
+          const {ruleId,data} = props ?? {};
 
-          return  rejectRegistryRule(ruleId,axiosOptions)
+          return  rejectRegistryRule(ruleId,data,axiosOptions)
         }
 
         
@@ -14342,18 +14536,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type RejectRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof rejectRegistryRule>>>
-    
+    export type RejectRegistryRuleMutationBody = RejectRegistryRuleBody
     export type RejectRegistryRuleMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Reject Registry Rule
  */
 export const useRejectRegistryRule = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectRegistryRule>>, TError,{ruleId: string;data: RejectRegistryRuleBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof rejectRegistryRule>>,
         TError,
-        {ruleId: string},
+        {ruleId: string;data: RejectRegistryRuleBody},
         TContext
       > => {
 
@@ -15257,6 +15451,73 @@ export const useUpdateMonitoredTableSchedule = <TError = AxiosError<HTTPValidati
       > => {
 
       const mutationOptions = getUpdateMonitoredTableScheduleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Set or clear sticky operational notes on a monitored table.
+
+Requires ``MODIFY`` on the monitored table unless the caller is an
+admin/approver. Orthogonal to the review lifecycle — does NOT flip status.
+ * @summary Update Monitored Table Notes
+ */
+export const updateMonitoredTableNotes = (
+    bindingId: string,
+    updateMonitoredTableNotesIn: UpdateMonitoredTableNotesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/monitored-tables/${bindingId}/notes`,
+      updateMonitoredTableNotesIn,options
+    );
+  }
+
+
+
+export const getUpdateMonitoredTableNotesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, TError,{bindingId: string;data: UpdateMonitoredTableNotesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, TError,{bindingId: string;data: UpdateMonitoredTableNotesIn}, TContext> => {
+
+const mutationKey = ['updateMonitoredTableNotes'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, {bindingId: string;data: UpdateMonitoredTableNotesIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  updateMonitoredTableNotes(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMonitoredTableNotesMutationResult = NonNullable<Awaited<ReturnType<typeof updateMonitoredTableNotes>>>
+    export type UpdateMonitoredTableNotesMutationBody = UpdateMonitoredTableNotesIn
+    export type UpdateMonitoredTableNotesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Monitored Table Notes
+ */
+export const useUpdateMonitoredTableNotes = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, TError,{bindingId: string;data: UpdateMonitoredTableNotesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateMonitoredTableNotes>>,
+        TError,
+        {bindingId: string;data: UpdateMonitoredTableNotesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateMonitoredTableNotesMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -16390,20 +16651,22 @@ pending_approval`` step below then re-enters into review and counts.
  * @summary Submit Monitored Table
  */
 export const submitMonitoredTable = (
-    bindingId: string, options?: AxiosRequestConfig
+    bindingId: string,
+    submitMonitoredTableBody: SubmitMonitoredTableBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/monitored-tables/${bindingId}/submit`,undefined,options
+      `/api/v1/monitored-tables/${bindingId}/submit`,
+      submitMonitoredTableBody,options
     );
   }
 
 
 
 export const getSubmitMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string;data: SubmitMonitoredTableBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string;data: SubmitMonitoredTableBody}, TContext> => {
 
 const mutationKey = ['submitMonitoredTable'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -16415,10 +16678,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitMonitoredTable>>, {bindingId: string}> = (props) => {
-          const {bindingId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitMonitoredTable>>, {bindingId: string;data: SubmitMonitoredTableBody}> = (props) => {
+          const {bindingId,data} = props ?? {};
 
-          return  submitMonitoredTable(bindingId,axiosOptions)
+          return  submitMonitoredTable(bindingId,data,axiosOptions)
         }
 
         
@@ -16427,18 +16690,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type SubmitMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof submitMonitoredTable>>>
-    
+    export type SubmitMonitoredTableMutationBody = SubmitMonitoredTableBody
     export type SubmitMonitoredTableMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Submit Monitored Table
  */
 export const useSubmitMonitoredTable = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitMonitoredTable>>, TError,{bindingId: string;data: SubmitMonitoredTableBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof submitMonitoredTable>>,
         TError,
-        {bindingId: string},
+        {bindingId: string;data: SubmitMonitoredTableBody},
         TContext
       > => {
 
@@ -16468,20 +16731,22 @@ re-approved out of band.
  * @summary Approve Monitored Table
  */
 export const approveMonitoredTable = (
-    bindingId: string, options?: AxiosRequestConfig
+    bindingId: string,
+    approveMonitoredTableBody: ApproveMonitoredTableBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/monitored-tables/${bindingId}/approve`,undefined,options
+      `/api/v1/monitored-tables/${bindingId}/approve`,
+      approveMonitoredTableBody,options
     );
   }
 
 
 
 export const getApproveMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string;data: ApproveMonitoredTableBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string;data: ApproveMonitoredTableBody}, TContext> => {
 
 const mutationKey = ['approveMonitoredTable'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -16493,10 +16758,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveMonitoredTable>>, {bindingId: string}> = (props) => {
-          const {bindingId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveMonitoredTable>>, {bindingId: string;data: ApproveMonitoredTableBody}> = (props) => {
+          const {bindingId,data} = props ?? {};
 
-          return  approveMonitoredTable(bindingId,axiosOptions)
+          return  approveMonitoredTable(bindingId,data,axiosOptions)
         }
 
         
@@ -16505,18 +16770,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ApproveMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof approveMonitoredTable>>>
-    
+    export type ApproveMonitoredTableMutationBody = ApproveMonitoredTableBody
     export type ApproveMonitoredTableMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Approve Monitored Table
  */
 export const useApproveMonitoredTable = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMonitoredTable>>, TError,{bindingId: string;data: ApproveMonitoredTableBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof approveMonitoredTable>>,
         TError,
-        {bindingId: string},
+        {bindingId: string;data: ApproveMonitoredTableBody},
         TContext
       > => {
 
@@ -16543,20 +16808,22 @@ the binding and its checks would silently disagree.
  * @summary Reject Monitored Table
  */
 export const rejectMonitoredTable = (
-    bindingId: string, options?: AxiosRequestConfig
+    bindingId: string,
+    rejectMonitoredTableBody: RejectMonitoredTableBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/monitored-tables/${bindingId}/reject`,undefined,options
+      `/api/v1/monitored-tables/${bindingId}/reject`,
+      rejectMonitoredTableBody,options
     );
   }
 
 
 
 export const getRejectMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string;data: RejectMonitoredTableBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string;data: RejectMonitoredTableBody}, TContext> => {
 
 const mutationKey = ['rejectMonitoredTable'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -16568,10 +16835,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectMonitoredTable>>, {bindingId: string}> = (props) => {
-          const {bindingId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectMonitoredTable>>, {bindingId: string;data: RejectMonitoredTableBody}> = (props) => {
+          const {bindingId,data} = props ?? {};
 
-          return  rejectMonitoredTable(bindingId,axiosOptions)
+          return  rejectMonitoredTable(bindingId,data,axiosOptions)
         }
 
         
@@ -16580,18 +16847,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type RejectMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof rejectMonitoredTable>>>
-    
+    export type RejectMonitoredTableMutationBody = RejectMonitoredTableBody
     export type RejectMonitoredTableMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Reject Monitored Table
  */
 export const useRejectMonitoredTable = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMonitoredTable>>, TError,{bindingId: string;data: RejectMonitoredTableBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof rejectMonitoredTable>>,
         TError,
-        {bindingId: string},
+        {bindingId: string;data: RejectMonitoredTableBody},
         TContext
       > => {
 
@@ -16736,6 +17003,77 @@ export const useSuggestRulesForTable = <TError = AxiosError<HTTPValidationError>
       > => {
 
       const mutationOptions = getSuggestRulesForTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Match a natural-language rule description against published registry rules.
+
+Embeds the steward's query, retrieves similar published rules, and runs the
+mapping judge so hits can be staged onto this table. Always returns HTTP 200
+with ``available=False`` + a ``reason`` for every degraded path — same
+contract as ``suggest-rules``. An empty ``matches`` list with
+``available=True`` means nothing was close enough; the UI then falls through
+to generate-rule.
+ * @summary Match Rules For Table
+ */
+export const matchRulesForTable = (
+    bindingId: string,
+    matchRulesIn: MatchRulesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MatchRulesOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/match-rules`,
+      matchRulesIn,options
+    );
+  }
+
+
+
+export const getMatchRulesForTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof matchRulesForTable>>, TError,{bindingId: string;data: MatchRulesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof matchRulesForTable>>, TError,{bindingId: string;data: MatchRulesIn}, TContext> => {
+
+const mutationKey = ['matchRulesForTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof matchRulesForTable>>, {bindingId: string;data: MatchRulesIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  matchRulesForTable(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MatchRulesForTableMutationResult = NonNullable<Awaited<ReturnType<typeof matchRulesForTable>>>
+    export type MatchRulesForTableMutationBody = MatchRulesIn
+    export type MatchRulesForTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Match Rules For Table
+ */
+export const useMatchRulesForTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof matchRulesForTable>>, TError,{bindingId: string;data: MatchRulesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof matchRulesForTable>>,
+        TError,
+        {bindingId: string;data: MatchRulesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getMatchRulesForTableMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -24116,20 +24454,22 @@ carrying an ``(auto)`` marker.
  * @summary Submit Data Product
  */
 export const submitDataProduct = (
-    productId: string, options?: AxiosRequestConfig
+    productId: string,
+    submitDataProductBody: SubmitDataProductBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<DataProductOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/data-products/${productId}/submit`,undefined,options
+      `/api/v1/data-products/${productId}/submit`,
+      submitDataProductBody,options
     );
   }
 
 
 
 export const getSubmitDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string;data: SubmitDataProductBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string;data: SubmitDataProductBody}, TContext> => {
 
 const mutationKey = ['submitDataProduct'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -24141,10 +24481,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitDataProduct>>, {productId: string}> = (props) => {
-          const {productId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitDataProduct>>, {productId: string;data: SubmitDataProductBody}> = (props) => {
+          const {productId,data} = props ?? {};
 
-          return  submitDataProduct(productId,axiosOptions)
+          return  submitDataProduct(productId,data,axiosOptions)
         }
 
         
@@ -24153,18 +24493,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type SubmitDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof submitDataProduct>>>
-    
+    export type SubmitDataProductMutationBody = SubmitDataProductBody
     export type SubmitDataProductMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Submit Data Product
  */
 export const useSubmitDataProduct = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitDataProduct>>, TError,{productId: string;data: SubmitDataProductBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof submitDataProduct>>,
         TError,
-        {productId: string},
+        {productId: string;data: SubmitDataProductBody},
         TContext
       > => {
 
@@ -24180,20 +24520,22 @@ export const useSubmitDataProduct = <TError = AxiosError<HTTPValidationError>,
  * @summary Approve Data Product
  */
 export const approveDataProduct = (
-    productId: string, options?: AxiosRequestConfig
+    productId: string,
+    approveDataProductBody: ApproveDataProductBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<DataProductOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/data-products/${productId}/approve`,undefined,options
+      `/api/v1/data-products/${productId}/approve`,
+      approveDataProductBody,options
     );
   }
 
 
 
 export const getApproveDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string;data: ApproveDataProductBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string;data: ApproveDataProductBody}, TContext> => {
 
 const mutationKey = ['approveDataProduct'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -24205,10 +24547,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveDataProduct>>, {productId: string}> = (props) => {
-          const {productId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveDataProduct>>, {productId: string;data: ApproveDataProductBody}> = (props) => {
+          const {productId,data} = props ?? {};
 
-          return  approveDataProduct(productId,axiosOptions)
+          return  approveDataProduct(productId,data,axiosOptions)
         }
 
         
@@ -24217,18 +24559,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ApproveDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof approveDataProduct>>>
-    
+    export type ApproveDataProductMutationBody = ApproveDataProductBody
     export type ApproveDataProductMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Approve Data Product
  */
 export const useApproveDataProduct = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveDataProduct>>, TError,{productId: string;data: ApproveDataProductBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof approveDataProduct>>,
         TError,
-        {productId: string},
+        {productId: string;data: ApproveDataProductBody},
         TContext
       > => {
 
@@ -24244,20 +24586,22 @@ export const useApproveDataProduct = <TError = AxiosError<HTTPValidationError>,
  * @summary Reject Data Product
  */
 export const rejectDataProduct = (
-    productId: string, options?: AxiosRequestConfig
+    productId: string,
+    rejectDataProductBody: RejectDataProductBody, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<DataProductOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/data-products/${productId}/reject`,undefined,options
+      `/api/v1/data-products/${productId}/reject`,
+      rejectDataProductBody,options
     );
   }
 
 
 
 export const getRejectDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string;data: RejectDataProductBody}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string;data: RejectDataProductBody}, TContext> => {
 
 const mutationKey = ['rejectDataProduct'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
@@ -24269,10 +24613,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectDataProduct>>, {productId: string}> = (props) => {
-          const {productId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectDataProduct>>, {productId: string;data: RejectDataProductBody}> = (props) => {
+          const {productId,data} = props ?? {};
 
-          return  rejectDataProduct(productId,axiosOptions)
+          return  rejectDataProduct(productId,data,axiosOptions)
         }
 
         
@@ -24281,18 +24625,18 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type RejectDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof rejectDataProduct>>>
-    
+    export type RejectDataProductMutationBody = RejectDataProductBody
     export type RejectDataProductMutationError = AxiosError<HTTPValidationError>
 
     /**
  * @summary Reject Data Product
  */
 export const useRejectDataProduct = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectDataProduct>>, TError,{productId: string;data: RejectDataProductBody}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof rejectDataProduct>>,
         TError,
-        {productId: string},
+        {productId: string;data: RejectDataProductBody},
         TContext
       > => {
 
@@ -26691,7 +27035,7 @@ export function useSearchPrincipalsSuspense<TData = Awaited<ReturnType<typeof se
 
 
 /**
- * Return the admin default for the per-grant inheritance toggle.
+ * Return the cascade default for new grants (always ON).
  * @summary Get Default Inherit
  */
 export const getPermissionsDefaultInherit = (
@@ -26838,7 +27182,7 @@ export function useGetPermissionsDefaultInheritSuspense<TData = Awaited<ReturnTy
 
 
 /**
- * Set the admin default for the per-grant inheritance toggle (admin only).
+ * Legacy admin endpoint; cascade default stays ON regardless of body.
  * @summary Set Default Inherit
  */
 export const setPermissionsDefaultInherit = (

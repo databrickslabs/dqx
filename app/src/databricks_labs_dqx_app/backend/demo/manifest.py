@@ -49,7 +49,7 @@ class SlotSpec:
 
     Args:
         name: placeholder name used in the body (``{{name}}``) and binding groups.
-        family: column family the slot accepts (numeric|text|temporal|boolean|array|any).
+        family: column family the slot accepts (numeric|text|temporal|boolean|any).
         arg_key: the check-function argument the slot fills for *dqx_native* rules
             (e.g. *column*, *columns*); None for *sql* rules with no function argument.
     """

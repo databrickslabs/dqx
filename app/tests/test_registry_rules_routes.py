@@ -125,10 +125,27 @@ class TestCreateAndUpdate:
     def test_create_returns_rule_and_warning(self):
         svc = MagicMock()
         svc.create_rule.return_value = (_rule(), "possible duplicate")
-        body = CreateRegistryRuleIn(mode="dqx_native", definition=_definition())
+        body = CreateRegistryRuleIn(mode="dqx_native", definition=_definition(), allow_duplicate=True)
         result = create_registry_rule(body=body, svc=svc, user_email="alice@x")
         assert result.rule.rule_id == "r1"
         assert result.dedup_warning == "possible duplicate"
+        assert svc.create_rule.call_args.kwargs.get("allow_duplicate") is True
+
+    def test_create_duplicate_returns_409(self):
+        from databricks_labs_dqx_app.backend.services.registry_service import DuplicateRegistryRuleError
+
+        svc = MagicMock()
+        svc.create_rule.side_effect = DuplicateRegistryRuleError(
+            "A published rule with an identical definition already exists: 'X' (rule_id=abc).",
+            existing_rule_id="abc",
+            existing_rule_name="X",
+        )
+        body = CreateRegistryRuleIn(mode="dqx_native", definition=_definition())
+        with pytest.raises(HTTPException) as exc_info:
+            create_registry_rule(body=body, svc=svc, user_email="alice@x")
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "duplicate_rule"
+        assert exc_info.value.detail["existing_rule_id"] == "abc"
 
     def test_create_seeds_default_grants_via_service(self):
         """Seeding is now the service's responsibility (not the route's).

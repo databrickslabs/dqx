@@ -40,27 +40,36 @@ import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule, pickSlotForColumn } from "./shared";
 import type { ColumnRef } from "./RulesByColumn";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { computeRuleSchemaDrift, type RuleSchemaDrift } from "./schemaDrift";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
-// all of the rule's declared slots. Drives the yellow "incomplete" styling
-// and the by-rule/by-column "needs attention" filters.
+// all of the rule's declared slots. Combined with schema drift (missing /
+// type-mismatched mapped columns) to drive the yellow "needs attention"
+// styling and the by-rule filter.
 // ---------------------------------------------------------------------------
 
 export interface RuleStatus {
   kind: "complete" | "incomplete" | "no-mapping-needed";
   incompleteGroupCount: number;
   totalGroupCount: number;
+  /** Live UC vs mapping drift for this rule (empty when columns not loaded). */
+  drift: RuleSchemaDrift;
 }
 
-export function computeStatus(rule: AppliedRuleOut, slots: RuleSlot[]): RuleStatus {
+export function computeStatus(
+  rule: AppliedRuleOut,
+  slots: RuleSlot[],
+  columns: ColumnOut[] = [],
+): RuleStatus {
+  const drift = computeRuleSchemaDrift(rule, slots, columns);
   const slotNames = slots.map((s) => s.name);
   if (slotNames.length === 0) {
-    return { kind: "no-mapping-needed", incompleteGroupCount: 0, totalGroupCount: 0 };
+    return { kind: "no-mapping-needed", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   const groups = rule.column_mapping ?? [];
   if (groups.length === 0) {
-    return { kind: "complete", incompleteGroupCount: 0, totalGroupCount: 0 };
+    return { kind: "complete", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   let incomplete = 0;
   for (const g of groups) {
@@ -71,7 +80,17 @@ export function computeStatus(rule: AppliedRuleOut, slots: RuleSlot[]): RuleStat
     kind: incomplete === 0 ? "complete" : "incomplete",
     incompleteGroupCount: incomplete,
     totalGroupCount: groups.length,
+    drift,
   };
+}
+
+/** Incomplete slot fill OR schema drift → needs attention. */
+export function statusNeedsAttention(status: RuleStatus): boolean {
+  return (
+    status.kind === "incomplete" ||
+    status.drift.missingCount > 0 ||
+    status.drift.typeMismatchCount > 0
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +149,13 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
 
   return (
     <div className="space-y-3">
-      <LowcodeBuilder ast={ast} onChange={() => {}} declaredColumns={declaredColumns} readOnly />
+      <LowcodeBuilder
+        ast={ast}
+        onChange={() => {}}
+        declaredColumns={declaredColumns}
+        readOnly
+        hasGroupBy={groupBy.trim().length > 0}
+      />
       {ast.joins.length > 0 && (
         <JoinsBuilder ast={ast} onChange={() => {}} declaredColumns={declaredColumns} readOnly />
       )}
@@ -640,8 +665,13 @@ export function RuleConfigCard({
   const slotTags = slotTagsFromUserMetadata(registryRule?.user_metadata as Record<string, unknown> | undefined);
   const effectiveSeverity = rule.severity_override ?? ruleSeverity;
   const slots = registryRule?.definition.slots ?? [];
-  const status = computeStatus(rule, slots);
+  // Pass live columns so missing / type-mismatched mappings count as
+  // needs-attention alongside incomplete slot fills (schema-drift P0).
+  const status = computeStatus(rule, slots, columns ?? []);
   const incomplete = status.kind === "incomplete";
+  const hasDrift =
+    status.drift.missingCount > 0 || status.drift.typeMismatchCount > 0;
+  const needsAttention = incomplete || hasDrift;
   const latestVersion = registryRule?.version ?? 1;
   const groupCount = (rule.column_mapping ?? []).length;
   const needsFirstMapping = slots.length > 0 && groupCount === 0;
@@ -692,7 +722,7 @@ export function RuleConfigCard({
       id={`rule-card-${rule.rule_id}`}
       className={cn(
         "rounded-lg border mb-2 transition-colors overflow-hidden",
-        incomplete && "border-l-yellow-500 border-l-[3px]",
+        needsAttention && "border-l-yellow-500 border-l-[3px]",
         isOpen && "bg-card",
       )}
     >
@@ -703,7 +733,7 @@ export function RuleConfigCard({
           className="flex items-center gap-3 flex-1 min-w-0 text-left"
           aria-expanded={isOpen}
         >
-          {incomplete && <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 shrink-0" aria-hidden />}
+          {needsAttention && <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 shrink-0" aria-hidden />}
 
           <div className="min-w-0 flex-1">
             {/* Name + dimension tag together on the LEFT, one line;
@@ -746,6 +776,23 @@ export function RuleConfigCard({
                   incomplete: status.incompleteGroupCount,
                   count: status.totalGroupCount,
                 })}
+              </div>
+            )}
+            {hasDrift && (
+              <div className="text-xs text-yellow-600 dark:text-yellow-500 leading-snug mt-0.5">
+                &#x26A0;{" "}
+                {status.drift.missingCount > 0 && status.drift.typeMismatchCount > 0
+                  ? t("monitoredTables.schemaDriftRuleStatusBoth", {
+                      missing: status.drift.missingCount,
+                      mismatch: status.drift.typeMismatchCount,
+                    })
+                  : status.drift.missingCount > 0
+                    ? t("monitoredTables.schemaDriftRuleStatusMissing", {
+                        count: status.drift.missingCount,
+                      })
+                    : t("monitoredTables.schemaDriftRuleStatusMismatch", {
+                        count: status.drift.typeMismatchCount,
+                      })}
               </div>
             )}
           </div>

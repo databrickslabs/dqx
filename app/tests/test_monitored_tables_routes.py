@@ -1002,7 +1002,7 @@ class TestSubmitMonitoredTable:
         materializer.materialize_binding.assert_called_once_with("b1")
         rules_catalog.set_status.assert_any_call("r1", "pending_approval", "alice@x")
         rules_catalog.set_status.assert_any_call("r2", "pending_approval", "alice@x")
-        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x", rationale=None, set_rationale=True)
 
     def test_only_draft_checks_are_submitted(self):
         svc = MagicMock()
@@ -1056,7 +1056,7 @@ class TestSubmitMonitoredTable:
         rules_catalog.set_status.assert_any_call("r2", "draft", "alice@x")
         rules_catalog.set_status.assert_any_call("r1", "pending_approval", "alice@x")
         rules_catalog.set_status.assert_any_call("r2", "pending_approval", "alice@x")
-        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x", rationale=None, set_rationale=True)
 
     def test_row_transition_failure_is_skipped_not_fatal(self):
         svc = MagicMock()
@@ -1139,7 +1139,9 @@ class TestApproveMonitoredTable:
         assert result.table.status == "approved"
         assert result.affected_check_count == 2
         rules_catalog.set_status.assert_any_call("r1", "approved", "alice@x")
-        svc.set_status.assert_called_once_with("b1", "approved", "alice@x")
+        svc.set_status.assert_called_once_with(
+            "b1", "approved", "alice@x", rationale=None, set_rationale=True
+        )
 
     def test_approve_freezes_a_new_version_and_returns_it(self):
         """Table approval bumps + freezes the version; the response carries it."""
@@ -1207,7 +1209,9 @@ class TestRejectMonitoredTable:
         assert result.table.status == "rejected"
         assert result.affected_check_count == 1
         rules_catalog.set_status.assert_called_once_with("r1", "rejected", "alice@x")
-        svc.set_status.assert_called_once_with("b1", "rejected", "alice@x")
+        svc.set_status.assert_called_once_with(
+            "b1", "rejected", "alice@x", rationale=None, set_rationale=True
+        )
 
     def test_missing_binding_raises_404(self):
         svc = MagicMock()
@@ -1246,7 +1250,7 @@ class TestRevertMonitoredTable:
         assert result.table.status == "draft"
         assert result.affected_check_count == 1
         rules_catalog.set_status.assert_called_once_with("r1", "draft", "alice@x")
-        svc.set_status.assert_called_once_with("b1", "draft", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "draft", "alice@x", set_rationale=True)
 
     def test_missing_binding_raises_404(self):
         svc = MagicMock()

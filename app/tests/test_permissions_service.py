@@ -176,7 +176,10 @@ class _FakeOltp:
 
 @pytest.fixture
 def app_settings_mock() -> MagicMock:
-    return create_autospec(AppSettingsService, instance=True)
+    m = create_autospec(AppSettingsService, instance=True)
+    # Match the real default: tables/collections are NOT shared with workspace users.
+    m.get_share_tables_with_workspace_users.return_value = False
+    return m
 
 
 @pytest.fixture
@@ -460,8 +463,9 @@ def test_author_cannot_modify_without_grant(svc):
     assert exc.value.status_code == 403
 
 
-def test_apply_allowed_when_users_group_row_seeded(svc):
+def test_apply_allowed_when_users_group_row_seeded(svc, app_settings_mock):
     # APPLY succeeds once the users-group default row is seeded.
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = True
     svc.seed_default_grants("monitored_table", "b1", owner_email=None, grantor=None)
     svc.require(
         "monitored_table",
@@ -636,6 +640,19 @@ def test_manage_grants_requires_owner_or_admin(svc, fake):
     # Admin can manage.
     assert svc.can_manage_grants(
         "registry_rule", "r1", role=UserRole.ADMIN, principal_ids=set(), owner_email=None, principal_email=None
+    )
+
+
+def test_manage_privilege_confers_can_manage_grants(svc, fake):
+    """Holding MANAGE (without ownership) lets a non-admin change grants."""
+    fake.add_grant("registry_rule", "r1", "u1", "MANAGE")
+    assert svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u1"},
+        owner_email="other@x.com",
+        principal_email="me@x.com",
     )
 
 
@@ -872,8 +889,21 @@ def test_valid_object_id_formats_pass_through(svc, object_id):
 # ---------------------------------------------------------------------------
 
 
-def test_seed_default_grants_writes_users_group_and_owner(svc):
+def test_seed_default_grants_writes_owner_only_when_share_off(svc):
+    """Default OFF: tables get the owner grant only — no users-group row."""
     from databricks_labs_dqx_app.backend.common.permissions import expand_privileges
+
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    grants = svc.list_grants("monitored_table", "obj1")
+    assert not any(g.principal_id == USERS_GROUP_PRINCIPAL_ID for g in grants)
+    owner = next(g for g in grants if g.principal_id == "a@b.com")
+    assert expand_privileges(owner.privileges) == expand_privileges({Privilege.ALL_PRIVILEGES})
+
+
+def test_seed_default_grants_writes_users_group_and_owner_when_share_on(svc, app_settings_mock):
+    from databricks_labs_dqx_app.backend.common.permissions import expand_privileges
+
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = True
     svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
     grants = svc.list_grants("monitored_table", "obj1")
     users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
@@ -882,7 +912,8 @@ def test_seed_default_grants_writes_users_group_and_owner(svc):
     assert expand_privileges(owner.privileges) == expand_privileges({Privilege.ALL_PRIVILEGES})
 
 
-def test_seed_is_idempotent(svc):
+def test_seed_is_idempotent(svc, app_settings_mock):
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = True
     svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
     svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
     users_rows = [g for g in svc.list_grants("monitored_table", "obj1") if g.principal_id == USERS_GROUP_PRINCIPAL_ID]
@@ -897,7 +928,8 @@ def test_no_implicit_default_when_unseeded(svc):
     assert eff == set()
 
 
-def test_deleting_users_group_row_sticks(svc):
+def test_deleting_users_group_row_sticks(svc, app_settings_mock):
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = True
     svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
     svc.remove_grant("monitored_table", "obj1", USERS_GROUP_PRINCIPAL_ID)
     eff = svc.effective_privileges("monitored_table", "obj1", principal_ids={"randomcaller"})
@@ -909,6 +941,14 @@ def test_seed_without_owner_only_writes_users_group(svc):
     grants = svc.list_grants("registry_rule", "r1")
     assert len(grants) == 1
     assert grants[0].principal_id == USERS_GROUP_PRINCIPAL_ID
+
+
+def test_seed_rule_always_writes_users_group_even_when_share_off(svc, app_settings_mock):
+    """Registry rules always get the users-group grant; the share setting only gates tables/collections."""
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = False
+    svc.seed_default_grants("registry_rule", "r1", owner_email=None, grantor=None)
+    grants = svc.list_grants("registry_rule", "r1")
+    assert any(g.principal_id == USERS_GROUP_PRINCIPAL_ID for g in grants)
 
 
 def test_owner_access_comes_from_stored_row(svc):
@@ -944,20 +984,34 @@ def test_seed_registry_rule_users_group_has_no_execute(svc):
     assert Privilege.APPLY in users.privileges
 
 
-def test_seed_monitored_table_users_group_includes_execute(svc):
-    """monitored_table seeding MUST include EXECUTE in the users-group row."""
+def test_seed_monitored_table_users_group_includes_execute(svc, app_settings_mock):
+    """When sharing is ON, monitored_table seeding MUST include EXECUTE in the users-group row."""
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = True
     svc.seed_default_grants("monitored_table", "tbl1", owner_email=None, grantor=None)
     grants = svc.list_grants("monitored_table", "tbl1")
     users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
     assert Privilege.EXECUTE in users.privileges
 
 
-def test_seed_data_product_users_group_includes_execute(svc):
-    """data_product seeding MUST include EXECUTE in the users-group row."""
+def test_seed_data_product_users_group_includes_execute(svc, app_settings_mock):
+    """When sharing is ON, data_product seeding MUST include EXECUTE in the users-group row."""
+    app_settings_mock.get_share_tables_with_workspace_users.return_value = True
     svc.seed_default_grants("data_product", "prod1", owner_email=None, grantor=None)
     grants = svc.list_grants("data_product", "prod1")
     users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
     assert Privilege.EXECUTE in users.privileges
+
+
+def test_seed_monitored_table_skips_users_group_when_share_off(svc):
+    svc.seed_default_grants("monitored_table", "tbl1", owner_email=None, grantor=None)
+    grants = svc.list_grants("monitored_table", "tbl1")
+    assert grants == []
+
+
+def test_seed_data_product_skips_users_group_when_share_off(svc):
+    svc.seed_default_grants("data_product", "prod1", owner_email=None, grantor=None)
+    grants = svc.list_grants("data_product", "prod1")
+    assert grants == []
 
 
 # ---------------------------------------------------------------------------

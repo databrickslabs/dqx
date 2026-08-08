@@ -185,7 +185,6 @@ class AppSettingsService:
 
     _RETENTION_KEY = "retention_days"
     _QUARANTINE_RETENTION_KEY = "quarantine_retention_days"
-    _QUARANTINE_OPTIMIZE_INTERVAL_KEY = "quarantine_optimize_interval_hours"
 
     def get_retention_days(self) -> int | None:
         """Return the configured global retention window, or ``None`` if unset."""
@@ -205,41 +204,11 @@ class AppSettingsService:
         self.save_setting(self._QUARANTINE_RETENTION_KEY, str(int(days)), user_email=user_email)
         return int(days)
 
-    def get_quarantine_optimize_interval_hours(self) -> int | None:
-        """Return the configured OPTIMIZE cadence (hours) for dq_quarantine_records, or *None* if unset.
-
-        When *None* the scheduler falls back to its compiled-in default (24 hours).
-        The stored value is returned verbatim (any parseable int, including 0 or a
-        negative); returns *None* only when unset, blank, or non-integer. Lower-bound
-        (floor) protection lives in the scheduler resolver and the route-layer
-        validation, not here.
-        """
-        return self._get_int_setting(self._QUARANTINE_OPTIMIZE_INTERVAL_KEY)
-
-    def save_quarantine_optimize_interval_hours(self, hours: int, *, user_email: str | None = None) -> None:
-        """Persist the OPTIMIZE cadence (hours) for dq_quarantine_records.
-
-        Validation and floor enforcement live at the route layer; this method
-        stores the value exactly as given so callers can always read back what
-        they wrote.
-
-        Args:
-            hours: OPTIMIZE cadence in hours. Must be a positive integer;
-                enforcement is the caller's responsibility.
-            user_email: Email of the admin performing the change (audit trail).
-        """
-        self.save_setting(self._QUARANTINE_OPTIMIZE_INTERVAL_KEY, str(int(hours)), user_email=user_email)
-
     # ------------------------------------------------------------------
-    # Draft-run sampling — bounds the rows a DRAFT monitored-table run
-    # reads (``BindingRunService.run_binding`` with ``source='draft'``).
-    # Approved/published runs NEVER sample — they always scan the whole
-    # table; this knob exists only so exploratory draft runs on large
-    # tables stay cheap. Stored as a plain integer string:
-    #   * unset / invalid → consumer falls back to
-    #     ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000)
-    #   * 0               → unlimited (draft runs scan the whole table)
-    #   * positive N      → draft runs read at most N rows
+    # Draft-run sampling (legacy admin setting) — kept for API compatibility.
+    # The UI no longer exposes this; draft runs take an optional per-request
+    # ``sample_size`` (default 1000) on the run endpoints. See
+    # ``BindingRunService.run_binding``.
     # ------------------------------------------------------------------
 
     _DRAFT_RUN_SAMPLE_LIMIT_KEY = "draft_run_sample_limit"
@@ -273,32 +242,23 @@ class AppSettingsService:
             return None
 
     # ------------------------------------------------------------------
-    # Rules Registry — auto-upgrade-without-approval (design spec §5).
-    #
-    # Governs re-materialization behaviour when a FOLLOWING (i.e.
-    # ``pinned_version IS NULL``) applied rule's registry rule is
-    # republished and the newly rendered check differs from what's
-    # currently stored:
-    #   * ``False`` (default = "Behaviour B"): the materialized row is
-    #     pushed back to ``pending_approval`` for per-table re-review.
-    #   * ``True`` ("Behaviour A"): the materialized row silently
-    #     re-approves — central registry approval is treated as
-    #     sufficient. Pinned applications are never affected either way.
+    # Rules Registry — automatic rule upgrades always require approval.
+    # The former admin toggle was removed; compatibility reads and writes
+    # remain so older clients receive a stable ``False`` policy.
     # ------------------------------------------------------------------
 
     _AUTO_UPGRADE_WITHOUT_APPROVAL_KEY = "auto_upgrade_without_approval"
 
     def get_auto_upgrade_without_approval(self) -> bool:
-        """Return the configured auto-upgrade behaviour; defaults to ``True`` (Behaviour A) when unset."""
-        raw = self.get_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY)
-        return raw is None or raw.strip().lower() == "true"
+        """Return ``False``: automatic rule upgrades always require approval."""
+        return False
 
     def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
-        """Persist the auto-upgrade-without-approval setting. Returns the saved value."""
+        """Compatibility write that preserves the always-off policy."""
         self.save_setting(
-            self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "true" if enabled else "false", user_email=user_email
+            self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "false", user_email=user_email
         )
-        return enabled
+        return False
 
     # ------------------------------------------------------------------
     # Approvals mode — app-wide submit→approve gate (issue #94). A 3-value
@@ -333,42 +293,27 @@ class AppSettingsService:
         return candidate
 
     # ------------------------------------------------------------------
-    # Object permissions — default per-grant inheritance (P22-D item 10).
-    #
-    # Governs the DEFAULT state of the per-grant "inherit to child objects"
-    # toggle in the Permissions tab ("Cascade permissions by default"). Defaults
-    # to ``True`` (new grants cascade down the hierarchy — granting on a table
-    # space or monitored table also grants SELECT on underlying tables/rules),
-    # which is the common intent. An admin can flip this to ``False`` so each new
-    # grant is scoped to just its object unless the granter opts in.
+    # Object permissions — per-grant inheritance default. Always ON
+    # (cascade to child objects). The admin Configuration toggle was removed;
+    # individual grants can still override inherit on the Permissions tab.
     # ------------------------------------------------------------------
 
     _PERMISSIONS_DEFAULT_INHERIT_KEY = "permissions_default_inherit"
 
     def get_permissions_default_inherit(self) -> bool:
-        """Return the admin default for the per-grant inheritance toggle (default ``True``).
-
-        When the setting has never been persisted (``raw is None``) we default to
-        ``True`` — cascading is the expected behaviour for most deployments.
-        """
-        raw = self.get_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY)
-        if raw is None:
-            return True
-        return raw.strip().lower() == "true"
+        """Return the default for the per-grant inheritance toggle — always ``True``."""
+        return True
 
     def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
-        """Persist the default per-grant inheritance setting. Returns the saved value."""
+        """No-op persistence kept for API compatibility; cascade default stays ON."""
+        # Still write for audit/compat if someone hits the old PUT endpoint,
+        # but reads always return True.
         self.save_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email)
-        return enabled
+        return True
 
     # ------------------------------------------------------------------
-    # Rules Registry — default-auto-upgrade (P21-G). Distinct from
-    # ``auto_upgrade_without_approval`` above:
-    #   * ``auto_upgrade_without_approval`` governs RE-APPROVAL — whether a
-    #     re-rendered check on an EXISTING following (``pinned_version IS
-    #     NULL``) application silently re-approves or falls back to
-    #     ``pending_approval``.
-    #   * ``default_auto_upgrade`` (this setting) governs the PIN CHOSEN AT
+    # Rules Registry — default-auto-upgrade (P21-G).
+    # ``default_auto_upgrade`` governs the PIN CHOSEN AT
     #     ATTACH TIME for a brand-new rule application / data-product
     #     member, when the caller does not explicitly request a pin:
     #       - ``True`` (default): the new attachment follows latest
@@ -430,24 +375,21 @@ class AppSettingsService:
         return current_version
 
     # ------------------------------------------------------------------
-    # Global Results tab (issue B2-20) — the app-wide, all-tables Results
-    # surface (``routes/_sidebar/results.tsx`` + its sidebar entry). OFF by
-    # default: it duplicates per-object results and confuses fresh deploys,
-    # so an admin must explicitly opt in. When off, the global Results nav
-    # item AND the homepage overall-score "?" explainer are hidden (the "?"
-    # only explains a global-results-vs-home divergence that's moot with no
-    # global results screen). Per-object MT/TS/RR results tabs are
-    # unaffected — this gates only the GLOBAL surface. Only an explicit
-    # ``"true"`` reads as on; an unset or any other value reads as off so a
-    # fresh deploy or a corrupt row keeps the surface hidden.
+    # Global Results tab — the app-wide, all-tables Results surface
+    # (``routes/_sidebar/results.tsx`` + its sidebar entry). ON by default
+    # (admin Configuration toggles removed). An explicit ``"false"`` still
+    # reads as off for API backwards compatibility. The UI always shows the
+    # Results nav and homepage score explainer regardless of this setting.
     # ------------------------------------------------------------------
 
     _GLOBAL_RESULTS_ENABLED_KEY = "global_results_enabled"
 
     def get_global_results_enabled(self) -> bool:
-        """Return whether the global Results tab is enabled; defaults to ``False`` (off) when unset."""
+        """Return whether the global Results tab is enabled; defaults to ``True`` when unset."""
         raw = self.get_setting(self._GLOBAL_RESULTS_ENABLED_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
 
     def save_global_results_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the global-Results-tab setting. Returns the saved value."""
@@ -455,21 +397,22 @@ class AppSettingsService:
         return enabled
 
     # ------------------------------------------------------------------
-    # Rules Results tab (item 35) — whether the per-rule "Results" tab is
-    # surfaced inside the Rules Registry rule dialog. Distinct from
+    # Rules Results tab — whether the per-rule "Results" tab is surfaced
+    # inside the Rules Registry rule dialog. Distinct from
     # ``global_results_enabled`` above (that gates the app-wide, all-tables
     # Results SURFACE + its sidebar entry); this gates only the Results TAB on
-    # an individual rule. OFF by default — a fresh deploy hides the rule
-    # Results tab until an admin explicitly opts in. Only an explicit
-    # ``"true"`` reads as on; an unset or any other value reads as off.
+    # an individual rule. ON by default (admin Configuration toggles removed).
+    # An explicit ``"false"`` still reads as off for API backwards compatibility.
     # ------------------------------------------------------------------
 
     _RULES_RESULTS_TAB_ENABLED_KEY = "rules_results_tab_enabled"
 
     def get_rules_results_tab_enabled(self) -> bool:
-        """Return whether the per-rule Results tab is enabled; defaults to ``False`` (off) when unset."""
+        """Return whether the per-rule Results tab is enabled; defaults to ``True`` when unset."""
         raw = self.get_setting(self._RULES_RESULTS_TAB_ENABLED_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
 
     def save_rules_results_tab_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the rules-Results-tab setting. Returns the saved value."""
@@ -503,6 +446,32 @@ class AppSettingsService:
         """Persist the require-draft-run-before-submit setting. Returns the saved value."""
         self.save_setting(
             self._REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
+
+    # ------------------------------------------------------------------
+    # Share new tables / collections with the workspace users group.
+    # When ON, ``PermissionsService.seed_default_grants`` materialises the
+    # users-group default grant on newly created monitored tables and
+    # collections. When OFF (the default), only the owner grant is seeded —
+    # tables/collections stay private until someone explicitly grants access.
+    # Registry rules always seed the users-group grant (rules are meant to be
+    # discoverable/reusable workspace-wide).
+    # ------------------------------------------------------------------
+
+    _SHARE_TABLES_WITH_WORKSPACE_USERS_KEY = "share_tables_with_workspace_users"
+
+    def get_share_tables_with_workspace_users(self) -> bool:
+        """Return whether new tables/collections get a users-group grant; defaults to ``False`` (off)."""
+        raw = self.get_setting(self._SHARE_TABLES_WITH_WORKSPACE_USERS_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_share_tables_with_workspace_users(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the share-tables-with-workspace-users setting. Returns the saved value."""
+        self.save_setting(
+            self._SHARE_TABLES_WITH_WORKSPACE_USERS_KEY,
+            "true" if enabled else "false",
+            user_email=user_email,
         )
         return enabled
 

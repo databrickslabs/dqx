@@ -17,7 +17,8 @@ synthesised at read time. Deleting a grant row permanently removes access.
 
 Roles are the HARD CEILING (entitlements invariant, item #43). An object
 grant can only ever confer a member of the :class:`~backend.common.permissions.Privilege`
-vocabulary (``SELECT`` / ``MODIFY`` / ``APPLY``) *on a single object* — it is
+vocabulary (``SELECT`` / ``MODIFY`` / ``APPLY`` / ``EXECUTE`` / ``MANAGE``)
+*on a single object* — it is
 purely additive within whatever a route's ``require_role`` guard already
 admits, and there is no code path by which a grant satisfies, widens, or
 substitutes for that role check. Concretely: (1) the object-grant vocabulary
@@ -425,9 +426,9 @@ class PermissionsService:
     ) -> bool:
         """Return True if the caller may change grants on the object.
 
-        Granting/revoking requires ownership or an admin/approver role — like
-        UC, holding ALL PRIVILEGES on an object does NOT by itself let you
-        re-grant it (MANAGE is separate).
+        Granting/revoking requires ownership, an admin/approver role, or the
+        ``MANAGE`` privilege — like UC, holding ALL PRIVILEGES alone does NOT
+        let you re-grant (MANAGE is separate).
 
         The owner can always manage grants on their own object (keyed by email
         match, regardless of stored rows). Workspace admins / approvers
@@ -438,7 +439,13 @@ class PermissionsService:
             return True
         if owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower():
             return True
-        return False
+        return Privilege.MANAGE in self.effective_privileges(
+            object_type,
+            object_id,
+            principal_ids,
+            owner_email=owner_email,
+            principal_email=principal_email,
+        )
 
     def can_edit_and_approve(
         self,
@@ -493,18 +500,20 @@ class PermissionsService:
     ) -> None:
         """Materialise the default grant rows for a newly created object.
 
-        Inserts the workspace users-group row with the privileges appropriate
-        for the object type (see
+        Optionally inserts the workspace users-group row with the privileges
+        appropriate for the object type (see
         :func:`~backend.common.permissions.default_users_group_privileges_for`)
         and, when *owner_email* is set, an owner row with ``ALL_PRIVILEGES``.
         Both inserts are idempotent — a row is only written when no row for
         that principal already exists on the object.
 
-        The users-group privilege set is type-specific: ``registry_rule``
-        objects receive ``{SELECT, APPLY}`` only — ``EXECUTE`` is meaningless
-        on a rule (the privilege means "run profiling/validation on a table or
-        collection"). ``monitored_table`` and ``data_product`` objects receive
-        ``{SELECT, APPLY, EXECUTE}`` (the historical default).
+        Users-group seeding policy:
+
+        * ``registry_rule`` — always seeded (``{SELECT, APPLY}``; ``EXECUTE``
+          is meaningless on a rule).
+        * ``monitored_table`` / ``data_product`` — seeded only when the admin
+          setting ``share_tables_with_workspace_users`` is ON (default OFF).
+          When ON, the historical privilege set is ``{SELECT, APPLY, EXECUTE}``.
 
         Should be called once by each entity service at object-creation time
         (registry rule, monitored table, data product). A separate backfill
@@ -520,7 +529,12 @@ class PermissionsService:
         direct = self.list_grants(object_type, object_id)
         existing_ids = {g.principal_id for g in direct}
 
-        if USERS_GROUP_PRINCIPAL_ID not in existing_ids:
+        seed_users_group = object_type == ObjectType.REGISTRY_RULE.value or (
+            object_type
+            in (ObjectType.MONITORED_TABLE.value, ObjectType.DATA_PRODUCT.value)
+            and self._app_settings.get_share_tables_with_workspace_users()
+        )
+        if seed_users_group and USERS_GROUP_PRINCIPAL_ID not in existing_ids:
             users_group_privs = default_users_group_privileges_for(object_type)
             self.set_grant(
                 object_type,

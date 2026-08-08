@@ -1312,6 +1312,18 @@ _V26_STEWARD_DISPLAY_NAME = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN steward_display_name STRING"
 )
 
+_V27_NOTES_AND_RATIONALE = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN notes STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN pending_rationale STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_decision_rationale STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN notes STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN pending_rationale STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN last_decision_rationale STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN pending_rationale STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN last_decision_rationale STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules_history ADD COLUMN rationale STRING"
+)
+
 
 _V19_TAG_AUTO_SUPPRESSIONS = (
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_tag_auto_suppressions ("
@@ -1506,6 +1518,13 @@ MIGRATIONS: list[Migration] = [
         description="Add steward_display_name to dq_rules, dq_monitored_tables, dq_data_products "
         "— used only when Lakebase is disabled",
         sql_template=_V26_STEWARD_DISPLAY_NAME,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=27,
+        description="Add notes + change-rationale columns "
+        "— used only when Lakebase is disabled",
+        sql_template=_V27_NOTES_AND_RATIONALE,
         oltp_fallback=True,
     ),
 ]

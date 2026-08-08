@@ -10,7 +10,7 @@
 
 import { useTranslation } from "react-i18next";
 
-export type CellFamily = "numeric" | "temporal" | "boolean" | "text" | "array" | "any" | string;
+export type CellFamily = "numeric" | "temporal" | "boolean" | "text" | "any" | string;
 
 export function TypedCell({
   family,

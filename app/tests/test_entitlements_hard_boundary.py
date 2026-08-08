@@ -175,7 +175,8 @@ async def test_broad_grant_does_not_let_low_role_pass_role_gate(svc):
 
 def test_grant_cannot_confer_manage_on_object(svc):
     # Even ALL_PRIVILEGES does not grant MANAGE (re-granting) — that stays with
-    # owners / bypass roles, mirroring UC. A grant is not a role.
+    # owners / bypass roles / an explicit MANAGE privilege, mirroring UC.
+    # A concrete ALL grant alone is not a role and does not confer re-grant.
     svc.fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
     assert not svc.service.can_manage_grants(
         "registry_rule",
@@ -184,6 +185,16 @@ def test_grant_cannot_confer_manage_on_object(svc):
         principal_ids={"u1"},
         owner_email="other@x.com",
         principal_email="me@x.com",
+    )
+    # Explicit MANAGE privilege does confer re-grant (still within the role gate).
+    svc.fake.add_grant("registry_rule", "r1", "u2", "MANAGE")
+    assert svc.service.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"u2"},
+        owner_email="other@x.com",
+        principal_email="other2@x.com",
     )
 
 

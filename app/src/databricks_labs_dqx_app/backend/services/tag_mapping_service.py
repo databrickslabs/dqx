@@ -23,7 +23,7 @@ _TYPE_FAMILY: dict[str, str] = {
     "BIGINT": "numeric", "LONG": "numeric", "FLOAT": "numeric", "DOUBLE": "numeric", "DECIMAL": "numeric",
     "STRING": "text", "VARCHAR": "text", "CHAR": "text",
     "DATE": "temporal", "TIMESTAMP": "temporal", "TIMESTAMP_NTZ": "temporal",
-    "BOOLEAN": "boolean", "ARRAY": "array",
+    "BOOLEAN": "boolean",
 }
 
 

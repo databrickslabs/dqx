@@ -9,10 +9,10 @@ import {
   ChevronRight,
   FileText,
   Info,
+  ListChecks,
   Loader2,
   Save,
   Send,
-  Sparkles,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -62,7 +62,6 @@ import {
   SeverityBadge,
 } from "@/components/RegistryRuleBadges";
 import { useLabelDefinitions } from "@/lib/api-custom";
-import { AI_BANNER_BG, AI_BANNER_BORDER, AI_BUTTON_BG, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/use-permissions";
 
@@ -105,7 +104,6 @@ export function ContractWorkspace({ onDone }: { onDone: () => void }) {
   const [generatePredefined, setGeneratePredefined] = useState(true);
   const [generateSchemaValidation, setGenerateSchemaValidation] = useState(true);
   const [strictSchema, setStrictSchema] = useState(true);
-  const [processTextRules, setProcessTextRules] = useState(false);
   // App-severity axis (Low/Medium/High/Critical), not raw DQX error/warn. "High"
   // is the default (maps to criticality "error", preserving prior behaviour).
   const [defaultSeverity, setDefaultSeverity] = useState<string>("High");
@@ -157,7 +155,6 @@ export function ContractWorkspace({ onDone }: { onDone: () => void }) {
       const resp = await generateRulesFromContract({
         contract_text: contractText,
         generate_predefined_rules: generatePredefined,
-        process_text_rules: processTextRules,
         generate_schema_validation: generateSchemaValidation,
         strict_schema_validation: strictSchema,
         default_criticality: resolveCriticality(defaultSeverity, severityVc),
@@ -322,14 +319,6 @@ export function ContractWorkspace({ onDone }: { onDone: () => void }) {
               label={t("rulesFromContract.options.strict")}
               hint={t("rulesFromContract.options.strictHint")}
             />
-            <OptionRow
-              checked={processTextRules}
-              onChange={setProcessTextRules}
-              disabled={busy}
-              ai
-              label={t("rulesFromContract.options.textRules")}
-              hint={t("rulesFromContract.options.textRulesHint")}
-            />
             <div className="flex items-start gap-3 p-3 rounded-lg border">
               <div className="flex-1 space-y-1">
                 <div className="text-sm font-medium">
@@ -362,13 +351,13 @@ export function ContractWorkspace({ onDone }: { onDone: () => void }) {
             <Button
               onClick={handleGenerate}
               disabled={!contractText.trim() || busy}
-              className={cn("gap-2", AI_BUTTON_BG)}
+              className="gap-2"
               size="sm"
             >
               {isGenerating ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Sparkles className="h-4 w-4" />
+                <ListChecks className="h-4 w-4" />
               )}
               {t("rulesFromContract.generate")}
             </Button>
@@ -419,23 +408,18 @@ export function OptionRow({
   disabled,
   label,
   hint,
-  ai,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   label: string;
   hint: string;
-  /** Marks this as an AI/LLM-backed option — gets the purple AI motif. */
-  ai?: boolean;
 }) {
   return (
     <label
       className={cn(
         "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
         disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-muted/30",
-        ai && checked && AI_BANNER_BG,
-        ai && checked && AI_BANNER_BORDER,
       )}
     >
       <Checkbox
@@ -445,10 +429,7 @@ export function OptionRow({
         className="mt-0.5"
       />
       <div className="flex-1 space-y-1">
-        <div className="flex items-center gap-1.5 text-sm font-medium">
-          {ai && <Sparkles className="h-3.5 w-3.5 shrink-0" stroke={AI_GRADIENT_URL} />}
-          {label}
-        </div>
+        <div className="text-sm font-medium">{label}</div>
         <div className="text-xs text-muted-foreground">{hint}</div>
       </div>
     </label>

@@ -19,6 +19,7 @@ from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
 from databricks_labs_dqx_app.backend.lowcode_compile import (
     CompiledLowcodeBody,
+    brace_bare_slot_refs,
     compile_lowcode_body,
     extract_slot_tokens,
     lowcode_is_usable,
@@ -147,12 +148,34 @@ column ("b" here) MUST also be listed in "columns", exactly like column_ref.
 # family from the check function's own semantics in `_derive_native_slots`.
 _DQX_NATIVE_COLUMNS_FIELD = (
     '\n  - "columns": a JSON array of {"name": "<snake_case slot name>", "family": '
-    '"any"|"numeric"|"text"|"temporal"|"boolean"|"array"} objects, ONE per column the rule targets'
+    '"any"|"numeric"|"text"|"temporal"|"boolean"} objects, ONE per column the rule targets'
 )
 _DQX_NATIVE_COLUMNS_GUIDANCE = (
     '\n- Give each targeted column a meaningful snake_case slot name (e.g. "user_email", '
     '"order_amount") in "columns", and use those exact names as the column argument VALUES '
     'inside "definition".arguments.'
+)
+
+# The sql pass needs the SAME slot contract the dqx_native and lowcode passes
+# get. Without it the model wrote bare column identifiers (`a < b`), which are
+# dead text in a table-agnostic registry rule: `_derive_sql_slots` finds no
+# `{{token}}` to declare, so the rule reached the editor with an unmappable
+# predicate and zero columns. Mirrors `_WRITE_SQL_SYSTEM_TEMPLATE`, which has
+# always demanded placeholders. `brace_bare_slot_refs` repairs the text anyway
+# when a model ignores this.
+_SQL_COLUMNS_FIELD = (
+    '\n  - "columns": a JSON array of {"name": "<snake_case slot name>", "family": '
+    '"any"|"numeric"|"text"|"temporal"|"boolean"} objects, ONE per column the rule references'
+)
+_SQL_COLUMNS_GUIDANCE = (
+    "\n- Reference every column OF THE TABLE UNDER TEST as a {{slot}} placeholder — never a bare "
+    "column identifier. A registry rule is table-agnostic, so its own columns are always "
+    'placeholders that get bound to a real column per monitored table. For "column a must be '
+    'smaller than column b", write "{{a}} < {{b}}".'
+    '\n- Declare EVERY {{placeholder}} that appears in the query in "columns", and nothing else, '
+    "using meaningful snake_case names."
+    "\n- A JOINED table stays a literal name with a short alias, and its own columns are "
+    "referenced raw as `alias.column` — only the table under test's columns are placeholders."
 )
 
 # The escape hatch that makes trying dqx_native FIRST safe (see _DEFAULT_CASCADE).
@@ -227,7 +250,7 @@ _WRITE_SQL_SYSTEM_TEMPLATE = f"""\
 You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
 object:
 {{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{{"name": "<slot_name>", \
-"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}}]}}
+"family": "numeric"|"text"|"temporal"|"boolean"|"any"}}]}}
 
 {_SQL_GRANULARITY_GUIDANCE}
 
@@ -245,7 +268,7 @@ fully-qualified name the description gives you; when it names no catalog or sche
 "slots" rules:
 - Declare EVERY {{{{placeholder}}}} that appears in your predicate, and nothing else.
 - Reuse the caller's declared slot names (and their intent) wherever they fit.
-- Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
+- Pick the family from the value the column holds: numeric, text, temporal, boolean, or \
 any when unsure.
 
 Safety rules:
@@ -258,7 +281,7 @@ _IMPROVE_SQL_SYSTEM_TEMPLATE = f"""\
 You refine a DQX SQL boolean predicate per the user's instruction. Respond with ONLY a JSON \
 object:
 {{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{{"name": "<slot_name>", \
-"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}}]}}
+"family": "numeric"|"text"|"temporal"|"boolean"|"any"}}]}}
 
 Keep every reference to a column of the table under test as a {{{{slot}}}} placeholder; keep \
 declared slot names unchanged.
@@ -272,7 +295,7 @@ name exactly as written.
 
 "slots" rules:
 - Declare EVERY {{{{placeholder}}}} that appears in your predicate, and nothing else.
-- Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
+- Pick the family from the value the column holds: numeric, text, temporal, boolean, or \
 any when unsure.
 
 Safety rules:
@@ -416,7 +439,7 @@ _SEVERITY_LABEL_KEY = "severity"
 _VALID_POLARITIES = frozenset({"pass", "fail"})
 # Mirrors registry_models.SlotFamily — the closed vocabulary a column slot's
 # family may take. Used to validate any family hint the model returns for a slot.
-_VALID_SLOT_FAMILIES = frozenset({"numeric", "text", "temporal", "boolean", "array", "any"})
+_VALID_SLOT_FAMILIES = frozenset({"numeric", "text", "temporal", "boolean", "any"})
 _SLOT_TOKEN_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
 
 
@@ -592,16 +615,11 @@ class AiRulesService:
     def generate_from_schema_info(self, user_input: str, schema_info: str = "") -> list[dict[str, Any]]:
         """Generate DQX rules from natural language with a pre-built schema_info.
 
-        Used by the data-contract importer for text/natural-language quality
-        expectations: the schema is already known from the contract, so there
-        is no UC table to look up. This reuses the same ChatDatabricks prompt
-        and few-shot context as :meth:`generate` — DQX's own contract text-rule
-        path needs ``dspy`` + a SparkSession, which the stateless app container
-        doesn't have, so we route contract text rules through this LLM leg
-        instead and tag the results with ``rule_type: text_llm`` upstream. The
-        model call itself runs with the caller's OBO WorkspaceClient (never the
-        app's service principal), so it is subject to the calling user's own
-        UC permissions on the configured serving endpoint.
+        Split out from :meth:`generate` for callers that already know the
+        column context and so have no UC table to look up. The model call runs
+        with the caller's OBO WorkspaceClient (never the app's service
+        principal), so it is subject to the calling user's own UC permissions
+        on the configured serving endpoint.
 
         Args:
             user_input: Natural language description of the quality expectation.
@@ -809,8 +827,8 @@ class AiRulesService:
         system = _RULE_PROPOSAL_SYSTEM_TEMPLATE.format(
             mode_label=_MODE_LABELS.get(mode, mode),
             definition_shape=definition_shape,
-            columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else "",
-            columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else "",
+            columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else _SQL_COLUMNS_FIELD,
+            columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else _SQL_COLUMNS_GUIDANCE,
             coverage_guidance=_DQX_NATIVE_COVERAGE_GUIDANCE if is_native else "",
             dimensions=", ".join(dimensions),
             severities=", ".join(severities),
@@ -901,6 +919,11 @@ class AiRulesService:
             sql_query = definition.get("sql_query")
             if not isinstance(sql_query, str) or not sql_query.strip():
                 return None
+            # Brace any bare own-table column the model left unwrapped BEFORE
+            # anything else reads the query, so the safety scan, the derived
+            # slots and the definition the editor loads all see one text.
+            sql_query = brace_bare_slot_refs(sql_query, self._declared_column_names(proposal.get("columns")))
+            definition["sql_query"] = sql_query
             if not is_sql_query_safe(sql_query):
                 logger.warning("AI-generated sql rule dropped: unsafe SQL query")
                 return None
@@ -1115,12 +1138,7 @@ class AiRulesService:
 
         # Ordered pool of the model's declared column-slot names, consumed only
         # to name a column parameter the arguments didn't reference.
-        fallback_names: list[str] = []
-        if isinstance(ai_columns, list):
-            for col in ai_columns:
-                if isinstance(col, dict) and isinstance(col.get("name"), str) and col["name"].strip():
-                    fallback_names.append(col["name"].strip())
-        fallback_pool = iter(fallback_names)
+        fallback_pool = iter(AiRulesService._declared_column_names(ai_columns))
 
         slots: list[dict[str, Any]] = []
         position = 0
@@ -1356,6 +1374,11 @@ class AiRulesService:
         if not isinstance(predicate, str) or not predicate.strip():
             raise ValueError("AI did not return a SQL predicate.")
         predicate = predicate.strip()
+        # A model that ignores the placeholder contract and writes a bare column
+        # identifier hands the editor a reference that binds to nothing (and no
+        # slot, since `_parse_sql_slots` reads the text). Repair it from the
+        # model's own declared slot names before validating or reading the text.
+        predicate = brace_bare_slot_refs(predicate, AiRulesService._declared_column_names(parsed.get("slots")))
         # Comments are stripped before the keyword scan for the same reason every
         # other app-side gate does it: an AI "Explain" comment block can legitimately
         # contain a word like "updates" that would otherwise trip the DDL/DML check.
@@ -1369,6 +1392,22 @@ class AiRulesService:
             "polarity": clean_polarity,
             "slots": AiRulesService._parse_sql_slots(predicate, parsed.get("slots")),
         }
+
+    @staticmethod
+    def _declared_column_names(declared: object) -> list[str]:
+        """The ``name`` values of a model-declared ``columns``/``slots`` array, in order.
+
+        Shared by every caller of :func:`brace_bare_slot_refs`: those names are
+        the ONLY identifiers a bare-reference repair is allowed to touch. A
+        non-list, or an entry without a usable string name, is ignored.
+        """
+        if not isinstance(declared, list):
+            return []
+        names: list[str] = []
+        for entry in declared:
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str) and entry["name"].strip():
+                names.append(entry["name"].strip())
+        return names
 
     @staticmethod
     def _parse_sql_slots(predicate: str, declared: object) -> list[dict[str, str]]:

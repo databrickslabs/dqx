@@ -10,6 +10,7 @@ import type {
   BatchImportRegistryRulesIn,
   BatchImportRegistryRulesOut,
   CreateRegistryRuleOut,
+  MonitoredTableOut,
   RuleCatalogEntryOut,
   RunStatusOut,
 } from "./api";
@@ -1567,3 +1568,277 @@ export const downloadExportFile = (out: ExportOut): void => {
   a.click();
   URL.revokeObjectURL(url);
 };
+
+// ---------------------------------------------------------------------------
+// Notes + lifecycle change rationale (until OpenAPI / orval regenerate)
+// ---------------------------------------------------------------------------
+
+export interface LifecycleRationaleIn {
+  rationale?: string | null;
+}
+
+export interface UpdateMonitoredTableNotesIn {
+  notes?: string | null;
+}
+
+export const updateMonitoredTableNotes = (
+  bindingId: string,
+  data: UpdateMonitoredTableNotesIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<MonitoredTableOut>> =>
+  axios.default.patch(`/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/notes`, data, options);
+
+export const useUpdateMonitoredTableNotes = <
+  TError = AxiosError<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMonitoredTableNotes>>,
+    TError,
+    { bindingId: string; data: UpdateMonitoredTableNotesIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationKey: ["updateMonitoredTableNotes"],
+    mutationFn: (props: { bindingId: string; data: UpdateMonitoredTableNotesIn }) =>
+      updateMonitoredTableNotes(props.bindingId, props.data, axiosOptions),
+    ...mutationOptions,
+  });
+};
+
+type LifecycleVars = { rationale?: string | null };
+
+export const submitRegistryRuleWithRationale = (
+  ruleId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) => axios.default.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/submit`, data ?? {}, options);
+
+export const approveRegistryRuleWithRationale = (
+  ruleId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) => axios.default.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/approve`, data ?? {}, options);
+
+export const rejectRegistryRuleWithRationale = (
+  ruleId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) => axios.default.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/reject`, data ?? {}, options);
+
+export const submitMonitoredTableWithRationale = (
+  bindingId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) =>
+  axios.default.post(
+    `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/submit`,
+    data ?? {},
+    options,
+  );
+
+export const approveMonitoredTableWithRationale = (
+  bindingId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) =>
+  axios.default.post(
+    `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/approve`,
+    data ?? {},
+    options,
+  );
+
+export const rejectMonitoredTableWithRationale = (
+  bindingId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) =>
+  axios.default.post(
+    `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/reject`,
+    data ?? {},
+    options,
+  );
+
+export const submitDataProductWithRationale = (
+  productId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) =>
+  axios.default.post(`/api/v1/data-products/${encodeURIComponent(productId)}/submit`, data ?? {}, options);
+
+export const approveDataProductWithRationale = (
+  productId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) =>
+  axios.default.post(`/api/v1/data-products/${encodeURIComponent(productId)}/approve`, data ?? {}, options);
+
+export const rejectDataProductWithRationale = (
+  productId: string,
+  data?: LifecycleRationaleIn | null,
+  options?: AxiosRequestConfig,
+) =>
+  axios.default.post(`/api/v1/data-products/${encodeURIComponent(productId)}/reject`, data ?? {}, options);
+
+function useLifecyclePost<TVars extends Record<string, unknown>>(
+  key: string,
+  fn: (vars: TVars & LifecycleVars, axiosOptions?: AxiosRequestConfig) => Promise<AxiosResponse<unknown>>,
+  options?: {
+    mutation?: UseMutationOptions<AxiosResponse<unknown>, AxiosError<unknown>, TVars & LifecycleVars, unknown>;
+    axios?: AxiosRequestConfig;
+  },
+) {
+  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
+  return useMutation({
+    mutationKey: [key],
+    mutationFn: (vars: TVars & LifecycleVars) => fn(vars, axiosOptions),
+    ...mutationOptions,
+  });
+}
+
+export const useSubmitRegistryRuleWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { ruleId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "submitRegistryRuleWithRationale",
+    (vars, axiosOptions) =>
+      submitRegistryRuleWithRationale(vars.ruleId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useApproveRegistryRuleWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { ruleId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "approveRegistryRuleWithRationale",
+    (vars, axiosOptions) =>
+      approveRegistryRuleWithRationale(vars.ruleId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useRejectRegistryRuleWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { ruleId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "rejectRegistryRuleWithRationale",
+    (vars, axiosOptions) =>
+      rejectRegistryRuleWithRationale(vars.ruleId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useSubmitMonitoredTableWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { bindingId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "submitMonitoredTableWithRationale",
+    (vars, axiosOptions) =>
+      submitMonitoredTableWithRationale(vars.bindingId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useApproveMonitoredTableWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { bindingId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "approveMonitoredTableWithRationale",
+    (vars, axiosOptions) =>
+      approveMonitoredTableWithRationale(vars.bindingId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useRejectMonitoredTableWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { bindingId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "rejectMonitoredTableWithRationale",
+    (vars, axiosOptions) =>
+      rejectMonitoredTableWithRationale(vars.bindingId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useSubmitDataProductWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { productId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "submitDataProductWithRationale",
+    (vars, axiosOptions) =>
+      submitDataProductWithRationale(vars.productId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useApproveDataProductWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { productId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "approveDataProductWithRationale",
+    (vars, axiosOptions) =>
+      approveDataProductWithRationale(vars.productId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );
+
+export const useRejectDataProductWithRationale = (options?: {
+  mutation?: UseMutationOptions<
+    AxiosResponse<unknown>,
+    AxiosError<unknown>,
+    { productId: string } & LifecycleVars,
+    unknown
+  >;
+  axios?: AxiosRequestConfig;
+}) =>
+  useLifecyclePost(
+    "rejectDataProductWithRationale",
+    (vars, axiosOptions) =>
+      rejectDataProductWithRationale(vars.productId, { rationale: vars.rationale ?? null }, axiosOptions),
+    options,
+  );

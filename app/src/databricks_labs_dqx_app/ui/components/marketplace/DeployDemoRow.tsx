@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { AxiosError } from "axios";
@@ -13,8 +14,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
@@ -28,7 +27,6 @@ export function DeployDemoRow() {
   const queryClient = useQueryClient();
   const { isAdmin } = usePermissions();
   const [open, setOpen] = useState(false);
-  const [wipeFirst, setWipeFirst] = useState(true);
   const deployMutation = useDeployDemoContent();
 
   const { data: statusResp } = useDemoContentStatus({
@@ -44,7 +42,9 @@ export function DeployDemoRow() {
   const handleConfirm = () => {
     if (deployMutation.isPending) return;
     deployMutation.mutate(
-      { data: { wipe_first: wipeFirst } },
+      // Wipe is intentionally not offered here — clear existing data via
+      // Configuration → Danger Zone → Reset database first if needed.
+      { data: { wipe_first: false } },
       {
         onSuccess: () => {
           toast.success(t("config.demoStarted"));
@@ -68,10 +68,7 @@ export function DeployDemoRow() {
       <button
         type="button"
         disabled={!isAdmin || isRunning}
-        onClick={() => {
-          setWipeFirst(true);
-          setOpen(true);
-        }}
+        onClick={() => setOpen(true)}
         className={cn(
           "w-full flex items-center gap-4 rounded-lg bg-foreground px-4 py-3.5 text-left text-background",
           "transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed",
@@ -115,17 +112,17 @@ export function DeployDemoRow() {
             </DialogTitle>
             <DialogDescription>{t("config.demoWarning")}</DialogDescription>
           </DialogHeader>
-          <div className="flex items-start gap-2">
-            <Checkbox
-              id="demo-wipe-first"
-              checked={wipeFirst}
-              onCheckedChange={(c) => setWipeFirst(c === true)}
-              disabled={deployMutation.isPending}
-            />
-            <Label htmlFor="demo-wipe-first" className="text-xs leading-relaxed">
-              {t("config.demoWipeLabel")}
-            </Label>
-          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("config.demoResetFirstPrefix")}{" "}
+            <Link
+              to="/settings"
+              className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
+              onClick={closeDialog}
+            >
+              {t("config.demoResetFirstLink")}
+            </Link>{" "}
+            {t("config.demoResetFirstSuffix")}
+          </p>
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={closeDialog} disabled={deployMutation.isPending}>
               {t("config.demoCancel")}

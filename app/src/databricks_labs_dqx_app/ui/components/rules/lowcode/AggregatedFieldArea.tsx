@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Select,
@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import {
   AGGREGATES,
   AGGREGATES_TAKING_PARAM,
+  AGGREGATES_WITHOUT_GROUP_BY,
   aggregateAcceptsFamily,
   AGGREGATE_INPUT_FAMILIES,
   FAMILY_LABEL,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/lowcodeOperators";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
 import { cn } from "@/lib/utils";
+import { CursorTooltip } from "@/components/rules/CursorTooltip";
 
 /** ALL-CAPS framing-word style for cmdk group headings — matches the merged
  * condition selector's section headers (IF / THEN THE ROW style). */
@@ -40,6 +42,9 @@ type Props = {
   aggregate_param?: number | null;
   declaredColumns: LowcodeColumnRef[];
   onChange: (next: { aggregate: string; column_ref: string; aggregate_param?: number | null }) => void;
+  /** When false, only {@link AGGREGATES_WITHOUT_GROUP_BY} are offered; the
+   * picker surfaces a tooltip / footer pointing the author at Group by. */
+  hasGroupBy?: boolean;
 };
 
 // Friendly labels for the dropdown. Ordering follows AGGREGATES.
@@ -73,25 +78,53 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family | null {
 const UNIVERSAL_AGGREGATES = AGGREGATES.filter((a) => AGGREGATE_INPUT_FAMILIES[a] === "ANY");
 
 // Ported from dqlake's AggregatedFieldArea.
-export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, declaredColumns, onChange }: Props) {
+export function AggregatedFieldArea({
+  aggregate,
+  column_ref,
+  aggregate_param,
+  declaredColumns,
+  onChange,
+  hasGroupBy = false,
+}: Props) {
   const { t } = useTranslation();
   const [aggOpen, setAggOpen] = useState(false);
   const [aggQuery, setAggQuery] = useState("");
   const colFamily = familyOf(column_ref, declaredColumns);
 
-  const familySpecific = AGGREGATES.filter((a) => {
-    if (UNIVERSAL_AGGREGATES.includes(a)) return false;
+  // Without Group by only the table-wide cardinality set is offered; with a
+  // group key the full AGGREGATES vocabulary unlocks.
+  const availableAggregates = hasGroupBy
+    ? (AGGREGATES as readonly string[])
+    : AGGREGATES_WITHOUT_GROUP_BY;
+
+  // If Group by was cleared while a now-hidden aggregate was selected, fall
+  // back to count so the row stays valid and the trigger isn't orphaned.
+  useEffect(() => {
+    if (hasGroupBy || !aggregate || AGGREGATES_WITHOUT_GROUP_BY.includes(aggregate)) return;
+    onChange({ aggregate: "count", column_ref, aggregate_param: null });
+    // Intentionally omit onChange from deps — parent often passes an inline
+    // lambda; re-running on every render would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasGroupBy, aggregate, column_ref]);
+
+  const familySpecific = availableAggregates.filter((a) => {
+    if (AGGREGATE_INPUT_FAMILIES[a] === "ANY") return false;
     if (!colFamily) return true;
     return aggregateAcceptsFamily(a, colFamily);
   });
 
-  const aggSpec = aggregate ? AGGREGATE_INPUT_FAMILIES[aggregate] : undefined;
-  const allowedColumns = declaredColumns.filter((c) =>
-    !aggregate ? true : aggSpec === "ANY" ? true : Array.isArray(aggSpec) && aggSpec.includes(c.family),
-  );
+  // Same compatibility rule as the aggregate list above, so the two pickers
+  // can't disagree: before this went through `aggregateAcceptsFamily`, picking
+  // `sum` dropped every `any`-family column out of the column picker.
+  const allowedColumns = declaredColumns.filter((c) => !aggregate || aggregateAcceptsFamily(aggregate, c.family));
 
   const needsParam = AGGREGATES_TAKING_PARAM.has(aggregate);
-  const familyGroupLabel = colFamily ? FAMILY_LABEL[colFamily] : t("rulesRegistry.lowcodeTypeSpecific");
+  // An unconstrained (ANY) column takes the generic heading: labelling the group
+  // "Any" next to the "Universal" one reads as the same thing twice, when what
+  // it actually lists is the aggregates that DO depend on the bound column's type.
+  const familyGroupLabel =
+    colFamily && colFamily !== "ANY" ? FAMILY_LABEL[colFamily] : t("rulesRegistry.lowcodeTypeSpecific");
+  const groupByHint = t("rulesRegistry.lowcodeAggregateNeedsGroupBy");
 
   // Grouped + query-filtered aggregate options for the searchable picker,
   // mirroring the merged condition selector's operators view.
@@ -99,7 +132,7 @@ export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, de
   const q = aggQuery.trim().toLowerCase();
   const matches = (a: string) => q === "" || (AGG_LABEL[a] ?? a).toLowerCase().includes(q) || a.toLowerCase().includes(q);
   const familyMatches = familySpecific.filter(matches);
-  const universalMatches = UNIVERSAL_AGGREGATES.filter(matches);
+  const universalMatches = UNIVERSAL_AGGREGATES.filter((a) => availableAggregates.includes(a)).filter(matches);
   if (familyMatches.length > 0) aggGroups.push({ heading: familyGroupLabel, aggs: familyMatches });
   if (universalMatches.length > 0)
     aggGroups.push({ heading: t("rulesRegistry.lowcodeUniversalOperators"), aggs: universalMatches });
@@ -116,19 +149,21 @@ export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, de
           if (!o) setAggQuery("");
         }}
       >
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            data-slot="select-trigger"
-            data-size="sm"
-            className="border-input dark:bg-input/30 dark:hover:bg-input/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs outline-none"
-          >
-            <span className={cn("truncate", aggregate ? "text-foreground" : "text-muted-foreground")}>
-              {aggregate ? (AGG_LABEL[aggregate] ?? aggregate) : t("rulesRegistry.lowcodeAggregatePlaceholder")}
-            </span>
-            <ChevronDown className="size-4 opacity-50 shrink-0" />
-          </button>
-        </PopoverTrigger>
+        <CursorTooltip text={hasGroupBy ? undefined : groupByHint}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              data-slot="select-trigger"
+              data-size="sm"
+              className="border-input dark:bg-input/30 dark:hover:bg-input/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs outline-none"
+            >
+              <span className={cn("truncate", aggregate ? "text-foreground" : "text-muted-foreground")}>
+                {aggregate ? (AGG_LABEL[aggregate] ?? aggregate) : t("rulesRegistry.lowcodeAggregatePlaceholder")}
+              </span>
+              <ChevronDown className="size-4 opacity-50 shrink-0" />
+            </button>
+          </PopoverTrigger>
+        </CursorTooltip>
         <PopoverContent className="p-0 w-auto min-w-56 max-w-[24rem]" align="start">
           <Command shouldFilter={false}>
             <CommandInput
@@ -165,6 +200,11 @@ export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, de
                 </CommandGroup>
               ))}
             </CommandList>
+            {!hasGroupBy && (
+              <p className="border-t px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+                {groupByHint}
+              </p>
+            )}
           </Command>
         </PopoverContent>
       </Popover>

@@ -12,6 +12,7 @@ import pytest
 
 from databricks_labs_dqx_app.backend.lowcode_compile import (
     OPERATORS_BY_FAMILY,
+    brace_bare_slot_refs,
     compile_ast_to_sql,
     compile_lowcode_body,
     extract_slot_tokens,
@@ -301,3 +302,56 @@ class TestUsabilityAndTokens:
         tokens = extract_slot_tokens("{{b}} > 0 AND {{a}} < {{b}}", "SELECT {{a}}, {{c}} FROM {{input_view}}")
         # input_view is reserved and skipped; duplicates de-duped in order.
         assert tokens == ["b", "a", "c"]
+
+
+class TestBraceBareSlotRefs:
+    """Repairs an AI predicate that referenced own-table columns as bare
+    identifiers instead of ``{{slot}}`` placeholders (which bind to nothing).
+    """
+
+    def test_braces_every_declared_column(self):
+        assert brace_bare_slot_refs("column_1 < column_2", ["column_1", "column_2"]) == "{{column_1}} < {{column_2}}"
+
+    def test_leaves_already_braced_placeholders_untouched(self):
+        assert brace_bare_slot_refs("{{amount}} > 0", ["amount"]) == "{{amount}} > 0"
+
+    def test_braces_only_the_unbraced_half(self):
+        assert brace_bare_slot_refs("{{amount}} <= credit_limit", ["amount", "credit_limit"]) == (
+            "{{amount}} <= {{credit_limit}}"
+        )
+
+    def test_undeclared_identifiers_and_keywords_stay_raw(self):
+        assert brace_bare_slot_refs("id IS NOT NULL AND status = 'ok'", ["id"]) == (
+            "{{id}} IS NOT NULL AND status = 'ok'"
+        )
+
+    def test_column_name_inside_a_string_literal_is_data_not_a_reference(self):
+        assert brace_bare_slot_refs("status = 'status'", ["status"]) == "{{status}} = 'status'"
+
+    def test_joined_table_column_stays_qualified_and_raw(self):
+        sql = "{{amount}} * fx.rate_to_usd < 10000\nLEFT JOIN main.ref.fx_rates fx ON fx.country_code = country_code"
+        out = brace_bare_slot_refs(sql, ["amount", "country_code", "rate_to_usd"])
+        # The dotted joined-table refs are untouched; only the bare own-table one is braced.
+        assert "fx.rate_to_usd" in out
+        assert "fx.country_code = {{country_code}}" in out
+
+    def test_function_call_is_not_a_column_reference(self):
+        assert brace_bare_slot_refs("count(*) > 0", ["count"]) == "count(*) > 0"
+
+    def test_required_condition_alias_is_never_braced(self):
+        # The table-level contract REQUIRES the literal `AS condition` alias; a
+        # model that also declares a column named `condition` must not break it.
+        sql = "SELECT SUM(amount) > 0 AS condition FROM {{input_view}}"
+        out = brace_bare_slot_refs(sql, ["condition", "amount"])
+        assert "AS condition" in out
+        assert "SUM({{amount}})" in out
+
+    def test_no_declared_names_is_a_no_op(self):
+        assert brace_bare_slot_refs("a < b", []) == "a < b"
+
+    def test_dotted_declared_name_is_ignored_outright(self):
+        assert brace_bare_slot_refs("orders.total > 0", ["orders.total"]) == "orders.total > 0"
+
+    def test_repaired_text_round_trips_through_token_extraction(self):
+        repaired = brace_bare_slot_refs("start_date <= end_date", ["start_date", "end_date"])
+        assert extract_slot_tokens(repaired) == ["start_date", "end_date"]

@@ -38,6 +38,9 @@ type Props = {
    * capped so the row isn't forced to full width. When false (row filters), the
    * operator keeps its fixed 18rem width and the value fills the remainder. */
   compact?: boolean;
+  /** When false, aggregated rows offer only the table-wide cardinality set;
+   * Group by unlocks the rest. */
+  hasGroupBy?: boolean;
 };
 
 function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
@@ -47,7 +50,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true, compact = false }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true, compact = false, hasGroupBy = false }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -193,6 +196,7 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
           column_ref={row.column_ref}
           aggregate_param={row.aggregate_param}
           declaredColumns={declaredColumns}
+          hasGroupBy={hasGroupBy}
           onChange={({ aggregate, column_ref, aggregate_param }) =>
             onChange({ ...row, aggregate, column_ref, aggregate_param } as AnyRow)
           }

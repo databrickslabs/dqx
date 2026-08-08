@@ -644,6 +644,28 @@ function RegistryRulesPage() {
               </Tooltip>
             </>
           )}
+          {/* An approved rule carrying unpublished edit-in-place changes needs
+              the SAME send-for-review affordance a draft gets — without it the
+              only way to publish a revision as vN+1 was to open the rule's
+              detail page, so the row read as a dead end ("Modified since vN"
+              with nothing to act on). Backend accepts approved →
+              pending_approval for exactly this (RegistryService.submit). */}
+          {rule.display_status === "modified" && perms.canCreateRules && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-blue-600"
+                  aria-label={t("rulesRegistry.submitForReview")}
+                  onClick={() => handleSubmit(rule)}
+                >
+                  <SendHorizonal className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesRegistry.submitForReview")}</TooltipContent>
+            </Tooltip>
+          )}
           {/* View changes before Revoke — same order as Tables/Collections
               (Approve → Reject → Diff → Revert). */}
           {(rule.display_status === "modified" || rule.status === "pending_approval") && (

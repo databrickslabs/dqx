@@ -17,6 +17,7 @@ import type { RegistryRuleOut, RegistryRuleOutAuthorKind } from "@/lib/api";
 // as free-form tags. Shared by the Rules Registry list and detail pages.
 export const RESERVED_NAME_KEY = "name";
 export const RESERVED_DESCRIPTION_KEY = "description";
+export const RESERVED_NOTES_KEY = "notes";
 export const RESERVED_DIMENSION_KEY = "dimension";
 export const RESERVED_SEVERITY_KEY = "severity";
 
@@ -44,6 +45,7 @@ export function freeTags(rule: RegistryRuleOut): Record<string, string> {
     if (
       k === RESERVED_NAME_KEY ||
       k === RESERVED_DESCRIPTION_KEY ||
+      k === RESERVED_NOTES_KEY ||
       k === RESERVED_DIMENSION_KEY ||
       k === RESERVED_SEVERITY_KEY
     ) {

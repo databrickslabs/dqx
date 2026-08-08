@@ -1,4 +1,4 @@
-// GovernedKeyPicker — "Add new governed key" button + popover for the admin
+// GovernedKeyPicker — "Add from governed key" button + popover for the admin
 // Custom tags settings card. Lists Unity Catalog GOVERNED tag KEYs (deduped to
 // top-level keys via the same `groupTags` helper the apply-rules TagPicker
 // uses) and, on select, seeds a new custom-tag draft pre-populated from that

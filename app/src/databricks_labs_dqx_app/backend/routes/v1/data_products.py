@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.models import (
     DataProductOut,
     DataProductReviewChangesOut,
     DataProductReviewMemberOut,
+    LifecycleRationaleIn,
     RunDataProductIn,
     RunDataProductOut,
     UpdateDataProductIn,
@@ -191,6 +192,7 @@ def create_data_product(
             body.steward,
             user_email,
             steward_display_name=body.steward_display_name,
+            notes=body.notes,
         )
         detail = svc.get(product.product_id)
         assert detail is not None  # just created
@@ -386,6 +388,7 @@ def submit_data_product(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
 
@@ -398,6 +401,7 @@ def submit_data_product(
     the same call (bumping its version) with the caller recorded as the approver
     carrying an ``(auto)`` marker.
     """
+    rationale = body.rationale if body else None
     try:
         user_email = _current_user_email(obo_ws)
         # Require-draft-run gate (issue B2-12): when the admin setting is on, the
@@ -416,7 +420,7 @@ def submit_data_product(
             # run must be newer than the last edit to count as a fresh test.
             last_change_time=gate_detail.product.updated_at,
         )
-        svc.submit(product_id, user_email)
+        svc.submit(product_id, user_email, rationale=rationale)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
         # its permission + owner lookups entirely.
@@ -430,7 +434,7 @@ def submit_data_product(
             principal_email=user_email,
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
-            svc.approve(product_id, mark_auto_approver(user_email))
+            svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)
@@ -457,6 +461,7 @@ def approve_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Approve a Table Space — bumps ``version`` by 1 and sets ``status='approved'``.
 
@@ -464,7 +469,7 @@ def approve_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.approve(product_id, user_email)
+        svc.approve(product_id, user_email, rationale=body.rationale if body else None)
         detail = svc.get(product_id)
         assert detail is not None  # just approved it
         return DataProductOut.from_domain(detail)
@@ -487,6 +492,7 @@ def reject_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Reject a Table Space — sets ``status='rejected'``.
 
@@ -494,7 +500,7 @@ def reject_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.reject(product_id, user_email)
+        svc.reject(product_id, user_email, rationale=body.rationale if body else None)
         detail = svc.get(product_id)
         assert detail is not None  # just rejected it
         return DataProductOut.from_domain(detail)
@@ -575,7 +581,13 @@ def run_data_product(
         principal_email=user_email,
     )
     try:
-        result = svc.run(product_id, source=body.source, user_email=user_email, trigger="manual")
+        result = svc.run(
+            product_id,
+            source=body.source,
+            user_email=user_email,
+            trigger="manual",
+            sample_size=body.sample_size,
+        )
         return RunDataProductOut.from_domain(result)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))

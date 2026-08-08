@@ -173,11 +173,11 @@ _COLUMN_FAMILIES: dict[str, str] = {
     # Numeric — statistical outlier detection is only defined over numbers.
     "has_no_outliers": "numeric",
     "has_no_aggr_outliers": "numeric",
-    # Array — the only built-in check that genuinely takes an ARRAY column
-    # (``F.size(col)``). No other non-geo built-in requires an array argument
-    # (``is_in_list`` takes a scalar column + a Python list VALUE, not an array
-    # column), so ARRAY is added to the family set solely for this check.
-    "is_not_null_and_not_empty_array": "array",
+    # Array columns classify as ``any`` — the only built-in that takes an
+    # ARRAY column (``F.size(col)``) is still offered, but without a dedicated
+    # slot family. ``is_in_list`` takes a scalar column + a Python list VALUE,
+    # not an array column.
+    "is_not_null_and_not_empty_array": "any",
 }
 
 

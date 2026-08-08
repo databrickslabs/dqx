@@ -51,6 +51,7 @@ from databricks_labs_dqx_app.backend.models import (
     BatchRecordPendingApplicationsOut,
     BulkRegisterMonitoredTablesIn,
     BulkRegisterMonitoredTablesOut,
+    LifecycleRationaleIn,
     MonitoredTableDetailOut,
     MonitoredTableOut,
     MonitoredTableProfileOut,
@@ -65,11 +66,14 @@ from databricks_labs_dqx_app.backend.models import (
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
     RunMonitoredTableOut,
+    UpdateMonitoredTableNotesIn,
     UpdateMonitoredTableOwnerIn,
     UpdateMonitoredTableScheduleIn,
     SaveAppliedRulesIn,
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
+    MatchRulesIn,
+    MatchRulesOut,
     SuggestRulesOut,
     TagSuggestionsOut,
 )
@@ -477,6 +481,45 @@ def update_monitored_table_schedule(
         raise HTTPException(status_code=500, detail=f"Failed to update monitored table schedule: {e}")
 
 
+@router.patch(
+    "/{binding_id}/notes",
+    response_model=MonitoredTableOut,
+    operation_id="updateMonitoredTableNotes",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def update_monitored_table_notes(
+    binding_id: str,
+    body: UpdateMonitoredTableNotesIn,
+    svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+) -> MonitoredTableOut:
+    """Set or clear sticky operational notes on a monitored table.
+
+    Requires ``MODIFY`` on the monitored table unless the caller is an
+    admin/approver. Orthogonal to the review lifecycle — does NOT flip status.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
+    try:
+        table = svc.update_notes(binding_id, body.notes, user_email)
+        return MonitoredTableOut.from_domain(table)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update monitored table notes {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update monitored table notes: {e}")
+
+
 # ------------------------------------------------------------------
 # Profiling (READ-ONLY — reuses dq_profiling_results, never writes here)
 # ------------------------------------------------------------------
@@ -615,6 +658,7 @@ def run_monitored_table(
             user_email=user_email,
             trigger="manual",
             rule_ids=body.rule_ids,
+            sample_size=body.sample_size,
         )
         return RunMonitoredTableOut(
             run_set_id=result.run_set_id,
@@ -1074,6 +1118,8 @@ def _approve_binding_checks(
     version_svc: MonitoredTableVersionService,
     binding_id: str,
     approver: str,
+    *,
+    rationale: str | None = None,
 ) -> tuple[MonitoredTable, int, int | None]:
     """Approve a binding's ``pending_approval`` checks, roll up, and freeze a version.
 
@@ -1092,7 +1138,11 @@ def _approve_binding_checks(
         user_email=approver,
     )
     table = monitored_tables_svc.set_status(
-        binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), approver
+        binding_id,
+        _rollup_binding_status(monitored_tables_svc, binding_id),
+        approver,
+        rationale=rationale,
+        set_rationale=True,
     )
     new_version = version_svc.freeze_new_version(binding_id, approver)
     return table, approved, new_version
@@ -1116,6 +1166,7 @@ def submit_monitored_table(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
 
@@ -1136,6 +1187,7 @@ def submit_monitored_table(
     ``draft`` (a legal per-rule transition), which the ``draft ->
     pending_approval`` step below then re-enters into review and counts.
     """
+    rationale = body.rationale if body else None
     try:
         user_email = _current_user_email(obo_ws)
         # Require-draft-run gate (issue B2-12): when the admin setting is on, the
@@ -1173,7 +1225,11 @@ def submit_monitored_table(
             user_email=user_email,
         )
         table = monitored_tables_svc.set_status(
-            binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
+            binding_id,
+            _rollup_binding_status(monitored_tables_svc, binding_id),
+            user_email,
+            rationale=rationale,
+            set_rationale=True,
         )
         # Approvals mode (issue #94): in ``disabled`` mode, or ``auto_bypass``
         # when the caller can edit AND approve this binding, publish in the same
@@ -1191,7 +1247,12 @@ def submit_monitored_table(
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
             table, approved, new_version = _approve_binding_checks(
-                monitored_tables_svc, rules_catalog, version_svc, binding_id, mark_auto_approver(user_email)
+                monitored_tables_svc,
+                rules_catalog,
+                version_svc,
+                binding_id,
+                mark_auto_approver(user_email),
+                rationale=rationale,
             )
             return MonitoredTableReviewOut(
                 table=MonitoredTableOut.from_domain(table),
@@ -1224,6 +1285,7 @@ def approve_monitored_table(
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Approve a monitored table — approving every ``pending_approval`` check mapped to it.
 
@@ -1257,7 +1319,12 @@ def approve_monitored_table(
             )
         user_email = _current_user_email(obo_ws)
         table, approved, new_version = _approve_binding_checks(
-            monitored_tables_svc, rules_catalog, version_svc, binding_id, user_email
+            monitored_tables_svc,
+            rules_catalog,
+            version_svc,
+            binding_id,
+            user_email,
+            rationale=body.rationale if body else None,
         )
         return MonitoredTableReviewOut(
             table=MonitoredTableOut.from_domain(table),
@@ -1284,6 +1351,7 @@ def reject_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Reject a monitored table — rejecting every ``pending_approval`` check mapped to it.
 
@@ -1321,7 +1389,13 @@ def reject_monitored_table(
             to_status="rejected",
             user_email=user_email,
         )
-        table = monitored_tables_svc.set_status(binding_id, "rejected", user_email)
+        table = monitored_tables_svc.set_status(
+            binding_id,
+            "rejected",
+            user_email,
+            rationale=body.rationale if body else None,
+            set_rationale=True,
+        )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=rejected)
     except HTTPException:
         raise
@@ -1378,7 +1452,9 @@ def revert_monitored_table(
             to_status="draft",
             user_email=user_email,
         )
-        table = monitored_tables_svc.set_status(binding_id, "draft", user_email)
+        table = monitored_tables_svc.set_status(
+            binding_id, "draft", user_email, set_rationale=True
+        )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=reverted)
     except HTTPException:
         raise
@@ -1415,6 +1491,32 @@ async def suggest_rules_for_table(
     user_email = _current_user_email(obo_ws)
     result = await svc.suggest(binding_id, user_email)
     return SuggestRulesOut.from_domain(result)
+
+
+@router.post(
+    "/{binding_id}/match-rules",
+    response_model=MatchRulesOut,
+    operation_id="matchRulesForTable",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def match_rules_for_table(
+    binding_id: str,
+    body: MatchRulesIn,
+    svc: Annotated[RuleSuggester, Depends(get_rule_suggester)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> MatchRulesOut:
+    """Match a natural-language rule description against published registry rules.
+
+    Embeds the steward's query, retrieves similar published rules, and runs the
+    mapping judge so hits can be staged onto this table. Always returns HTTP 200
+    with ``available=False`` + a ``reason`` for every degraded path — same
+    contract as ``suggest-rules``. An empty ``matches`` list with
+    ``available=True`` means nothing was close enough; the UI then falls through
+    to generate-rule.
+    """
+    user_email = _current_user_email(obo_ws)
+    result = await svc.match_from_query(binding_id, body.query, user_email, top_k=body.top_k)
+    return MatchRulesOut.from_domain(result)
 
 
 # ------------------------------------------------------------------

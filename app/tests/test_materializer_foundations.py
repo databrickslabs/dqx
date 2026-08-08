@@ -135,15 +135,15 @@ class TestAutoUpgradeWithoutApprovalSetting:
     def svc(self, sql_executor_mock):
         return AppSettingsService(sql_executor_mock), sql_executor_mock
 
-    def test_defaults_to_true_when_unset(self, svc):
+    def test_defaults_to_false_when_unset(self, svc):
         s, sql = svc
         sql.query.return_value = []
-        assert s.get_auto_upgrade_without_approval() is True
+        assert s.get_auto_upgrade_without_approval() is False
 
-    def test_round_trips_true(self, svc):
+    def test_persisted_true_is_ignored(self, svc):
         s, sql = svc
         sql.query.return_value = [("true",)]
-        assert s.get_auto_upgrade_without_approval() is True
+        assert s.get_auto_upgrade_without_approval() is False
 
     def test_round_trips_false_explicit(self, svc):
         s, sql = svc
@@ -155,4 +155,4 @@ class TestAutoUpgradeWithoutApprovalSetting:
         s.save_auto_upgrade_without_approval(True, user_email="alice@x")
         sql.upsert.assert_called_once()
         _, kwargs = sql.upsert.call_args
-        assert kwargs["value_cols"]["setting_value"] == "true"
+        assert kwargs["value_cols"]["setting_value"] == "false"

@@ -52,12 +52,21 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20  # Per-column retrieval unions per column; cap = max(top_k, top_k*3) in _retrieve_per_column
 
+# NL "describe a rule" match path: retrieve against the user prompt (not
+# column-built queries), then run the same mapping judge for staging.
+DEFAULT_MATCH_TOP_K = 5
+MIN_MATCH_SCORE = 0.45  # Cosine similarity floor for a hit to count as a match
+
 # Human-readable reasons for the genuine "available, but nothing to show"
 # outcomes. Kept as constants so the exact wording is asserted by tests and
 # stays consistent with the dialog's empty-state copy.
 _NO_PUBLISHED_RULES_REASON = "No published rules to suggest from yet. Publish rules to the registry first."
 _NO_MATCH_REASON = "No published rules matched this table's columns."
 _NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this table's columns."
+_NO_NL_MATCH_REASON = "No published rules closely matched that description."
+_NO_NL_CLEAN_MAPPING_REASON = (
+    "Found related published rules, but none mapped cleanly to this table's columns."
+)
 
 _JUDGE_SYSTEM_PROMPT = (
     "You are a precise data-quality rule mapping assistant. Given a table's columns (each with a name, "
@@ -77,7 +86,7 @@ _JUDGE_SYSTEM_PROMPT = (
     "never suggest a partial mapping that leaves a slot empty; if you cannot fill all of a rule's slots well, "
     "reject that rule. Only suggest a rule when it is a good structural AND semantic match: a slot's family "
     "should match the column's family (a numeric-family slot maps to a numeric column; a temporal-family slot "
-    "to a date/timestamp column; an array-family slot to an array column; an 'any'-family slot may map to any "
+    "to a date/timestamp column; an 'any'-family slot may map to any "
     "column), and the column's name/comment should be consistent with what the rule checks. Never invent a "
     "column name that is not in the provided column list.\n"
     "A single rule MAY genuinely apply to several different column choices (for example a one-slot not-null "
@@ -136,6 +145,34 @@ class SuggestRulesResult:
 
     available: bool
     suggestions: list[RuleSuggestion] = field(default_factory=list)
+    reason: str = ""
+
+
+@dataclass
+class MatchedRule:
+    """One NL-matched published rule for a monitored table (describe-a-rule flow).
+
+    ``column_mapping`` is set when the mapping judge produced a complete,
+    validated slot→column map suitable for staging; ``None`` when retrieval
+    found the rule but mapping could not be completed (UI may still show it
+    as a weak hit, but staging prefers mapped matches).
+    """
+
+    rule_id: str
+    rule_name: str | None
+    dimension: str | None
+    severity: str | None
+    score: float
+    column_mapping: ColumnMappingGroup | None = None
+    explanation: str = ""
+
+
+@dataclass
+class MatchRulesResult:
+    """Result of :meth:`RuleSuggester.match_from_query`. Same degrade contract as Suggest."""
+
+    available: bool
+    matches: list[MatchedRule] = field(default_factory=list)
     reason: str = ""
 
 
@@ -247,6 +284,151 @@ class RuleSuggester:
             reason = _NO_CLEAN_MAPPING_REASON if judged else _NO_MATCH_REASON
             return SuggestRulesResult(available=True, suggestions=[], reason=reason)
         return SuggestRulesResult(available=True, suggestions=suggestions)
+
+    async def match_from_query(
+        self,
+        binding_id: str,
+        query: str,
+        user_email: str,
+        *,
+        top_k: int = DEFAULT_MATCH_TOP_K,
+        min_score: float = MIN_MATCH_SCORE,
+    ) -> MatchRulesResult:
+        """Match a natural-language rule description against published registry rules.
+
+        Unlike :meth:`suggest` (which builds retrieval queries from the table's
+        columns), this embeds the steward's *query* text directly, ranks published
+        rules by cosine similarity, then runs the mapping judge so hits can be
+        staged onto the table the same way Suggest does.
+
+        Args:
+            binding_id: Monitored table binding to map slots against.
+            query: Steward's natural-language description of the desired rule.
+            user_email: Caller identity for AIGateway rate limiting / audit.
+            top_k: Max retrieval hits to consider (default :data:`DEFAULT_MATCH_TOP_K`).
+            min_score: Cosine floor; hits below this are discarded
+                (default :data:`MIN_MATCH_SCORE`).
+
+        Returns:
+            A :class:`MatchRulesResult`. ``available=False`` covers the same
+            degrade paths as :meth:`suggest`. An empty ``matches`` list with
+            ``available=True`` means the NL search ran but nothing was close
+            enough (or nothing mapped) — the UI then falls through to generate-rule.
+        """
+        query = (query or "").strip()
+        if not query:
+            return MatchRulesResult(available=False, reason="Query is required.")
+
+        detail = self._monitored_tables.get(binding_id)
+        if detail is None:
+            return MatchRulesResult(available=False, reason=f"Monitored table not found: {binding_id}")
+
+        available, reason = self._retriever.is_available()
+        if not available:
+            return MatchRulesResult(available=False, reason=reason)
+        if not self._ai_gateway.is_enabled() or not self._ai_gateway.endpoint_name():
+            return MatchRulesResult(available=False, reason="AI features are not configured.")
+
+        table_fqn = detail.table.table_fqn
+        profile = self._monitored_tables.get_latest_profile(table_fqn)
+        columns = await self._resolve_columns(table_fqn, profile)
+
+        try:
+            hits = self._retriever.retrieve(query, top_k)
+        except RuleRetrievalUnavailableError as e:
+            return MatchRulesResult(available=False, reason=str(e))
+        except Exception:
+            logger.warning("NL rule match retrieval failed for binding %s", binding_id, exc_info=True)
+            return MatchRulesResult(available=False, reason="Rule retrieval failed.")
+
+        # Keep only above-threshold hits; preserve score for ranking / UI.
+        score_by_id: dict[str, float] = {}
+        for hit in hits:
+            if hit.score < min_score:
+                continue
+            prev = score_by_id.get(hit.rule_id)
+            if prev is None or hit.score > prev:
+                score_by_id[hit.rule_id] = hit.score
+
+        candidate_rules: list[RegistryRule] = []
+        for rule_id, _score in sorted(score_by_id.items(), key=lambda kv: kv[1], reverse=True):
+            rule = self._registry.get_rule(rule_id)
+            if rule is not None and rule.status == "approved":
+                candidate_rules.append(rule)
+
+        if not candidate_rules:
+            # Distinguish "corpus empty / nothing above threshold" from infra failure.
+            if not hits:
+                return MatchRulesResult(available=True, matches=[], reason=_NO_PUBLISHED_RULES_REASON)
+            return MatchRulesResult(available=True, matches=[], reason=_NO_NL_MATCH_REASON)
+
+        try:
+            judged = await self._judge(candidate_rules, columns, table_fqn, user_email)
+        except (AIUnavailableError, AIRateLimitExceededError) as e:
+            return MatchRulesResult(available=False, reason=str(e))
+        except PermissionDenied:
+            logger.warning("AI judge permission denied for NL match on binding %s", binding_id, exc_info=True)
+            endpoint = self._ai_gateway.endpoint_name()
+            return MatchRulesResult(
+                available=False,
+                reason=(
+                    f"AI suggestions are unavailable because you don't have permission to run the configured AI model"
+                    f" ({endpoint}). Ask an admin to grant you EXECUTE on the serving endpoint."
+                ),
+            )
+        except AIResponseParseError:
+            logger.warning("AI judge returned an unparsable response for NL match on %s", binding_id, exc_info=True)
+            return MatchRulesResult(available=False, reason="AI judge returned an unparsable response.")
+        except Exception:
+            logger.warning("AI judge failed for NL match on binding %s", binding_id, exc_info=True)
+            return MatchRulesResult(available=False, reason="AI judge failed to produce suggestions.")
+
+        already_applied = self._already_applied_keys(binding_id)
+        mapped = self._post_process(judged, candidate_rules, columns, already_applied)
+        mapped_by_id: dict[str, RuleSuggestion] = {}
+        for suggestion in mapped:
+            # Prefer the first (post_process order); one mapping per rule for this UI.
+            mapped_by_id.setdefault(suggestion.rule_id, suggestion)
+
+        matches: list[MatchedRule] = []
+        for rule in candidate_rules:
+            suggestion = mapped_by_id.get(rule.rule_id)
+            if suggestion is not None:
+                matches.append(
+                    MatchedRule(
+                        rule_id=rule.rule_id,
+                        rule_name=suggestion.rule_name,
+                        dimension=suggestion.dimension,
+                        severity=suggestion.severity,
+                        score=score_by_id[rule.rule_id],
+                        column_mapping=suggestion.column_mapping,
+                        explanation=suggestion.explanation,
+                    )
+                )
+            else:
+                # Retrieval hit without a clean mapping — still surface so the
+                # steward can see the related published rule, but column_mapping
+                # stays None (not stageable one-click).
+                matches.append(
+                    MatchedRule(
+                        rule_id=rule.rule_id,
+                        rule_name=get_rule_name(rule.user_metadata),
+                        dimension=get_rule_dimension(rule.user_metadata),
+                        severity=get_rule_severity(rule.user_metadata),
+                        score=score_by_id[rule.rule_id],
+                        column_mapping=None,
+                        explanation="",
+                    )
+                )
+
+        # Prefer mappable matches first, then by score.
+        matches.sort(key=lambda m: (m.column_mapping is not None, m.score), reverse=True)
+
+        if not any(m.column_mapping for m in matches):
+            # All hits need mapping — still return them, but set a reason so the
+            # dialog can explain why one-click staging isn't available.
+            return MatchRulesResult(available=True, matches=matches, reason=_NO_NL_CLEAN_MAPPING_REASON)
+        return MatchRulesResult(available=True, matches=matches)
 
     # ------------------------------------------------------------------
     # Query construction

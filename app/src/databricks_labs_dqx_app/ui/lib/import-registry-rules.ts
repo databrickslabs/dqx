@@ -204,9 +204,9 @@ export function parseChecksForImport(
         checkFunctions,
         t,
       );
-      // LLM-derived checks (the contract generator tags these
-      // ``rule_type: text_llm``) carry AI provenance regardless of the batch
-      // default, so they render with the app's AI motif and audit correctly.
+      // Checks tagged ``rule_type: text_llm`` were produced by the retired
+      // LLM contract-import leg. Nothing emits the tag now, but rules saved
+      // or exported earlier still carry it and must keep AI provenance.
       const isLlmDerived = parsed.userMetadata?.["rule_type"] === "text_llm";
       rules.push({
         mode: parsed.mode,

@@ -38,6 +38,22 @@ def test_expand_all_privileges_to_concrete_set():
         Privilege.APPLY,
         Privilege.EXECUTE,
     }
+    # MANAGE is deliberately excluded from ALL expansion (UC semantics).
+    assert Privilege.MANAGE not in expand_privileges({Privilege.ALL_PRIVILEGES})
+
+
+def test_expand_all_plus_manage_preserves_manage():
+    assert expand_privileges({Privilege.ALL_PRIVILEGES, Privilege.MANAGE}) == {
+        Privilege.SELECT,
+        Privilege.MODIFY,
+        Privilege.APPLY,
+        Privilege.EXECUTE,
+        Privilege.MANAGE,
+    }
+
+
+def test_expand_manage_alone():
+    assert expand_privileges({Privilege.MANAGE}) == {Privilege.MANAGE}
 
 
 def test_expand_passthrough_concrete():
@@ -59,8 +75,16 @@ def test_serialize_all_privileges_is_superset_token():
     assert serialize_privileges({Privilege.ALL_PRIVILEGES}) == "ALL_PRIVILEGES"
 
 
+def test_serialize_all_plus_manage():
+    assert serialize_privileges({Privilege.ALL_PRIVILEGES, Privilege.MANAGE}) == "ALL_PRIVILEGES,MANAGE"
+
+
 def test_serialize_concrete_is_stable_order():
     assert serialize_privileges({Privilege.APPLY, Privilege.SELECT}) == "SELECT,APPLY"
+
+
+def test_serialize_manage_after_execute():
+    assert serialize_privileges({Privilege.MANAGE, Privilege.SELECT}) == "SELECT,MANAGE"
 
 
 def test_normalize_collapses_full_set_to_all_privileges():
@@ -69,11 +93,30 @@ def test_normalize_collapses_full_set_to_all_privileges():
     }
 
 
+def test_normalize_keeps_manage_alongside_all():
+    assert normalize_privileges(
+        {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE, Privilege.MANAGE}
+    ) == {Privilege.ALL_PRIVILEGES, Privilege.MANAGE}
+
+
 def test_normalize_keeps_partial_set():
     assert normalize_privileges({Privilege.SELECT, Privilege.MODIFY}) == {
         Privilege.SELECT,
         Privilege.MODIFY,
     }
+
+
+def test_normalize_keeps_manage_with_partial():
+    assert normalize_privileges({Privilege.SELECT, Privilege.MANAGE}) == {
+        Privilege.SELECT,
+        Privilege.MANAGE,
+    }
+
+
+def test_manage_is_not_concrete():
+    from databricks_labs_dqx_app.backend.common.permissions import _CONCRETE_PRIVILEGES
+
+    assert Privilege.MANAGE not in _CONCRETE_PRIVILEGES
 
 
 def test_execute_is_concrete():

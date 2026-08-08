@@ -48,6 +48,20 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_s
 logger = logging.getLogger(__name__)
 
 
+class DuplicateRegistryRuleError(Exception):
+    """Raised when creating a rule whose fingerprint matches a published rule
+    and the caller did not set ``allow_duplicate=True``.
+
+    The interactive create UI catches this (HTTP 409) and asks the steward to
+    confirm before re-submitting with ``allow_duplicate=True``.
+    """
+
+    def __init__(self, message: str, *, existing_rule_id: str, existing_rule_name: str | None = None) -> None:
+        super().__init__(message)
+        self.existing_rule_id = existing_rule_id
+        self.existing_rule_name = existing_rule_name
+
+
 class RegistryService:
     """Manages the Rules Registry (``dq_rules`` / ``dq_rule_versions``) in the OLTP store."""
 
@@ -67,11 +81,13 @@ class RegistryService:
     # bind a fully-qualified table name so a cross-table rule could stay
     # workspace-portable; a rule now belongs to one table and names any joined
     # table inline in its SQL, so the family was retired from
-    # :data:`SlotFamily`. Rows authored before that change still carry such
-    # slots, and they are stripped at the read boundary (see
-    # ``_drop_retired_slots``) rather than rejected — one legacy rule must not
-    # be able to fail the whole listing.
-    _RETIRED_SLOT_FAMILIES: frozenset[str] = frozenset({"table"})
+    # :data:`SlotFamily`. ``array`` was retired the same way — ARRAY columns
+    # classify as ``any``, and the one built-in that took an array column
+    # (``is_not_null_and_not_empty_array``) now advertises family ``any``.
+    # Rows authored before those changes still carry such slots, and they
+    # are stripped at the read boundary (see ``_drop_retired_slots``) rather
+    # than rejected — one legacy rule must not be able to fail the whole listing.
+    _RETIRED_SLOT_FAMILIES: frozenset[str] = frozenset({"table", "array"})
 
     # An ``approved`` rule can be re-submitted for review (approved ->
     # pending_approval): this is how an edit-in-place REVISION of an
@@ -120,7 +136,8 @@ class RegistryService:
             "rule_id, mode, status, version, polarity, author_kind, "
             f"{definition} AS definition_json, {user_metadata} AS user_metadata_json, "
             f"fingerprint, steward, is_builtin, source, created_by, {created_at}, "
-            f"updated_by, {updated_at}, steward_display_name"
+            f"updated_by, {updated_at}, steward_display_name, "
+            f"pending_rationale, last_decision_rationale"
         )
 
     # ------------------------------------------------------------------
@@ -538,19 +555,27 @@ class RegistryService:
         steward: str | None = None,
         steward_display_name: str | None = None,
         source: str = "ui",
+        allow_duplicate: bool = False,
     ) -> tuple[RegistryRule, str | None]:
         """Create a new draft registry rule.
 
-        Returns ``(rule, dedup_warning)``. The dedup check is a WARNING,
-        never a hard error — a published rule sharing the same structural
-        fingerprint doesn't block creation, it just flags the possible
-        duplicate for the author to review.
+        Returns ``(rule, dedup_warning)``. When a published rule shares the same
+        structural fingerprint:
+
+        * ``allow_duplicate=False`` (default, interactive create) → raises
+          :class:`DuplicateRegistryRuleError` **before** insert so the UI can
+          ask the steward to confirm.
+        * ``allow_duplicate=True`` (batch import, seeds, profiling after an
+          explicit confirm) → creates anyway and returns a non-blocking
+          ``dedup_warning`` string.
 
         *source* records how the rule entered the registry (default ``"ui"``
         for interactive authoring; ``"profiling"`` for a rule auto-created from
         a DQX profiling suggestion) so auto-created rules stay auditable.
 
         Raises:
+            DuplicateRegistryRuleError: A published rule shares this fingerprint
+                and ``allow_duplicate`` is false.
             UnsafeSqlQueryError: *definition*'s SQL body fails
                 :meth:`_validate_definition_sql_safety` — the same check
                 :meth:`update_draft` applies, so an unsafe query can't be
@@ -588,7 +613,22 @@ class RegistryService:
             updated_at=now,
         )
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
-        warning = self._dedup_warning(rule)
+        duplicate = self._find_duplicate_published(rule)
+        warning: str | None = None
+        if duplicate is not None:
+            from databricks_labs_dqx_app.backend.registry_models import get_rule_name
+
+            existing_name = get_rule_name(duplicate.user_metadata) or duplicate.rule_id
+            warning = (
+                f"A published rule with an identical definition already exists: "
+                f"'{existing_name}' (rule_id={duplicate.rule_id})."
+            )
+            if not allow_duplicate:
+                raise DuplicateRegistryRuleError(
+                    warning,
+                    existing_rule_id=duplicate.rule_id,
+                    existing_rule_name=existing_name if existing_name != duplicate.rule_id else None,
+                )
         self._insert(rule)
         self._record_history(rule.rule_id, rule.definition, rule.version, "create", None, "draft", user_email)
         if self._perms is not None:
@@ -769,8 +809,8 @@ class RegistryService:
                     "The rule's filter contains prohibited SQL and cannot be saved."
                 )
 
-    def _dedup_warning(self, rule: RegistryRule) -> str | None:
-        """Return a human-readable warning if a published rule shares this fingerprint."""
+    def _find_duplicate_published(self, rule: RegistryRule) -> RegistryRule | None:
+        """Return a published rule that shares this fingerprint, if any."""
         if not rule.fingerprint:
             return None
         e_fp = escape_sql_string(rule.fingerprint)
@@ -781,7 +821,13 @@ class RegistryService:
         rows = self._sql.query(sql)
         if not rows:
             return None
-        existing = self._row_to_rule(rows[0])
+        return self._row_to_rule(rows[0])
+
+    def _dedup_warning(self, rule: RegistryRule) -> str | None:
+        """Return a human-readable warning if a published rule shares this fingerprint."""
+        existing = self._find_duplicate_published(rule)
+        if existing is None:
+            return None
         from databricks_labs_dqx_app.backend.registry_models import get_rule_name
 
         name = get_rule_name(existing.user_metadata) or existing.rule_id
@@ -794,7 +840,7 @@ class RegistryService:
     # Lifecycle transitions
     # ------------------------------------------------------------------
 
-    def submit(self, rule_id: str, user_email: str) -> RegistryRule:
+    def submit(self, rule_id: str, user_email: str, rationale: str | None = None) -> RegistryRule:
         """Submit a rule for approval (-> pending_approval).
 
         Valid from ``draft`` (first publish) and from ``approved`` (an
@@ -818,9 +864,11 @@ class RegistryService:
             snapshot = self._get_version(rule.rule_id, rule.version)
             if not self._compute_modified(rule, snapshot):
                 raise ValueError("No changes to submit")
-        return self._transition(rule_id, "pending_approval", user_email)
+        return self._transition(
+            rule_id, "pending_approval", user_email, rationale=rationale, as_submit=True
+        )
 
-    def approve(self, rule_id: str, user_email: str) -> RegistryRule:
+    def approve(self, rule_id: str, user_email: str, rationale: str | None = None) -> RegistryRule:
         """Approve (publish) a pending rule.
 
         Publishing bumps ``version`` (0 -> 1 on first publish) and writes a
@@ -834,16 +882,25 @@ class RegistryService:
         prev_status = rule.status
         rule.status = "approved"
         rule.version += 1
+        rule.pending_rationale = None
+        rule.last_decision_rationale = rationale
         rule.updated_by = user_email
         self._update(rule)
         self._write_version_snapshot(rule, user_email)
         self._record_history(
-            rule.rule_id, rule.definition, rule.version, "approve", prev_status, "approved", user_email
+            rule.rule_id,
+            rule.definition,
+            rule.version,
+            "approve",
+            prev_status,
+            "approved",
+            user_email,
+            rationale=rationale,
         )
         logger.info("Published registry rule %s as v%d", rule.rule_id, rule.version)
         return rule
 
-    def reject(self, rule_id: str, user_email: str) -> RegistryRule:
+    def reject(self, rule_id: str, user_email: str, rationale: str | None = None) -> RegistryRule:
         """Reject a pending rule — behaviour depends on whether it was ever published.
 
         Mirrors the Monitored Tables recovery semantics: rejecting the review
@@ -859,7 +916,9 @@ class RegistryService:
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         target: RuleStatus = "approved" if rule.version >= 1 else "rejected"
-        return self._transition(rule_id, target, user_email)
+        return self._transition(
+            rule_id, target, user_email, rationale=rationale, as_decision=True
+        )
 
     def revoke(self, rule_id: str, user_email: str) -> RegistryRule:
         """Revoke a pending submission back to a working state.
@@ -878,7 +937,7 @@ class RegistryService:
         if rule.status != "pending_approval":
             raise ValueError(f"Cannot revoke: rule is not pending approval (status={rule.status})")
         target: RuleStatus = "approved" if rule.version >= 1 else "draft"
-        return self._transition(rule_id, target, user_email)
+        return self._transition(rule_id, target, user_email, clear_pending_rationale=True)
 
     def deprecate(self, rule_id: str, user_email: str) -> RegistryRule:
         """Deprecate a published rule (approved -> deprecated)."""
@@ -888,7 +947,17 @@ class RegistryService:
         """Reinstate a deprecated rule (deprecated -> approved). Does not re-bump version."""
         return self._transition(rule_id, "approved", user_email)
 
-    def _transition(self, rule_id: str, new_status: RuleStatus, user_email: str) -> RegistryRule:
+    def _transition(
+        self,
+        rule_id: str,
+        new_status: RuleStatus,
+        user_email: str,
+        *,
+        rationale: str | None = None,
+        as_submit: bool = False,
+        as_decision: bool = False,
+        clear_pending_rationale: bool = False,
+    ) -> RegistryRule:
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
@@ -896,9 +965,24 @@ class RegistryService:
         prev_status = rule.status
         rule.status = new_status
         rule.updated_by = user_email
+        if as_submit:
+            rule.pending_rationale = rationale
+        elif as_decision:
+            rule.pending_rationale = None
+            rule.last_decision_rationale = rationale
+        elif clear_pending_rationale:
+            rule.pending_rationale = None
         self._update(rule)
+        history_rationale = rationale if (as_submit or as_decision) else None
         self._record_history(
-            rule.rule_id, rule.definition, rule.version, f"status:{new_status}", prev_status, new_status, user_email
+            rule.rule_id,
+            rule.definition,
+            rule.version,
+            f"status:{new_status}",
+            prev_status,
+            new_status,
+            user_email,
+            rationale=history_rationale,
         )
         logger.info("Registry rule %s transitioned %s -> %s", rule_id, prev_status, new_status)
         return rule
@@ -998,6 +1082,8 @@ class RegistryService:
             f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
             f"  steward = {self._opt_str(rule.steward)}, "
             f"  steward_display_name = {self._opt_str(rule.steward_display_name)}, "
+            f"  pending_rationale = {self._opt_str(rule.pending_rationale)}, "
+            f"  last_decision_rationale = {self._opt_str(rule.last_decision_rationale)}, "
             f"  updated_by = {self._opt_str(rule.updated_by)}, "
             f"  updated_at = now() "
             f"WHERE rule_id = '{e_rule_id}'"
@@ -1036,6 +1122,8 @@ class RegistryService:
         prev_status: str | None,
         new_status: str | None,
         user_email: str,
+        *,
+        rationale: str | None = None,
     ) -> None:
         """Insert an audit row into ``dq_rules_history`` (best-effort)."""
         try:
@@ -1046,9 +1134,11 @@ class RegistryService:
             )
             sql = (
                 f"INSERT INTO {self._history_table} "
-                "(rule_id, definition, version, action, prev_status, new_status, changed_by, changed_at) VALUES "
+                "(rule_id, definition, version, action, prev_status, new_status, changed_by, changed_at, rationale) "
+                "VALUES "
                 f"({self._opt_str(rule_id)}, {definition_sql}, {version}, '{escape_sql_string(action)}', "
-                f"{self._opt_str(prev_status)}, {self._opt_str(new_status)}, {self._opt_str(user_email)}, now())"
+                f"{self._opt_str(prev_status)}, {self._opt_str(new_status)}, {self._opt_str(user_email)}, now(), "
+                f"{self._opt_str(rationale)})"
             )
             self._sql.execute(sql)
         except Exception:
@@ -1080,6 +1170,8 @@ class RegistryService:
             updated_by=row[14],
             updated_at=self._parse_timestamp(row[15], rule_id=rule_id, field="updated_at"),
             steward_display_name=row[16] if len(row) > 16 else None,
+            pending_rationale=row[17] if len(row) > 17 else None,
+            last_decision_rationale=row[18] if len(row) > 18 else None,
         )
 
     def _row_to_version(self, row: list[str]) -> RuleVersion:

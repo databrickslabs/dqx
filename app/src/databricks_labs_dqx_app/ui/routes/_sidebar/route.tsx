@@ -20,7 +20,6 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { useRunFailureToasts } from "@/hooks/use-run-failure-toasts";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -32,10 +31,6 @@ export const Route = createFileRoute("/_sidebar")({
 function Layout() {
   const location = useLocation();
   const { t } = useTranslation();
-  // The global, all-tables Results surface is admin-gated and OFF by default
-  // (B2-20). Hide the nav item entirely until an admin enables it; per-object
-  // MT/TS/RR results tabs are unaffected.
-  const globalResultsEnabled = useGlobalResultsEnabled();
   // When approvals are disabled app-wide there is no review queue, so the
   // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
   const { mode: approvalsMode } = useApprovalsMode();
@@ -160,23 +155,19 @@ function Layout() {
 
             {/* Results — org-wide DQ results composition over all monitored
                 tables (dq-results endpoints). Visible to all; the backend
-                filters to the viewer's accessible catalogs. Admin-gated and
-                hidden by default (B2-20) — an admin opts in on the
-                Configuration page. When shown, it sits ABOVE Runs History. */}
-            {globalResultsEnabled && (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  isActive={location.pathname.startsWith("/results")}
-                  tooltip={t("sidebar.results")}
-                >
-                  <Link to="/results">
-                    <LineChart />
-                    <span>{t("sidebar.results")}</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
+                filters to the viewer's accessible catalogs. Sits ABOVE Runs History. */}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/results")}
+                tooltip={t("sidebar.results")}
+              >
+                <Link to="/results">
+                  <LineChart />
+                  <span>{t("sidebar.results")}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>

@@ -45,6 +45,17 @@ To import:
    committing. No data is changed by a test.
 4. Save. The rules are added to your Rules Registry as drafts.
 
+### Don't have YAML yet? Generate it
+
+If you know what you want to check but not how to write it, use **Generate with
+AI** above the editor: describe the checks in plain language and DQX Studio
+writes the YAML for you. It lands in the editor like any pasted file, so you can
+read and edit it before importing — nothing is saved until you do. Rules created
+this way are marked as AI-assisted in the registry, and edits you make by hand
+clear that mark.
+
+The option appears only when AI is configured and enabled for your workspace.
+
 <Admonition type="tip" title="What the format looks like">
 The YAML format matches DQX Core's storage format for checks, so files move
 between the two without translation. For the full syntax — every field and
@@ -88,7 +99,7 @@ To import:
 ### Choosing what to derive
 
 Before you import, a few options let you control which kinds of rules DQX Studio
-generates from the contract. The first three are on by default; the last is off.
+generates from the contract. All of them are on by default.
 
 - **Predefined rules from schema** *(on by default)* — reads the constraints the
   contract puts on each column and turns them into ordinary checks: *is not
@@ -105,10 +116,14 @@ generates from the contract. The first three are on by default; the last is off.
   **exact** column set, order, and types — nothing extra. Turn it off for
   permissive validation that allows additional columns and doesn't enforce
   order.
-- **Natural-language expectations** *(off by default)* — some contracts include
-  quality expectations written as free text. Switch this on to have AI turn
-  those sentences into checks. It's slower — each expectation is sent to a
-  language model — so it's off unless you ask for it.
+
+Import is deterministic: rules come only from the parts of a contract that are
+machine-checkable — property constraints and `library` or `sql` quality rules.
+Contracts sometimes also carry expectations written as free text (`type: text`).
+Those can't become a check without interpreting the prose, so they are skipped
+and reported in the generation warnings. To get such an expectation imported,
+express it in the contract as a `sql` or `library` quality rule instead, or
+author the check directly in Studio.
 
 <Admonition type="tip" title="Go deeper on data contracts">
 For the full picture of how DQX turns a contract into checks — including the

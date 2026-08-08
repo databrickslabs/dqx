@@ -554,8 +554,9 @@ class TestColumnResolution:
         _, kwargs = gateway.query.call_args
         user_prompt = kwargs["messages"][1]["content"]
         assert "tags" in user_prompt
-        # ARRAY classifies to the array family and reaches the judge payload.
-        assert "array" in user_prompt
+        # ARRAY columns classify as any (array family retired) and reach the judge payload.
+        assert '"family": "any"' in user_prompt
+        assert '"type": "ARRAY<STRING>"' in user_prompt
 
     async def test_falls_back_to_profile_when_uc_read_fails(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
@@ -649,3 +650,90 @@ class TestTopKAndSameColumnGuard:
 
         assert len(result.suggestions) == 1
         assert result.suggestions[0].column_mapping == {"column": "a"}
+
+
+class TestMatchFromQuery:
+    async def test_empty_query_unavailable(self, monitored_tables, registry, apply_rules):
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), _gateway())
+        result = await suggester.match_from_query("b1", "  ", "user@x")
+        assert result.available is False
+        assert "required" in result.reason.lower()
+
+    async def test_unknown_binding(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = None
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), _gateway())
+        result = await suggester.match_from_query("missing", "email must not be null", "user@x")
+        assert result.available is False
+        assert "missing" in result.reason
+
+    async def test_retriever_unavailable(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        retriever = FakeRetriever(available=False, reason="no embedding endpoint is configured")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+        result = await suggester.match_from_query("b1", "email must not be null", "user@x")
+        assert result.available is False
+        assert "embedding endpoint" in result.reason
+
+    async def test_below_threshold_returns_empty_matches(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.2)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+        result = await suggester.match_from_query("b1", "email must not be null", "user@x")
+        assert result.available is True
+        assert result.matches == []
+        assert result.reason
+
+    async def test_returns_mapped_match_with_score(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.91)])
+        gateway = _gateway(
+            {
+                "suggestions": [
+                    {
+                        "rule_id": "r1",
+                        "mapping": {"column": "email"},
+                        "explanation": "Checks nulls on email",
+                    }
+                ]
+            }
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+        result = await suggester.match_from_query("b1", "email must never be null", "user@x")
+        assert result.available is True
+        assert len(result.matches) == 1
+        match = result.matches[0]
+        assert match.rule_id == "r1"
+        assert match.score == pytest.approx(0.91)
+        assert match.column_mapping == {"column": "email"}
+        assert "email" in match.explanation.lower() or match.explanation
+
+    async def test_unmapped_hit_still_returned(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.8)])
+        # Judge returns empty suggestions → hit surfaces without mapping.
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway({"suggestions": []}))
+        result = await suggester.match_from_query("b1", "email must never be null", "user@x")
+        assert result.available is True
+        assert len(result.matches) == 1
+        assert result.matches[0].column_mapping is None
+        assert result.reason  # explains why one-click staging isn't available
+
+    async def test_skips_non_approved_rules(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        draft = _rule("r1", ["column"])
+        draft.status = "draft"
+        registry.get_rule.return_value = draft
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.95)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+        result = await suggester.match_from_query("b1", "email must never be null", "user@x")
+        assert result.available is True
+        assert result.matches == []

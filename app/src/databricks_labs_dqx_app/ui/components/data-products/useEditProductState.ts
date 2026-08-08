@@ -17,7 +17,6 @@ import {
   useUpdateDataProduct,
   useAddDataProductMember,
   useRemoveDataProductMember,
-  useSubmitDataProduct,
   useSetObjectGrant,
   useRemoveObjectGrant,
   getGetDataProductQueryKey,
@@ -28,6 +27,7 @@ import {
   type DataProductMemberOut,
   type UpdateDataProductIn,
 } from "@/lib/api";
+import { useSubmitDataProductWithRationale } from "@/lib/api-custom";
 import type { StewardGrantIntent } from "@/components/permissions/PermissionsTab";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -60,6 +60,7 @@ export function useEditProductState(product: DataProductOut) {
   // --- Local buffered state, seeded once from the server snapshot ---
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description ?? "");
+  const [notes, setNotes] = useState(product.notes ?? "");
   const [steward, setStewardLocal] = useState(product.steward ?? "");
   const [stewardDisplayName, setStewardDisplayNameLocal] = useState(product.steward_display_name ?? "");
   // Pending steward grant intent — stashed when the user confirms the
@@ -174,11 +175,12 @@ export function useEditProductState(product: DataProductOut) {
   const isDirty = useMemo(() => {
     if (name !== product.name) return true;
     if (description !== (product.description ?? "")) return true;
+    if (notes !== (product.notes ?? "")) return true;
     if (stewardDirty) return true;
     if (scheduleDirty) return true;
     if (membersDirty) return true;
     return false;
-  }, [name, description, product.name, product.description, stewardDirty, scheduleDirty, membersDirty]);
+  }, [name, description, notes, product.name, product.description, product.notes, stewardDirty, scheduleDirty, membersDirty]);
 
   // Save is blocked while the Schedule tab's raw-cron editor holds an
   // expression the backend scheduler can't parse — otherwise a PATCH would
@@ -205,7 +207,7 @@ export function useEditProductState(product: DataProductOut) {
   const updateMut = useUpdateDataProduct({ mutation: { onError: () => {} } });
   const addMut = useAddDataProductMember({ mutation: { onError: () => {} } });
   const removeMut = useRemoveDataProductMember({ mutation: { onError: () => {} } });
-  const submitMut = useSubmitDataProduct({ mutation: { onError: () => {} } });
+  const submitMut = useSubmitDataProductWithRationale({ mutation: { onError: () => {} } });
   const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
   const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
 
@@ -232,6 +234,10 @@ export function useEditProductState(product: DataProductOut) {
     }
     if (description !== (product.description ?? "")) {
       patch.description = description;
+      patchNeeded = true;
+    }
+    if (notes !== (product.notes ?? "")) {
+      patch.notes = notes.trim() || null;
       patchNeeded = true;
     }
     if (stewardDirty) {
@@ -316,6 +322,7 @@ export function useEditProductState(product: DataProductOut) {
     t,
     name,
     description,
+    notes,
     steward,
     stewardDisplayName,
     stewardDirty,
@@ -351,11 +358,12 @@ export function useEditProductState(product: DataProductOut) {
 
   /** Persist any staged edits, then submit the space for review
    *  (draft/rejected -> pending_approval). Mirrors the monitored-table
-   *  "Submit for review" flow. */
-  const handleSubmit = useCallback(async (): Promise<boolean> => {
+   *  "Submit for review" flow. Optional change rationale is stored on the
+   *  lifecycle event (pending_rationale), not in the comment thread. */
+  const handleSubmit = useCallback(async (rationale?: string | null): Promise<boolean> => {
     try {
       await persist();
-      await submitMut.mutateAsync({ productId: product.product_id });
+      await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
       bypassGuardRef.current = true;
       resyncRef.current = true;
       invalidate();
@@ -389,8 +397,10 @@ export function useEditProductState(product: DataProductOut) {
   return {
     name,
     description,
+    notes,
     setName,
     setDescription,
+    setNotes,
 
     steward,
     setSteward,

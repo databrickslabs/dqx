@@ -65,6 +65,9 @@ def _table_row(
     last_profiled_at: str | None = None,
     last_run_at: str | None = None,
     schedule_kind: str | None = "profiling_and_dq",
+    notes: str | None = None,
+    pending_rationale: str | None = None,
+    last_decision_rationale: str | None = None,
     score: str | None = None,
     failed_tests: str | None = None,
     total_tests: str | None = None,
@@ -73,10 +76,11 @@ def _table_row(
 ) -> list[str]:
     # ``schedule_kind`` (B2-52) is at index 13;
     # ``steward_display_name`` at index 14;
+    # notes / pending_rationale / last_decision_rationale at 15..17;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN columns
-    # (P3.4, indices 15..18) — all None when the table has never been scored.
-    # Index 19 is the version_state_json from the dq_monitored_table_versions
-    # LEFT JOIN. The single-row read paths select only the first 15 columns;
+    # (P3.4, indices 18..21) — all None when the table has never been scored.
+    # Index 22 is the version_state_json from the dq_monitored_table_versions
+    # LEFT JOIN. The single-row read paths select only the first 18 columns;
     # the extra cells are simply ignored by _row_to_table.
     return [
         binding_id,        # 0
@@ -94,11 +98,14 @@ def _table_row(
         "2026-07-02T00:00:00+00:00",  # 12 updated_at
         schedule_kind,     # 13
         steward_display_name,  # 14
-        score,             # 15
-        failed_tests,      # 16
-        total_tests,       # 17
-        score_computed_at, # 18
-        version_state_json,  # 19
+        notes,             # 15
+        pending_rationale,  # 16
+        last_decision_rationale,  # 17
+        score,             # 18
+        failed_tests,      # 19
+        total_tests,       # 20
+        score_computed_at, # 21
+        version_state_json,  # 22
     ]
 
 
@@ -456,6 +463,7 @@ class TestListMonitoredTables:
             ],
             [["b1", "3"]],  # applied-rule counts
             [["cat.schema.t1", "7"]],  # materialized-check counts
+            [],  # tag facets (bindings with applied rules)
         ]
         summaries = svc.list_monitored_tables()
         list_sql = sql.query.call_args_list[0][0][0]

@@ -1189,6 +1189,35 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  ADD COLUMN IF NOT EXISTS steward_display_name TEXT;"
         ),
     ),
+    PgMigration(
+        version=23,
+        description="Add notes + change-rationale columns (object notes; submit/approve/reject rationale)",
+        sql=(
+            # Object Notes (sticky ops field) + lifecycle rationale fields.
+            # Rule "notes" live in user_metadata (RESERVED_NOTES_KEY); only
+            # monitored tables / products get a notes column. Rationale is
+            # stored on the entity for pending banners + on dq_rules_history
+            # for audit.
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS notes TEXT;"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS pending_rationale TEXT;"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS last_decision_rationale TEXT;"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD COLUMN IF NOT EXISTS notes TEXT;"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD COLUMN IF NOT EXISTS pending_rationale TEXT;"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD COLUMN IF NOT EXISTS last_decision_rationale TEXT;"
+            f"ALTER TABLE {_S}.dq_rules "
+            "  ADD COLUMN IF NOT EXISTS pending_rationale TEXT;"
+            f"ALTER TABLE {_S}.dq_rules "
+            "  ADD COLUMN IF NOT EXISTS last_decision_rationale TEXT;"
+            f"ALTER TABLE {_S}.dq_rules_history "
+            "  ADD COLUMN IF NOT EXISTS rationale TEXT;"
+        ),
+    ),
 ]
 
 

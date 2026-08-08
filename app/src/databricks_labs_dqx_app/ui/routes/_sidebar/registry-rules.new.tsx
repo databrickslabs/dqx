@@ -22,18 +22,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { getListRegistryRulesQueryKey } from "@/lib/api";
+import { getListRegistryRulesQueryKey, type AiGenerateRuleOut } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import {
   RegistryRuleFormDialog,
   type PageTab,
 } from "@/components/RegistryRuleFormDialog";
+import {
+  isAllowedReturnTo,
+  parseMonitoredTableReturnTo,
+  takeDescribeRuleProposal,
+} from "@/components/apply-rules/describe-rule-handoff";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_sidebar/registry-rules/new")({
-  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { tab?: string; returnTo?: string } => ({
     tab: typeof search.tab === "string" ? search.tab : undefined,
+    returnTo:
+      typeof search.returnTo === "string" && isAllowedReturnTo(search.returnTo)
+        ? search.returnTo
+        : undefined,
   }),
   component: RegistryRuleCreatePage,
 });
@@ -42,10 +51,13 @@ function RegistryRuleCreatePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { tab } = useSearch({ from: "/_sidebar/registry-rules/new" });
+  const { tab, returnTo } = useSearch({ from: "/_sidebar/registry-rules/new" });
 
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
+
+  // Read once on mount — takeDescribeRuleProposal clears sessionStorage.
+  const [initialAiProposal] = useState<AiGenerateRuleOut | null>(() => takeDescribeRuleProposal());
 
   const [isDirty, setIsDirty] = useState(false);
   // "As JSON" edit-in-place dialog — opened from the ⋮ overflow menu below and
@@ -73,13 +85,22 @@ function RegistryRuleCreatePage() {
     (ruleId?: string) => {
       justSavedRef.current = true;
       queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() });
+      const back = returnTo ? parseMonitoredTableReturnTo(returnTo) : null;
+      if (back) {
+        void navigate({
+          to: "/monitored-tables/$bindingId",
+          params: { bindingId: back.bindingId },
+          search: back.search,
+        });
+        return;
+      }
       if (ruleId) {
         navigate({ to: "/registry-rules/$ruleId", params: { ruleId } });
       } else {
         backToList();
       }
     },
-    [queryClient, navigate, backToList],
+    [queryClient, navigate, backToList, returnTo],
   );
 
   // Page title, passed to the form as `headerTitle` so it renders on the LEFT
@@ -148,6 +169,7 @@ function RegistryRuleCreatePage() {
           onJsonDialogOpenChange={setFormJsonDialogOpen}
           headerActions={headerActions}
           headerTitle={headerTitle}
+          initialAiProposal={initialAiProposal}
         />
       </div>
 

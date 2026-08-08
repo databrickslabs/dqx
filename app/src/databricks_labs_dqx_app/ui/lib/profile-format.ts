@@ -79,3 +79,50 @@ export function fmtPct(num: number, total: number | null | undefined): string {
   if (p >= 10) return `${p.toFixed(0)}%`;
   return `${p.toFixed(1)}%`;
 }
+
+/** Reserved summary key for LLM primary-key detection — not a column. */
+export const LLM_PK_SUMMARY_KEY = "llm_primary_key_detection";
+
+/** Pull per-column stat objects out of a profiler ``summary`` dict. */
+export function columnStatsFromSummary(
+  summary: Record<string, unknown> | null | undefined,
+): Record<string, Record<string, unknown>> {
+  if (!summary) return {};
+  const entries = Object.entries(summary).filter(
+    (e): e is [string, Record<string, unknown>] =>
+      e[0] !== LLM_PK_SUMMARY_KEY &&
+      typeof e[1] === "object" &&
+      e[1] !== null &&
+      !Array.isArray(e[1]),
+  );
+  return Object.fromEntries(entries);
+}
+
+/** Compact null / completeness / distinct helpers for schema tables. */
+export function columnProfilePercents(
+  stats: Record<string, unknown> | undefined,
+  rowCount: number | null | undefined,
+): { nullPct: string; completePct: string; distinctPct: string } {
+  if (!stats) return { nullPct: "—", completePct: "—", distinctPct: "—" };
+  const total = (stats.count as number | undefined) ?? rowCount ?? null;
+  const nulls = (stats.count_null as number | undefined) ?? null;
+  const nonNull = (stats.count_non_null as number | undefined) ?? null;
+  const distinct = (stats.count_distinct as number | undefined) ?? null;
+  return {
+    nullPct: nulls == null ? "—" : fmtPct(nulls, total),
+    completePct: nonNull == null ? "—" : fmtPct(nonNull, total),
+    distinctPct:
+      distinct == null
+        ? "—"
+        : total != null && total > 0
+          ? fmtPct(distinct, total)
+          : compactNumber(distinct),
+  };
+}
+
+/** Human duration for profile run headers (seconds → ``45s`` / ``2m 3s``). */
+export function formatProfileDuration(seconds: number | null | undefined): string {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}

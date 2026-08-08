@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,9 +11,9 @@ import {
   ChevronRight,
   ExternalLink,
   FileText,
+  ListChecks,
   Loader2,
   Play,
-  Sparkles,
   Upload,
   X,
   XCircle,
@@ -69,8 +69,6 @@ import {
 import { normalizeImportedCheck, parseChecksForImport } from "@/lib/import-registry-rules";
 import { resolveCriticality, severityValueCriticality } from "@/lib/registry-rule-conversion";
 import { orderSeverityValuesForDisplay, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
-import { AI_BUTTON_BG } from "@/lib/ai-style";
-import { cn } from "@/lib/utils";
 import { buildSlotMapping } from "@/lib/slot-mapping";
 import {
   aggregateByContract,
@@ -83,6 +81,7 @@ import {
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { OptionRow } from "@/routes/_sidebar/rules.from-contract";
+import { usePermissions } from "@/hooks/use-permissions";
 
 // Above this many tables we confirm before kicking off the (synchronous,
 // per-rule) execute loop, mirroring the ApplyRuleModal "many tables" guard.
@@ -132,8 +131,9 @@ function readFileText(file: File): Promise<string> {
  *
  * Upload N ODCS contracts, preview a per-table plan (FQN resolution +
  * auto-map coverage), then in one action register the monitored tables,
- * create the registry rules (submitting for review), and auto-apply the ones
- * that come back approved and whose slots name-match the target columns.
+ * create the registry rules (fingerprint-deduped; submit for review, or
+ * auto-approve when the caller opts in and holds an approver role), and
+ * auto-apply the ones whose slots name-match the target columns.
  * Everything is sequenced over existing endpoints — same pattern as
  * ApplyRuleModal — so there's no net-new async/job infrastructure.
  */
@@ -141,6 +141,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { canApproveRules } = usePermissions();
 
   const [files, setFiles] = useState<ContractFileInput[]>([]);
   const [targetCatalog, setTargetCatalog] = useState<string>("");
@@ -149,9 +150,11 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
   const [generatePredefined, setGeneratePredefined] = useState(true);
   const [generateSchemaValidation, setGenerateSchemaValidation] = useState(true);
   const [strictSchema, setStrictSchema] = useState(true);
-  const [processTextRules, setProcessTextRules] = useState(false);
   // App-severity axis (Low/Medium/High/Critical), not raw DQX error/warn.
   const [defaultSeverity, setDefaultSeverity] = useState<string>("High");
+  // Approvers only: publish imported rules outright so mapped ones apply
+  // immediately instead of waiting in the approval queue.
+  const [skipApproval, setSkipApproval] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("config");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -244,7 +247,6 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           const resp = await generateRulesFromContract({
             contract_text: file.text,
             generate_predefined_rules: generatePredefined,
-            process_text_rules: processTextRules,
             generate_schema_validation: generateSchemaValidation,
             strict_schema_validation: strictSchema,
             default_criticality: resolveCriticality(defaultSeverity, severityVc),
@@ -395,9 +397,12 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           try {
             // skip_duplicates keeps re-imports idempotent: a structurally
             // identical active rule is reused instead of creating a copy.
+            // auto_approve (approvers only) publishes rules so mapped ones
+            // apply immediately; otherwise also_submit queues them for review.
             const resp = await batchImportRegistryRulesWithDedup({
               rules: ruleChunk,
               also_submit: true,
+              auto_approve: skipApproval && canApproveRules,
               skip_duplicates: true,
             });
             const created = resp.data.created ?? [];
@@ -719,8 +724,11 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           <CardTitle className="text-base">{t("rulesBulkImport.options.title")}</CardTitle>
           <CardDescription>{t("rulesBulkImport.options.description")}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+        <CardContent className="space-y-5">
+          <OptionGroup
+            title={t("rulesBulkImport.options.groupSchemaTitle")}
+            description={t("rulesBulkImport.options.groupSchemaHint")}
+          >
             <OptionRow
               checked={generatePredefined}
               onChange={setGeneratePredefined}
@@ -742,14 +750,14 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
               label={t("rulesFromContract.options.strict")}
               hint={t("rulesFromContract.options.strictHint")}
             />
-            <OptionRow
-              checked={processTextRules}
-              onChange={setProcessTextRules}
-              disabled={busy}
-              ai
-              label={t("rulesFromContract.options.textRules")}
-              hint={t("rulesFromContract.options.textRulesHint")}
-            />
+          </OptionGroup>
+
+          <Separator />
+
+          <OptionGroup
+            title={t("rulesBulkImport.options.groupPublishingTitle")}
+            description={t("rulesBulkImport.options.groupPublishingHint")}
+          >
             <div className="flex items-start gap-3 rounded-lg border p-3">
               <div className="flex-1 space-y-1">
                 <div className="text-sm font-medium">
@@ -776,16 +784,25 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
                 </SelectContent>
               </Select>
             </div>
-          </div>
+            {canApproveRules && (
+              <OptionRow
+                checked={skipApproval}
+                onChange={setSkipApproval}
+                disabled={busy}
+                label={t("rulesBulkImport.options.skipApproval")}
+                hint={t("rulesBulkImport.options.skipApprovalHint")}
+              />
+            )}
+          </OptionGroup>
 
           <Separator />
 
           <div className="flex items-center justify-end">
-            <Button onClick={buildPreview} disabled={busy} className={cn("gap-2", AI_BUTTON_BG)}>
+            <Button onClick={buildPreview} disabled={busy} className="gap-2">
               {isGenerating ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Sparkles className="h-4 w-4" />
+                <ListChecks className="h-4 w-4" />
               )}
               {t("rulesBulkImport.generate")}
             </Button>
@@ -793,6 +810,32 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/** A titled group of generation options. The flat single grid grew past the
+ *  point where a steward could tell which toggles affect rule generation vs.
+ *  how the results get labelled/released, so the options are split into
+ *  labelled sections instead. */
+function OptionGroup({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2.5">
+      <div className="space-y-0.5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {title}
+        </h3>
+        {description && <p className="text-xs text-muted-foreground/80">{description}</p>}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">{children}</div>
+    </section>
   );
 }
 

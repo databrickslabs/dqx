@@ -212,7 +212,8 @@ def test_default_inherit_get_and_set():
     perms = _perms_mock()
     perms.get_default_inherit.return_value = True
     assert get_default_inherit(perms).enabled is True
-    perms.set_default_inherit.return_value = False
+    # Cascade default stays ON even if a caller tries to turn it off.
+    perms.set_default_inherit.return_value = True
     out = set_default_inherit(SetPermissionsDefaultInheritIn(enabled=False), "admin@x.com", perms)
-    assert out.enabled is False
+    assert out.enabled is True
     perms.set_default_inherit.assert_called_once()

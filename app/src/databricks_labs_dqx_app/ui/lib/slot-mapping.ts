@@ -5,7 +5,7 @@ import type { ColumnOut, RuleSlot, RuleSlotFamily } from "@/lib/api";
  * respect a slot's declared family when auto-matching a same-named column
  * (Rules Registry Phase 7D-d "Apply to tables" flow). Deliberately
  * conservative: an unrecognized type (arrays, structs, binary, etc.) falls
- * back to no family match, so it only ever satisfies an "any" slot.
+ * back to ``any``, so it only ever satisfies an "any" slot.
  */
 export function familyForSparkType(typeName: string): RuleSlotFamily {
   const normalized = typeName.trim().toLowerCase();
@@ -13,7 +13,6 @@ export function familyForSparkType(typeName: string): RuleSlotFamily {
   if (/^(string|varchar|char)/.test(normalized)) return "text";
   if (/^(date|timestamp)/.test(normalized)) return "temporal";
   if (normalized === "boolean") return "boolean";
-  if (normalized.startsWith("array")) return "array";
   return "any";
 }
 

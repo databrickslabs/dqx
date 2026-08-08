@@ -104,6 +104,9 @@ export function RegistryRuleJsonDialog({
           user_metadata: parsed.userMetadata,
           steward: rule.steward ?? null,
           author_kind: rule.author_kind ?? "human",
+          // Clone of an existing rule — fingerprint will match the source;
+          // allow it without a second confirm (the steward already chose clone).
+          allow_duplicate: true,
         },
       });
       toast.success(t("rulesRegistry.toastDraftCopyCreated"));

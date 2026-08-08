@@ -126,7 +126,7 @@ class TestFamilyForColumnParam:
             ("is_not_in_future", "temporal"),
             ("is_data_fresh", "temporal"),
             ("has_no_outliers", "numeric"),
-            ("is_not_null_and_not_empty_array", "array"),
+            ("is_not_null_and_not_empty_array", "any"),
         ],
     )
     def test_typed_checks_imply_their_family(self, fn_name: str, expected: str) -> None:
@@ -341,9 +341,9 @@ class TestIntrospectCheckFunctions:
         col_families = {p.name: p.family for p in fn.params if p.kind == "column"}
         assert col_families == {"column1": "temporal", "column2": "temporal"}
 
-    def test_array_check_types_its_column_slot(self) -> None:
+    def test_array_check_types_its_column_slot_as_any(self) -> None:
         fn = self._by_name("is_not_null_and_not_empty_array")
-        assert fn.params[0].family == "array"
+        assert fn.params[0].family == "any"
 
     def test_polymorphic_check_column_stays_any(self) -> None:
         fn = self._by_name("is_not_null")

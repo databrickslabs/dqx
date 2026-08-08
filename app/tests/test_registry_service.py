@@ -47,6 +47,8 @@ def _row_for(
     status: str | None = None,
     version: int | None = None,
     steward_display_name: str | None = None,
+    pending_rationale: str | None = None,
+    last_decision_rationale: str | None = None,
 ) -> list[str]:
     """Build a SELECT row matching ``RegistryService._build_select_cols`` order."""
     return [
@@ -67,6 +69,8 @@ def _row_for(
         rule.updated_by,
         "2026-07-02T00:00:00+00:00",
         steward_display_name if steward_display_name is not None else rule.steward_display_name,
+        pending_rationale if pending_rationale is not None else rule.pending_rationale,
+        last_decision_rationale if last_decision_rationale is not None else rule.last_decision_rationale,
     ]
 
 
@@ -206,7 +210,7 @@ class TestCreateRule:
         calls = [c.args[0] for c in sql.execute.call_args_list]
         assert any("dq_rules_history" in c for c in calls)
 
-    def test_dedup_warning_when_published_rule_shares_fingerprint(self, svc, sql):
+    def test_dedup_blocks_when_published_rule_shares_fingerprint(self, svc, sql):
         existing_definition = _native_definition()
         published = None
 
@@ -221,6 +225,7 @@ class TestCreateRule:
         # simulate that an *existing* published rule shares it.
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
         from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+        from databricks_labs_dqx_app.backend.services.registry_service import DuplicateRegistryRuleError
 
         published = RegistryRule(
             rule_id="existing1",
@@ -233,10 +238,46 @@ class TestCreateRule:
         published.fingerprint = compute_registry_rule_fingerprint(published)
 
         sql.query.side_effect = fake_query
-        rule, warning = svc.create_rule(mode="dqx_native", definition=existing_definition, user_email="bob@x")
+        with pytest.raises(DuplicateRegistryRuleError) as exc_info:
+            svc.create_rule(mode="dqx_native", definition=existing_definition, user_email="bob@x")
+        assert "existing1" in str(exc_info.value)
+        assert exc_info.value.existing_rule_id == "existing1"
+        # Nothing inserted when blocked.
+        assert sql.execute.call_count == 0
+
+    def test_dedup_allowed_when_allow_duplicate_true(self, svc, sql):
+        existing_definition = _native_definition()
+        published = None
+
+        def fake_query(query_sql):
+            nonlocal published
+            if "fingerprint" in query_sql and "approved" in query_sql:
+                assert published is not None
+                return [_row_for(published)]
+            return []
+
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+
+        published = RegistryRule(
+            rule_id="existing1",
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            definition=existing_definition,
+            user_metadata={"name": "Existing Rule"},
+        )
+        published.fingerprint = compute_registry_rule_fingerprint(published)
+
+        sql.query.side_effect = fake_query
+        rule, warning = svc.create_rule(
+            mode="dqx_native",
+            definition=existing_definition,
+            user_email="bob@x",
+            allow_duplicate=True,
+        )
         assert warning is not None
         assert "existing1" in warning
-        # Creation still succeeds despite the warning.
         assert rule.status == "draft"
 
     def test_clones_non_draft_rule_into_editable_draft(self, svc, sql):

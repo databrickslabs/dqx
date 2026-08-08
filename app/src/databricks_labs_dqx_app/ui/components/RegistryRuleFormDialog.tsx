@@ -122,11 +122,10 @@ import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
 import { stripSqlLineComments } from "@/lib/sqlComments";
 import { mergeCarriedSlotsIntoSignature } from "@/lib/slotCarry";
-import type { LabelDefinition } from "@/lib/api-custom";
+import { useSubmitRegistryRuleWithRationale, type LabelDefinition } from "@/lib/api-custom";
 import {
   useCreateRegistryRule,
   useUpdateRegistryRule,
-  useSubmitRegistryRule,
   useListRegistryRuleVersions,
   useGetRuleScore,
   useListCheckFunctions,
@@ -148,6 +147,7 @@ import {
   type CreateRegistryRuleInAuthorKind,
   type AiGenerateRuleOut,
 } from "@/lib/api";
+import { LifecycleRationaleDialog } from "@/components/LifecycleRationaleDialog";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import {
@@ -181,12 +181,12 @@ import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/Registry
 import { SqlAiAssistMenu } from "@/components/rules/SqlAiAssistMenu";
 import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
-import { useRulesResultsTabEnabled } from "@/hooks/use-global-results-enabled";
 import { computeMergeColumnsAutofill } from "@/lib/mergeColumnsAutofill";
 import { AI_EXAMPLE_COUNT, pickAiExampleKey } from "@/lib/aiExamplePrompt";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
+const RESERVED_NOTES_KEY = "notes";
 const RESERVED_DIMENSION_KEY = "dimension";
 const RESERVED_SEVERITY_KEY = "severity";
 const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
@@ -1063,7 +1063,7 @@ function ReferenceColumnsField({
   );
 }
 
-const SLOT_FAMILIES: RuleSlotFamilyType[] = ["any", "numeric", "text", "temporal", "boolean", "array"];
+const SLOT_FAMILIES: RuleSlotFamilyType[] = ["any", "numeric", "text", "temporal", "boolean"];
 const SLOT_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 function nextSlotName(existing: string[], stem = "column"): string {
@@ -1229,7 +1229,7 @@ function mergeAiDeclaredSlots(
 }
 
 /**
- * "Columns used" slot-declaration panel, ported from the dqlake
+ * "Variable Columns" slot-declaration panel, ported from the dqlake
  * `ColumnsUsedPanel`. Shared by all three authoring modes: SQL / Low-Code
  * authors freely add/remove/rename/retype `{{slot}}` placeholders their
  * predicate references (`allowAddRemove={true}`, the default — every row is
@@ -1243,6 +1243,8 @@ function mergeAiDeclaredSlots(
  * group (down to a minimum of one, since the function still needs at least
  * one column), while every other native slot stays fixed. `expandableArgKey`
  * is ignored when `allowAddRemove` is already `true`.
+ *
+ * Rows are flat — name is edited inline on the card (no expand/collapse).
  */
 function SlotsPanel({
   value,
@@ -1279,32 +1281,7 @@ function SlotsPanel({
   addDisabledReason?: string;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState<number | null>(null);
   const [singleColPopoverOpen, setSingleColPopoverOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (expanded === null) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (rootRef.current?.contains(target)) return;
-      // Ignore clicks inside any portaled Radix overlay: popper-positioned
-      // content exposes `data-radix-popper-content-wrapper`, but an
-      // item-aligned Select's content is portaled without that wrapper — match
-      // its `data-slot="select-content"` / `role="listbox"` too so committing a
-      // selection in such a Select doesn't collapse the slot editor mid-click.
-      if (
-        target.closest(
-          '[data-radix-popper-content-wrapper], [data-slot="select-content"], [role="listbox"]',
-        )
-      )
-        return;
-      setExpanded(null);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [expanded]);
 
   const familyLabel = (f: RuleSlotFamilyType): string =>
     ({
@@ -1312,7 +1289,6 @@ function SlotsPanel({
       text: t("rulesRegistry.slotFamilyText"),
       temporal: t("rulesRegistry.slotFamilyTemporal"),
       boolean: t("rulesRegistry.slotFamilyBoolean"),
-      array: t("rulesRegistry.slotFamilyArray"),
       any: t("rulesRegistry.slotFamilyAny"),
     })[f];
 
@@ -1352,7 +1328,6 @@ function SlotsPanel({
     const next = value.slice();
     next.splice(i, 1);
     onChange(next.map((s, idx) => ({ ...s, position: idx })));
-    if (expanded === i) setExpanded(null);
     // Drop the removed slot's tag entry so it never dangles as an orphan.
     if (removedName !== undefined && slotTags[removedName] !== undefined) {
       const updated = { ...slotTags };
@@ -1377,7 +1352,6 @@ function SlotsPanel({
     const name = nextSlotName(value.map((s) => s.name));
     const arg_key = allowAddRemove ? undefined : expandableArgKey;
     onChange([...value, { name, family: "any", position: value.length, cardinality: "one", arg_key }]);
-    setExpanded(value.length);
   };
 
   // When the function is single-column arity, clicking "+ Add column" first
@@ -1394,14 +1368,14 @@ function SlotsPanel({
   };
 
   return (
-    <div ref={rootRef} className="space-y-2">
+    <div className="space-y-2">
       <SectionHeader
         tooltip={t("rulesRegistry.slotsPanelTooltip")}
         action={
           // Always reserve the add-button's footprint when the panel isn't
           // fully disabled (read-only), even when this mode's arity is fixed
           // (DQX Native with no expandable list argument) — otherwise the
-          // "Columns used" header sits at a different height than in SQL/
+          // "Variable Columns" header sits at a different height than in SQL/
           // Low-Code, which do show a real button here.
           !disabled ? (
             addDisabledReason ? (
@@ -1473,114 +1447,77 @@ function SlotsPanel({
           <p className="text-xs text-muted-foreground py-1">{t("rulesRegistry.slotsPanelEmpty")}</p>
         )}
         {value.map((slot, i) => {
-          const isOpen = expanded === i;
           const nameOk = SLOT_NAME_PATTERN.test(slot.name);
           const removable = canRemoveSlot(slot, i);
           return (
             <div
               key={i}
-              className={cn(
-                "border rounded-md bg-muted/30 transition-colors",
-                !disabled && "cursor-pointer",
-                isOpen && "bg-background border-primary/40",
-              )}
-              onClick={() => !disabled && setExpanded(isOpen ? null : i)}
+              className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3"
             >
-              <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2 min-h-[2.5rem]">
-                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                  {/* The row expands to the rename field, but nothing said so —
-                      the same invisible affordance that hid the type control. */}
-                  {!disabled && (
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={cn(
-                        "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-                        isOpen && "rotate-180",
-                      )}
-                    />
-                  )}
-                  <code className={cn("text-xs mr-1", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
-                  <SlotTagRegion
-                    tags={slotTags[slot.name] ?? []}
-                    disabled={disabled}
-                    onAddTag={(tag) => addTagToSlot(slot.name, tag)}
-                    onRemoveTag={(tag) => removeTagFromSlot(slot.name, tag)}
-                  />
-                </div>
-                {/* The slot's TYPE, editable in place. It used to be a read-only
-                    badge with the Select hidden in the row's expandable detail,
-                    and since the row has no disclosure chevron there was nothing
-                    to suggest a type could be changed at all — picking "Table"
-                    (a reference-table slot) was effectively undiscoverable.
-                    stopPropagation so opening the dropdown doesn't also toggle
-                    the row. */}
-                {disabled || lockFamily ? (
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant="outline" className="text-[10px] font-medium">
-                      {familyLabel(slot.family)}
-                    </Badge>
-                    {lockFamily && !disabled && <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />}
-                  </div>
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                {/* Inline rename: click the name and type. Braces stay as
+                    chrome so the row still reads as a {{slot}} placeholder. */}
+                {disabled ? (
+                  <code className={cn("text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
                 ) : (
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <Select
-                      value={slot.family}
-                      onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}
-                    >
-                      <SelectTrigger className="h-6 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent position="popper">
-                        {SLOT_FAMILIES.map((f) => (
-                          <SelectItem key={f} value={f} className="text-xs">
-                            {familyLabel(f)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {!disabled && removable && (
-                  <button
-                    type="button"
-                    aria-label={t("rulesRegistry.slotsPanelRemove")}
-                    className="text-muted-foreground hover:text-destructive transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeAt(i);
-                    }}
+                  <label
+                    className={cn(
+                      "inline-flex items-center gap-0 font-mono text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
+                      !nameOk && "text-destructive",
+                    )}
+                    aria-label={t("rulesRegistry.slotsPanelNameLabel")}
                   >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                    <span className="text-muted-foreground select-none">{"{{"}</span>
+                    <input
+                      value={slot.name}
+                      onChange={(e) => setAt(i, { name: e.target.value })}
+                      className="bg-transparent outline-none min-w-[4ch] max-w-[14rem]"
+                      size={Math.max(slot.name.length || 1, 4)}
+                      spellCheck={false}
+                    />
+                    <span className="text-muted-foreground select-none">{"}}"}</span>
+                  </label>
                 )}
+                <SlotTagRegion
+                  tags={slotTags[slot.name] ?? []}
+                  disabled={disabled}
+                  onAddTag={(tag) => addTagToSlot(slot.name, tag)}
+                  onRemoveTag={(tag) => removeTagFromSlot(slot.name, tag)}
+                />
               </div>
-              {!disabled && (
-                // Animate the detail open/close via the grid-rows trick (0fr↔1fr),
-                // matching AdvancedDisclosure — smooth on both expand and collapse.
-                <div
-                  className={cn(
-                    "grid transition-[grid-template-rows] duration-200 ease-out",
-                    isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-                  )}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="overflow-hidden">
-                    {/* Only the NAME lives here now — the type moved up to the row
-                        itself so it is visible and changeable without expanding. */}
-                    <div className="px-3 pb-3 pt-2 border-t">
-                      <div className="space-y-1 max-w-xs">
-                        <Label className="text-[11px] text-muted-foreground">
-                          {t("rulesRegistry.slotsPanelNameLabel")}
-                        </Label>
-                        <Input
-                          value={slot.name}
-                          onChange={(e) => setAt(i, { name: e.target.value })}
-                          className="font-mono text-xs h-8"
-                        />
-                      </div>
-                    </div>
-                  </div>
+              {disabled || lockFamily ? (
+                <div className="flex items-center gap-1.5">
+                  <Badge variant="outline" className="text-[10px] font-medium">
+                    {familyLabel(slot.family)}
+                  </Badge>
+                  {lockFamily && !disabled && <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />}
                 </div>
+              ) : (
+                <Select
+                  value={slot.family}
+                  onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}
+                >
+                  <SelectTrigger className="h-6 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {SLOT_FAMILIES.map((f) => (
+                      <SelectItem key={f} value={f} className="text-xs">
+                        {familyLabel(f)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {!disabled && removable && (
+                <button
+                  type="button"
+                  aria-label={t("rulesRegistry.slotsPanelRemove")}
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                  onClick={() => removeAt(i)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
           );
@@ -1642,6 +1579,12 @@ interface RegistryRuleFormDialogProps {
    * Ignored in the dialog variant (which renders its own DialogTitle).
    */
   headerTitle?: ReactNode;
+  /**
+   * Optional AI proposal to apply once on mount (describe-a-rule handoff from
+   * a monitored table). Cleared by the parent after pass; the form applies it
+   * via the same path as Build-with-AI.
+   */
+  initialAiProposal?: AiGenerateRuleOut | null;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -1673,6 +1616,7 @@ function stableStringify(value: unknown): string {
 interface RuleEditSnapshot {
   name: string;
   description: string;
+  notes: string;
   dimension: string;
   severity: string;
   passThreshold: number | null;
@@ -1716,7 +1660,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   };
   const tags: Record<string, string> = {};
   for (const [k, v] of Object.entries(md)) {
-    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
+    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_NOTES_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
     if (typeof v === "string") tags[k] = v;
   }
   const isNative = rule.mode === "dqx_native";
@@ -1737,6 +1681,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   return {
     name: asString(RESERVED_NAME_KEY),
     description: asString(RESERVED_DESCRIPTION_KEY),
+    notes: asString(RESERVED_NOTES_KEY),
     dimension: asString(RESERVED_DIMENSION_KEY),
     severity: asString(RESERVED_SEVERITY_KEY),
     passThreshold: asIntOrNull(RESERVED_PASS_THRESHOLD_KEY),
@@ -1781,6 +1726,7 @@ const seededFirstLowcodeRow = (columnRef: string): AnyRow => ({
 const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   name: "",
   description: "",
+  notes: "",
   dimension: "",
   severity: "",
   passThreshold: null,
@@ -1816,6 +1762,7 @@ export function RegistryRuleFormDialog({
   onJsonDialogOpenChange,
   headerActions,
   headerTitle,
+  initialAiProposal = null,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   // Pick one example prompt per dialog open — empty deps so it doesn't reshuffle on keystrokes.
@@ -1948,6 +1895,7 @@ export function RegistryRuleFormDialog({
   const [polarity, setPolarity] = useState<Polarity>("pass");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [notes, setNotes] = useState("");
   const [dimension, setDimension] = useState<string>("");
   const [severity, setSeverity] = useState<string>("");
   const [passThreshold, setPassThreshold] = useState<number | null>(null);
@@ -1958,6 +1906,13 @@ export function RegistryRuleFormDialog({
   // steward and confirms the popup.  Consumed (and cleared) in handleSave
   // right after the rule is persisted.  null = no pending grant.
   const [stewardGrantIntent, setStewardGrantIntent] = useState<StewardGrantIntent | null>(null);
+  // Stashed when create returns HTTP 409 duplicate_rule — steward must confirm
+  // before we re-submit with allow_duplicate=true.
+  const [pendingDuplicateConfirm, setPendingDuplicateConfirm] = useState<{
+    message: string;
+    thenSubmit: boolean;
+    rationale?: string | null;
+  } | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
   const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
@@ -2031,6 +1986,7 @@ export function RegistryRuleFormDialog({
     };
     setName(asString(RESERVED_NAME_KEY));
     setDescription(asString(RESERVED_DESCRIPTION_KEY));
+    setNotes(asString(RESERVED_NOTES_KEY));
     setDimension(asString(RESERVED_DIMENSION_KEY));
     setSeverity(asString(RESERVED_SEVERITY_KEY));
     setPassThreshold(asIntOrNull(RESERVED_PASS_THRESHOLD_KEY));
@@ -2053,7 +2009,7 @@ export function RegistryRuleFormDialog({
     setPendingNativeSlots(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
-      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_NOTES_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
       if (typeof v === "string") freeTags[k] = v;
     }
     setTags(freeTags);
@@ -2230,13 +2186,17 @@ export function RegistryRuleFormDialog({
   const queryClient = useQueryClient();
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
-  const submitMutation = useSubmitRegistryRule();
+  const submitMutation = useSubmitRegistryRuleWithRationale();
   const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
   const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
   // When the approvals mode will auto-approve this user's submit (#94), the
   // submit buttons publish in one step — relabel them accordingly.
   const { willAutoApprove } = useApprovalsMode();
   const [saving, setSaving] = useState(false);
+  // Submit/save-and-submit open the shared rationale dialog first; the pending
+  // mode tells onConfirm whether to PATCH-then-submit or submit-only.
+  const [submitRationaleOpen, setSubmitRationaleOpen] = useState(false);
+  const [pendingSubmitMode, setPendingSubmitMode] = useState<"saveAndSubmit" | "submitOnly" | null>(null);
 
   // Published version lineage for the History tab. Only queried for a rule
   // that has been published at least once (version > 0) and while the dialog
@@ -2264,15 +2224,11 @@ export function RegistryRuleFormDialog({
   // explanatory tooltip + click-to-retry — previously it was silently
   // disabled, indistinguishable from the still-loading state (P3.6).
   const resultsScoreError = ruleScoreQuery.isError;
-  // Disabled while there's no saved rule (create flow, like History) or the
-  // score hasn't loaded yet — the tooltip only shows for the definitive
-  // "not applied anywhere" / fetch-error states.
+  // Disabled while there's no saved rule (create flow, like History), the
+  // score hasn't loaded yet, or the rule isn't applied anywhere. Tooltip
+  // covers new / not-applied / fetch-error; loading alone stays silently disabled.
   const resultsDisabled = !sourceRule || ruleScore === undefined || resultsNotApplied;
-  // Item 35: the per-rule Results tab is admin-gated and OFF by default. When
-  // the admin hasn't opted in, the trigger + its content (and its leading
-  // divider) are hidden entirely — the trailing observability group collapses
-  // to just Test / History, matching the tables/spaces tab strips.
-  const rulesResultsTabEnabled = useRulesResultsTabEnabled();
+  const resultsNeedsApplyTooltip = !sourceRule || resultsNotApplied;
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
@@ -2283,6 +2239,7 @@ export function RegistryRuleFormDialog({
   const currentSnapshot: RuleEditSnapshot = {
     name,
     description,
+    notes,
     dimension,
     severity,
     passThreshold,
@@ -2636,6 +2593,7 @@ export function RegistryRuleFormDialog({
     const md: Record<string, unknown> = { ...tags };
     if (name.trim()) md[RESERVED_NAME_KEY] = name.trim();
     if (description.trim()) md[RESERVED_DESCRIPTION_KEY] = description.trim();
+    if (notes.trim()) md[RESERVED_NOTES_KEY] = notes.trim();
     if (dimension) md[RESERVED_DIMENSION_KEY] = dimension;
     if (severity) md[RESERVED_SEVERITY_KEY] = severity;
     if (passThreshold !== null) md[RESERVED_PASS_THRESHOLD_KEY] = passThreshold;
@@ -2693,6 +2651,7 @@ export function RegistryRuleFormDialog({
     const md = parsed.userMetadata;
     setName(md[RESERVED_NAME_KEY] ?? "");
     setDescription(md[RESERVED_DESCRIPTION_KEY] ?? "");
+    setNotes(md[RESERVED_NOTES_KEY] ?? "");
     setDimension(md[RESERVED_DIMENSION_KEY] ?? "");
     setSeverity(md[RESERVED_SEVERITY_KEY] ?? "");
     {
@@ -2702,7 +2661,7 @@ export function RegistryRuleFormDialog({
     }
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
-      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_NOTES_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
       freeTags[k] = v;
     }
     setTags(freeTags);
@@ -2798,6 +2757,14 @@ export function RegistryRuleFormDialog({
               ? nativeArgs.expression
               : "";
       setSqlPredicate(predicate);
+      // The proposal's declared columns REPLACE whatever the form held (the
+      // seeded `column_1` on a fresh rule), exactly as the low-code branch
+      // above does. Skipping this left the "Columns used" panel showing the
+      // stale seed while the predicate referenced other columns — so a
+      // two-column proposal read as "1 column used" and only one of its
+      // placeholders could be mapped. The backend derives these from the
+      // {{placeholder}}s in the predicate itself, so they always match.
+      setSqlSlots(proposal.slots ?? []);
       setPolarity(proposal.polarity === "fail" ? "fail" : "pass");
       setFunctionName("");
       setParamRawValues({});
@@ -2824,6 +2791,17 @@ export function RegistryRuleFormDialog({
     setPageTab("implementation");
     toast.success(t("rulesRegistry.aiProposalApplied"));
   };
+
+  // Describe-a-rule handoff: apply the sessionStorage proposal once when the
+  // create page mounts with `initialAiProposal`. Guard with a ref so StrictMode
+  // double-mount and later prop identity changes don't re-apply.
+  const initialAiAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!initialAiProposal || initialAiAppliedRef.current) return;
+    initialAiAppliedRef.current = true;
+    applyAiProposal(initialAiProposal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply once on mount
+  }, [initialAiProposal]);
 
   const handleAiGenerate = async () => {
     if (!aiDescription.trim()) return;
@@ -2931,7 +2909,42 @@ export function RegistryRuleFormDialog({
     onOpenChange(false);
   };
 
-  const handleSave = async (thenSubmit: boolean) => {
+  const parseDuplicateRuleConflict = (
+    err: unknown,
+  ): { message: string; existingRuleId?: string; existingRuleName?: string } | null => {
+    const axErr = err as {
+      response?: {
+        status?: number;
+        data?: {
+          detail?:
+            | string
+            | {
+                code?: string;
+                message?: string;
+                existing_rule_id?: string;
+                existing_rule_name?: string | null;
+              };
+        };
+      };
+    };
+    if (axErr?.response?.status !== 409) return null;
+    const detail = axErr.response.data?.detail;
+    if (!detail || typeof detail === "string") {
+      // Fall back: some gateways stringify the detail.
+      if (typeof detail === "string" && detail.toLowerCase().includes("identical definition")) {
+        return { message: detail };
+      }
+      return null;
+    }
+    if (detail.code !== "duplicate_rule") return null;
+    return {
+      message: detail.message || t("rulesRegistry.duplicateConfirmDescription"),
+      existingRuleId: detail.existing_rule_id,
+      existingRuleName: detail.existing_rule_name ?? undefined,
+    };
+  };
+
+  const handleSave = async (thenSubmit: boolean, rationale?: string | null, allowDuplicate = false) => {
     if (readOnly) return;
     if (!validate()) return;
     setSaving(true);
@@ -2968,6 +2981,7 @@ export function RegistryRuleFormDialog({
           steward: steward.trim() || null,
           steward_display_name: stewardDisplayName.trim() || null,
           author_kind: authorKind ?? "human",
+          allow_duplicate: allowDuplicate || undefined,
         };
         const resp = await createMutation.mutateAsync({ data: payload });
         ruleId = resp.data.rule.rule_id;
@@ -2975,13 +2989,10 @@ export function RegistryRuleFormDialog({
         // not show "Rule created as a draft." — the rule never rests in
         // draft state, it goes straight to pending approval.
         if (!thenSubmit) toast.success(t("rulesRegistry.toastCreated"));
-        if (resp.data.dedup_warning) {
-          toast.warning(resp.data.dedup_warning, { duration: 8000 });
-        }
       }
       if (thenSubmit) {
         try {
-          await submitMutation.mutateAsync({ ruleId });
+          await submitMutation.mutateAsync({ ruleId, rationale: rationale ?? null });
           toast.success(t("rulesRegistry.toastSubmitted"));
         } catch (submitErr) {
           // The rule itself is already persisted at this point — only the
@@ -3043,6 +3054,15 @@ export function RegistryRuleFormDialog({
       onSaved(ruleId);
       closeAndReset();
     } catch (err) {
+      const dup = !isEditing ? parseDuplicateRuleConflict(err) : null;
+      if (dup) {
+        setPendingDuplicateConfirm({
+          message: dup.message,
+          thenSubmit,
+          rationale,
+        });
+        return;
+      }
       toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), { duration: 6000 });
     } finally {
       setSaving(false);
@@ -3052,11 +3072,11 @@ export function RegistryRuleFormDialog({
   // Submits an already-saved, unmodified draft for approval without a
   // redundant PATCH — mirrors dqlake's plain "Publish" button, shown in
   // place of "Save and Submit" once the draft has no pending edits.
-  const handleSubmitOnly = async () => {
+  const handleSubmitOnly = async (rationale?: string | null) => {
     if (readOnly || !editingRule) return;
     setSaving(true);
     try {
-      await submitMutation.mutateAsync({ ruleId: editingRule.rule_id });
+      await submitMutation.mutateAsync({ ruleId: editingRule.rule_id, rationale: rationale ?? null });
       toast.success(t("rulesRegistry.toastSubmitted"));
       onSaved(editingRule.rule_id);
       closeAndReset();
@@ -3065,6 +3085,11 @@ export function RegistryRuleFormDialog({
     } finally {
       setSaving(false);
     }
+  };
+
+  const openSubmitRationale = (mode: "saveAndSubmit" | "submitOnly") => {
+    setPendingSubmitMode(mode);
+    setSubmitRationaleOpen(true);
   };
 
   const dialogTitle = readOnly
@@ -3167,6 +3192,20 @@ export function RegistryRuleFormDialog({
             />
           )}
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <Label>{t("rulesRegistry.notesLabel")}</Label>
+          <HelpTooltip text={t("rulesRegistry.notesTooltip")} />
+        </div>
+        <Textarea
+          className="text-xs min-h-[60px]"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          disabled={readOnly}
+          placeholder={t("rulesRegistry.notesPlaceholder")}
+        />
       </div>
 
       <Separator />
@@ -4085,6 +4124,7 @@ export function RegistryRuleFormDialog({
             }}
             declaredColumns={lowcodeColumns}
             readOnly={readOnly}
+            hasGroupBy={groupBy.trim().length > 0}
             renderOperator={({ family, value, onChange, isFirst }) =>
               isFirst ? (
                 <ConditionSelector
@@ -4662,6 +4702,79 @@ export function RegistryRuleFormDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog
+        open={pendingDuplicateConfirm !== null}
+        onOpenChange={(o) => !o && setPendingDuplicateConfirm(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesRegistry.duplicateConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">{pendingDuplicateConfirm?.message}</span>
+              <span className="block">{t("rulesRegistry.duplicateConfirmDescription")}</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingDuplicateConfirm(null)}>
+              {t("rulesRegistry.duplicateConfirmNo")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const pending = pendingDuplicateConfirm;
+                setPendingDuplicateConfirm(null);
+                if (!pending) return;
+                void handleSave(pending.thenSubmit, pending.rationale, true);
+              }}
+            >
+              {t("rulesRegistry.duplicateConfirmYes")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <LifecycleRationaleDialog
+        open={submitRationaleOpen}
+        onOpenChange={(open) => {
+          setSubmitRationaleOpen(open);
+          if (!open) setPendingSubmitMode(null);
+        }}
+        action="submit"
+        title={
+          willAutoApprove
+            ? pendingSubmitMode === "submitOnly"
+              ? t("rulesRegistry.publishNow")
+              : t("rulesRegistry.saveAndPublish")
+            : isPublishedRevision
+              ? pendingSubmitMode === "submitOnly"
+                ? t("rulesRegistry.submitForReview")
+                : t("rulesRegistry.saveAndSubmitReview")
+              : pendingSubmitMode === "submitOnly"
+                ? t("rulesRegistry.actionSubmit")
+                : t("rulesRegistry.saveAndSubmit")
+        }
+        description={t("rulesRegistry.statusPendingApproval")}
+        confirmLabel={
+          willAutoApprove
+            ? pendingSubmitMode === "submitOnly"
+              ? t("rulesRegistry.publishNow")
+              : t("rulesRegistry.saveAndPublish")
+            : isPublishedRevision
+              ? pendingSubmitMode === "submitOnly"
+                ? t("rulesRegistry.submitForReview")
+                : t("rulesRegistry.saveAndSubmitReview")
+              : pendingSubmitMode === "submitOnly"
+                ? t("rulesRegistry.actionSubmit")
+                : t("rulesRegistry.saveAndSubmit")
+        }
+        busy={saving}
+        onConfirm={(rationale) => {
+          const mode = pendingSubmitMode;
+          setSubmitRationaleOpen(false);
+          setPendingSubmitMode(null);
+          if (mode === "submitOnly") void handleSubmitOnly(rationale);
+          else if (mode === "saveAndSubmit") void handleSave(true, rationale);
+        }}
+      />
       {buildWithAiBanner}
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4687,55 +4800,49 @@ export function RegistryRuleFormDialog({
                 left/observability group (after Implementation) with its own
                 divider — the same relative placement Monitored Tables and
                 Table Spaces use (last left-aligned tab, LineChart icon),
-                rather than the old trailing-of-the-right-group spot. The tab
-                is admin-gated (rulesResultsTabEnabled) and OFF by default, so
-                the divider + trigger only render once an admin opts in.
-                Results is still only meaningful once the rule is applied to at
-                least one monitored table (applied_to_count > 0); until then
-                the trigger is disabled with an explanatory tooltip. The
-                wrapping <span> is the tooltip trigger because the disabled
-                button itself swallows pointer events. */}
-            {rulesResultsTabEnabled && (
-              <>
-                <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
-                {resultsNotApplied || resultsScoreError ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span
-                        tabIndex={0}
-                        className={cn(
-                          "inline-flex h-full",
-                          resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
-                        )}
-                        aria-disabled="true"
-                        // On a fetch error the wrapper doubles as the retry
-                        // affordance (the disabled trigger swallows clicks).
-                        onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
-                      >
-                        <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
-                          <LineChart className="h-3.5 w-3.5" />
-                          {t("rulesRegistry.tabResults")}
-                        </TabsTrigger>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      {resultsScoreError
-                        ? t("rulesRegistry.resultsScoreErrorTooltip")
-                        : t("rulesRegistry.resultsNotAppliedTooltip")}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <TabsTrigger
-                    value="results"
-                    className="gap-1.5"
-                    disabled={resultsDisabled}
-                    aria-disabled={resultsDisabled}
+                rather than the old trailing-of-the-right-group spot.
+                Results is only meaningful once the rule is applied to at
+                least one monitored table; until then (and for new rules) the
+                trigger is disabled with an explanatory tooltip. The wrapping
+                <span> is the tooltip trigger because the disabled button
+                itself swallows pointer events. */}
+            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
+            {resultsNeedsApplyTooltip || resultsScoreError ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    tabIndex={0}
+                    className={cn(
+                      "inline-flex h-full",
+                      resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
+                    )}
+                    aria-disabled="true"
+                    // On a fetch error the wrapper doubles as the retry
+                    // affordance (the disabled trigger swallows clicks).
+                    onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
                   >
-                    <LineChart className="h-3.5 w-3.5" />
-                    {t("rulesRegistry.tabResults")}
-                  </TabsTrigger>
-                )}
-              </>
+                    <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
+                      <LineChart className="h-3.5 w-3.5" />
+                      {t("rulesRegistry.tabResults")}
+                    </TabsTrigger>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  {resultsScoreError
+                    ? t("rulesRegistry.resultsScoreErrorTooltip")
+                    : t("rulesRegistry.resultsNotAppliedTooltip")}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <TabsTrigger
+                value="results"
+                className="gap-1.5"
+                disabled={resultsDisabled}
+                aria-disabled={resultsDisabled}
+              >
+                <LineChart className="h-3.5 w-3.5" />
+                {t("rulesRegistry.tabResults")}
+              </TabsTrigger>
             )}
           </TabsList>
           <TabsList>
@@ -4754,11 +4861,9 @@ export function RegistryRuleFormDialog({
         <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
-        {rulesResultsTabEnabled && (
-          <TabsContent value="results" className="pt-4">
-            {sourceRule && <RuleResultsTab ruleId={sourceRule.rule_id} />}
-          </TabsContent>
-        )}
+        <TabsContent value="results" className="pt-4">
+          {sourceRule && <RuleResultsTab ruleId={sourceRule.rule_id} />}
+        </TabsContent>
       </Tabs>
       {jsonDialogOpen && !readOnly && (
         <RegistryRuleFormJsonDialog
@@ -4883,7 +4988,7 @@ export function RegistryRuleFormDialog({
           // The draft is already persisted and unchanged — submit it
           // for approval directly rather than issuing a redundant save.
           withMissingFieldsTooltip(
-            <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit || submitDisabledNoChanges} className="gap-2">
+            <Button onClick={() => openSubmitRationale("submitOnly")} disabled={saving || !canSubmit || submitDisabledNoChanges} className="gap-2">
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
               {willAutoApprove
                 ? t("rulesRegistry.publishNow")
@@ -4898,7 +5003,7 @@ export function RegistryRuleFormDialog({
         ) : (
           withNoRevisionTooltip(
             withMissingFieldsTooltip(
-              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
+              <Button onClick={() => openSubmitRationale("saveAndSubmit")} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
                 {willAutoApprove
                   ? t("rulesRegistry.saveAndPublish")

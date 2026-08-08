@@ -51,7 +51,7 @@ def build_rule_embed_text(rule: RegistryRule) -> str:
     "email format" and "valid email regex").
 
     Slot family and cardinality use the same vocabulary as the query-side
-    ``family_for_type`` token (numeric|text|temporal|boolean|array|any), so
+    ``family_for_type`` token (numeric|text|temporal|boolean|any), so
     adding them creates a direct match channel between document and query.
 
     Severity is intentionally omitted — nearly every rule has one, so it

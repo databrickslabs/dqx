@@ -12,9 +12,10 @@ at the application level:
   config — rule logic / table config / space config, and delete),
   ``APPLY`` (attach children — apply a rule to a table; add a table to a
   space), ``EXECUTE`` (run profiling/validation on a table or collection),
-  and ``ALL_PRIVILEGES`` (the UC-style superset that expands to the
-  concrete set at check-time; the stored form stays ``ALL PRIVILEGES``, not
-  its components).
+  ``MANAGE`` (change grants on the object — separate from ALL_PRIVILEGES,
+  matching UC), and ``ALL_PRIVILEGES`` (the UC-style superset that expands to
+  the concrete set at check-time; the stored form stays ``ALL PRIVILEGES``,
+  not its components).
 * **Grants** target workspace principals (users/groups, by SCIM id). The
   workspace **users group** (:data:`USERS_GROUP_PRINCIPAL_ID`) is a
   first-class group principal that stands in for "everyone", the way
@@ -29,11 +30,14 @@ at the application level:
   ``EXECUTE``) and the object owner's ``ALL_PRIVILEGES`` grant are
   materialised as REAL rows in ``dq_object_grants`` by
   :meth:`~backend.services.permissions_service.PermissionsService.seed_default_grants`
-  at object-creation time. There is no read-time synthesis of implicit
-  defaults and no implicit owner grant — if no row exists for a principal,
-  that principal has no access. A separate backfill migration seeds grants
-  for pre-existing objects. ``ADMIN``/``RULE_APPROVER`` role bypass is the
-  only non-stored access path. Revoking a grant permanently removes the row.
+  at object-creation time. Registry rules always get the users-group row;
+  monitored tables and collections get it only when the admin setting
+  ``share_tables_with_workspace_users`` is ON (default OFF). There is no
+  read-time synthesis of implicit defaults and no implicit owner grant —
+  if no row exists for a principal, that principal has no access. A
+  separate backfill migration seeds grants for pre-existing objects.
+  ``ADMIN``/``RULE_APPROVER`` role bypass is the only non-stored access
+  path. Revoking a grant permanently removes the row.
 """
 
 from enum import Enum
@@ -51,6 +55,7 @@ class Privilege(str, Enum):
     MODIFY = "MODIFY"
     APPLY = "APPLY"
     EXECUTE = "EXECUTE"
+    MANAGE = "MANAGE"
     ALL_PRIVILEGES = "ALL_PRIVILEGES"
 
 
@@ -95,9 +100,9 @@ def is_reserved_principal_id(principal_id: str) -> bool:
 
 
 # The concrete privileges ``ALL_PRIVILEGES`` expands to. Deliberately excludes
-# any "manage grants" capability — like UC's ALL PRIVILEGES excluding MANAGE —
-# so holding ALL PRIVILEGES on an object does not by itself let you re-grant it
-# to others (that requires ownership or an admin/approver role).
+# MANAGE — like UC's ALL PRIVILEGES excluding MANAGE — so holding ALL
+# PRIVILEGES on an object does not by itself let you re-grant it to others
+# (that requires ``MANAGE``, ownership, or an admin/approver role).
 _CONCRETE_PRIVILEGES: frozenset[Privilege] = frozenset(
     {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE}
 )
@@ -151,11 +156,15 @@ def expand_privileges(privileges: set[Privilege]) -> set[Privilege]:
     Returns:
         A set containing the concrete privileges the grant confers. An
         ``ALL_PRIVILEGES`` token expands to :data:`_CONCRETE_PRIVILEGES`;
-        concrete privileges pass through unchanged.
+        ``MANAGE`` is preserved separately (not part of ALL expansion).
     """
     if Privilege.ALL_PRIVILEGES in privileges:
-        return set(_CONCRETE_PRIVILEGES)
-    return {p for p in privileges if p in _CONCRETE_PRIVILEGES}
+        out = set(_CONCRETE_PRIVILEGES)
+    else:
+        out = {p for p in privileges if p in _CONCRETE_PRIVILEGES}
+    if Privilege.MANAGE in privileges:
+        out.add(Privilege.MANAGE)
+    return out
 
 
 def parse_privileges(raw: str | None) -> set[Privilege]:
@@ -198,8 +207,11 @@ def serialize_privileges(privileges: set[Privilege]) -> str:
         A comma-joined, canonically-ordered privilege string.
     """
     if Privilege.ALL_PRIVILEGES in privileges:
-        return Privilege.ALL_PRIVILEGES.value
-    order = [Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE]
+        parts = [Privilege.ALL_PRIVILEGES.value]
+        if Privilege.MANAGE in privileges:
+            parts.append(Privilege.MANAGE.value)
+        return ",".join(parts)
+    order = [Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE, Privilege.MANAGE]
     return ",".join(p.value for p in order if p in privileges)
 
 
@@ -208,14 +220,20 @@ def normalize_privileges(privileges: set[Privilege]) -> set[Privilege]:
 
     If the set already covers every concrete privilege it is collapsed to
     ``{ALL_PRIVILEGES}`` so the stored form matches how UC reports a
-    full grant.
+    full grant. ``MANAGE`` is never folded into ``ALL_PRIVILEGES``.
 
     Args:
         privileges: The privilege set to normalize.
 
     Returns:
-        The canonical set: either ``{ALL_PRIVILEGES}`` or the concrete subset.
+        The canonical set: either ``{ALL_PRIVILEGES}`` (optionally plus
+        ``MANAGE``) or the concrete subset (optionally plus ``MANAGE``).
     """
+    has_manage = Privilege.MANAGE in privileges
     if Privilege.ALL_PRIVILEGES in privileges or _CONCRETE_PRIVILEGES.issubset(privileges):
-        return {Privilege.ALL_PRIVILEGES}
-    return {p for p in privileges if p in _CONCRETE_PRIVILEGES}
+        out = {Privilege.ALL_PRIVILEGES}
+    else:
+        out = {p for p in privileges if p in _CONCRETE_PRIVILEGES}
+    if has_manage:
+        out.add(Privilege.MANAGE)
+    return out

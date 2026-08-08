@@ -4,11 +4,10 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
-import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import {
   Card,
   CardContent,
@@ -61,26 +60,17 @@ import {
   useGetComputeSettings,
   useSaveComputeSettings,
   getGetComputeSettingsQueryKey,
-  useGetPermissionsDefaultInherit,
-  useSetPermissionsDefaultInherit,
-  getGetPermissionsDefaultInheritQueryKey,
-  useGetGlobalResultsSettings,
-  useSaveGlobalResultsSettings,
-  getGetGlobalResultsSettingsQueryKey,
   useGetRequireDraftRunSettings,
   useSaveRequireDraftRunSettings,
   getGetRequireDraftRunSettingsQueryKey,
+  useGetShareTablesWithWorkspaceUsers,
+  useSaveShareTablesWithWorkspaceUsers,
+  getGetShareTablesWithWorkspaceUsersQueryKey,
   useListComputeWarehouses,
   useListComputeClusters,
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
-  useGetDraftRunSampleLimit,
-  useSaveDraftRunSampleLimit,
-  getGetDraftRunSampleLimitQueryKey,
-  useGetOptimizeSettings,
-  useSaveOptimizeSettings,
-  getGetOptimizeSettingsQueryKey,
   type AiSettingsIn,
   type RulesRegistrySettingsIn,
   type ComputeSettingsIn,
@@ -1188,190 +1178,6 @@ function RetentionSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Draft-run sample limit — admin knob capping the rows a DRAFT monitored-table
-// run reads (0 = whole table). Approved/published runs never sample; they
-// always scan the full table, so there is deliberately no knob for them.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Convert draft_sample_limit rows → SampleSelector {kind, value}. */
-function limitToSample(limit: number): { kind: SampleKind; value: number } {
-  if (limit === 0) return { kind: "full", value: 1000 };
-  return { kind: "records", value: limit };
-}
-
-/** Convert SampleSelector {kind, value} → draft_sample_limit rows.
- *  Any non-full kind maps to a row count (percent is disabled in this context
- *  via disablePercent, but guard here as belt-and-suspenders). */
-function sampleToLimit(kind: SampleKind, value: number): number {
-  if (kind === "full") return 0;
-  return value; // both "records" and (guarded) "percent" store the numeric value as rows
-}
-
-function DraftRunSampleLimitSettings() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: resp, isLoading } = useGetDraftRunSampleLimit();
-  const settings = resp?.data;
-  const saveMutation = useSaveDraftRunSampleLimit();
-  const { isAdmin } = usePermissions();
-
-  const [sampleKind, setSampleKind] = useState<SampleKind>("records");
-  const [sampleValue, setSampleValue] = useState(1000);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    if (settings && !hydrated) {
-      const { kind, value } = limitToSample(settings.draft_run_sample_limit);
-      setSampleKind(kind);
-      setSampleValue(value);
-      setHydrated(true);
-    }
-  }, [settings, hydrated]);
-
-  const handleSave = useCallback((kind: SampleKind, value: number) => {
-    const limit = sampleToLimit(kind, value);
-    saveMutation.mutate(
-      { data: { draft_run_sample_limit: limit } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
-          toast.success(t("config.draftSampleSaved"));
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDraftSample"));
-        },
-      },
-    );
-  }, [saveMutation, queryClient, t]);
-
-  const handleKindChange = (k: SampleKind) => {
-    setSampleKind(k);
-    handleSave(k, sampleValue);
-  };
-
-  const handleValueChange = (n: number) => {
-    setSampleValue(n);
-    handleSave(sampleKind, n);
-  };
-
-  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Database className="h-5 w-5" />
-          {t("config.draftSampleTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label className="text-sm">{t("config.draftSampleLabel")}</Label>
-          </div>
-          <SampleSelector
-            kind={sampleKind}
-            value={sampleValue}
-            onKind={handleKindChange}
-            onValue={handleValueChange}
-            disablePercent
-          />
-        </div>
-        {!isAdmin && (
-          <span className="text-xs text-muted-foreground">{t("config.draftSampleAdminOnlyHint")}</span>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Optimize Settings — admin-controlled cadence for the periodic OPTIMIZE sweep
-// that physically applies dq_quarantine_records' liquid clustering. A single
-// integer-hours field, floored at the min the scheduler enforces server-side.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function OptimizeSettings() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: resp, isLoading } = useGetOptimizeSettings();
-  const settings = resp?.data;
-  const saveMutation = useSaveOptimizeSettings();
-  const { isAdmin } = usePermissions();
-
-  const [hours, setHours] = useState<string>("");
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    if (settings && !hydrated) {
-      setHours(String(settings.optimize_interval_hours));
-      setHydrated(true);
-    }
-  }, [settings, hydrated]);
-
-  const min = settings?.optimize_interval_hours_min ?? 1;
-
-  const handleSave = (rawValue: string) => {
-    if (!settings) return;
-    const parsed = Number.parseInt(rawValue, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) return;
-    const clamped = Math.max(min, parsed);
-    if (String(clamped) !== rawValue) setHours(String(clamped));
-    saveMutation.mutate(
-      { data: { optimize_interval_hours: clamped } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetOptimizeSettingsQueryKey() });
-          toast.success(t("config.optimizeSaved"));
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.optimizeSaveFailed"));
-        },
-      },
-    );
-  };
-
-  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Clock className="h-5 w-5" />
-          {t("config.optimizeTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="optimize-interval" className="text-sm">
-              {t("config.optimizeIntervalLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.optimizeDescription")}</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Input
-              id="optimize-interval"
-              type="number"
-              min={min}
-              step={1}
-              value={hours}
-              disabled={!isAdmin || saveMutation.isPending}
-              onChange={(e) => setHours(e.target.value)}
-              onBlur={() => handleSave(hours)}
-              className="h-8 w-20"
-            />
-            <span className="text-sm text-muted-foreground">{t("config.optimizeIntervalHoursUnit")}</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Run review statuses — admin-managed catalogue surfaced as the per-run
 // review dropdown (Runs detail page) and as a filter on the Runs History
 // page. The backend enforces the invariant "exactly one entry has
@@ -2056,13 +1862,10 @@ function AiSettingsCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rules Registry governance — two distinct admin knobs bundled behind one
-// read/write surface (P21-G): ``defaultAutoUpgrade`` governs the pin chosen
-// at ATTACH TIME for a brand-new rule application / data-product member;
-// ``autoUpgradeWithoutApproval`` governs RE-APPROVAL of an EXISTING
-// following application when its rule is re-published. Kept side by side so
-// stewards don't conflate "when does a table start following a rule" with
-// "what happens once it's already following it".
+// Rules Registry governance. ``defaultAutoUpgrade`` governs the pin chosen
+// at ATTACH TIME for a brand-new rule application / data-product member.
+// Automatic upgrades always require approval; that policy is no longer
+// configurable.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RulesRegistrySettingsCard() {
@@ -2278,16 +2081,13 @@ const APPROVAL_MODES = ["enabled", "auto_bypass", "disabled"] as const;
 function ApprovalsModeCard() {
   const { t } = useTranslation();
   const { data, isLoading } = useGetApprovalsMode();
-  const { data: registryData, isLoading: registryLoading } = useGetRulesRegistrySettings();
   const queryClient = useQueryClient();
   const saveMutation = useSaveApprovalsMode();
-  const saveRegistryMutation = useSaveRulesRegistrySettings();
   const { isAdmin } = usePermissions();
 
   const mode = data?.data?.mode;
-  const registrySettings = registryData?.data;
 
-  if (isLoading || !mode || registryLoading || !registrySettings) return <Skeleton className="h-40 w-full" />;
+  if (isLoading || !mode) return <Skeleton className="h-40 w-full" />;
 
   const save = (next: string) => {
     saveMutation.mutate(
@@ -2296,21 +2096,6 @@ function ApprovalsModeCard() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetApprovalsModeQueryKey() });
           toast.success(t("config.approvalsModeSaved"));
-          // When approvals mode is disabled, turn off bypass setting
-          if (next === "disabled") {
-            saveRegistryMutation.mutate(
-              { data: { auto_upgrade_without_approval: false } },
-              {
-                onSuccess: () => {
-                  queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
-                },
-                onError: (err: unknown) => {
-                  const axErr = err as AxiosError<{ detail?: string }>;
-                  toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
-                },
-              },
-            );
-          }
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
@@ -2319,24 +2104,6 @@ function ApprovalsModeCard() {
       },
     );
   };
-
-  const saveBypass = (checked: boolean) => {
-    saveRegistryMutation.mutate(
-      { data: { auto_upgrade_without_approval: checked } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
-          toast.success(t("config.rulesRegistrySettingsSaved"));
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
-        },
-      },
-    );
-  };
-
-  const approvalsDisabled = mode === "disabled";
 
   return (
     <Card>
@@ -2372,23 +2139,6 @@ function ApprovalsModeCard() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="auto-upgrade-without-approval" className="text-sm">
-              {t("config.autoUpgradeWithoutApprovalLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">
-              {t("config.autoUpgradeWithoutApprovalHint")}
-            </p>
-          </div>
-          <Switch
-            id="auto-upgrade-without-approval"
-            checked={approvalsDisabled ? false : registrySettings.auto_upgrade_without_approval}
-            onCheckedChange={saveBypass}
-            disabled={!isAdmin || saveMutation.isPending || saveRegistryMutation.isPending || approvalsDisabled}
-          />
         </div>
 
         {!isAdmin && (
@@ -2465,31 +2215,32 @@ function RequireDraftRunSettingsCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Permissions — admin default for the per-grant inheritance toggle. When on,
-// a new grant on a table space defaults to flowing down to its member tables.
-// Individual grants can still override this per-grant in the Permissions tab.
+// Share new tables / collections with the workspace users group. When on,
+// newly created monitored tables and collections get the default users-group
+// grant. When off (default), only the owner is granted. Registry rules always
+// seed the users-group grant regardless of this setting.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PermissionsSettingsCard() {
+function ShareTablesWithWorkspaceUsersCard() {
   const { t } = useTranslation();
-  const { data, isLoading } = useGetPermissionsDefaultInherit({ query: { select: (d) => d.data } });
+  const { data, isLoading } = useGetShareTablesWithWorkspaceUsers({ query: { select: (d) => d.data } });
   const queryClient = useQueryClient();
-  const saveMutation = useSetPermissionsDefaultInherit();
+  const saveMutation = useSaveShareTablesWithWorkspaceUsers();
   const { isAdmin } = usePermissions();
 
   if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
 
   const save = (enabled: boolean) => {
     saveMutation.mutate(
-      { data: { enabled } },
+      { data: { share_tables_with_workspace_users: enabled } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetPermissionsDefaultInheritQueryKey() });
-          toast.success(t("config.permissionsDefaultInheritSaved"));
+          queryClient.invalidateQueries({ queryKey: getGetShareTablesWithWorkspaceUsersQueryKey() });
+          toast.success(t("config.shareTablesWithUsersSaved"));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.permissionsDefaultInheritFailedSave"));
+          toast.error(axErr?.response?.data?.detail ?? t("config.shareTablesWithUsersFailedSave"));
         },
       },
     );
@@ -2499,113 +2250,28 @@ function PermissionsSettingsCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <KeyRound className="h-5 w-5" />
-          {t("config.permissionsDefaultInheritTitle")}
+          <Users className="h-5 w-5" />
+          {t("config.shareTablesWithUsersTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
-            <Label htmlFor="permissions-default-inherit" className="text-sm">
-              {t("config.permissionsDefaultInheritLabel")}
+            <Label htmlFor="share-tables-with-users" className="text-sm">
+              {t("config.shareTablesWithUsersLabel")}
             </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.permissionsDefaultInheritHint")}</p>
+            <p className="text-[11px] text-muted-foreground">{t("config.shareTablesWithUsersHint")}</p>
           </div>
           <Switch
-            id="permissions-default-inherit"
-            checked={data.enabled}
+            id="share-tables-with-users"
+            checked={data.share_tables_with_workspace_users}
             onCheckedChange={(checked) => save(checked)}
             disabled={!isAdmin || saveMutation.isPending}
           />
         </div>
 
         {!isAdmin && (
-          <span className="text-xs text-muted-foreground">{t("config.permissionsDefaultInheritAdminOnlyHint")}</span>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Global Results tab (B2-20) — admin opt-in for the app-wide, all-tables
-// Results surface. OFF by default: it duplicates the per-object results tabs
-// and confuses fresh deploys. When enabled, the global Results sidebar nav
-// item AND the homepage overall-score "?" explainer appear. Per-object MT/TS/RR
-// results tabs are unaffected.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function GlobalResultsSettingsCard() {
-  const { t } = useTranslation();
-  const { data, isLoading } = useGetGlobalResultsSettings({ query: { select: (d) => d.data } });
-  const queryClient = useQueryClient();
-  const saveMutation = useSaveGlobalResultsSettings();
-  const { isAdmin } = usePermissions();
-
-  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
-
-  // Each toggle is saved independently — the PUT body only carries the field
-  // that changed (the backend leaves the other untouched), so flipping one
-  // never clobbers the other's value.
-  const save = (patch: { global_results_enabled?: boolean; rules_results_tab_enabled?: boolean }) => {
-    saveMutation.mutate(
-      { data: patch },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetGlobalResultsSettingsQueryKey() });
-          toast.success(t("config.globalResultsSaved"));
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.globalResultsFailedSave"));
-        },
-      },
-    );
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <LineChart className="h-5 w-5" />
-          {t("config.globalResultsTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="global-results-enabled" className="text-sm">
-              {t("config.globalResultsLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.globalResultsHint")}</p>
-          </div>
-          <Switch
-            id="global-results-enabled"
-            checked={data.global_results_enabled}
-            onCheckedChange={(checked) => save({ global_results_enabled: checked })}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
-        </div>
-
-        {/* Item 35: separate admin toggle for the per-rule Results tab (OFF by
-            default), distinct from the app-wide global Results surface above. */}
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="rules-results-tab-enabled" className="text-sm">
-              {t("config.rulesResultsTabLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.rulesResultsTabHint")}</p>
-          </div>
-          <Switch
-            id="rules-results-tab-enabled"
-            checked={data.rules_results_tab_enabled}
-            onCheckedChange={(checked) => save({ rules_results_tab_enabled: checked })}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
-        </div>
-
-        {!isAdmin && (
-          <span className="text-xs text-muted-foreground">{t("config.globalResultsAdminOnlyHint")}</span>
+          <span className="text-xs text-muted-foreground">{t("config.shareTablesWithUsersAdminOnlyHint")}</span>
         )}
       </CardContent>
     </Card>
@@ -3056,19 +2722,16 @@ function ConfigPage() {
     () => [
       { id: "timezone", tab: "general", title: t("config.timezoneTitle"), keywords: t("config.kwTimezone"), render: () => <TimezoneSettings /> },
       { id: "reviewStatuses", tab: "governance", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
-      { id: "globalResults", tab: "general", title: t("config.globalResultsTitle"), keywords: t("config.kwGlobalResults"), render: () => <GlobalResultsSettingsCard /> },
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
       { id: "labels", tab: "tags", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "governance", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
       { id: "passThreshold", tab: "governance", title: t("config.passThresholdSettingsTitle"), keywords: t("config.kwPassThreshold"), render: () => <PassThresholdSettingsCard /> },
       { id: "approvalsMode", tab: "governance", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
       { id: "requireDraftRun", tab: "governance", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
+      { id: "shareTablesWithUsers", tab: "governance", title: t("config.shareTablesWithUsersTitle"), keywords: t("config.kwShareTablesWithUsers"), render: () => <ShareTablesWithWorkspaceUsersCard /> },
       { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
-      { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
-      { id: "optimize", tab: "compute", title: t("config.optimizeTitle"), keywords: t("config.kwOptimize"), render: () => <OptimizeSettings /> },
-      { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],

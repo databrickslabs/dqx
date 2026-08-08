@@ -172,7 +172,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
 
   const syncYamlFromTextarea = () => {
     const value = textareaRef.current?.value ?? yamlText;
-    if (value !== yamlText) setYamlText(value);
+    if (value !== yamlText) {
+      setYamlText(value);
+    }
     parseYaml(value);
   };
 

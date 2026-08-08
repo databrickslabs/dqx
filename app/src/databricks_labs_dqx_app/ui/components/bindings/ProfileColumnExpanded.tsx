@@ -24,14 +24,17 @@ const HIDDEN_KEYS = new Set([
 ]);
 
 function orderKeys(group: StatTypeGroup, present: string[]): string[] {
+  // DQX emits min/max for strings (lexicographic from Spark summary) and for
+  // timestamps/dates after the min/max builders — prefer those over length
+  // keys that the profiler does not currently produce.
   const base: string[] =
     group === "numeric"
       ? ["count_null", "empty_count", "min", "max", "mean", "stddev"]
       : group === "string"
-        ? ["count_null", "empty_count", "min_length", "max_length", "avg_length"]
+        ? ["count_null", "empty_count", "min", "max", "min_length", "max_length", "avg_length"]
         : group === "timestamp"
           ? ["count_null", "empty_count", "min", "max"]
-          : ["count_null", "empty_count"];
+          : ["count_null", "empty_count", "min", "max"];
   const ordered = base.filter((k) => present.includes(k));
   const extras = present.filter((k) => !base.includes(k) && !PERCENTILE_KEYS.has(k)).sort();
   return [...ordered, ...extras];

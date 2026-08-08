@@ -48,11 +48,6 @@ _RETENTION_DAYS_MIN = 7
 # typo, and lets the UI render a meaningful slider/input range.
 _RETENTION_DAYS_MAX = 3650
 
-# Defaults for the OPTIMIZE sweep — kept in sync with
-# ``backend.services.scheduler_service``.
-_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT = 24
-_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN = 1
-
 _LABEL_DEFS_SETTING_KEY = "label_definitions"
 # Keys must be safe for YAML round-tripping and stable as DataFrame columns:
 # letters, digits, underscore, leading with a letter.
@@ -409,72 +404,6 @@ def save_retention_settings(
         logger.info("Saved quarantine_retention_days=%d", validated_q)
 
     return get_retention_settings(svc)
-
-
-# ---------------------------------------------------------------------------
-# Quarantine OPTIMIZE cadence — admin knob for the periodic OPTIMIZE sweep
-# that physically applies liquid clustering on dq_quarantine_records.
-# Default 24 h; floored at 1 h so a misconfiguration can't hammer the
-# warehouse. Surfaced in Settings → Compute alongside the retention card.
-# ---------------------------------------------------------------------------
-
-
-class OptimizeSettingsOut(BaseModel):
-    """Effective OPTIMIZE cadence + the default/min the scheduler falls back to."""
-
-    optimize_interval_hours: int
-    optimize_interval_hours_default: int = _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
-    optimize_interval_hours_min: int = _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN
-    optimize_interval_hours_set: bool
-
-
-class OptimizeSettingsIn(BaseModel):
-    optimize_interval_hours: int | None = None
-
-
-def _validate_optimize_hours(value: int) -> int:
-    if value < _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN:
-        raise HTTPException(
-            status_code=400,
-            detail=f"optimize_interval_hours must be at least {_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN} hour(s).",
-        )
-    return value
-
-
-@router.get(
-    "/optimize",
-    response_model=OptimizeSettingsOut,
-    operation_id="getOptimizeSettings",
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-def get_optimize_settings(
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-) -> OptimizeSettingsOut:
-    """Return the current OPTIMIZE cadence + defaults (admin only)."""
-    hrs = svc.get_quarantine_optimize_interval_hours()
-    return OptimizeSettingsOut(
-        optimize_interval_hours=hrs if hrs is not None else _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT,
-        optimize_interval_hours_set=hrs is not None,
-    )
-
-
-@router.put(
-    "/optimize",
-    response_model=OptimizeSettingsOut,
-    operation_id="saveOptimizeSettings",
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-def save_optimize_settings(
-    body: OptimizeSettingsIn,
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    email: Annotated[str, Depends(get_user_email)],
-) -> OptimizeSettingsOut:
-    """Update the OPTIMIZE cadence (admin only). Omitted field = leave unchanged."""
-    if body.optimize_interval_hours is not None:
-        svc.save_quarantine_optimize_interval_hours(
-            _validate_optimize_hours(body.optimize_interval_hours), user_email=email
-        )
-    return get_optimize_settings(svc)
 
 
 # ---------------------------------------------------------------------------
@@ -1217,17 +1146,11 @@ async def list_serving_endpoints(
 
 
 # ----------------------------------------------------------------------
-# Rules Registry governance settings (P21-G). Two distinct admin knobs
-# that both shape "what happens as registry rules evolve", but at
-# different moments — surfaced together here so the UI can present them
-# side by side without conflating them:
+# Rules Registry governance settings (P21-G).
 #
-#   * ``auto_upgrade_without_approval`` — governs RE-APPROVAL of an
-#     EXISTING following (unpinned) application when its rule is
-#     re-published with a materially different rendered check: silently
-#     re-approve (True) vs. fall back to ``pending_approval`` for
-#     per-table re-review (False, default).
-#   * ``default_auto_upgrade`` — governs the PIN CHOSEN AT ATTACH TIME
+#   * ``auto_upgrade_without_approval`` is retained for API compatibility but
+#     is always False: upgraded applications return to pending approval.
+#   * ``default_auto_upgrade`` governs the PIN CHOSEN AT ATTACH TIME
 #     for a brand-new rule application / data-product member that
 #     doesn't request an explicit pin: follow latest (True, default) vs.
 #     freeze to the current version (False). Existing applications are
@@ -1244,8 +1167,7 @@ class RulesRegistrySettingsOut(BaseModel):
     """Effective Rules Registry governance settings."""
 
     auto_upgrade_without_approval: bool = Field(
-        description="Re-approval behaviour: silently re-approve a following application's "
-        "re-rendered check (True, default) vs. send it back to pending_approval (False)."
+        description="Compatibility field; always False because automatic rule upgrades require approval."
     )
     default_auto_upgrade: bool = Field(
         description="Attach-time default pin for new applications/members: follow latest "
@@ -1414,12 +1336,12 @@ class GlobalResultsSettingsOut(BaseModel):
 
     global_results_enabled: bool = Field(
         description="Whether the app-wide, all-tables Results surface (nav item + homepage "
-        "overall-score explainer) is enabled. Defaults to False (hidden)."
+        "overall-score explainer) is enabled. Defaults to True (always on in the UI)."
     )
     rules_results_tab_enabled: bool = Field(
-        default=False,
+        default=True,
         description="Whether the per-rule Results tab is shown inside the Rules Registry rule "
-        "dialog. Distinct from global_results_enabled. Defaults to False (hidden).",
+        "dialog. Distinct from global_results_enabled. Defaults to True (always on in the UI).",
     )
 
 
@@ -1547,6 +1469,64 @@ def save_require_draft_run_settings(
     saved = svc.save_require_draft_run_before_submit(body.require_draft_run_before_submit, user_email=email)
     logger.info("Saved require_draft_run_before_submit = %s (by=%s)", saved, email)
     return RequireDraftRunSettingsOut(require_draft_run_before_submit=saved)
+
+
+# ----------------------------------------------------------------------
+# Share new tables / collections with the workspace users group.
+# When ON, newly created monitored tables and collections get the default
+# users-group grant (SELECT + APPLY + EXECUTE). When OFF (default), only
+# the owner is granted — tables/collections stay private until explicitly
+# shared. Registry rules always seed the users-group grant regardless.
+# ----------------------------------------------------------------------
+
+
+class ShareTablesWithWorkspaceUsersOut(BaseModel):
+    """Effective share-tables-with-workspace-users setting."""
+
+    share_tables_with_workspace_users: bool = Field(
+        description="Whether newly created monitored tables and collections get a default "
+        "grant to the workspace users group. Defaults to False (private). Registry rules "
+        "always seed the users-group grant regardless of this setting."
+    )
+
+
+class ShareTablesWithWorkspaceUsersIn(BaseModel):
+    """Update payload for the share-tables-with-workspace-users setting."""
+
+    share_tables_with_workspace_users: bool
+
+
+@router.get(
+    "/share-tables-with-workspace-users",
+    response_model=ShareTablesWithWorkspaceUsersOut,
+    operation_id="getShareTablesWithWorkspaceUsers",
+)
+def get_share_tables_with_workspace_users(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ShareTablesWithWorkspaceUsersOut:
+    """Return whether new tables/collections are shared with workspace users (defaults to False)."""
+    return ShareTablesWithWorkspaceUsersOut(
+        share_tables_with_workspace_users=svc.get_share_tables_with_workspace_users()
+    )
+
+
+@router.put(
+    "/share-tables-with-workspace-users",
+    response_model=ShareTablesWithWorkspaceUsersOut,
+    operation_id="saveShareTablesWithWorkspaceUsers",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_share_tables_with_workspace_users(
+    body: ShareTablesWithWorkspaceUsersIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> ShareTablesWithWorkspaceUsersOut:
+    """Enable or disable sharing new tables/collections with workspace users (admin only)."""
+    saved = svc.save_share_tables_with_workspace_users(
+        body.share_tables_with_workspace_users, user_email=email
+    )
+    logger.info("Saved share_tables_with_workspace_users = %s (by=%s)", saved, email)
+    return ShareTablesWithWorkspaceUsersOut(share_tables_with_workspace_users=saved)
 
 
 # ----------------------------------------------------------------------

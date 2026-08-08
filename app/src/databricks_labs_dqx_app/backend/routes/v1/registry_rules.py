@@ -39,6 +39,7 @@ from databricks_labs_dqx_app.backend.models import (
     BatchImportRegistryRulesOut,
     CreateRegistryRuleIn,
     CreateRegistryRuleOut,
+    LifecycleRationaleIn,
     RegistryRuleDetailOut,
     RegistryRuleOut,
     RegistryRuleVersionOut,
@@ -51,7 +52,10 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
-from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.registry_service import (
+    DuplicateRegistryRuleError,
+    RegistryService,
+)
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 
@@ -154,8 +158,10 @@ def create_registry_rule(
 ) -> CreateRegistryRuleOut:
     """Create a new draft registry rule.
 
-    A dedup warning (never a hard error) is returned when a published rule
-    already shares this rule's structural fingerprint.
+    By default, a published rule that shares this rule's structural fingerprint
+    blocks creation (HTTP 409) so the UI can ask the steward to confirm. Pass
+    ``allow_duplicate=true`` after confirmation (or for non-interactive callers).
+    When a duplicate is allowed, ``dedup_warning`` still carries the advisory text.
     """
     try:
         rule, warning = svc.create_rule(
@@ -167,8 +173,19 @@ def create_registry_rule(
             user_metadata=body.user_metadata,
             steward=body.steward,
             steward_display_name=body.steward_display_name,
+            allow_duplicate=body.allow_duplicate,
         )
         return CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
+    except DuplicateRegistryRuleError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "duplicate_rule",
+                "message": str(e),
+                "existing_rule_id": e.existing_rule_id,
+                "existing_rule_name": e.existing_rule_name,
+            },
+        )
     except UnsafeSqlQueryError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -251,6 +268,10 @@ def batch_import_registry_rules(
                 steward=rule_in.steward,
                 steward_display_name=rule_in.steward_display_name,
                 source=body.source,
+                # Batch import already has skip_duplicates for reuse; when that
+                # is off, keep the historical soft-warn create behaviour rather
+                # than failing the whole row on fingerprint collision.
+                allow_duplicate=True,
             )
             out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
             created.append(out)
@@ -484,6 +505,7 @@ def _publish_registry_rule(
     app_settings: AppSettingsService,
     apply_rules: ApplyRulesService,
     pending: PendingApplicationService,
+    rationale: str | None = None,
 ) -> RegistryRule:
     """Publish (approve) a pending registry rule and run its side effects.
 
@@ -494,7 +516,7 @@ def _publish_registry_rule(
     :func:`approve_registry_rule` for the full behaviour contract. Returns the
     published rule.
     """
-    rule = svc.approve(rule_id, approver)
+    rule = svc.approve(rule_id, approver, rationale=rationale)
     # Activate any Bulk Contract Import pre-staged applications BEFORE
     # rematerialize so their new dq_quality_rules copies are produced here.
     _activate_pending_applications(rule_id, approver, apply_rules=apply_rules, pending=pending)
@@ -538,6 +560,7 @@ def submit_registry_rule(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     user_email: CurrentUser,
+    body: LifecycleRationaleIn | None = None,
 ) -> RegistryRuleOut:
     """Submit a draft registry rule for approval.
 
@@ -554,8 +577,9 @@ def submit_registry_rule(
     requirement is therefore enforced where a concrete table exists — the MT/TS
     submit paths and the per-table applied-rule submit — not here.
     """
+    rationale = body.rationale if body else None
     try:
-        rule = svc.submit(rule_id, user_email)
+        rule = svc.submit(rule_id, user_email, rationale=rationale)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
         # its permission + owner lookups entirely.
@@ -580,6 +604,7 @@ def submit_registry_rule(
                 app_settings=app_settings,
                 apply_rules=apply_rules,
                 pending=pending,
+                rationale=rationale,
             )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
@@ -609,6 +634,7 @@ def approve_registry_rule(
     pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
     tag_reconcile: Annotated[TagReconcileService, Depends(get_tag_reconcile_service)],
     user_email: CurrentUser,
+    body: LifecycleRationaleIn | None = None,
 ) -> RegistryRuleOut:
     """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
 
@@ -635,6 +661,7 @@ def approve_registry_rule(
     NOT a re-freeze), so the hook is skipped entirely. Best-effort: a
     re-freeze failure never turns a successful publish into a 5xx.
     """
+    rationale = body.rationale if body else None
     try:
         rule = _publish_registry_rule(
             rule_id,
@@ -647,6 +674,7 @@ def approve_registry_rule(
             app_settings=app_settings,
             apply_rules=apply_rules,
             pending=pending,
+            rationale=rationale,
         )
         # Apply-on-tag (Task 7): after a successful publish, attach this rule
         # to every monitored table it now tag-matches. Best-effort and a no-op
@@ -677,10 +705,11 @@ def reject_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     user_email: CurrentUser,
+    body: LifecycleRationaleIn | None = None,
 ) -> RegistryRuleOut:
     """Reject a pending registry rule."""
     try:
-        rule = svc.reject(rule_id, user_email)
+        rule = svc.reject(rule_id, user_email, rationale=body.rationale if body else None)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

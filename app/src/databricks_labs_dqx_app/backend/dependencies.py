@@ -355,18 +355,14 @@ async def get_ai_rules_service(
 
 async def get_contract_rules_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-    ai_service: Annotated[AiRulesService, Depends(get_ai_rules_service)],
 ) -> ContractRulesService:
     """Create a ContractRulesService.
 
-    Contract parsing is local and the generator doesn't touch UC, so we
-    use the SP client — same pattern as the AI generator's LLM call leg.
-    The AI service is injected so natural-language (``type: text``) quality
-    expectations can be converted through the same ChatDatabricks leg the
-    AI-Assisted Generation page uses (DQX's own text path needs dspy + Spark,
-    which the app container lacks).
+    Contract parsing is local and the generator doesn't touch UC, so the SP
+    client suffices. No LLM dependency: rule generation from a contract is
+    deterministic, derived only from machine-checkable ODCS fields.
     """
-    return ContractRulesService(sp_ws=sp_ws, ai_service=ai_service)
+    return ContractRulesService(sp_ws=sp_ws)
 
 
 async def get_rules_catalog_service(

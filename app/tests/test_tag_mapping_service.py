@@ -17,7 +17,7 @@ def test_family_for_type():
     assert family_for_type("STRING") == "text"
     assert family_for_type("TIMESTAMP") == "temporal"
     assert family_for_type("BOOLEAN") == "boolean"
-    assert family_for_type("ARRAY<INT>") == "array"
+    assert family_for_type("ARRAY<INT>") == "any"
     assert family_for_type("MAP<STRING,INT>") == "any"
 
 

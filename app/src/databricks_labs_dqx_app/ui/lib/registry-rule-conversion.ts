@@ -359,6 +359,31 @@ function extractSlotNames(argValue: unknown): string[] {
   return names;
 }
 
+/**
+ * Promote a bound (literal) column argument into slot names for import.
+ *
+ * ODCS / YAML imports often arrive with concrete column names
+ * (``column: "transactionID"``) rather than ``{{transactionID}}`` placeholders.
+ * Without promotion those land as canonical ``column_N`` slots and never
+ * auto-map onto the target table. A non-empty string that isn't already a
+ * ``{{placeholder}}`` becomes the slot name; lists expand one slot per
+ * element. Non-string values (numbers, booleans, objects) are ignored — those
+ * belong on parameters, not slots.
+ */
+function extractLiteralColumnNames(argValue: unknown): string[] {
+  const names: string[] = [];
+  const take = (v: unknown): void => {
+    if (typeof v !== "string") return;
+    const trimmed = v.trim();
+    if (!trimmed) return;
+    if (SLOT_TOKEN_RE.test(trimmed)) return;
+    names.push(trimmed);
+  };
+  if (Array.isArray(argValue)) argValue.forEach(take);
+  else take(argValue);
+  return names;
+}
+
 export function parseParamValue(type: RuleParameterType, raw: string): RuleParameter["value"] {
   const trimmed = raw.trim();
   if (trimmed === "") return null;
@@ -663,22 +688,27 @@ export function parseDqxCheckJson(
   // column renames survive the round-trip. Each derived slot is a `column_N`
   // template carrying the real family/arg_key/cardinality; we keep those but
   // swap in the authored name. The list argument (`listColumnArgKey`) expands
-  // to one slot per token; a scalar column arg takes the first token; an
-  // argument with no `{{token}}` keeps its canonical `column_N` name.
+  // to one slot per token; a scalar column arg takes the first token.
+  //
+  // Bound imports (ODCS / YAML with literal column names like
+  // ``column: "transactionID"``) have no `{{token}}` — promote the literal to
+  // a slot name so auto-map can match the target table. Only fall back to
+  // canonical `column_N` when the arg is missing or non-string.
   const listArgKey = listColumnArgKey(fn);
   const slots: RuleSlot[] = [];
   let slotPosition = 0;
   for (const template of templateSlots) {
     const argKey = template.arg_key ?? template.name;
     const authored = extractSlotNames(args[argKey]);
-    if (authored.length === 0) {
+    const names = authored.length > 0 ? authored : extractLiteralColumnNames(args[argKey]);
+    if (names.length === 0) {
       slots.push({ ...template, position: slotPosition++ });
     } else if (argKey === listArgKey) {
-      for (const authoredName of authored) {
+      for (const authoredName of names) {
         slots.push({ ...template, name: authoredName, position: slotPosition++ });
       }
     } else {
-      slots.push({ ...template, name: authored[0], position: slotPosition++ });
+      slots.push({ ...template, name: names[0], position: slotPosition++ });
     }
   }
   const parameters: RuleParameter[] = derivedParams.map((p) => {

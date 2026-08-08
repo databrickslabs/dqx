@@ -47,11 +47,11 @@ describe("deriveSlotsAndParameters — item 10 family seeding + item 11 negate s
     expect(slots[0]?.family).toBe("any");
   });
 
-  test("carries the array family through for array-column checks", () => {
+  test("array-column checks advertise family any (array family retired)", () => {
     const { slots } = deriveSlotsAndParameters(
-      fn({ params: [param("column", "column", { family: "array" })] }),
+      fn({ params: [param("column", "column", { family: "any" })] }),
     );
-    expect(slots[0]?.family).toBe("array");
+    expect(slots[0]?.family).toBe("any");
   });
 
   test("drops negate from the derived parameter list (surfaced as polarity)", () => {
@@ -78,10 +78,10 @@ describe("deriveSlotsAndParameters — item 10 family seeding + item 11 negate s
   });
 });
 
-describe("familyForSparkType — ARRAY family (item 10)", () => {
-  test("classifies array column types as array", () => {
-    expect(familyForSparkType("array<string>")).toBe("array");
-    expect(familyForSparkType("ARRAY<INT>")).toBe("array");
+describe("familyForSparkType — ARRAY columns classify as any", () => {
+  test("classifies array column types as any (array family retired)", () => {
+    expect(familyForSparkType("array<string>")).toBe("any");
+    expect(familyForSparkType("ARRAY<INT>")).toBe("any");
   });
   test("still classifies the primitive families", () => {
     expect(familyForSparkType("bigint")).toBe("numeric");
@@ -256,11 +256,28 @@ describe("parseDqxCheckJson — reusable slot names survive the round-trip (item
     expect(args.columns).toEqual(["{{order_id}}", "{{line_no}}"]);
   });
 
-  test("falls back to the canonical column_N name when no placeholder is present", () => {
+  test("promotes a literal column name to a slot so ODCS imports can auto-map", () => {
     const result = parse(
-      { check: { function: "is_not_null", arguments: { column: "not_a_placeholder" } } },
+      { check: { function: "is_not_null", arguments: { column: "transactionID" } } },
       [isNotNull],
     );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["transactionID"]);
+    const args = (result.definition.body as { arguments: Record<string, unknown> }).arguments;
+    expect(args.column).toBe("{{transactionID}}");
+  });
+
+  test("promotes a list of literal column names to slots", () => {
+    const result = parse(
+      { check: { function: "foreign_key", arguments: { columns: ["order_id", "line_no"] } } },
+      [foreignKey],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["order_id", "line_no"]);
+    const args = (result.definition.body as { arguments: Record<string, unknown> }).arguments;
+    expect(args.columns).toEqual(["{{order_id}}", "{{line_no}}"]);
+  });
+
+  test("falls back to the canonical column_N name when the column arg is missing", () => {
+    const result = parse({ check: { function: "is_not_null", arguments: {} } }, [isNotNull]);
     expect(result.definition.slots?.map((s) => s.name)).toEqual(["column_1"]);
   });
 });

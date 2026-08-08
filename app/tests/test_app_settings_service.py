@@ -149,13 +149,13 @@ class TestAiGatewaySettings:
 
 
 class TestGlobalResultsEnabled:
-    """Global Results tab gating (issue B2-20) — OFF by default; explicit opt-in only."""
+    """Global Results tab gating — ON by default; explicit false still disables via API."""
 
-    def test_defaults_to_false_when_unset(self, settings_service):
+    def test_defaults_to_true_when_unset(self, settings_service):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert svc.get_global_results_enabled() is False
+        assert svc.get_global_results_enabled() is True
 
     def test_explicit_true_reads_on(self, settings_service):
         svc, sql_executor_mock = settings_service
@@ -183,13 +183,13 @@ class TestGlobalResultsEnabled:
 
 
 class TestRulesResultsTabEnabled:
-    """Per-rule Results tab gating (item 35) — OFF by default; explicit opt-in only."""
+    """Per-rule Results tab gating — ON by default; explicit false still disables via API."""
 
-    def test_defaults_to_false_when_unset(self, settings_service):
+    def test_defaults_to_true_when_unset(self, settings_service):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert svc.get_rules_results_tab_enabled() is False
+        assert svc.get_rules_results_tab_enabled() is True
 
     def test_explicit_true_reads_on(self, settings_service):
         svc, sql_executor_mock = settings_service

@@ -41,12 +41,11 @@ from databricks_labs_dqx_app.backend.services.view_service import ViewService
 logger = logging.getLogger(__name__)
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
-# Sampling policy — no caller knob; resolved per source inside run_binding:
+# Sampling policy inside run_binding:
 #   * source='approved' → sample_size 0 (whole table), unconditionally.
 #     Published monitoring runs must never sample.
-#   * source='draft'    → the admin setting ``draft_run_sample_limit``
-#     (AppSettingsService; default 1000, 0 = unlimited) so exploratory
-#     draft runs on large tables stay cheap.
+#   * source='draft'    → caller-supplied sample_size, or
+#     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT (1000) when omitted; 0 = unlimited.
 # Dryrun/preview routes (routes/v1/dryrun.py) are a separate flow with
 # their own explicit sampling.
 
@@ -183,6 +182,7 @@ class BindingRunService:
         trigger: RunSetTrigger = "manual",
         run_set_id: str | None = None,
         rule_ids: list[str] | None = None,
+        sample_size: int | None = None,
     ) -> BindingRunResult:
         """Resolve checks for *binding_id* and submit a run.
 
@@ -200,10 +200,11 @@ class BindingRunService:
         Mints a new run set when *run_set_id* is None (a run set of one);
         otherwise joins the caller-supplied run set (product fan-out).
 
-        Sampling is not a caller choice — it is resolved from *source*:
-        approved/published runs always scan the whole table (sample size
-        0, unconditionally); draft runs are capped by the admin setting
-        ``draft_run_sample_limit`` (default 1000, 0 = unlimited).
+        Sampling:
+        - approved/published runs always scan the whole table (sample size
+          0, unconditionally), ignoring *sample_size*.
+        - draft runs use *sample_size* when provided (0 = unlimited);
+          otherwise ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000).
 
         Naming note: the task entrypoint submitted here is historically
         called ``dryrun`` — that is the frozen runner's task_type for
@@ -246,22 +247,14 @@ class BindingRunService:
         checks = _stamp_run_provenance(checks, run_mode, binding_version)
 
         # Approved/published runs never sample — force a full-table scan
-        # regardless of any caller wishes. Draft runs are capped by the
-        # admin setting (0 = unlimited); a settings-read failure must not
-        # block a draft run, so fall back to the compiled-in default.
+        # regardless of any caller wishes. Draft runs use the caller-supplied
+        # size (0 = unlimited) or the compiled-in default of 1000.
         if source == "approved":
-            sample_size = 0
+            resolved_sample_size = 0
+        elif sample_size is not None:
+            resolved_sample_size = sample_size
         else:
-            try:
-                limit = self._settings_service.get_draft_run_sample_limit()
-            except Exception:
-                logger.warning(
-                    "Failed to read draft_run_sample_limit; using default %d",
-                    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
-                    exc_info=True,
-                )
-                limit = None
-            sample_size = limit if limit is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+            resolved_sample_size = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
 
         run_id = uuid4().hex[:16]
         # Persisted ``run_type`` for the ``dq_validation_runs`` row — the
@@ -312,7 +305,7 @@ class BindingRunService:
         try:
             config: dict[str, Any] = {
                 "checks": checks,
-                "sample_size": sample_size,
+                "sample_size": resolved_sample_size,
                 "source_table_fqn": table_fqn,
                 "is_sql_check": sql_query is not None,
                 "run_type": run_type,
@@ -335,7 +328,7 @@ class BindingRunService:
                 requesting_user=user_email,
                 source_table_fqn=table_fqn,
                 view_fqn=view_fqn,
-                sample_size=sample_size,
+                sample_size=resolved_sample_size,
                 run_type=run_type,
                 job_run_id=job_run_id,
             )

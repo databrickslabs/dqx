@@ -18,8 +18,6 @@ import { toast } from "sonner";
 import {
   useDeleteDataProduct,
   useRunDataProduct,
-  useApproveDataProduct,
-  useRejectDataProduct,
   useRevertDataProduct,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
@@ -31,6 +29,12 @@ import {
   type DataProductOut,
   type DataProductMemberOut,
 } from "@/lib/api";
+import {
+  exportDataProduct,
+  useApproveDataProductWithRationale,
+  useRejectDataProductWithRationale,
+} from "@/lib/api-custom";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -50,11 +54,10 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckCircle2, Clock, Download, GitCompare, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
-import { CommentsDialog } from "@/components/CommentThread";
+import { CheckCircle2, Clock, Download, GitCompare, History, Loader2, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
 import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/drafts/ChangeDiffDialog";
-import { exportDataProduct } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
+import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -306,16 +309,17 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
   const runMut = useRunDataProduct({ mutation: { onError: () => {} } });
   const deleteMut = useDeleteDataProduct({ mutation: { onError: () => {} } });
-  const approveMut = useApproveDataProduct({ mutation: { onError: () => {} } });
-  const rejectMut = useRejectDataProduct({ mutation: { onError: () => {} } });
+  const approveMut = useApproveDataProductWithRationale({ mutation: { onError: () => {} } });
+  const rejectMut = useRejectDataProductWithRationale({ mutation: { onError: () => {} } });
   const revertMut = useRevertDataProduct({ mutation: { onError: () => {} } });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [lifecycleDialog, setLifecycleDialog] = useState<LifecycleAction | null>(null);
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [draftSampleKind, setDraftSampleKind] = useState<SampleKind>("records");
+  const [draftSampleValue, setDraftSampleValue] = useState(1000);
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
@@ -363,12 +367,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
   };
 
-  const handleApprove = async () => {
+  const handleApprove = async (rationale?: string | null) => {
     // See ReviewPendingChangesButton.handleApprove: only bypass the guard for
     // the post-approve refetch window when nothing was unsaved (B2-66).
     const wasClean = !editState.isDirty;
     try {
-      await approveMut.mutateAsync({ productId: product.product_id });
+      await approveMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
       if (wasClean) editState.markApprovedWhenClean();
       toast.success(t("dataProducts.toastApproved"));
       invalidateLifecycle();
@@ -377,9 +381,9 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     }
   };
 
-  const handleReject = async () => {
+  const handleReject = async (rationale?: string | null) => {
     try {
-      await rejectMut.mutateAsync({ productId: product.product_id });
+      await rejectMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
       toast.success(t("dataProducts.toastRejected"));
       invalidateLifecycle();
     } catch (e) {
@@ -409,7 +413,14 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const handleRun = async (source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource]) => {
     setBusyRun(true);
     try {
-      const resp = await runMut.mutateAsync({ productId: product.product_id, data: { source } });
+      const sample_size = draftSampleKind === "full" ? 0 : Math.max(1, draftSampleValue);
+      const resp = await runMut.mutateAsync({
+        productId: product.product_id,
+        data: {
+          source,
+          ...(source === RunDataProductInSource.draft ? { sample_size } : {}),
+        },
+      });
       // The run endpoint returns 200 even when EVERY member failed to launch
       // (their failures collected into `skipped`, `submitted` left empty, and
       // the empty run set rolled back). That is not a started run, so treat an
@@ -509,7 +520,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
           {canEdit && (
             <Button
-              onClick={() => void editState.handleSubmit()}
+              onClick={() => setLifecycleDialog("submit")}
               disabled={editState.submitPending || needsDraftRun || (submitDisabledNoChanges && !editState.canSave)}
               size="sm"
               className="gap-2"
@@ -528,6 +539,16 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                 ? t("dataProducts.saveAndPublishButton")
                 : t("dataProducts.submitForReviewButton")}
             </Button>
+          )}
+
+          {canRun && canRunDraft && (
+            <SampleSelector
+              kind={draftSampleKind}
+              value={draftSampleValue}
+              onKind={setDraftSampleKind}
+              onValue={setDraftSampleValue}
+              disablePercent
+            />
           )}
 
           {canRun &&
@@ -636,10 +657,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                 <History className="h-3.5 w-3.5" />
                 {t("runsHistory.menuViewRuns")}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setCommentsOpen(true)} className="gap-2">
-                <MessageSquare className="h-3.5 w-3.5" />
-                {t("dataProducts.actionComments")}
-              </DropdownMenuItem>
               {canEdit && <DropdownMenuSeparator />}
               {canEdit && (
                 <DropdownMenuItem onSelect={() => setDeleteOpen(true)} variant="destructive" className="gap-2">
@@ -675,6 +692,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
                 {t("dataProducts.pendingBannerBody")}
               </p>
+              {product.pending_rationale ? (
+                <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                  <span className="font-medium">{t("lifecycle.pendingRationaleLabel")}: </span>
+                  <span className="whitespace-pre-wrap">{product.pending_rationale}</span>
+                </p>
+              ) : null}
               {!canApprove && (
                 <p className="text-xs text-amber-700/80 dark:text-amber-300/70 italic">
                   {t("dataProducts.awaitingApproval")}
@@ -714,7 +737,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={() => void handleApprove()}
+                    onClick={() => setLifecycleDialog("approve")}
                     className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
                   >
                     {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -724,7 +747,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={() => setRejectOpen(true)}
+                    onClick={() => setLifecycleDialog("reject")}
                     className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
                   >
                     {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -737,28 +760,45 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         </div>
       )}
 
-      <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("dataProducts.rejectConfirmDescription", { name: product.name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={() => {
-                setRejectOpen(false);
-                void handleReject();
-              }}
-            >
-              {t("dataProducts.rejectAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <LifecycleRationaleDialog
+        open={lifecycleDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setLifecycleDialog(null);
+        }}
+        action={lifecycleDialog ?? "submit"}
+        title={
+          lifecycleDialog === "approve"
+            ? t("dataProducts.approveAction")
+            : lifecycleDialog === "reject"
+              ? t("dataProducts.rejectConfirmTitle")
+              : willAutoApprove
+                ? t("dataProducts.saveAndPublishButton")
+                : t("dataProducts.submitForReviewButton")
+        }
+        description={
+          lifecycleDialog === "reject"
+            ? t("dataProducts.rejectConfirmDescription", { name: product.name })
+            : t("dataProducts.pendingBannerBody")
+        }
+        confirmLabel={
+          lifecycleDialog === "approve"
+            ? t("dataProducts.approveAction")
+            : lifecycleDialog === "reject"
+              ? t("dataProducts.rejectAction")
+              : willAutoApprove
+                ? t("dataProducts.saveAndPublishButton")
+                : t("dataProducts.submitForReviewButton")
+        }
+        destructive={lifecycleDialog === "reject"}
+        busy={lifecycleBusy}
+        onConfirm={(rationale) => {
+          const action = lifecycleDialog;
+          setLifecycleDialog(null);
+          if (action === "approve") void handleApprove(rationale);
+          else if (action === "reject") void handleReject(rationale);
+          else if (action === "submit") void editState.handleSubmit(rationale);
+        }}
+      />
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
@@ -784,13 +824,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
       </AlertDialog>
 
       <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
-
-      <CommentsDialog
-        entityType="data_product"
-        entityId={product.product_id}
-        open={commentsOpen}
-        onOpenChange={setCommentsOpen}
-      />
     </div>
   );
 }

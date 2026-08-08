@@ -129,6 +129,18 @@ export const AGGREGATES = [
   "mode",
 ] as const;
 
+/**
+ * Aggregates offered when the rule has no Group by. Without a grouping key the
+ * check is table-wide, so only cardinality / completeness-style aggregates are
+ * useful; sum/avg/min/max/… unlock once the author sets Group by in Advanced.
+ */
+export const AGGREGATES_WITHOUT_GROUP_BY: readonly string[] = [
+  "count",
+  "count_distinct",
+  "null_rate",
+  "approx_count_distinct",
+];
+
 // Which column families each aggregate accepts. "ANY" means every family.
 export const AGGREGATE_INPUT_FAMILIES: Record<string, Family[] | "ANY"> = {
   count: "ANY",
@@ -154,10 +166,17 @@ export const AGGREGATE_INPUT_FAMILIES: Record<string, Family[] | "ANY"> = {
 
 export const AGGREGATES_TAKING_PARAM = new Set(["percentile", "percentile_approx"]);
 
+// A registry rule is table-agnostic: a slot's family CONSTRAINS which real
+// column may be bound to it per monitored table, and `ANY` declares no
+// constraint at all. So `ANY` is a wildcard on BOTH sides — an aggregate that
+// takes any family accepts every column, and an unconstrained column is
+// accepted by every aggregate. Treating a column's `ANY` as a concrete type
+// satisfied nothing, which silently hid sum/avg/min/max/… from the aggregate
+// picker for the default (`any`) slot family.
 export function aggregateAcceptsFamily(agg: string, family: Family): boolean {
   const spec = AGGREGATE_INPUT_FAMILIES[agg];
   if (!spec) return false;
-  if (spec === "ANY") return true;
+  if (spec === "ANY" || family === "ANY") return true;
   return spec.includes(family);
 }
 

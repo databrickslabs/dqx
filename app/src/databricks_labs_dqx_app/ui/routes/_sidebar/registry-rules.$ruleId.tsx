@@ -29,9 +29,9 @@ import {
   AlertCircle,
   Braces,
   CheckCircle2,
+  Clock,
   Download,
   Loader2,
-  MessageSquare,
   MoreVertical,
   RotateCcw,
   Table2,
@@ -39,20 +39,23 @@ import {
   Undo2,
   XCircle,
 } from "lucide-react";
-import { CommentsDialog } from "@/components/CommentThread";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
   useDeleteRegistryRule,
-  useApproveRegistryRule,
-  useRejectRegistryRule,
   useRevokeRegistryRule,
 } from "@/lib/api";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
-import { useLabelDefinitions, exportRegistryRule } from "@/lib/api-custom";
+import {
+  useLabelDefinitions,
+  exportRegistryRule,
+  useApproveRegistryRuleWithRationale,
+  useRejectRegistryRuleWithRationale,
+} from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
+import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import {
@@ -134,9 +137,8 @@ function RegistryRuleDetailPage() {
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [lifecycleDialog, setLifecycleDialog] = useState<"approve" | "reject" | null>(null);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // Read-only view / "save as new draft" clone dialog (rule isn't editable
   // in place — see `RegistryRuleJsonDialog`).
@@ -189,43 +191,48 @@ function RegistryRuleDetailPage() {
     );
   }, [deleteMutation, ruleId, t, backToList]);
 
-  const approveMutation = useApproveRegistryRule();
-  const rejectMutation = useRejectRegistryRule();
+  const approveMutation = useApproveRegistryRuleWithRationale();
+  const rejectMutation = useRejectRegistryRuleWithRationale();
   const revokeMutation = useRevokeRegistryRule();
   const lifecycleBusy = approveMutation.isPending || rejectMutation.isPending || revokeMutation.isPending;
 
-  const handleApprove = useCallback(() => {
-    approveMutation.mutate(
-      { ruleId },
-      {
-        onSuccess: () => {
-          toast.success(t("rulesRegistry.toastApproved"));
-          invalidateDetail();
-          invalidateAfterLifecycleChange();
+  const handleApprove = useCallback(
+    (rationale?: string | null) => {
+      approveMutation.mutate(
+        { ruleId, rationale: rationale ?? null },
+        {
+          onSuccess: () => {
+            toast.success(t("rulesRegistry.toastApproved"));
+            invalidateDetail();
+            invalidateAfterLifecycleChange();
+          },
+          onError: (err) => {
+            toast.error(extractApiError(err, t("rulesRegistry.toastApproveFailed")), { duration: 6000 });
+          },
         },
-        onError: (err) => {
-          toast.error(extractApiError(err, t("rulesRegistry.toastApproveFailed")), { duration: 6000 });
-        },
-      },
-    );
-  }, [approveMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange]);
+      );
+    },
+    [approveMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange],
+  );
 
-  const handleConfirmReject = useCallback(() => {
-    setRejectConfirmOpen(false);
-    rejectMutation.mutate(
-      { ruleId },
-      {
-        onSuccess: () => {
-          toast.success(t("rulesRegistry.toastRejected"));
-          invalidateDetail();
-          invalidateAfterLifecycleChange();
+  const handleReject = useCallback(
+    (rationale?: string | null) => {
+      rejectMutation.mutate(
+        { ruleId, rationale: rationale ?? null },
+        {
+          onSuccess: () => {
+            toast.success(t("rulesRegistry.toastRejected"));
+            invalidateDetail();
+            invalidateAfterLifecycleChange();
+          },
+          onError: (err) => {
+            toast.error(extractApiError(err, t("rulesRegistry.toastRejectFailed")), { duration: 6000 });
+          },
         },
-        onError: (err) => {
-          toast.error(extractApiError(err, t("rulesRegistry.toastRejectFailed")), { duration: 6000 });
-        },
-      },
-    );
-  }, [rejectMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange]);
+      );
+    },
+    [rejectMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange],
+  );
 
   const canRevokeSubmission =
     rule.status === "pending_approval" &&
@@ -318,7 +325,7 @@ function RegistryRuleDetailPage() {
             variant="outline"
             size="sm"
             className="gap-2 h-8 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-            onClick={handleApprove}
+            onClick={() => setLifecycleDialog("approve")}
             disabled={lifecycleBusy}
           >
             {approveMutation.isPending ? (
@@ -332,7 +339,7 @@ function RegistryRuleDetailPage() {
             variant="outline"
             size="sm"
             className="gap-2 h-8 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-            onClick={() => setRejectConfirmOpen(true)}
+            onClick={() => setLifecycleDialog("reject")}
             disabled={lifecycleBusy}
           >
             {rejectMutation.isPending ? (
@@ -390,11 +397,6 @@ function RegistryRuleDetailPage() {
               <Braces className="h-3.5 w-3.5" />
               {t("rulesRegistry.actionViewJson")}
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
-              <MessageSquare className="h-3.5 w-3.5" />
-              {t("rulesRegistry.actionComments")}
-            </DropdownMenuItem>
             {canDelete && (
               <>
                 <DropdownMenuSeparator />
@@ -443,6 +445,23 @@ function RegistryRuleDetailPage() {
       <div className="space-y-6">
         <PageBreadcrumb items={[{ label: t("rulesRegistry.title"), to: "/registry-rules" }]} page={name} />
 
+        {rule.status === "pending_approval" && (
+          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
+            <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0 space-y-1">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {t("rulesRegistry.statusPendingApproval")}
+              </p>
+              {rule.pending_rationale ? (
+                <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                  <span className="font-medium">{t("lifecycle.pendingRationaleLabel")}: </span>
+                  <span className="whitespace-pre-wrap">{rule.pending_rationale}</span>
+                </p>
+              ) : null}
+            </div>
+          </div>
+        )}
+
         <RegistryRuleFormDialog
           variant="page"
           open
@@ -478,13 +497,6 @@ function RegistryRuleDetailPage() {
         />
       )}
 
-      <CommentsDialog
-        entityType="rule"
-        entityId={rule.rule_id}
-        open={commentsOpen}
-        onOpenChange={setCommentsOpen}
-      />
-
       <RegistryRuleJsonDialog
         open={jsonDialogOpen}
         onOpenChange={setJsonDialogOpen}
@@ -507,6 +519,37 @@ function RegistryRuleDetailPage() {
         }}
       />
 
+      <LifecycleRationaleDialog
+        open={lifecycleDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setLifecycleDialog(null);
+        }}
+        action={(lifecycleDialog ?? "approve") as LifecycleAction}
+        title={
+          lifecycleDialog === "reject"
+            ? t("rulesRegistry.rejectConfirmTitle")
+            : t("rulesRegistry.actionApprove")
+        }
+        description={
+          lifecycleDialog === "reject"
+            ? t("rulesRegistry.rejectConfirmDescription", { name })
+            : t("rulesRegistry.statusPendingApproval")
+        }
+        confirmLabel={
+          lifecycleDialog === "reject"
+            ? t("rulesRegistry.actionReject")
+            : t("rulesRegistry.actionApprove")
+        }
+        destructive={lifecycleDialog === "reject"}
+        busy={lifecycleBusy}
+        onConfirm={(rationale) => {
+          const action = lifecycleDialog;
+          setLifecycleDialog(null);
+          if (action === "approve") handleApprove(rationale);
+          else if (action === "reject") handleReject(rationale);
+        }}
+      />
+
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -522,26 +565,6 @@ function RegistryRuleDetailPage() {
               onClick={handleConfirmDelete}
             >
               {t("rulesRegistry.actionDelete")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("rulesRegistry.rejectConfirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("rulesRegistry.rejectConfirmDescription", { name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className={cn("bg-destructive text-white hover:bg-destructive/90")}
-              onClick={handleConfirmReject}
-            >
-              {t("rulesRegistry.actionReject")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

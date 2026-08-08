@@ -41,7 +41,7 @@ from .services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableSummary,
 )
-from .services.rule_suggester import RuleSuggestion, SuggestRulesResult
+from .services.rule_suggester import MatchRulesResult, MatchedRule, RuleSuggestion, SuggestRulesResult
 from .services.tag_suggestion_service import TagRuleSuggestion
 
 if TYPE_CHECKING:
@@ -240,8 +240,7 @@ class GenerateRulesFromContractIn(BaseModel):
 
     # Bound the raw payload so a single request can't carry a pathologically
     # large contract. 1 MiB is far larger than any realistic ODCS contract
-    # while still capping parse cost and the upstream LLM fan-out from
-    # ``type: text`` expectations (OWASP LLM04 — see AGENTS.md).
+    # while still capping parse cost.
     contract_text: str = Field(
         max_length=1_048_576,
         description="Raw ODCS contract YAML or JSON content",
@@ -249,10 +248,6 @@ class GenerateRulesFromContractIn(BaseModel):
     generate_predefined_rules: bool = Field(
         default=True,
         description="Generate rules from schema property constraints (required, pattern, min/max, etc.)",
-    )
-    process_text_rules: bool = Field(
-        default=False,
-        description="Process natural-language quality expectations via LLM (requires [llm] extras)",
     )
     generate_schema_validation: bool = Field(
         default=True,
@@ -347,6 +342,10 @@ class RuleHistoryEntryOut(BaseModel):
     new_status: str | None = None
     changed_by: str | None = None
     changed_at: str | None = None
+    rationale: str | None = Field(
+        default=None,
+        description="Optional change rationale recorded with this history entry (when captured).",
+    )
 
 
 class SaveRulesIn(BaseModel):
@@ -433,6 +432,14 @@ class CreateRegistryRuleIn(BaseModel):
         default=None,
         description="Human-readable display name for the steward; sourced from the principal picker.",
     )
+    allow_duplicate: bool = Field(
+        default=False,
+        description=(
+            "When false (default), creating a rule whose definition matches a published "
+            "rule returns HTTP 409 so the UI can ask the steward to confirm. Set true after "
+            "the steward confirms (or for batch/seed paths that intentionally allow copies)."
+        ),
+    )
 
 
 class UpdateRegistryRuleIn(BaseModel):
@@ -475,6 +482,14 @@ class RegistryRuleOut(BaseModel):
     )
     is_builtin: bool = False
     source: str | None = None
+    pending_rationale: str | None = Field(
+        default=None,
+        description="Author's change rationale while status is pending_approval.",
+    )
+    last_decision_rationale: str | None = Field(
+        default=None,
+        description="Approver's rationale from the most recent approve/reject decision.",
+    )
     created_by: str | None = None
     created_at: str | None = None
     updated_by: str | None = None
@@ -507,6 +522,8 @@ class RegistryRuleOut(BaseModel):
             steward_display_name=rule.steward_display_name,
             is_builtin=rule.is_builtin,
             source=rule.source,
+            pending_rationale=rule.pending_rationale,
+            last_decision_rationale=rule.last_decision_rationale,
             created_by=rule.created_by,
             created_at=rule.created_at.isoformat() if rule.created_at else None,
             updated_by=rule.updated_by,
@@ -731,6 +748,19 @@ class UpdateMonitoredTableOwnerIn(BaseModel):
     owner: str = Field(min_length=1, description="Owner's email/username")
 
 
+class UpdateMonitoredTableNotesIn(BaseModel):
+    """Request body for PATCH ``/monitored-tables/{id}/notes``."""
+
+    notes: str | None = Field(default=None, description="Sticky operational notes; null clears")
+
+
+class LifecycleRationaleIn(BaseModel):
+    """Optional body for submit / approve / reject lifecycle endpoints."""
+
+    rationale: str | None = Field(
+        default=None,
+        description="Change rationale: author's reason on submit, approver's reason on approve/reject.",
+    )
 
 
 class BulkRegisterMonitoredTablesIn(BaseModel):
@@ -970,6 +1000,13 @@ class MonitoredTableOut(BaseModel):
         description="Newest terminal validation-run instant for this table (either trigger surface); "
         "drives the overview 'Last run' column.",
     )
+    notes: str | None = Field(default=None, description="Sticky operational notes")
+    pending_rationale: str | None = Field(
+        default=None, description="Author's change rationale while status is pending_approval"
+    )
+    last_decision_rationale: str | None = Field(
+        default=None, description="Approver's rationale from the most recent approve/reject decision"
+    )
     created_by: str | None = None
     created_at: str | None = None
     updated_by: str | None = None
@@ -989,6 +1026,9 @@ class MonitoredTableOut(BaseModel):
             schedule_kind=table.schedule_kind,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
             last_run_at=table.last_run_at.isoformat() if table.last_run_at else None,
+            notes=table.notes,
+            pending_rationale=table.pending_rationale,
+            last_decision_rationale=table.last_decision_rationale,
             created_by=table.created_by,
             created_at=table.created_at.isoformat() if table.created_at else None,
             updated_by=table.updated_by,
@@ -1184,6 +1224,62 @@ class SuggestRulesOut(BaseModel):
             available=result.available,
             reason=result.reason,
             suggestions=[SuggestedRuleMappingOut.from_domain(s) for s in result.suggestions],
+        )
+
+
+class MatchRulesIn(BaseModel):
+    """Body of ``POST /monitored-tables/{binding_id}/match-rules`` (describe-a-rule)."""
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="Natural-language description of the rule the steward wants.",
+    )
+    top_k: int = Field(default=5, ge=1, le=20, description="Max retrieval hits to consider.")
+
+
+class MatchedRuleOut(BaseModel):
+    """One NL-matched published registry rule, optionally with a stageable column mapping."""
+
+    rule_id: str
+    rule_name: str | None = None
+    dimension: str | None = None
+    severity: str | None = None
+    score: float
+    column_mapping: ColumnMappingGroup | None = None
+    explanation: str = ""
+
+    @classmethod
+    def from_domain(cls, match: MatchedRule) -> "MatchedRuleOut":
+        return cls(
+            rule_id=match.rule_id,
+            rule_name=match.rule_name,
+            dimension=match.dimension,
+            severity=match.severity,
+            score=match.score,
+            column_mapping=match.column_mapping,
+            explanation=match.explanation,
+        )
+
+
+class MatchRulesOut(BaseModel):
+    """Response of ``POST /monitored-tables/{binding_id}/match-rules``.
+
+    Same deploy-safe contract as SuggestRulesOut: always HTTP 200;
+    ``available=False`` + ``reason`` covers every degraded path.
+    """
+
+    available: bool
+    matches: list[MatchedRuleOut] = Field(default_factory=list)
+    reason: str = ""
+
+    @classmethod
+    def from_domain(cls, result: MatchRulesResult) -> "MatchRulesOut":
+        return cls(
+            available=result.available,
+            reason=result.reason,
+            matches=[MatchedRuleOut.from_domain(m) for m in result.matches],
         )
 
 
@@ -1546,10 +1642,15 @@ class RunMonitoredTableIn(BaseModel):
         min_length=1,
         description="Optional registry rule ids to run. Omit to run every applied rule on the binding.",
     )
-    # Deliberately NO sample_size field: approved/published runs always
-    # check the whole table (never sample), and draft runs are capped by
-    # the admin setting ``draft_run_sample_limit`` — sampling is not a
-    # per-request choice. See BindingRunService.run_binding.
+    sample_size: int | None = Field(
+        default=None,
+        ge=0,
+        le=10_000_000,
+        description=(
+            "Rows to sample for draft runs (0 = full table). Ignored for approved/published "
+            "runs, which always scan the whole table. When omitted on a draft run, defaults to 1000."
+        ),
+    )
 
 
 class RunMonitoredTableOut(BaseModel):
@@ -1614,6 +1715,7 @@ class CreateDataProductIn(BaseModel):
 
     name: str
     description: str | None = None
+    notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
     steward: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
     steward_display_name: str | None = Field(
         default=None,
@@ -1632,6 +1734,7 @@ class UpdateDataProductIn(BaseModel):
 
     name: str | None = None
     description: str | None = None
+    notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
     steward: str | None = None
     steward_display_name: str | None = Field(
         default=None,
@@ -1658,6 +1761,15 @@ class RunDataProductIn(BaseModel):
 
     source: RegistryRunSetSource = Field(
         description="'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state"
+    )
+    sample_size: int | None = Field(
+        default=None,
+        ge=0,
+        le=10_000_000,
+        description=(
+            "Rows to sample for draft runs (0 = full table). Ignored for approved/published "
+            "runs. When omitted on a draft run, defaults to 1000. Applied to every member."
+        ),
     )
 
 
@@ -1709,6 +1821,7 @@ class DataProductOut(BaseModel):
     product_id: str
     name: str
     description: str | None = None
+    notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
     steward: str | None = None
     steward_display_name: str | None = Field(
         default=None,
@@ -1719,6 +1832,12 @@ class DataProductOut(BaseModel):
     schedule_kind: RegistryScheduleKind = REGISTRY_SCHEDULE_KIND_DEFAULT
     status: RegistryDataProductStatus
     version: int
+    pending_rationale: str | None = Field(
+        default=None, description="Author's change rationale while status is pending_approval"
+    )
+    last_decision_rationale: str | None = Field(
+        default=None, description="Approver's rationale from the most recent approve/reject decision"
+    )
     display_status: str = Field(
         description="'approved' | 'pending_approval' | 'rejected' | 'modified' | 'draft' — review lifecycle display"
     )
@@ -1745,6 +1864,7 @@ class DataProductOut(BaseModel):
             product_id=product.product_id,
             name=product.name,
             description=product.description,
+            notes=product.notes,
             steward=product.steward,
             steward_display_name=product.steward_display_name,
             schedule_cron=product.schedule_cron,
@@ -1752,6 +1872,8 @@ class DataProductOut(BaseModel):
             schedule_kind=product.schedule_kind,
             status=product.status,
             version=product.version,
+            pending_rationale=product.pending_rationale,
+            last_decision_rationale=product.last_decision_rationale,
             display_status=data_product_display_status(product),
             members=[DataProductMemberOut.from_domain(m) for m in detail.members],
             member_count=detail.member_count,
@@ -2439,7 +2561,7 @@ class CheckFunctionParam(BaseModel):
         default=None,
         description=(
             "For a column-kind parameter ('column' / 'columns'), the slot family the "
-            "check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', "
+            "check's semantics imply ('numeric', 'text', 'temporal', 'boolean', "
             "or 'any'). A specific (non-'any') family is locked in the authoring UI and "
             "narrows the apply-time column picker. None for non-column parameters."
         ),
@@ -2496,7 +2618,8 @@ class ObjectGrantOut(BaseModel):
     principal_type: str = Field(description="'user' or 'group'")
     principal_name: str | None = Field(default=None, description="Human-readable principal name")
     privileges: list[str] = Field(
-        default_factory=list, description="Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES)"
+        default_factory=list,
+        description="Granted privileges (SELECT/MODIFY/APPLY/EXECUTE/MANAGE or ALL_PRIVILEGES)",
     )
     inherit: bool = Field(default=False, description="Whether this grant flows down to child objects")
     grantor: str | None = Field(default=None, description="Who granted this")
@@ -2518,7 +2641,7 @@ class ObjectGrantsOut(BaseModel):
     grants: list[ObjectGrantOut] = Field(default_factory=list)
     can_manage: bool = Field(default=False, description="Whether the caller may add/remove grants on this object")
     default_inherit: bool = Field(
-        default=False, description="Admin default for the per-grant inheritance toggle on new grants"
+        default=True, description="Default for the per-grant inheritance toggle on new grants (always ON)"
     )
 
 

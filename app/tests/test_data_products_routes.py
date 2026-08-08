@@ -175,7 +175,9 @@ class TestCreate:
             perms=MagicMock(),
         )
         assert result.product_id == "p1"
-        svc.create.assert_called_once_with("Orders", None, None, "alice@x", steward_display_name=None)
+        svc.create.assert_called_once_with(
+            "Orders", None, None, "alice@x", steward_display_name=None, notes=None
+        )
 
     def test_create_seeds_default_grants_via_service(self):
         """Seeding is now the service's responsibility (not the route's).
@@ -333,7 +335,7 @@ class TestSubmit:
         svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
         result = submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert result.status == "pending_approval"
-        svc.submit.assert_called_once_with("p1", "alice@x")
+        svc.submit.assert_called_once_with("p1", "alice@x", rationale=None)
 
     def test_submit_missing_raises_404(self):
         svc = MagicMock()
@@ -363,7 +365,7 @@ class TestApprove:
         svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
         result = approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
         assert result.status == "approved"
-        svc.approve.assert_called_once_with("p1", "alice@x")
+        svc.approve.assert_called_once_with("p1", "alice@x", rationale=None)
 
     def test_approve_non_pending_raises_409(self):
         svc = MagicMock()
@@ -386,7 +388,7 @@ class TestReject:
         svc.get.return_value = _detail(product_id="p1", status="rejected", version=0)
         result = reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
         assert result.status == "rejected"
-        svc.reject.assert_called_once_with("p1", "alice@x")
+        svc.reject.assert_called_once_with("p1", "alice@x", rationale=None)
 
     def test_reject_non_pending_raises_409(self):
         svc = MagicMock()

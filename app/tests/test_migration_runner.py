@@ -215,6 +215,34 @@ class TestStewardDisplayNameMigration:
         assert idx26 == idx25 + 1, "v26 must immediately follow v25 in MIGRATIONS"
 
 
+class TestNotesAndRationaleMigration:
+    """v27: notes + change-rationale columns (OLTP fallback)."""
+
+    def test_v27_adds_notes_and_rationale_columns(self) -> None:
+        v27 = next(m for m in MIGRATIONS if m.version == 27)
+        sql = v27.sql_template
+        assert "dq_monitored_tables" in sql
+        assert "dq_data_products" in sql
+        assert "dq_rules" in sql
+        assert "dq_rules_history" in sql
+        assert "notes" in sql
+        assert "pending_rationale" in sql
+        assert "last_decision_rationale" in sql
+        assert "rationale" in sql
+        # Rule notes stay in user_metadata — no notes column on dq_rules.
+        assert "dq_rules ADD COLUMN notes" not in sql.replace("\n", " ")
+
+    def test_v27_is_oltp_fallback(self) -> None:
+        v27 = next(m for m in MIGRATIONS if m.version == 27)
+        assert v27.oltp_fallback is True
+
+    def test_v27_version_follows_v26(self) -> None:
+        versions = [m.version for m in MIGRATIONS]
+        idx26 = versions.index(26)
+        idx27 = versions.index(27)
+        assert idx27 == idx26 + 1, "v27 must immediately follow v26 in MIGRATIONS"
+
+
 class TestStripExecuteFromRegistryRuleGrantsMigration:
     """v25: strip EXECUTE from registry_rule users-group grant rows (OLTP fallback)."""
 

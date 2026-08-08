@@ -294,74 +294,56 @@ class TestSubmission:
     def test_approved_always_scans_full_table(self, service, monitored_tables, version_service, job_service):
         """Approved/published runs never sample — sample_size is forced to 0.
 
-        There is no caller knob any more (``run_binding`` takes no
-        sample_size and ``RunMonitoredTableIn`` has no such field), so
-        this pins the service-level force: ``sample_size=0`` (the
-        runner's "no sampling" convention) in both the job config and
-        the run row, regardless of the admin draft setting.
+        Even when a caller passes a draft-style sample_size, approved runs
+        still force ``sample_size=0`` (full table) in both the job config
+        and the run row.
         """
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
 
-        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x", sample_size=250)
 
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 0
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["sample_size"] == 0
 
-    def test_draft_reads_admin_sample_limit(
-        self, service, monitored_tables, materializer, job_service, settings_service
+    def test_draft_uses_caller_sample_size(
+        self, service, monitored_tables, materializer, job_service
     ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
         materializer.render_binding_checks.return_value = _CHECKS
-        settings_service.get_draft_run_sample_limit.return_value = 250
 
-        service.run_binding("b1", source="draft", version=None, user_email="alice@x")
+        service.run_binding("b1", source="draft", version=None, user_email="alice@x", sample_size=250)
 
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 250
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["sample_size"] == 250
 
-    def test_draft_setting_zero_means_unlimited(
-        self, service, monitored_tables, materializer, job_service, settings_service
+    def test_draft_sample_size_zero_means_unlimited(
+        self, service, monitored_tables, materializer, job_service
     ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
         materializer.render_binding_checks.return_value = _CHECKS
-        settings_service.get_draft_run_sample_limit.return_value = 0
 
-        service.run_binding("b1", source="draft", version=None, user_email="alice@x")
+        service.run_binding("b1", source="draft", version=None, user_email="alice@x", sample_size=0)
 
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 0
 
-    def test_draft_defaults_to_1000_when_setting_unset(
-        self, service, monitored_tables, materializer, job_service, settings_service
+    def test_draft_defaults_to_1000_when_sample_size_omitted(
+        self, service, monitored_tables, materializer, job_service
     ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
         materializer.render_binding_checks.return_value = _CHECKS
-        settings_service.get_draft_run_sample_limit.return_value = None
 
         service.run_binding("b1", source="draft", version=None, user_email="alice@x")
 
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 1000
 
-    def test_draft_settings_read_failure_falls_back_to_default(
-        self, service, monitored_tables, materializer, job_service, settings_service
-    ):
-        """A settings-store hiccup must not block a draft run."""
-        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
-        materializer.render_binding_checks.return_value = _CHECKS
-        settings_service.get_draft_run_sample_limit.side_effect = RuntimeError("db down")
-
-        service.run_binding("b1", source="draft", version=None, user_email="alice@x")
-
-        _, submit_kwargs = job_service.submit_run.call_args
-        assert submit_kwargs["config"]["sample_size"] == 1000
-
-    def test_approved_does_not_consult_draft_setting(
+    def test_approved_ignores_caller_sample_size(
         self, service, monitored_tables, version_service, settings_service
     ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)

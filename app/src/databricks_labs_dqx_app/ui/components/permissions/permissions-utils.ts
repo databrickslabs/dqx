@@ -8,6 +8,7 @@ export const PRIV_SELECT = "SELECT";
 export const PRIV_MODIFY = "MODIFY";
 export const PRIV_APPLY = "APPLY";
 export const PRIV_EXECUTE = "EXECUTE";
+export const PRIV_MANAGE = "MANAGE";
 export const PRIV_ALL = "ALL_PRIVILEGES";
 
 /** Minimal shape needed to detect the synthetic default rows (users-group and
@@ -38,8 +39,8 @@ export function isOwnerDefaultGrant(grant: UsersGroupGrantLike): boolean {
 }
 
 /** Initial state of a new/edited grant's "inherit to child objects" toggle.
- *  New grants seed from the admin `permissions_default_inherit` setting; an
- *  existing grant keeps its stored value (falling back to the admin default). */
+ *  New grants seed from the cascade default (always ON); an existing grant
+ *  keeps its stored value (falling back to that default). */
 export function initialGrantInherit(
   editing: { inherit?: boolean | null } | null,
   defaultInherit: boolean,
@@ -79,12 +80,13 @@ export interface GrantDraftPrivs {
   modify: boolean;
   apply: boolean;
   execute: boolean;
+  manage: boolean;
 }
 
-/** When any of modify/apply/execute is set, SELECT (view) must be on:
+/** When any of modify/apply/execute/manage is set, SELECT (view) must be on:
  *  you can't act on what you can't see. Returns the draft with view forced. */
 export function forceSelectWhenOthers<T extends GrantDraftPrivs>(draft: T): T {
-  const others = draft.modify || draft.apply || draft.execute;
+  const others = draft.modify || draft.apply || draft.execute || draft.manage;
   return others ? { ...draft, view: true } : draft;
 }
 

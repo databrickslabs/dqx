@@ -63,27 +63,43 @@ describe("isAllPrivileges", () => {
 
 describe("forceSelectWhenOthers", () => {
   test("checking MODIFY forces SELECT on", () => {
-    expect(forceSelectWhenOthers({ view: false, modify: true, apply: false, execute: false }).view).toBe(true);
+    expect(
+      forceSelectWhenOthers({ view: false, modify: true, apply: false, execute: false, manage: false }).view,
+    ).toBe(true);
   });
 
   test("checking APPLY forces SELECT on", () => {
-    expect(forceSelectWhenOthers({ view: false, modify: false, apply: true, execute: false }).view).toBe(true);
+    expect(
+      forceSelectWhenOthers({ view: false, modify: false, apply: true, execute: false, manage: false }).view,
+    ).toBe(true);
   });
 
   test("checking EXECUTE forces SELECT on", () => {
-    expect(forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: true }).view).toBe(true);
+    expect(
+      forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: true, manage: false }).view,
+    ).toBe(true);
+  });
+
+  test("checking MANAGE forces SELECT on", () => {
+    expect(
+      forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: false, manage: true }).view,
+    ).toBe(true);
   });
 
   test("no other privilege leaves SELECT as-is (false)", () => {
-    expect(forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: false }).view).toBe(false);
+    expect(
+      forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: false, manage: false }).view,
+    ).toBe(false);
   });
 
   test("no other privilege leaves SELECT as-is (true)", () => {
-    expect(forceSelectWhenOthers({ view: true, modify: false, apply: false, execute: false }).view).toBe(true);
+    expect(
+      forceSelectWhenOthers({ view: true, modify: false, apply: false, execute: false, manage: false }).view,
+    ).toBe(true);
   });
 
   test("does not mutate the original draft", () => {
-    const original = { view: false, modify: true, apply: false, execute: false };
+    const original = { view: false, modify: true, apply: false, execute: false, manage: false };
     const result = forceSelectWhenOthers(original);
     expect(result).not.toBe(original);
     expect(original.view).toBe(false);

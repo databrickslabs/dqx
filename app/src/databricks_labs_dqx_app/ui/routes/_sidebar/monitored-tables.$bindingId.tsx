@@ -21,6 +21,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
@@ -55,7 +57,6 @@ import {
   KeyRound,
   LineChart,
   Loader2,
-  MessageSquare,
   MoreVertical,
   Play,
   Plus,
@@ -74,15 +75,13 @@ import {
   useDeleteMonitoredTable,
   useGetMonitoredTableProfile,
   getGetMonitoredTableProfileQueryKey,
+  getGetMonitoredTableQueryKey,
+  getListMonitoredTablesQueryKey,
   useSubmitProfileRun,
   getProfileRunStatus,
   useListProfileRuns,
   useGetProfileRunResults,
   getListProfileRunsQueryKey,
-  useSubmitMonitoredTable,
-  useApproveMonitoredTable,
-  useRejectMonitoredTable,
-  useRevertMonitoredTable,
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
@@ -93,6 +92,7 @@ import {
   usePreviewTableData,
   useQueryTableData,
   useGetSampleQuestions,
+  useRevertMonitoredTable,
   getListTagSuggestionsQueryOptions,
   type AppliedRuleOut,
   type ColumnOut,
@@ -113,7 +113,6 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
-import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
@@ -122,9 +121,14 @@ import {
   useListPendingApplications,
   useListValidationRuns,
   useWorkspaceHost,
+  useUpdateMonitoredTableNotes,
+  useSubmitMonitoredTableWithRationale,
+  useApproveMonitoredTableWithRationale,
+  useRejectMonitoredTableWithRationale,
   type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
+import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
@@ -135,13 +139,20 @@ import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { formatDateShort } from "@/lib/format-utils";
+import {
+  LLM_PK_SUMMARY_KEY,
+  columnProfilePercents,
+  columnStatsFromSummary,
+  formatProfileDuration,
+} from "@/lib/profile-format";
 import { cn } from "@/lib/utils";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
+import { DescribeRuleDialog } from "@/components/apply-rules/DescribeRuleDialog";
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
-import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
+import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
   MonitoredTableDiffDialog,
@@ -166,6 +177,7 @@ import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestions
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -439,15 +451,14 @@ function MonitoredTableDetailPage() {
   const { blocker } = useUnsavedGuard({ hasUnsavedChanges: isDirty, bypassRef: justSavedRef });
 
   const saveMutation = useSaveAppliedRules();
-  const submitMutation = useSubmitMonitoredTable();
-  const approveMutation = useApproveMonitoredTable();
-  const rejectMutation = useRejectMonitoredTable();
+  const submitMutation = useSubmitMonitoredTableWithRationale();
+  const approveMutation = useApproveMonitoredTableWithRationale();
+  const rejectMutation = useRejectMonitoredTableWithRationale();
   const revertMutation = useRevertMonitoredTable();
   const deleteMutation = useDeleteMonitoredTable();
-  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [lifecycleDialog, setLifecycleDialog] = useState<LifecycleAction | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
@@ -491,7 +502,7 @@ function MonitoredTableDetailPage() {
   // renders the latest applied rules), then move the binding's checks into
   // the pending_approval queue via the submit endpoint. Preserves P16-F's
   // staged-save-first sequencing and clears the dirty/nav-guard state.
-  const handleSubmit = () => {
+  const handleSubmit = (rationale?: string | null) => {
     const persistFirst = isDirty
       ? persistStagedRows().then((resp) => {
           const normalized = normalizeStagedRows(resp.data);
@@ -507,7 +518,7 @@ function MonitoredTableDetailPage() {
         })
       : Promise.resolve();
     persistFirst
-      .then(() => submitMutation.mutateAsync({ bindingId }))
+      .then(() => submitMutation.mutateAsync({ bindingId, rationale: rationale ?? null }))
       .then(() => {
         justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSubmitted"));
@@ -518,8 +529,8 @@ function MonitoredTableDetailPage() {
       });
   };
 
-  const handleApprove = () => {
-    approveMutation.mutateAsync({ bindingId }).then(
+  const handleApprove = (rationale?: string | null) => {
+    approveMutation.mutateAsync({ bindingId, rationale: rationale ?? null }).then(
       () => {
         toast.success(t("monitoredTables.toastApproved"));
         invalidateLifecycleQueries();
@@ -530,8 +541,8 @@ function MonitoredTableDetailPage() {
     );
   };
 
-  const handleReject = () => {
-    rejectMutation.mutateAsync({ bindingId }).then(
+  const handleReject = (rationale?: string | null) => {
+    rejectMutation.mutateAsync({ bindingId, rationale: rationale ?? null }).then(
       () => {
         toast.success(t("monitoredTables.toastRejected"));
         invalidateLifecycleQueries();
@@ -649,7 +660,7 @@ function MonitoredTableDetailPage() {
                     <TooltipTrigger asChild>
                       <span className={cn(submitBlocked && "cursor-not-allowed")}>
                         <Button
-                          onClick={handleSubmit}
+                          onClick={() => setLifecycleDialog("submit")}
                           disabled={lifecycleBusy || submitBlocked}
                           className="gap-2"
                         >
@@ -725,10 +736,6 @@ function MonitoredTableDetailPage() {
                   <History className="h-3.5 w-3.5" />
                   {t("runsHistory.menuViewRuns")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  {t("monitoredTables.actionComments")}
-                </DropdownMenuItem>
                 {perms.canCreateRules && (
                   <>
                     <DropdownMenuSeparator />
@@ -768,6 +775,12 @@ function MonitoredTableDetailPage() {
                 <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
                   {t("monitoredTables.pendingBannerBody")}
                 </p>
+                {table.pending_rationale ? (
+                  <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                    <span className="font-medium">{t("lifecycle.pendingRationaleLabel")}: </span>
+                    <span className="whitespace-pre-wrap">{table.pending_rationale}</span>
+                  </p>
+                ) : null}
                 {!perms.canApproveRules && (
                   <p className="text-xs text-amber-700/80 dark:text-amber-300/70 italic">
                     {t("monitoredTables.awaitingApproval")}
@@ -813,7 +826,7 @@ function MonitoredTableDetailPage() {
                       variant="outline"
                       size="sm"
                       disabled={lifecycleBusy}
-                      onClick={handleApprove}
+                      onClick={() => setLifecycleDialog("approve")}
                       className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
                     >
                       {approveMutation.isPending ? (
@@ -827,7 +840,7 @@ function MonitoredTableDetailPage() {
                       variant="outline"
                       size="sm"
                       disabled={lifecycleBusy}
-                      onClick={() => setRejectConfirmOpen(true)}
+                      onClick={() => setLifecycleDialog("reject")}
                       className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
                     >
                       {rejectMutation.isPending ? (
@@ -844,28 +857,45 @@ function MonitoredTableDetailPage() {
           </div>
         )}
 
-        <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>{t("monitoredTables.rejectConfirmTitle")}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-white hover:bg-destructive/90"
-                onClick={() => {
-                  setRejectConfirmOpen(false);
-                  handleReject();
-                }}
-              >
-                {t("monitoredTables.rejectAction")}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <LifecycleRationaleDialog
+          open={lifecycleDialog !== null}
+          onOpenChange={(open) => {
+            if (!open) setLifecycleDialog(null);
+          }}
+          action={lifecycleDialog ?? "submit"}
+          title={
+            lifecycleDialog === "approve"
+              ? t("monitoredTables.approveAction")
+              : lifecycleDialog === "reject"
+                ? t("monitoredTables.rejectConfirmTitle")
+                : willAutoApprove
+                  ? t("monitoredTables.saveAndPublishButton")
+                  : t("monitoredTables.submitButton")
+          }
+          description={
+            lifecycleDialog === "reject"
+              ? t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })
+              : t("monitoredTables.pendingBannerBody")
+          }
+          confirmLabel={
+            lifecycleDialog === "approve"
+              ? t("monitoredTables.approveAction")
+              : lifecycleDialog === "reject"
+                ? t("monitoredTables.rejectAction")
+                : willAutoApprove
+                  ? t("monitoredTables.saveAndPublishButton")
+                  : t("monitoredTables.submitButton")
+          }
+          destructive={lifecycleDialog === "reject"}
+          busy={lifecycleBusy}
+          onConfirm={(rationale) => {
+            const action = lifecycleDialog;
+            setLifecycleDialog(null);
+            if (action === "approve") handleApprove(rationale);
+            else if (action === "reject") handleReject(rationale);
+            else if (action === "submit") handleSubmit(rationale);
+          }}
+        />
 
         <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
@@ -914,7 +944,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} canEdit={perms.canCreateRules} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -994,13 +1024,6 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <CommentsDialog
-        entityType="monitored_table"
-        entityId={bindingId}
-        open={commentsOpen}
-        onOpenChange={setCommentsOpen}
-      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
@@ -1107,10 +1130,21 @@ function RunTableAction({
   // mutation (not visible here), so without this a fast double-click could
   // fire a second save-then-run while the first save is still in flight.
   const [runDraftBusy, setRunDraftBusy] = useState(false);
+  const [draftSampleKind, setDraftSampleKind] = useState<SampleKind>("records");
+  const [draftSampleValue, setDraftSampleValue] = useState(1000);
+
+  const draftSampleSize = draftSampleKind === "full" ? 0 : Math.max(1, draftSampleValue);
 
   const handleRun = (source: "approved" | "draft", version?: number) => {
     runMutation.mutate(
-      { bindingId, data: { source, version } },
+      {
+        bindingId,
+        data: {
+          source,
+          version,
+          ...(source === "draft" ? { sample_size: draftSampleSize } : {}),
+        },
+      },
       {
         onSuccess: (resp) => {
           onRunStarted?.(resp.data.run_set_id);
@@ -1262,7 +1296,17 @@ function RunTableAction({
   );
 
   return (
-    <div className="inline-flex" role="group" aria-label={t("monitoredTables.runActionGroupAria")}>
+    <div className="inline-flex items-center gap-2" role="group" aria-label={t("monitoredTables.runActionGroupAria")}>
+      {canRunDraft && (
+        <SampleSelector
+          kind={draftSampleKind}
+          value={draftSampleValue}
+          onKind={setDraftSampleKind}
+          onValue={setDraftSampleValue}
+          disablePercent
+        />
+      )}
+      <div className="inline-flex">
       <TooltipProvider delayDuration={200}>
         {draftIsPrimary ? runDraftPrimary : runNowPrimary}
         <DropdownMenu>
@@ -1291,6 +1335,7 @@ function RunTableAction({
           </DropdownMenuContent>
         </DropdownMenu>
       </TooltipProvider>
+      </div>
     </div>
   );
 }
@@ -1343,22 +1388,70 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 
 function AboutTab({
   table,
+  canEdit,
   onColumnClick,
 }: {
   table: MonitoredTableOut;
+  canEdit: boolean;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
    *  between the by-rule/by-column lenses in ApplyRulesTab. */
   onColumnClick: (columnName: string) => void;
 }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   // 1-indexed schema page (P26 item 2) — the shared `Pagination` footer
   // convention. Reset to 1 whenever the filter changes so a narrowed
   // result set can't strand the view on a now-empty page.
   const [page, setPage] = useState(1);
+  const [notes, setNotes] = useState(table.notes ?? "");
+  const notesMutation = useUpdateMonitoredTableNotes({ mutation: { onError: () => {} } });
+  const notesSavingRef = useRef(false);
+
+  useEffect(() => {
+    setNotes(table.notes ?? "");
+  }, [table.notes]);
+
+  const saveNotes = useCallback(() => {
+    const next = notes.trim() || null;
+    const current = (table.notes ?? "").trim() || null;
+    if (next === current || notesSavingRef.current || notesMutation.isPending) return;
+    notesSavingRef.current = true;
+    notesMutation.mutate(
+      { bindingId: table.binding_id, data: { notes: next } },
+      {
+        onSuccess: () => {
+          toast.success(t("monitoredTables.toastNotesSaved"));
+          invalidateAfterMonitoredTableChange(queryClient, table.binding_id);
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("monitoredTables.toastNotesSaveFailed")), {
+            duration: 6000,
+          });
+        },
+        onSettled: () => {
+          notesSavingRef.current = false;
+        },
+      },
+    );
+  }, [notes, table.notes, table.binding_id, notesMutation, queryClient, t]);
+
   const parts = table.table_fqn.split(".");
   const [catalog, schema, tableName] = parts;
+
+  // Latest SUCCESS profile — join null%/distinct onto the UC schema table once
+  // a profiling run has finished (About stays UC-only until then).
+  const profileQuery = useGetMonitoredTableProfile(table.binding_id, {
+    // 404 = never profiled — leave schema UC-only until a SUCCESS run lands.
+    query: { retry: false },
+  });
+  const profile = profileQuery.data?.data;
+  const profileColumnStats = useMemo(
+    () => columnStatsFromSummary((profile?.summary ?? {}) as Record<string, unknown>),
+    [profile?.summary],
+  );
+  const hasProfileStats = Object.keys(profileColumnStats).length > 0;
 
   const columnsQuery = useGetTableColumns(catalog ?? "", schema ?? "", tableName ?? "", {
     query: { enabled: parts.length === 3 },
@@ -1435,6 +1528,43 @@ function AboutTab({
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedAt")}</dt>
             <dd>{table.updated_at ? formatDateShort(table.updated_at) : t("monitoredTables.aboutUnknown")}</dd>
           </dl>
+          <div className="space-y-2 pt-2">
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="mt-notes" className="text-xs text-muted-foreground uppercase tracking-wide">
+                {t("monitoredTables.notesLabel")}
+              </Label>
+              <HelpTooltip text={t("monitoredTables.notesTooltip")} />
+            </div>
+            {canEdit ? (
+              <div className="space-y-2">
+                <Textarea
+                  id="mt-notes"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  onBlur={saveNotes}
+                  rows={3}
+                  className="text-sm"
+                  placeholder={t("monitoredTables.notesPlaceholder")}
+                  disabled={notesMutation.isPending}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={notesMutation.isPending || (notes.trim() || null) === ((table.notes ?? "").trim() || null)}
+                  onClick={saveNotes}
+                  className="gap-2"
+                >
+                  {notesMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  {t("monitoredTables.saveNotesButton")}
+                </Button>
+              </div>
+            ) : notes.trim() ? (
+              <p className="text-sm whitespace-pre-wrap">{notes}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">{t("monitoredTables.aboutNoNotes")}</p>
+            )}
+          </div>
           {/* Deep link into the Unity Catalog explorer — mirrors dqlake's
               BindingAboutTab (label, external-link icon, placement after the
               definition list). Hidden when the host is unknown (local dev). */}
@@ -1451,9 +1581,18 @@ function AboutTab({
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold">
-            {t("monitoredTables.aboutSchemaSectionTitle", { count: columns.length })}
-          </h2>
+          <div className="space-y-0.5">
+            <h2 className="text-sm font-semibold">
+              {t("monitoredTables.aboutSchemaSectionTitle", { count: columns.length })}
+            </h2>
+            {hasProfileStats && (
+              <p className="text-[11px] text-muted-foreground">
+                {t("monitoredTables.aboutSchemaProfileHint", {
+                  date: profile?.profiled_at ? formatDateShort(profile.profiled_at) : "—",
+                })}
+              </p>
+            )}
+          </div>
           <div>
             {columnsQuery.isError ? (
               <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed rounded-lg">
@@ -1470,13 +1609,29 @@ function AboutTab({
                   <table className="w-full text-sm table-fixed">
                     <thead className="bg-muted/30">
                       <tr>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[26%]">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[22%]">
                           {t("monitoredTables.aboutColColumn")}
                         </th>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-20">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-16">
                           {t("monitoredTables.aboutColType")}
                         </th>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[28%]">
+                        {hasProfileStats && (
+                          <>
+                            <th
+                              className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wide px-2 py-2 w-16"
+                              title={t("monitoredTables.aboutColNullPctTooltip")}
+                            >
+                              {t("monitoredTables.aboutColNullPct")}
+                            </th>
+                            <th
+                              className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wide px-2 py-2 w-20"
+                              title={t("monitoredTables.aboutColDistinctTooltip")}
+                            >
+                              {t("monitoredTables.aboutColDistinct")}
+                            </th>
+                          </>
+                        )}
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[22%]">
                           {t("monitoredTables.aboutColTags")}
                         </th>
                         <th className="px-3 py-1.5">
@@ -1491,14 +1646,19 @@ function AboutTab({
                                 setFilter(e.target.value);
                                 setPage(1);
                               }}
-                              className="w-44 h-7 text-xs font-normal normal-case tracking-normal"
+                              className="w-40 h-7 text-xs font-normal normal-case tracking-normal"
                             />
                           </div>
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {pagedColumns.map((c) => (
+                      {pagedColumns.map((c) => {
+                        const colStats = profileColumnStats[c.name];
+                        const pcts = hasProfileStats
+                          ? columnProfilePercents(colStats, profile?.rows_profiled)
+                          : null;
+                        return (
                         <tr
                           key={c.name}
                           className="border-t h-8 cursor-pointer hover:bg-muted"
@@ -1530,6 +1690,16 @@ function AboutTab({
                               <span className="truncate">{c.type_name}</span>
                             </Badge>
                           </td>
+                          {pcts && (
+                            <>
+                              <td className="px-2 py-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+                                {pcts.nullPct}
+                              </td>
+                              <td className="px-2 py-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+                                {pcts.distinctPct}
+                              </td>
+                            </>
+                          )}
                           <td className="px-3 py-1 overflow-hidden">
                             <ColumnTagsCell tags={columnTags[c.name] ?? []} />
                           </td>
@@ -1543,10 +1713,14 @@ function AboutTab({
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {filteredColumns.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="text-center text-muted-foreground py-6 text-sm">
+                          <td
+                            colSpan={hasProfileStats ? 6 : 4}
+                            className="text-center text-muted-foreground py-6 text-sm"
+                          >
                             {t("monitoredTables.aboutNoMatchingColumns")}
                           </td>
                         </tr>
@@ -1583,11 +1757,11 @@ function AboutTab({
 // Profile tab
 // ---------------------------------------------------------------------------
 
-const LLM_PK_SUMMARY_KEY = "llm_primary_key_detection";
-
 interface LlmPrimaryKeyInfo {
   detected_columns?: string[];
   confidence?: string;
+  reasoning?: string;
+  method?: string;
 }
 
 function ProfileTab({
@@ -1697,7 +1871,13 @@ function ProfileTab({
     onComplete: async (status) => {
       if (status.result_state === "SUCCESS") {
         toast.success(t("monitoredTables.profileToastSucceeded"));
-        await queryClient.invalidateQueries({ queryKey: getGetMonitoredTableProfileQueryKey(bindingId) });
+        // Refresh profile column stats (Profile + About schema), last_profiled_at
+        // on the binding, and the runs list so the version switcher updates.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: getGetMonitoredTableProfileQueryKey(bindingId) }),
+          queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) }),
+          queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() }),
+        ]);
       } else {
         toast.error(t("monitoredTables.profileToastFailed"));
       }
@@ -1738,21 +1918,20 @@ function ProfileTab({
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
 
-  // The column list reflects the run picked in the version switcher: the latest
-  // profile by default, or a selected historical run's persisted results. The
-  // header stats stay pinned to the latest profile.
+  // Column list + header stats follow the version switcher selection when a
+  // historical run is picked; otherwise they show the latest SUCCESS profile.
   const historyResult = historyResultsQuery.data?.data;
+  const activeProfile = selectedRunId !== null ? historyResult : profile;
   const activeSummary =
     selectedRunId !== null ? ((historyResult?.summary ?? {}) as Record<string, unknown>) : summary;
-  const activeRowCount = selectedRunId !== null ? historyResult?.rows_profiled : profile?.rows_profiled;
+  const activeRowCount = activeProfile?.rows_profiled;
+  const activeProfiledAt =
+    selectedRunId !== null
+      ? (successfulRuns.find((r) => r.run_id === selectedRunId)?.created_at ?? null)
+      : profile?.profiled_at;
+  const activeDuration = activeProfile?.duration_seconds;
 
-  const columnStats = useMemo(() => {
-    const entries = Object.entries(activeSummary).filter(
-      (e): e is [string, Record<string, unknown>] =>
-        e[0] !== LLM_PK_SUMMARY_KEY && typeof e[1] === "object" && e[1] !== null && !Array.isArray(e[1]),
-    );
-    return Object.fromEntries(entries);
-  }, [activeSummary]);
+  const columnStats = useMemo(() => columnStatsFromSummary(activeSummary), [activeSummary]);
 
   // Staggered paint (items 49/96): the run/refresh header renders immediately;
   // only the column-list region waits on its own query. This stops the whole
@@ -1764,31 +1943,63 @@ function ProfileTab({
   const pkInfo = summary[LLM_PK_SUMMARY_KEY] as LlmPrimaryKeyInfo | undefined;
   const pkColumns = pkInfo?.detected_columns ?? [];
   const hasColumns = Object.keys(columnStats).length > 0;
+  const columnCount = Object.keys(columnStats).length;
 
   return (
     <div className="space-y-4 pt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-xs text-muted-foreground space-y-1">
-          <div>
-            <span className="uppercase tracking-wide">{t("monitoredTables.profileHeaderLastProfile")}</span>{" "}
-            <span className="font-mono">
-              {profile?.profiled_at ? formatDateShort(profile.profiled_at) : "—"}
-            </span>
-          </div>
-          <div>
-            <span className="uppercase tracking-wide">{t("monitoredTables.profileHeaderRows")}</span>{" "}
-            <span className="font-mono">
-              {profile?.rows_profiled != null ? profile.rows_profiled.toLocaleString() : "—"}
-            </span>
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded-md border px-3 py-2 min-w-[7rem]">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.profileHeaderLastProfile")}
+              </div>
+              <div className="font-mono text-sm tabular-nums">
+                {activeProfiledAt ? formatDateShort(activeProfiledAt) : "—"}
+              </div>
+            </div>
+            <div className="rounded-md border px-3 py-2 min-w-[7rem]">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.profileHeaderRows")}
+              </div>
+              <div className="font-mono text-sm tabular-nums">
+                {activeRowCount != null ? activeRowCount.toLocaleString() : "—"}
+              </div>
+            </div>
+            <div className="rounded-md border px-3 py-2 min-w-[7rem]">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.profileHeaderColumns")}
+              </div>
+              <div className="font-mono text-sm tabular-nums">
+                {hasProfile && columnCount > 0 ? columnCount.toLocaleString() : "—"}
+              </div>
+            </div>
+            <div className="rounded-md border px-3 py-2 min-w-[7rem]">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.profileHeaderDuration")}
+              </div>
+              <div className="font-mono text-sm tabular-nums">
+                {formatProfileDuration(activeDuration)}
+              </div>
+            </div>
           </div>
           {pkColumns.length > 0 && (
-            <div className="flex items-center gap-1.5 pt-0.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <KeyRound className="h-3 w-3 text-emerald-500" />
-              <Badge variant="secondary" className="font-mono text-[10px]">
+              <Badge
+                variant="secondary"
+                className="font-mono text-[10px]"
+                title={pkInfo?.reasoning ?? undefined}
+              >
                 {t("monitoredTables.profilePrimaryKeyBadge", { columns: pkColumns.join(", ") })}
               </Badge>
               {pkInfo?.confidence && (
                 <span className="text-[10px] text-muted-foreground">({pkInfo.confidence})</span>
+              )}
+              {pkInfo?.reasoning && (
+                <span className="text-[10px] text-muted-foreground max-w-xl truncate" title={pkInfo.reasoning}>
+                  {pkInfo.reasoning}
+                </span>
               )}
             </div>
           )}
@@ -1975,6 +2186,7 @@ function ApplyRulesTab({
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [describeOpen, setDescribeOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
@@ -2227,13 +2439,22 @@ function ApplyRulesTab({
     return m;
   }, [ruleById]);
 
-  // Completeness status per rule group — drives the "needs attention"
-  // filter and the by-rule/by-column incomplete-mapping indicators.
+  // Completeness + schema-drift status per rule group — drives the "needs
+  // attention" filter and the by-rule incomplete/drift indicators.
   const statuses = useMemo(
-    () => mergedRules.map((rule) => computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [])),
-    [mergedRules, ruleById],
+    () =>
+      mergedRules.map((rule) =>
+        computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [], columns),
+      ),
+    [mergedRules, ruleById, columns],
   );
-  const incompleteCount = statuses.filter((s) => s.kind === "incomplete").length;
+  const attentionCount = statuses.filter(statusNeedsAttention).length;
+  const schemaDriftMissing = statuses.reduce((n, s) => n + s.drift.missingCount, 0);
+  const schemaDriftMismatch = statuses.reduce((n, s) => n + s.drift.typeMismatchCount, 0);
+  const schemaDriftRuleCount = statuses.filter(
+    (s) => s.drift.missingCount > 0 || s.drift.typeMismatchCount > 0,
+  ).length;
+  const hasSchemaDrift = schemaDriftMissing > 0 || schemaDriftMismatch > 0;
 
   // Total checks: aggregate rules (0 slots) count as 1 check each;
   // column-mapped rules count as the number of non-empty mapping groups
@@ -2250,7 +2471,7 @@ function ApplyRulesTab({
   const visibleMergedRules = useMemo(() => {
     let filtered = mergedRules;
     if (filter === "needs-attention") {
-      filtered = mergedRules.filter((_, i) => statuses[i].kind === "incomplete");
+      filtered = mergedRules.filter((_, i) => statusNeedsAttention(statuses[i]));
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -2456,6 +2677,40 @@ function ApplyRulesTab({
           {t("monitoredTables.suggestRulesTableUnavailableReason")}
         </div>
       )}
+      {!columnsQuery.isError && hasSchemaDrift && (
+        <div className="rounded border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-300 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>
+            {schemaDriftMissing > 0 && schemaDriftMismatch > 0
+              ? t("monitoredTables.schemaDriftBannerBoth", {
+                  missing: schemaDriftMissing,
+                  mismatch: schemaDriftMismatch,
+                  rules: schemaDriftRuleCount,
+                })
+              : schemaDriftMissing > 0
+                ? t("monitoredTables.schemaDriftBannerMissing", {
+                    count: schemaDriftMissing,
+                    rules: schemaDriftRuleCount,
+                  })
+                : t("monitoredTables.schemaDriftBannerMismatch", {
+                    count: schemaDriftMismatch,
+                    rules: schemaDriftRuleCount,
+                  })}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setFilter("needs-attention");
+              setSearch("");
+              setLens("by-rule");
+              const first = mergedRules.find((_, i) => statusNeedsAttention(statuses[i]));
+              if (first) setOpenRuleId(first.rule_id);
+            }}
+            className="underline font-medium hover:no-underline"
+          >
+            {t("monitoredTables.schemaDriftBannerRemap")}
+          </button>
+        </div>
+      )}
       <PendingApplicationsPanel bindingId={bindingId} />
       <div className="flex items-center gap-3 flex-wrap">
         {stagedRows.length > 0 && (
@@ -2471,7 +2726,7 @@ function ApplyRulesTab({
           </div>
         )}
 
-        {incompleteCount > 0 && (
+        {attentionCount > 0 && (
           <div className="flex gap-1">
             <button
               type="button"
@@ -2583,6 +2838,17 @@ function ApplyRulesTab({
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                   {t("monitoredTables.suggestRulesButton")}
+                </Button>
+              )}
+              {aiAvailability.available && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => setDescribeOpen(true)}
+                >
+                  <Sparkles className="h-3.5 w-3.5" stroke={AI_GRADIENT_URL} />
+                  {t("monitoredTables.describeRuleButton")}
                 </Button>
               )}
               {/* Toolbar "Apply rules" button removed (item 36) — the wide
@@ -2750,6 +3016,18 @@ function ApplyRulesTab({
         appliedRules={stagedRows}
         onAdd={stageNewRows}
         onApplied={() => {}}
+      />
+
+      <DescribeRuleDialog
+        open={describeOpen}
+        onOpenChange={setDescribeOpen}
+        bindingId={bindingId}
+        tableFqn={tableFqn}
+        columns={columns.map((c) => c.name)}
+        labelDefinitions={labelDefinitions}
+        onAdd={stageNewRows}
+        onApplied={() => {}}
+        reportUnavailable={reportUnavailable}
       />
 
       <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>

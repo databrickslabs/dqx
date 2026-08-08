@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -34,6 +34,7 @@ import {
   MultiColumnPicker,
   columnsForSlot,
 } from "./ColumnPicker";
+import { columnMappingDriftKind } from "./schemaDrift";
 
 const PALETTE = [
   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
@@ -73,6 +74,7 @@ function ReadonlyChip({
   onRemove,
   removeTitle,
   busy,
+  driftKind,
 }: {
   colorClass: string;
   label: string;
@@ -85,14 +87,31 @@ function ReadonlyChip({
   /** Removal request for this group is in flight — disables the "x" and
    *  shows a spinner instead. */
   busy?: boolean;
+  /** Live UC vs mapping: missing column or type-family mismatch. */
+  driftKind?: "missing" | "type_mismatch" | null;
 }) {
+  const { t } = useTranslation();
+  const driftTitle =
+    driftKind === "missing"
+      ? t("monitoredTables.schemaDriftChipMissingTitle", { column: label })
+      : driftKind === "type_mismatch"
+        ? t("monitoredTables.schemaDriftChipMismatchTitle", { column: label })
+        : undefined;
   return (
     <span
+      title={driftTitle}
       className={cn(
         "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono",
         colorClass,
+        driftKind === "missing" &&
+          "border-dashed border-yellow-500/70 bg-yellow-500/10 text-yellow-800 dark:text-yellow-300",
+        driftKind === "type_mismatch" &&
+          "border-yellow-500/50 bg-yellow-500/5 text-yellow-800 dark:text-yellow-300",
       )}
     >
+      {driftKind && (
+        <AlertTriangle className="h-3 w-3 shrink-0 text-yellow-600 dark:text-yellow-400" aria-hidden />
+      )}
       {onJump ? (
         <button
           type="button"
@@ -169,6 +188,13 @@ function EditableChip({
     slot,
     excludeColumns.filter((c) => c !== label),
   );
+  const driftKind = columnMappingDriftKind(label, slot, columns);
+  const driftTitle =
+    driftKind === "missing"
+      ? t("monitoredTables.schemaDriftChipMissingTitle", { column: label })
+      : driftKind === "type_mismatch"
+        ? t("monitoredTables.schemaDriftChipMismatchTitle", { column: label })
+        : undefined;
 
   const picker = (
     <PopoverContent
@@ -226,11 +252,19 @@ function EditableChip({
 
   return (
     <span
+      title={driftTitle}
       className={cn(
         "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono",
         colorClass,
+        driftKind === "missing" &&
+          "border-dashed border-yellow-500/70 bg-yellow-500/10 text-yellow-800 dark:text-yellow-300",
+        driftKind === "type_mismatch" &&
+          "border-yellow-500/50 bg-yellow-500/5 text-yellow-800 dark:text-yellow-300",
       )}
     >
+      {driftKind && (
+        <AlertTriangle className="h-3 w-3 shrink-0 text-yellow-600 dark:text-yellow-400" aria-hidden />
+      )}
       {labelButton}
       {onJump && (
         <Popover open={open} onOpenChange={setOpen}>
@@ -607,7 +641,7 @@ export function MappingChips({
                         key={groupIdx}
                         className="inline-flex flex-col items-start gap-1"
                       >
-                        {onChangeGroup ? (
+                        {onChangeGroup && columns ? (
                           <EditableChip
                             colorClass={paletteAt(groupIdx)}
                             label={colName}
@@ -636,6 +670,11 @@ export function MappingChips({
                           <ReadonlyChip
                             colorClass={paletteAt(groupIdx)}
                             label={colName}
+                            driftKind={
+                              columns
+                                ? columnMappingDriftKind(colName, slot, columns)
+                                : null
+                            }
                             onJump={
                               onJumpToColumn
                                 ? () => onJumpToColumn(colName)

@@ -196,6 +196,22 @@ class TestPgMigrationsCatalogue:
         # Postgres uses IF NOT EXISTS, so re-running is a no-op.
         assert "IF NOT EXISTS" in sql, "v22 must use ADD COLUMN IF NOT EXISTS for idempotency"
 
+    def test_v23_adds_notes_and_rationale_columns(self):
+        """v23 adds notes + pending/last_decision_rationale (+ history rationale)."""
+        v23 = next(m for m in PG_MIGRATIONS if m.version == 23)
+        sql = v23.sql
+        assert "dq_monitored_tables" in sql
+        assert "dq_data_products" in sql
+        assert "dq_rules" in sql
+        assert "dq_rules_history" in sql
+        assert "notes" in sql
+        assert "pending_rationale" in sql
+        assert "last_decision_rationale" in sql
+        assert "rationale" in sql
+        # Rule notes stay in user_metadata — v23 must NOT add notes on dq_rules.
+        assert "dq_rules ADD COLUMN IF NOT EXISTS notes" not in sql
+        assert "IF NOT EXISTS" in sql
+
     def test_v21_strips_execute_from_registry_rule_grants(self):
         """v21 must UPDATE dq_object_grants to remove EXECUTE from
         registry_rule rows, leaving ALL_PRIVILEGES (owner) rows untouched."""

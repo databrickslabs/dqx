@@ -13,7 +13,13 @@ import {
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
 import { renameColumnInAst, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
-import { OPERATORS_BY_FAMILY, operatorAllowsColumnRef, type Family } from "./lowcodeOperators";
+import {
+  AGGREGATES,
+  aggregateAcceptsFamily,
+  OPERATORS_BY_FAMILY,
+  operatorAllowsColumnRef,
+  type Family,
+} from "./lowcodeOperators";
 
 // Unit tests for the low-code -> SQL compiler. This is the sole guard against
 // the class of bug that shipped the Advanced (joins / group-by) paths broken:
@@ -903,6 +909,40 @@ describe("operatorAllowsColumnRef", () => {
     expect(operatorAllowsColumnRef("is longer than")).toBe(false);
     expect(operatorAllowsColumnRef("is shorter than")).toBe(false);
     expect(operatorAllowsColumnRef("is a multiple of")).toBe(false);
+  });
+});
+
+// A slot's family constrains which real column may bind to it; `ANY` declares
+// no constraint. Treating a column's ANY as a concrete type made it satisfy
+// nothing, so the aggregate picker offered only the universal aggregates for
+// the DEFAULT slot family — sum/avg/min/max stayed hidden even with Group by set.
+describe("aggregateAcceptsFamily — ANY is a wildcard on both sides", () => {
+  test("an unconstrained (ANY) column accepts every aggregate", () => {
+    for (const agg of AGGREGATES) {
+      expect(aggregateAcceptsFamily(agg, "ANY")).toBe(true);
+    }
+  });
+
+  test("an any-family aggregate accepts every column family", () => {
+    const families: Family[] = ["NUMERIC", "TEXTUAL", "TEMPORAL", "BOOLEAN", "ANY"];
+    for (const family of families) {
+      expect(aggregateAcceptsFamily("count", family)).toBe(true);
+      expect(aggregateAcceptsFamily("null_rate", family)).toBe(true);
+    }
+  });
+
+  test("a concrete family is still checked against the aggregate's own spec", () => {
+    expect(aggregateAcceptsFamily("sum", "NUMERIC")).toBe(true);
+    expect(aggregateAcceptsFamily("sum", "TEXTUAL")).toBe(false);
+    expect(aggregateAcceptsFamily("max", "TEMPORAL")).toBe(true);
+    expect(aggregateAcceptsFamily("max", "BOOLEAN")).toBe(false);
+    expect(aggregateAcceptsFamily("bool_and", "BOOLEAN")).toBe(true);
+    expect(aggregateAcceptsFamily("bool_and", "NUMERIC")).toBe(false);
+  });
+
+  test("an unknown aggregate accepts nothing, ANY column included", () => {
+    expect(aggregateAcceptsFamily("nope", "ANY")).toBe(false);
+    expect(aggregateAcceptsFamily("nope", "NUMERIC")).toBe(false);
   });
 });
 

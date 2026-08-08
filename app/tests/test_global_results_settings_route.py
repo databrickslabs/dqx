@@ -1,8 +1,8 @@
-"""Tests for the ``/config/global-results-settings`` route (issue B2-20).
+"""Tests for the ``/config/global-results-settings`` route.
 
 An admin toggle that enables the app-wide, all-tables Results surface.
-OFF by default; read at VIEWER+ (the sidebar / homepage gate on it) and
-written ADMIN-only. See ``AppSettingsService.get_global_results_enabled``.
+ON by default; read at VIEWER+ and written ADMIN-only.
+See ``AppSettingsService.get_global_results_enabled``.
 """
 
 import pytest
@@ -40,15 +40,15 @@ def svc(sql_executor_mock):
 
 
 class TestGetGlobalResultsSettings:
-    def test_defaults_to_disabled_when_unset(self, svc):
+    def test_defaults_to_enabled_when_unset(self, svc):
         result = get_global_results_settings(svc)
 
-        assert result.global_results_enabled is False
+        assert result.global_results_enabled is True
 
-    def test_rules_results_tab_defaults_to_disabled_when_unset(self, svc):
+    def test_rules_results_tab_defaults_to_enabled_when_unset(self, svc):
         result = get_global_results_settings(svc)
 
-        assert result.rules_results_tab_enabled is False
+        assert result.rules_results_tab_enabled is True
 
 
 class TestSaveGlobalResultsSettings:
@@ -86,16 +86,16 @@ class TestSaveGlobalResultsSettings:
     def test_toggles_are_independent(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
 
-        # Enable only the rules tab; the global surface stays at its default.
+        # Explicitly disable only the rules tab; the global surface stays at its default (on).
         after_rules = save_global_results_settings(
-            GlobalResultsSettingsIn(rules_results_tab_enabled=True), svc, "admin@x"
+            GlobalResultsSettingsIn(rules_results_tab_enabled=False), svc, "admin@x"
         )
-        assert after_rules.rules_results_tab_enabled is True
-        assert after_rules.global_results_enabled is False
+        assert after_rules.rules_results_tab_enabled is False
+        assert after_rules.global_results_enabled is True
 
         # Enabling the global surface must not clobber the rules-tab value.
         after_global = save_global_results_settings(
             GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x"
         )
         assert after_global.global_results_enabled is True
-        assert after_global.rules_results_tab_enabled is True
+        assert after_global.rules_results_tab_enabled is False

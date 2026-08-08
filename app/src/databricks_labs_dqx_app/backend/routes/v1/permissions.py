@@ -105,7 +105,7 @@ def _to_out(grant: ObjectGrant, owner: str | None = None) -> ObjectGrantOut:
 def get_default_inherit(
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> PermissionsDefaultInheritOut:
-    """Return the admin default for the per-grant inheritance toggle."""
+    """Return the cascade default for new grants (always ON)."""
     return PermissionsDefaultInheritOut(enabled=perms.get_default_inherit())
 
 
@@ -120,7 +120,7 @@ def set_default_inherit(
     user: CurrentUser,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> PermissionsDefaultInheritOut:
-    """Set the admin default for the per-grant inheritance toggle (admin only)."""
+    """Legacy admin endpoint; cascade default stays ON regardless of body."""
     saved = perms.set_default_inherit(body.enabled, user_email=user)
     return PermissionsDefaultInheritOut(enabled=saved)
 

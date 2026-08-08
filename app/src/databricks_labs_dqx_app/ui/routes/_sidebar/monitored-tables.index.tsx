@@ -66,6 +66,7 @@ import {
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { cn } from "@/lib/utils";
+import { isFqnLikeTableSearch, matchesTableFqnSearch } from "./monitored-tables-search";
 
 const PAGE_SIZE = 25;
 const ALL = "all";
@@ -158,13 +159,17 @@ function MonitoredTablesPage() {
   const tables = useMemo(() => data?.data ?? [], [data]);
 
   const visibleTables = useMemo(() => {
-    const needle = nameSearch.trim().toLowerCase();
+    const fqnSearch = isFqnLikeTableSearch(nameSearch);
     return tables.filter((r) => {
       const { catalog, schema } = splitFqn(r.table.table_fqn);
+      // When the search box itself carries a multi-part FQN / path, it
+      // already scopes catalog/schema — don't also require the dropdown
+      // facets (a pasted `cat.sch.tbl` would otherwise disappear under a
+      // mismatched "All catalogs" / selected-catalog filter).
       return (
-        (catalogFilter === ALL || catalog === catalogFilter) &&
-        (schemaFilter === ALL || schema === schemaFilter) &&
-        (!needle || r.table.table_fqn.toLowerCase().includes(needle)) &&
+        (fqnSearch || catalogFilter === ALL || catalog === catalogFilter) &&
+        (fqnSearch || schemaFilter === ALL || schema === schemaFilter) &&
+        matchesTableFqnSearch(r.table.table_fqn, nameSearch) &&
         (ownerFilter === ALL || monitoredTableOwner(r) === ownerFilter) &&
         matchesDqScoreBucket(r.score, scoreFilter)
       );

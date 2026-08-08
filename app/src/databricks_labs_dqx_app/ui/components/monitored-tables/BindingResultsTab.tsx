@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type * as React from "react";
 import { QueryErrorResetBoundary, keepPreviousData } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { Trans, useTranslation } from "react-i18next";
-import { ChevronDown, Loader2, MessageSquare, Search } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { AlertTriangle, ChevronDown, Loader2, MessageSquare, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,12 +16,16 @@ import {
   useGetDqResultsFailedRows,
   useListResultDimensions,
   useListResultSeverities,
+  useGetMonitoredTable,
+  useGetTableColumns,
+  useListRegistryRules,
   getDqResultsFailedRows,
   type EntityResultsOut,
   type RunsOut,
   type TrendPointOut,
   type DimensionOut,
   type SeverityOut,
+  type RuleSlot,
 } from "@/lib/api";
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
@@ -45,6 +50,7 @@ import {
   toFailingRecords,
 } from "@/components/results/failedRecordsExport";
 import { toCountSeries } from "@/components/results/countSeries";
+import { computeSchemaDriftSummary } from "@/components/apply-rules/schemaDrift";
 
 // Ported from dqlake's `components/bindings/BindingIssuesTab.tsx` (the spec —
 // keep structure/section order/interactions aligned with it). Deviations are
@@ -380,7 +386,31 @@ function ResultsBody({
   runInProgress?: boolean;
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const thresholdEnabled = usePassThresholdEnabled();
+
+  // P0 schema drift: compare saved applied mappings to live UC columns.
+  // When mappings are stale, DQX may skip invalid-column checks while the
+  // overall score still looks healthy — surface that before trusting Results.
+  const parts = tableFqn.split(".");
+  const detailQuery = useGetMonitoredTable(bindingId);
+  const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const registryRulesQuery = useListRegistryRules({ status: "approved" });
+  const schemaDrift = useMemo(() => {
+    const applied = detailQuery.data?.data?.applied_rules ?? [];
+    const columns = columnsQuery.data?.data ?? [];
+    const slotsByRuleId = new Map<string, RuleSlot[]>();
+    for (const r of registryRulesQuery.data?.data ?? []) {
+      slotsByRuleId.set(r.rule_id, r.definition?.slots ?? []);
+    }
+    return computeSchemaDriftSummary(applied, columns, slotsByRuleId);
+  }, [detailQuery.data, columnsQuery.data, registryRulesQuery.data]);
+  const hasSchemaDrift =
+    !columnsQuery.isError &&
+    (schemaDrift.missingCount > 0 || schemaDrift.typeMismatchCount > 0);
+
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
   // Run mode: "Published only" (default) or "Published + Draft". Per-surface
   // state — every dq-results query on THIS tab gets `include_drafts` from it
@@ -784,6 +814,45 @@ function ResultsBody({
       <RunInProgressBanner show={Boolean(runInProgress)}>
         {t("resultsUi.runInProgressBanner")}
       </RunInProgressBanner>
+
+      {hasSchemaDrift && (
+        <div
+          role="status"
+          className="rounded border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-300 flex flex-wrap items-center gap-x-3 gap-y-1"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" aria-hidden />
+          <span>
+            {schemaDrift.missingCount > 0 && schemaDrift.typeMismatchCount > 0
+              ? t("resultsUi.schemaDriftBannerBoth", {
+                  missing: schemaDrift.missingCount,
+                  mismatch: schemaDrift.typeMismatchCount,
+                  rules: schemaDrift.affectedRuleIds.length,
+                })
+              : schemaDrift.missingCount > 0
+                ? t("resultsUi.schemaDriftBannerMissing", {
+                    count: schemaDrift.missingCount,
+                    rules: schemaDrift.affectedRuleIds.length,
+                  })
+                : t("resultsUi.schemaDriftBannerMismatch", {
+                    count: schemaDrift.typeMismatchCount,
+                    rules: schemaDrift.affectedRuleIds.length,
+                  })}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              navigate({
+                to: "/monitored-tables/$bindingId",
+                params: { bindingId },
+                search: (prev) => ({ ...prev, tab: "apply-rules" }),
+              });
+            }}
+            className="underline font-medium hover:no-underline"
+          >
+            {t("resultsUi.schemaDriftBannerRemap")}
+          </button>
+        </div>
+      )}
 
       {/* A2: the run picker (plus the run-mode dropdown) overlaps the score
           box's top-right corner; it drops below the score on very small

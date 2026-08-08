@@ -206,6 +206,44 @@ class TestGenerateRule:
         assert names == ["amount", "credit_limit"]
         assert {s["family"] for s in result["slots"]} == {"numeric"}
 
+    def test_bare_column_refs_are_braced_before_slots_are_derived(self):
+        """A model that writes bare column identifiers instead of {{slot}}
+        placeholders produced a rule the editor could not map: nothing to
+        substitute, and no declared columns. The declared names repair it.
+        """
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "column 1 below column 2",
+            "description": "column_1 must be smaller than column_2",
+            "mode": "sql",
+            "definition": {"sql_query": "column_1 < column_2"},
+            "columns": [
+                {"name": "column_1", "family": "numeric"},
+                {"name": "column_2", "family": "numeric"},
+            ],
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        assert result["definition"]["sql_query"] == "{{column_1}} < {{column_2}}"
+        assert [s["name"] for s in result["slots"]] == ["column_1", "column_2"]
+        assert {s["family"] for s in result["slots"]} == {"numeric"}
+
+    def test_undeclared_bare_columns_are_left_alone(self):
+        """The repair only touches names the model itself declared — it never
+        guesses which bare identifiers in the SQL are columns.
+        """
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "n",
+            "description": "d",
+            "mode": "sql",
+            "definition": {"sql_query": "id IS NOT NULL"},
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        assert result["definition"]["sql_query"] == "id IS NOT NULL"
+        assert result["slots"] == []
+
     async def test_generation_requests_deterministic_temperature(self):
         proposal = json.dumps(
             {
@@ -799,6 +837,33 @@ class TestWriteSql:
         assert "amount" in content
         # Applies-to defaults to row when the caller omits it.
         assert "granularity: row" in content
+
+    async def test_bare_column_refs_are_braced_from_the_declared_slots(self):
+        """The prompt demands {{slot}} placeholders, but a model that answers with
+        bare identifiers must not reach the editor: an unbraced column binds to
+        nothing and yields no slots. Repaired from the model's own declaration.
+        """
+        gateway = _gateway_returning(
+            json.dumps(
+                {
+                    "predicate": "column_1 < column_2",
+                    "polarity": "pass",
+                    "slots": [
+                        {"name": "column_1", "family": "numeric"},
+                        {"name": "column_2", "family": "numeric"},
+                    ],
+                }
+            )
+        )
+        service = _service(gateway)
+
+        result = await service.write_sql(description="column 1 must be smaller than column 2", user_email="a@x")
+
+        assert result["predicate"] == "{{column_1}} < {{column_2}}"
+        assert result["slots"] == [
+            {"name": "column_1", "family": "numeric"},
+            {"name": "column_2", "family": "numeric"},
+        ]
 
     async def test_forwards_dataset_granularity_in_user_context(self):
         gateway = _gateway_returning(

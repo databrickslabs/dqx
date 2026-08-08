@@ -49,7 +49,7 @@ Polarity = Literal["pass", "fail"]
 
 # DQX slot families (lowercase) -> the SQL type each ad-hoc column is TRY_CAST to
 # so a typed grid cell round-trips as the right type. Anything else (text /
-# array / any / unknown) stays STRING so arbitrary values are still allowed.
+# any / unknown) stays STRING so arbitrary values are still allowed.
 _FAMILY_SQL_TYPE: dict[str, str] = {
     "numeric": "DOUBLE",
     "temporal": "TIMESTAMP",

@@ -556,6 +556,7 @@ class DemoSeedService:
                 author_kind=cast(AuthorKind, spec.author_kind),
                 user_metadata=self._metadata_for(spec),
                 source="demo",
+                allow_duplicate=True,
             )
             self._registry.submit(rule.rule_id, user_email)
             approved = self._registry.approve(rule.rule_id, user_email)
@@ -594,6 +595,7 @@ class DemoSeedService:
             author_kind=cast(AuthorKind, spec.author_kind),
             user_metadata=self._metadata_for(spec),
             source="demo",
+            allow_duplicate=True,
         )
         self._registry.submit(rule.rule_id, user_email)
         logger.info("Demo rule '%s' -> %s (submitted for approval, unmapped)", spec.key, rule.rule_id)

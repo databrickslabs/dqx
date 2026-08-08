@@ -274,6 +274,7 @@ class TestReservedTagHelpers:
         assert module.RESERVED_DESCRIPTION_KEY == "description"
         assert module.RESERVED_DIMENSION_KEY == "dimension"
         assert module.RESERVED_SEVERITY_KEY == "severity"
+        assert module.RESERVED_NOTES_KEY == "notes"
         assert module.RESERVED_RULE_METADATA_KEYS == {
             "name",
             "description",
@@ -281,6 +282,7 @@ class TestReservedTagHelpers:
             "severity",
             "slot_tags",
             "pass_threshold",
+            "notes",
         }
 
     def test_getters_return_none_when_absent(self, module):
@@ -288,6 +290,15 @@ class TestReservedTagHelpers:
         assert module.get_rule_description({}) is None
         assert module.get_rule_dimension({}) is None
         assert module.get_rule_severity({}) is None
+        assert module.get_rule_notes({}) is None
+
+    def test_get_rule_notes_round_trips_via_set_reserved_tag(self, module):
+        metadata = module.set_reserved_tag({}, module.RESERVED_NOTES_KEY, "Follow up with data eng.")
+        assert metadata == {"notes": "Follow up with data eng."}
+        assert module.get_rule_notes(metadata) == "Follow up with data eng."
+        cleared = module.set_reserved_tag(metadata, module.RESERVED_NOTES_KEY, None)
+        assert cleared == {}
+        assert module.get_rule_notes(cleared) is None
 
     def test_getters_ignore_non_string_values(self, module):
         assert module.get_rule_name({"name": 123}) is None
@@ -420,6 +431,19 @@ class TestDataProduct:
         assert product.status == "draft"
         assert product.version == 0
         assert product.schedule_cron is None
+        assert product.notes is None
+        assert product.pending_rationale is None
+        assert product.last_decision_rationale is None
+
+    def test_accepts_notes_separate_from_description(self, DataProduct):
+        product = DataProduct(
+            product_id="p1",
+            name="x",
+            description="product description",
+            notes="ops notes",
+        )
+        assert product.description == "product description"
+        assert product.notes == "ops notes"
 
     def test_rejects_invalid_status(self, DataProduct):
         with pytest.raises(ValidationError):

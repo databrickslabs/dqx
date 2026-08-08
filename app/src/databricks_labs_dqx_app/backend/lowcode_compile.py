@@ -25,7 +25,7 @@ JSON-shaped AST the model returns.
 """
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -174,6 +174,21 @@ _COMPARISON_OPS = frozenset({"=", "!=", "<", "<=", ">", ">="})
 # Global ``{{token}}`` scanner (the anchored single-slot form lives in
 # ai_rules_service as ``_SLOT_TOKEN_RE``).
 _SLOT_TOKEN_SCAN_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
+
+# Regions of a SQL string whose contents must never be rewritten by
+# :func:`brace_bare_slot_refs`: an existing placeholder (already correct, and
+# nesting braces would corrupt it) and any quoted literal / quoted identifier (a
+# column name occurring inside a string is data, not a reference).
+_PROTECTED_SPAN_SCAN_RE = re.compile(r"\{\{.*?\}\}|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`", re.DOTALL)
+# A plain, unquoted SQL identifier — the only shape a slot name can take.
+_BARE_IDENTIFIER_RE = re.compile(r"[A-Za-z_][0-9A-Za-z_]*")
+# The identifier immediately before a candidate, used to recognise the positions
+# where an identifier NAMES something rather than references a column.
+_PRECEDING_IDENTIFIER_RE = re.compile(r"([A-Za-z_][0-9A-Za-z_]*)\s*$")
+# ``… AS condition`` DEFINES an alias (the table-level contract requires exactly
+# that one), and FROM/JOIN/TABLE/INTO introduce a table — bracing any of them
+# would rewrite a binding site into a column placeholder.
+_NON_COLUMN_PREDECESSORS = frozenset({"AS", "FROM", "JOIN", "TABLE", "INTO"})
 
 
 # --- Value / reference helpers (mirror lowcodeCompile.ts) --------------------
@@ -619,6 +634,63 @@ def extract_slot_tokens(*sql_fragments: str | None) -> list[str]:
     return out
 
 
+def brace_bare_slot_refs(sql: str | None, names: Iterable[str]) -> str:
+    """Wrap bare occurrences of *names* in *sql* as ``{{name}}`` placeholders.
+
+    A registry rule is table-agnostic, so every reference to a column OF THE
+    TABLE UNDER TEST must be a placeholder the materializer substitutes per
+    monitored table — a bare identifier is dead text that binds to nothing. The
+    AI prompts say so, but a model that ignores it produced a predicate the
+    editor could not map (``a < b`` with no declared slots), so this repairs the
+    text deterministically from the names the model itself declared rather than
+    trusting it to comply.
+
+    Only *names* are touched, and only where they are genuinely an unqualified
+    own-table reference:
+
+    * text already inside a ``{{...}}`` token, a quoted string, or a
+      backtick-quoted identifier is left byte-for-byte alone;
+    * a dotted reference (``fx.rate``, ``orders.total``) names a JOINED table's
+      column and stays raw — as does a name used as a table/alias qualifier;
+    * a name immediately followed by ``(`` is a function call, not a column;
+    * a name in a BINDING position (``AS condition``, ``FROM t``) is defining an
+      alias or naming a table, not referencing a column.
+
+    Names that are not plain identifiers (anything dotted or quoted) are ignored
+    outright: they cannot be slot names.
+    """
+    if not sql:
+        return sql or ""
+    targets = {n.strip() for n in names if isinstance(n, str) and _BARE_IDENTIFIER_RE.fullmatch(n.strip())}
+    if not targets:
+        return sql
+
+    def brace_segment(segment: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            word = match.group(0)
+            if word not in targets:
+                return word
+            before = segment[: match.start()].rstrip()
+            after = segment[match.end() :].lstrip()
+            if before.endswith(".") or after[:1] in (".", "("):
+                return word
+            preceding = _PRECEDING_IDENTIFIER_RE.search(before)
+            if preceding is not None and preceding.group(1).upper() in _NON_COLUMN_PREDECESSORS:
+                return word
+            return f"{{{{{word}}}}}"
+
+        return _BARE_IDENTIFIER_RE.sub(replace, segment)
+
+    out: list[str] = []
+    cursor = 0
+    for protected in _PROTECTED_SPAN_SCAN_RE.finditer(sql):
+        out.append(brace_segment(sql[cursor : protected.start()]))
+        out.append(protected.group(0))
+        cursor = protected.end()
+    out.append(brace_segment(sql[cursor:]))
+    return "".join(out)
+
+
 def lowcode_prompt_vocab() -> str:
     """Operator / aggregate vocabulary block for the low-code AI system prompt.
 
@@ -679,6 +751,7 @@ def lowcode_prompt_vocab() -> str:
 # Re-exported so callers can build slots without hand-rolling the field set.
 __all__ = [
     "CompiledLowcodeBody",
+    "brace_bare_slot_refs",
     "compile_ast_to_sql",
     "compile_joins_to_sql",
     "compile_lowcode_body",
