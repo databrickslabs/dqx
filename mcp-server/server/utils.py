@@ -888,6 +888,14 @@ def get_run_status(run_id: int) -> dict[str, Any]:
         error_code = getattr(e, "error_code", "") or ""
         if error_code in ("RESOURCE_DOES_NOT_EXIST", "INVALID_PARAMETER_VALUE") or "does not exist" in str(e).lower():
             return _run_not_found(run_id)
+        # A run the app SP cannot see is also not_found, for the same reason the job_id mismatch below
+        # is: telling the caller "permission denied" confirms the run EXISTS, which is exactly the
+        # disclosure the ownership guard exists to prevent — run ids are guessable integers. The job
+        # ACL blocking the read first is defence in depth, not a licence to leak. Logged so an
+        # operator can still distinguish a misconfigured ACL from a genuinely stale run_id.
+        if error_code == "PERMISSION_DENIED" or "permission" in str(e).lower():
+            logger.warning(f"Denying run {run_id}: the app service principal cannot read it ({error_code})")
+            return _run_not_found(run_id)
         raise
 
     # Guard against polling a run that belongs to some other job the SP can see — only the

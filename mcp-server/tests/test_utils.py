@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -791,6 +792,29 @@ class TestSweepStaleResultFiles:
 
         assert dropped == 0
         ws.files.delete.assert_not_called()
+
+    def test_unreadable_run_is_not_found_not_permission_denied(self):
+        """A run the app SP cannot see must look identical to one that does not exist.
+
+        Found by an integration test: the job ACL denies reading a foreign job's run before the
+        job_id guard can, and the raw PERMISSION_DENIED was surfacing to the caller. That confirms
+        the run EXISTS, which is the disclosure the ownership guard exists to prevent — run ids are
+        guessable integers.
+        """
+        from databricks.sdk.errors.base import DatabricksError
+
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        err = DatabricksError("User ... does not have View or Manage Run permissions on job 123")
+        err.error_code = "PERMISSION_DENIED"
+        ws.jobs.get_run.side_effect = err
+
+        with patch("server.utils._get_sp_client", return_value=ws), patch.dict(os.environ, _JOB_ID_ENV):
+            result = get_run_status(999)
+
+        assert result["status"] == "not_found", result
+        assert "permission" not in json.dumps(result).lower(), f"leaked the denial reason: {result}"
 
     def test_still_running_returns_running(self):
         from server.utils import get_run_status, _user_email_var

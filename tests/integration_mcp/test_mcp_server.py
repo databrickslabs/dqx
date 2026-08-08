@@ -474,26 +474,35 @@ def _assert_inline_contract_stages_a_file(client: McpClient, tmp_schema: str) ->
     """
     ws = WorkspaceClient()
     volume = f"/Volumes/{CATALOG}/{tmp_schema}/mcp_results"
-    before = {e.path for e in ws.files.list_directory_contents(volume)}
 
+    def _paths() -> set[str]:
+        # entry.path is Optional on the SDK model; drop the Nones here so the set is genuinely
+        # str-typed and can be diffed and sorted below.
+        return {e.path for e in ws.files.list_directory_contents(volume) if e.path}
+
+    before = _paths()
     result = client.call("generate_rules_from_contract", {"contract_content": CONTRACT_YAML})
     assert result["count"] > 0, result
 
-    after = {e.path for e in ws.files.list_directory_contents(volume)}
-    staged = [p for p in (after - before) if (p or "").rsplit("/", 1)[-1].startswith("staged_")]
+    added = _paths() - before
+    staged = [p for p in added if p.rsplit("/", 1)[-1].startswith("staged_")]
     assert staged, (
         "no staged_* file appeared on the results volume; inline contracts must be staged there for "
-        f"the runner SP to read. New paths: {sorted(after - before)}"
+        f"the runner SP to read. New paths: {sorted(added)}"
     )
 
 
 def _assert_foreign_job_run_is_not_readable(client: McpClient, runner_job_id: str) -> None:
     """A run_id belonging to a different job must come back not_found.
 
-    The app SP can see runs of other jobs in the workspace, and run ids are guessable integers — so
-    without this guard a caller could read another job's output through get_run_result. Uses a real
-    run from some other job in the workspace, which is the only way to exercise it: a fabricated id
-    hits the "does not exist" path instead, which is a different branch.
+    Run ids are guessable integers, so without this a caller could probe for or read another job's
+    output through get_run_result. Two layers deny it and this asserts the OBSERVABLE result of both:
+    the job ACL stops the app SP reading a foreign run at all (PERMISSION_DENIED), and the job_id
+    check would reject it if the ACL were ever widened. Either way the answer must be not_found —
+    a permission error would itself confirm the run exists.
+
+    Uses a real run from another job, which is the only way to exercise this: a fabricated id hits the
+    "does not exist" branch instead.
 
     Skips rather than fails when the workspace has no other visible run, so the suite stays usable on
     an empty workspace.
@@ -514,6 +523,29 @@ def _assert_foreign_job_run_is_not_readable(client: McpClient, runner_job_id: st
         f"other jobs' output: {result}"
     )
     assert "result" not in result, f"a foreign run must never return a payload: {result}"
+
+
+def _assert_schema_reads_and_guards(client: McpClient, table: str, seed_schema: str) -> None:
+    """get_table_schema over OBO, plus the guards that must refuse bad input before any SQL runs.
+
+    Grouped into a helper so the end-to-end test stays within pylint's per-function statement budget
+    (the same reason _assert_catalogue_and_validation and _assert_persisting_tools exist).
+    """
+    schema = client.call("get_table_schema", {"table_name": table})
+    columns = {c["name"] for c in schema["columns"]}
+    assert {"customer_id", "name", "email", "age", "country", "signup_date", "amount"} <= columns
+
+    # A table that does not exist must surface the SQL failure, not an empty-but-successful schema.
+    try:
+        missing = client.call("get_table_schema", {"table_name": f"{seed_schema}.no_such_table"})
+        assert not missing.get("columns"), f"nonexistent table reported a schema: {missing}"
+    except Exception:  # noqa: BLE001 — a raised MCP error is the expected surfacing
+        pass
+
+    # A malformed name must be refused by the identifier guard before it reaches SQL, and a path the
+    # caller cannot read must be refused as the caller, before any SP-run job is submitted.
+    _assert_table_name_validation(client)
+    _assert_inaccessible_paths_are_refused(client)
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
@@ -545,20 +577,8 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # 3-4. The catalogue (with its filter) and check validation.
         _assert_catalogue_and_validation(client)
 
-        # 5. get_table_schema (direct SQL via OBO), then a table that does not exist — the SQL
-        #    failure must surface as an error, not an empty-but-successful schema.
-        schema = client.call("get_table_schema", {"table_name": table})
-        columns = {c["name"] for c in schema["columns"]}
-        assert {"customer_id", "name", "email", "age", "country", "signup_date", "amount"} <= columns
-        try:
-            missing = client.call("get_table_schema", {"table_name": f"{data['schema']}.no_such_table"})
-            assert not missing.get("columns"), f"nonexistent table reported a schema: {missing}"
-        except Exception:  # noqa: BLE001 — a raised MCP error is the expected surfacing
-            pass
-        # A malformed name must be refused by the identifier guard before it reaches SQL, and a path
-        # the caller cannot read must be refused as the caller, before any SP-run job is submitted.
-        _assert_table_name_validation(client)
-        _assert_inaccessible_paths_are_refused(client)
+        # 5. get_table_schema, a nonexistent table, and the input guards.
+        _assert_schema_reads_and_guards(client, table, data["schema"])
 
         # 6. profile_table (full scan) -> generate_rules; generated rules must validate.
         profile = client.call("profile_table", {"table_name": table, "options": {"sample_fraction": 1.0}})
