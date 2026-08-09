@@ -8,7 +8,7 @@ from collections.abc import Callable
 import yaml
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
-from databricks.labs.dqx.checks_validator import ChecksValidator
+from databricks.labs.dqx.checks_validator import ChecksValidator, CheckSpec
 from databricks.labs.dqx.rule import (
     DQRule,
     DQRowRule,
@@ -20,6 +20,31 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
+
+
+def project_to_check_schema(check: dict) -> dict:
+    """Return a copy of *check* containing only the logical check-metadata keys.
+
+    Storage backends persist columns alongside the check that are not part of the check metadata
+    accepted by *apply_checks_by_metadata* (e.g. *run_config_name*, *created_at*, *rule_fingerprint*,
+    *rule_set_fingerprint*). Loading a check therefore yields those extra keys. This helper drops
+    them so a loaded check round-trips cleanly.
+
+    Both load paths funnel their assembled check dict through this single projection so they agree
+    on the loaded shape: the Lakebase path (*LakebaseChecksStorageHandler._load_checks_from_lakebase*)
+    and the Delta path (*DataFrameConverter.from_dataframe*). The allowed keys are derived from
+    *CheckSpec.model_fields*, so a new logical field added to the schema is retained by both paths
+    automatically — provided the backing store also carries it (adding a *CheckSpec* field still
+    requires a matching Delta table column and Lakebase column for the value to survive a round-trip).
+
+    Args:
+        check: A check dict that may carry storage-only keys.
+
+    Returns:
+        A new dict with only the keys defined by *CheckSpec*.
+    """
+    allowed_keys = set(CheckSpec.model_fields)
+    return {key: value for key, value in check.items() if key in allowed_keys}
 
 
 class ChecksNormalizer:
@@ -226,7 +251,7 @@ class ChecksDeserializer:
 
     def deserialize(self, checks: list[dict]) -> list[DQRule]:
         """
-        Converts a list of quality checks defined as Python dictionaries to a list of `DQRule` objects.
+        Converts a list of quality checks defined as Python dictionaries to a list of *DQRule* objects.
 
         Args:
             checks: list of dictionaries describing checks. Each check is a dictionary
@@ -245,29 +270,30 @@ class ChecksDeserializer:
         Raises:
             InvalidCheckError: If any dictionary is invalid or unsupported.
         """
-        status = ChecksValidator.validate_checks(checks, self.custom_checks)
+        status, specs = ChecksValidator.validate_and_parse(checks, self.custom_checks)
         if status.has_errors:
             raise InvalidCheckError(str(status))
 
         dq_rule_checks: list[DQRule] = []
-        for check_def in checks:
-            logger.debug(f"Processing check definition: {check_def}")
+        for spec in specs:
+            # No errors means every check parsed, so specs holds a CheckSpec for each entry.
+            assert spec is not None  # validated above; narrows the type for the reads below
+            logger.debug(f"Processing check definition: {spec}")
 
-            check = check_def.get("check", {})
-            name = check_def.get("name") or ""
-            func_name = check.get("function")
+            func_name = spec.check.function
             func = resolve_check_function(func_name, self.custom_checks, fail_on_missing=True)
             assert func  # should already be validated
 
-            func_args = check.get("arguments", {})
-            for_each_column = check.get("for_each_column")
+            func_args: dict[str, Any] = spec.check.arguments
+            for_each_column = spec.check.for_each_column
             column = func_args.get("column")  # should be defined for single-column checks only
             columns = func_args.get("columns")  # should be defined for multi-column checks only
             assert not (column and columns)  # should already be validated
-            criticality = check_def.get("criticality", "error")
-            filter_str = check_def.get("filter")
-            user_metadata = check_def.get("user_metadata")
-            message_expr = check_def.get("message_expr")
+            name = spec.name or ""
+            criticality = spec.criticality
+            filter_str = spec.filter
+            user_metadata = spec.user_metadata
+            message_expr = spec.message_expr
 
             # Exclude `column` and `columns` from check_func_kwargs
             # as these are always included in the check function call

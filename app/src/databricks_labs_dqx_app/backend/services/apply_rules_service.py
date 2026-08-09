@@ -67,6 +67,8 @@ def _clamp_pass_threshold(raw: object) -> int | None:
     """Coerce a per-rule ``pass_threshold`` to an int in [0, 100], or None."""
     if raw is None or raw == "":
         return None
+    if not isinstance(raw, (int, float, str, bytes, bytearray)):
+        return None
     try:
         return max(0, min(100, int(raw)))
     except (TypeError, ValueError):
@@ -371,9 +373,7 @@ class ApplyRulesService:
         if self._is_suppressed(binding_id, rule_id, mapping_hash):
             # A steward deliberately removed this auto mapping; the sweep must
             # not re-add it. See remove_applied's tombstone write.
-            logger.info(
-                "Skipped auto-attach of rule %s to binding %s: mapping is suppressed", rule_id, binding_id
-            )
+            logger.info("Skipped auto-attach of rule %s to binding %s: mapping is suppressed", rule_id, binding_id)
             return None
         existing = self._get_by_natural_key(binding_id, rule_id, mapping_hash)
         if existing is not None:

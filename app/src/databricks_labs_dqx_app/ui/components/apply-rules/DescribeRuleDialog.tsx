@@ -251,7 +251,6 @@ export function DescribeRuleDialog({
                 className="min-h-[96px] text-sm"
                 disabled={busy}
               />
-              <p className="text-xs text-muted-foreground">{t("monitoredTables.describeRuleHint")}</p>
             </div>
           )}
 

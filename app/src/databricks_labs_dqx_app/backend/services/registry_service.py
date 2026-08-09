@@ -204,9 +204,7 @@ class RegistryService:
             return
         definition = self._sql.select_json_text("definition")
         user_metadata = self._sql.select_json_text("user_metadata")
-        pairs = " OR ".join(
-            f"(rule_id = '{escape_sql_string(rid)}' AND version = {int(ver)})" for rid, ver in targets
-        )
+        pairs = " OR ".join(f"(rule_id = '{escape_sql_string(rid)}' AND version = {int(ver)})" for rid, ver in targets)
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
             f"{user_metadata} AS user_metadata_json, mode FROM {self._versions_table} WHERE {pairs}"  # noqa: S608
@@ -660,6 +658,9 @@ class RegistryService:
         ``backend.builtin_rules_seed.seed_builtin_rules_if_absent``) — this
         method always inserts.
         """
+        # Same SQL-safety gate as create/update — seeds are trusted today, but
+        # never persist an unsafe body at status='approved'.
+        self._validate_definition_sql_safety("dqx_native", definition)
         now = datetime.now(timezone.utc)
         rule = RegistryRule(
             rule_id=uuid4().hex[:16],
@@ -801,13 +802,9 @@ class RegistryService:
         if filter_value and filter_value.strip():
             _ROW_FILTER_MAX_LEN = 4000
             if len(filter_value.strip()) > _ROW_FILTER_MAX_LEN:
-                raise UnsafeSqlQueryError(
-                    f"Rule filter is too long (max {_ROW_FILTER_MAX_LEN} characters)."
-                )
+                raise UnsafeSqlQueryError(f"Rule filter is too long (max {_ROW_FILTER_MAX_LEN} characters).")
             if not is_sql_query_safe(f"SELECT * FROM _t WHERE ({filter_value.strip()})"):
-                raise UnsafeSqlQueryError(
-                    "The rule's filter contains prohibited SQL and cannot be saved."
-                )
+                raise UnsafeSqlQueryError("The rule's filter contains prohibited SQL and cannot be saved.")
 
     def _find_duplicate_published(self, rule: RegistryRule) -> RegistryRule | None:
         """Return a published rule that shares this fingerprint, if any."""
@@ -832,8 +829,7 @@ class RegistryService:
 
         name = get_rule_name(existing.user_metadata) or existing.rule_id
         return (
-            f"A published rule with an identical definition already exists: "
-            f"'{name}' (rule_id={existing.rule_id})."
+            f"A published rule with an identical definition already exists: " f"'{name}' (rule_id={existing.rule_id})."
         )
 
     # ------------------------------------------------------------------
@@ -864,9 +860,7 @@ class RegistryService:
             snapshot = self._get_version(rule.rule_id, rule.version)
             if not self._compute_modified(rule, snapshot):
                 raise ValueError("No changes to submit")
-        return self._transition(
-            rule_id, "pending_approval", user_email, rationale=rationale, as_submit=True
-        )
+        return self._transition(rule_id, "pending_approval", user_email, rationale=rationale, as_submit=True)
 
     def approve(self, rule_id: str, user_email: str, rationale: str | None = None) -> RegistryRule:
         """Approve (publish) a pending rule.
@@ -874,18 +868,27 @@ class RegistryService:
         Publishing bumps ``version`` (0 -> 1 on first publish) and writes a
         frozen ``dq_rule_versions`` snapshot — this IS the "publish" action
         described in the design spec, not a separate endpoint.
+
+        The version bump is conditional (``WHERE version = N AND status =
+        'pending_approval'``) so two concurrent approvers cannot both write
+        the same vN+1 snapshot.
         """
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         self._check_transition(rule.status, "approved")
         prev_status = rule.status
+        expected_version = rule.version
         rule.status = "approved"
-        rule.version += 1
+        rule.version = expected_version + 1
         rule.pending_rationale = None
         rule.last_decision_rationale = rationale
         rule.updated_by = user_email
-        self._update(rule)
+        if not self._update_approve_cas(rule, expected_version=expected_version, expected_status=prev_status):
+            raise RuntimeError(
+                f"Concurrent modification approving registry rule '{rule_id}': "
+                f"expected version={expected_version} status={prev_status}"
+            )
         self._write_version_snapshot(rule, user_email)
         self._record_history(
             rule.rule_id,
@@ -916,9 +919,7 @@ class RegistryService:
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         target: RuleStatus = "approved" if rule.version >= 1 else "rejected"
-        return self._transition(
-            rule_id, target, user_email, rationale=rationale, as_decision=True
-        )
+        return self._transition(rule_id, target, user_email, rationale=rationale, as_decision=True)
 
     def revoke(self, rule_id: str, user_email: str) -> RegistryRule:
         """Revoke a pending submission back to a working state.
@@ -1090,6 +1091,42 @@ class RegistryService:
         )
         self._sql.execute(sql)
 
+    def _update_approve_cas(self, rule: RegistryRule, *, expected_version: int, expected_status: str) -> bool:
+        """Conditional approve write — returns False if another writer won the race."""
+        definition_expr = self._sql.json_literal_expr(json.dumps(rule.definition.model_dump(mode="json")))
+        metadata_expr = self._sql.json_literal_expr(json.dumps(rule.user_metadata))
+        e_rule_id = escape_sql_string(rule.rule_id)
+        e_expected_status = escape_sql_string(expected_status)
+        sql = (
+            f"UPDATE {self._table} SET "
+            f"  mode = '{escape_sql_string(rule.mode)}', "
+            f"  status = '{escape_sql_string(rule.status)}', "
+            f"  version = {rule.version}, "
+            f"  polarity = {self._opt_str(rule.polarity)}, "
+            f"  author_kind = {self._opt_str(rule.author_kind)}, "
+            f"  definition = {definition_expr}, "
+            f"  user_metadata = {metadata_expr}, "
+            f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
+            f"  steward = {self._opt_str(rule.steward)}, "
+            f"  steward_display_name = {self._opt_str(rule.steward_display_name)}, "
+            f"  pending_rationale = {self._opt_str(rule.pending_rationale)}, "
+            f"  last_decision_rationale = {self._opt_str(rule.last_decision_rationale)}, "
+            f"  updated_by = {self._opt_str(rule.updated_by)}, "
+            f"  updated_at = now() "
+            f"WHERE rule_id = '{e_rule_id}' "
+            f"  AND version = {expected_version} "
+            f"  AND status = '{e_expected_status}'"
+        )
+        self._sql.execute(sql)
+        # Executors don't return rowcount portably — confirm via re-read.
+        refreshed = self._get(rule.rule_id)
+        return (
+            refreshed is not None
+            and refreshed.version == rule.version
+            and refreshed.status == rule.status
+            and refreshed.updated_by == rule.updated_by
+        )
+
     def _write_version_snapshot(self, rule: RegistryRule, user_email: str) -> None:
         """Insert the frozen ``dq_rule_versions`` row for the just-published version.
 
@@ -1204,7 +1241,9 @@ class RegistryService:
         as a confusing Pydantic error deep inside ``RegistryRule(...)``.
         """
         if value not in cls._VALID_MODES:
-            raise ValueError(f"Registry rule {rule_id!r} has invalid mode {value!r}; expected one of {sorted(cls._VALID_MODES)}")
+            raise ValueError(
+                f"Registry rule {rule_id!r} has invalid mode {value!r}; expected one of {sorted(cls._VALID_MODES)}"
+            )
         return cast(RuleMode, value)
 
     @classmethod

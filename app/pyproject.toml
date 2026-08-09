@@ -3,14 +3,7 @@ name = "databricks-labs-dqx-app"
 version = "0.15.0"
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
-# Floor is 3.11 (not 3.12): the deployed app installs its wheel into the
-# Databricks Apps platform venv and runs under the container's SYSTEM Python
-# via plain uvicorn (no ``uv run`` re-resolution at startup). That system
-# Python is 3.11, so the wheel's Requires-Python must admit 3.11 or the
-# platform ``pip install`` refuses it. The backend uses no 3.12-only syntax
-# (ruff/basedpyright already target py311), and every locked dependency
-# supports 3.11.
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
@@ -63,24 +56,12 @@ app-module = "databricks_labs_dqx_app.backend.app:app"
 [tool.uv]
 exclude-newer-package = { "databricks-sdk" = false }
 
-# The Rules Registry integration co-develops the DQX library and this app: the
-# backend imports symbols (e.g. ``llm.llm_core._filter_unsafe_sql_rules``) added
-# to the local ``databricks-labs-dqx`` 0.15.0 source that are not yet in the
-# published 0.15.0 wheel. Resolve the dependency against the parent checkout so
-# local dev, type-check, and tests use the co-developed library.
-#
-# This is a NON-editable path dep on purpose. ``databricks-sdk`` 0.120 ships as
-# a PEP 420 namespace package (no ``databricks/__init__.py``), whereas the DQX
-# library still declares a pkgutil-style ``databricks/__init__.py``. An editable
-# install puts that pkgutil ``__init__`` on the path via a ``.pth`` where it
-# shadows the sdk's PEP 420 ``databricks`` portion, so basedpyright resolves
-# ``databricks.labs.dqx`` but not ``databricks.sdk`` (a static-analysis-only
-# false positive; runtime import still merges both). Installing the built wheel
-# into site-packages keeps ``databricks`` a single package root, so the sdk
-# resolves. Re-run ``uv sync`` after editing the local library to pick up changes.
-# NOTE: ``build_app.py`` still pins the registry wheel for deploys — publish a
-# dqx release carrying these additions (or bundle the local wheel) before
-# deploying this branch. See DEPLOYMENT.md.
+# Rules Registry co-develops the DQX library with this app: local symbols
+# (e.g. llm helpers) are not yet in the published 0.15.0 wheel. Non-editable
+# path dep avoids namespace-package shadowing with databricks-sdk (see prior
+# Studio notes). Deploy still follows the #1300 uv-run source model — publish
+# a dqx release carrying these additions before relying on them in a deployed
+# app, or vendor via a future build step.
 [tool.uv.sources]
 databricks-labs-dqx = { path = "../" }
 
@@ -100,7 +81,7 @@ exclude = ["src/databricks_labs_dqx_app/ui"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 # ---------------------------------------------------------------------------

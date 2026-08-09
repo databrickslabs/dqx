@@ -342,7 +342,7 @@ function DataProductsPage() {
     const eligible = selectedRows.filter((p) => p.status === "pending_approval");
     bulkAction(
       eligible,
-      (productId) => approveMutation.mutateAsync({ productId }),
+      (productId) => approveMutation.mutateAsync({ productId, data: null }),
       t("dataProducts.bulkApproved"),
     );
   };
@@ -352,7 +352,7 @@ function DataProductsPage() {
     const eligible = selectedRows.filter((p) => p.status === "pending_approval");
     bulkAction(
       eligible,
-      (productId) => rejectMutation.mutateAsync({ productId }),
+      (productId) => rejectMutation.mutateAsync({ productId, data: null }),
       t("dataProducts.bulkRejected"),
     );
   };
@@ -440,7 +440,7 @@ function DataProductsPage() {
   const handleApprove = (product: DataProductOut) =>
     runRowAction(
       product.product_id,
-      () => approveMutation.mutateAsync({ productId: product.product_id }),
+      () => approveMutation.mutateAsync({ productId: product.product_id, data: null }),
       t("dataProducts.toastApproved"),
       t("dataProducts.toastApproveFailed"),
     );
@@ -491,7 +491,7 @@ function DataProductsPage() {
     setRejectTarget(null);
     runRowAction(
       product.product_id,
-      () => rejectMutation.mutateAsync({ productId: product.product_id }),
+      () => rejectMutation.mutateAsync({ productId: product.product_id, data: null }),
       t("dataProducts.toastRejected"),
       t("dataProducts.toastRejectFailed"),
     );

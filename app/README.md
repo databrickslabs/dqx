@@ -103,7 +103,7 @@ The schemas, wheels volume, and Lakebase Postgres **project** are declared as bu
  └── wheels (UC volume)               ← DQX + task-runner wheels uploaded at app startup
 
 Lakebase (Postgres) — when enabled (default):
- dqx-studio-db (Lakebase project) → branch → 'primary' endpoint (DQX_LAKEBASE_ENDPOINT)
+ dqx-studio-lakebase (database_instance)
  └── databricks_postgres (database)    ← always-present admin DB; no per-app logical DB provisioned
      └── dqx_studio (schema)           ← created by PgMigrationRunner on first start (DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
@@ -143,6 +143,6 @@ The app aligns with the [DQX Summary Metrics spec](https://github.com/databricks
 
 ## Stack
 
-- **Backend**: Python 3.11+, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
+- **Backend**: Python 3.12+, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
 - **Frontend**: React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation**: orval (OpenAPI → TypeScript types + React Query hooks)

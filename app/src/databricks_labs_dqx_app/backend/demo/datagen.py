@@ -431,9 +431,7 @@ def _fail_levels(week: int, weeks: int) -> dict[str, float]:
     return {
         "customers": _clamp(0.74 - 0.60 * frac + _jitter(week, 13, 0.13)),
         "orders": _clamp(0.06 + 0.80 * incident + _jitter(week, 29, 0.12)),
-        "payments": _clamp(
-            0.16 + 0.38 * frac + (0.14 if week >= TIGHTEN_WEEK else 0.0) + _jitter(week, 23, 0.12)
-        ),
+        "payments": _clamp(0.16 + 0.38 * frac + (0.14 if week >= TIGHTEN_WEEK else 0.0) + _jitter(week, 23, 0.12)),
         "products": _clamp(0.64 + _jitter(week, 19, 0.20)),
         "shipments": _clamp(0.18 + 0.40 * shump + _jitter(week, 31, 0.16)),
     }
@@ -442,83 +440,192 @@ def _fail_levels(week: int, weeks: int) -> dict[str, float]:
 def _mutate_customers(fqn: str, f: float) -> list[str]:
     """Return the customers column-mutation statements for fail level *f*."""
     return [
-        _mut(fqn, "first_name", "customer_id", 43, _clamp(f * 1.15),
-             "CAST(NULL AS STRING)", "concat('First', cast(customer_id AS STRING))"),
-        _mut(fqn, "last_name", "customer_id", 44, _clamp(f * 1.10),
-             "CAST(NULL AS STRING)", "concat('Last', cast(customer_id AS STRING))"),
-        _mut(fqn, "country_code", "customer_id", 23, _clamp(f * 1.25),
-             "'ZZ'", f"element_at({_ISO}, cast(pmod(customer_id, 12) + 1 AS INT))"),
-        _mut(fqn, "account_tier", "customer_id", 41, _clamp(f * 0.6),
-             "'Gold'", "element_at(array('Free','Pro','Enterprise'), cast(pmod(customer_id, 3) + 1 AS INT))"),
-        _mut(fqn, "created_at", "customer_id", 53, _clamp(f * 0.9),
-             _FUTURE, _past("customer_id", 3650)),
-        _mut(fqn, "phone", "customer_id", 57, _clamp(f * 1.05),
-             "CASE WHEN pmod(hash(customer_id, 57), 2) = 0 THEN CAST(NULL AS STRING) ELSE '12' END",
-             "concat('+1555', lpad(cast(pmod(customer_id, 10000) AS STRING), 4, '0'))"),
-        _mut(fqn, "is_active", "customer_id", 59, _clamp(f * 0.7),
-             "CAST(NULL AS BOOLEAN)", "(pmod(customer_id, 2) = 0)"),
+        _mut(
+            fqn,
+            "first_name",
+            "customer_id",
+            43,
+            _clamp(f * 1.15),
+            "CAST(NULL AS STRING)",
+            "concat('First', cast(customer_id AS STRING))",
+        ),
+        _mut(
+            fqn,
+            "last_name",
+            "customer_id",
+            44,
+            _clamp(f * 1.10),
+            "CAST(NULL AS STRING)",
+            "concat('Last', cast(customer_id AS STRING))",
+        ),
+        _mut(
+            fqn,
+            "country_code",
+            "customer_id",
+            23,
+            _clamp(f * 1.25),
+            "'ZZ'",
+            f"element_at({_ISO}, cast(pmod(customer_id, 12) + 1 AS INT))",
+        ),
+        _mut(
+            fqn,
+            "account_tier",
+            "customer_id",
+            41,
+            _clamp(f * 0.6),
+            "'Gold'",
+            "element_at(array('Free','Pro','Enterprise'), cast(pmod(customer_id, 3) + 1 AS INT))",
+        ),
+        _mut(fqn, "created_at", "customer_id", 53, _clamp(f * 0.9), _FUTURE, _past("customer_id", 3650)),
+        _mut(
+            fqn,
+            "phone",
+            "customer_id",
+            57,
+            _clamp(f * 1.05),
+            "CASE WHEN pmod(hash(customer_id, 57), 2) = 0 THEN CAST(NULL AS STRING) ELSE '12' END",
+            "concat('+1555', lpad(cast(pmod(customer_id, 10000) AS STRING), 4, '0'))",
+        ),
+        _mut(
+            fqn, "is_active", "customer_id", 59, _clamp(f * 0.7), "CAST(NULL AS BOOLEAN)", "(pmod(customer_id, 2) = 0)"
+        ),
     ]
 
 
 def _mutate_orders(fqn: str, f: float, n_customers: int) -> list[str]:
     """Return the orders column-mutation statements for fail level *f*."""
     return [
-        _mut(fqn, "customer_id", "order_id", 67, _clamp(f * 0.7),
-             "CAST(NULL AS BIGINT)", f"cast(pmod(order_id, {n_customers}) + 1 AS BIGINT)"),
-        _mut(fqn, "order_ts", "order_id", 71, _clamp(f * 0.8),
-             _FUTURE, _past("order_id", 1460)),
-        _mut(fqn, "amount", "order_id", 23, _clamp(f * 1.0),
-             "-1 * (pmod(order_id, 200) + 1) * 1.0", "round(5 + pmod(order_id, 49500) / 100.0, 2)"),
-        _mut(fqn, "discount_pct", "order_id", 61, _clamp(f * 0.9),
-             "150", "cast(pmod(order_id, 60) AS INT)"),
-        _mut(fqn, "status", "order_id", 31, _clamp(f * 1.15),
-             "'unknown'",
-             "element_at(array('placed','shipped','delivered','cancelled'), cast(pmod(order_id, 4) + 1 AS INT))"),
+        _mut(
+            fqn,
+            "customer_id",
+            "order_id",
+            67,
+            _clamp(f * 0.7),
+            "CAST(NULL AS BIGINT)",
+            f"cast(pmod(order_id, {n_customers}) + 1 AS BIGINT)",
+        ),
+        _mut(fqn, "order_ts", "order_id", 71, _clamp(f * 0.8), _FUTURE, _past("order_id", 1460)),
+        _mut(
+            fqn,
+            "amount",
+            "order_id",
+            23,
+            _clamp(f * 1.0),
+            "-1 * (pmod(order_id, 200) + 1) * 1.0",
+            "round(5 + pmod(order_id, 49500) / 100.0, 2)",
+        ),
+        _mut(fqn, "discount_pct", "order_id", 61, _clamp(f * 0.9), "150", "cast(pmod(order_id, 60) AS INT)"),
+        _mut(
+            fqn,
+            "status",
+            "order_id",
+            31,
+            _clamp(f * 1.15),
+            "'unknown'",
+            "element_at(array('placed','shipped','delivered','cancelled'), cast(pmod(order_id, 4) + 1 AS INT))",
+        ),
     ]
 
 
 def _mutate_payments(fqn: str, f: float, n_orders: int) -> list[str]:
     """Return the payments column-mutation statements for fail level *f*."""
     return [
-        _mut(fqn, "order_id", "payment_id", 83, _clamp(f * 0.5),
-             "CAST(NULL AS BIGINT)", f"cast(pmod(payment_id, {n_orders}) + 1 AS BIGINT)"),
-        _mut(fqn, "amount", "payment_id", 89, _clamp(f * 0.6),
-             "-1 * (pmod(payment_id, 100) + 1) * 1.0", "round(5 + pmod(payment_id, 49500) / 100.0, 2)"),
-        _mut(fqn, "paid_at", "payment_id", 97, _clamp(f * 0.7),
-             _FUTURE, _past("payment_id", 1460)),
-        _mut(fqn, "method", "payment_id", 29, _clamp(f * 1.1),
-             "'bitcoin'", "element_at(array('card','paypal','transfer'), cast(pmod(payment_id, 3) + 1 AS INT))"),
-        _mut(fqn, "card_last4", "payment_id", 31, _clamp(f * 1.0),
-             "'XXXX'", "lpad(cast(pmod(payment_id, 10000) AS STRING), 4, '0')"),
+        _mut(
+            fqn,
+            "order_id",
+            "payment_id",
+            83,
+            _clamp(f * 0.5),
+            "CAST(NULL AS BIGINT)",
+            f"cast(pmod(payment_id, {n_orders}) + 1 AS BIGINT)",
+        ),
+        _mut(
+            fqn,
+            "amount",
+            "payment_id",
+            89,
+            _clamp(f * 0.6),
+            "-1 * (pmod(payment_id, 100) + 1) * 1.0",
+            "round(5 + pmod(payment_id, 49500) / 100.0, 2)",
+        ),
+        _mut(fqn, "paid_at", "payment_id", 97, _clamp(f * 0.7), _FUTURE, _past("payment_id", 1460)),
+        _mut(
+            fqn,
+            "method",
+            "payment_id",
+            29,
+            _clamp(f * 1.1),
+            "'bitcoin'",
+            "element_at(array('card','paypal','transfer'), cast(pmod(payment_id, 3) + 1 AS INT))",
+        ),
+        _mut(
+            fqn,
+            "card_last4",
+            "payment_id",
+            31,
+            _clamp(f * 1.0),
+            "'XXXX'",
+            "lpad(cast(pmod(payment_id, 10000) AS STRING), 4, '0')",
+        ),
     ]
 
 
 def _mutate_products(fqn: str, f: float) -> list[str]:
     """Return the products column-mutation statements for fail level *f*."""
     return [
-        _mut(fqn, "name", "sku", 47, _clamp(f * 1.1),
-             "CAST(NULL AS STRING)", "concat('Product-', sku)"),
-        _mut(fqn, "price", "sku", 23, _clamp(f * 1.0),
-             "-1 * round(1 + pmod(length(sku), 500) / 10.0, 2)", "round(1 + pmod(length(sku), 50000) / 100.0, 2)"),
-        _mut(fqn, "category", "sku", 37, _clamp(f * 1.25),
-             "'Misc'",
-             "element_at(array('Electronics','Apparel','Home','Grocery','Toys'), cast(pmod(hash(sku, 99), 5) + 1 AS INT))"),
+        _mut(fqn, "name", "sku", 47, _clamp(f * 1.1), "CAST(NULL AS STRING)", "concat('Product-', sku)"),
+        _mut(
+            fqn,
+            "price",
+            "sku",
+            23,
+            _clamp(f * 1.0),
+            "-1 * round(1 + pmod(length(sku), 500) / 10.0, 2)",
+            "round(1 + pmod(length(sku), 50000) / 100.0, 2)",
+        ),
+        _mut(
+            fqn,
+            "category",
+            "sku",
+            37,
+            _clamp(f * 1.25),
+            "'Misc'",
+            "element_at(array('Electronics','Apparel','Home','Grocery','Toys'), cast(pmod(hash(sku, 99), 5) + 1 AS INT))",
+        ),
     ]
 
 
 def _mutate_shipments(fqn: str, f: float, n_orders: int) -> list[str]:
     """Return the shipments column-mutation statements for fail level *f*."""
     return [
-        _mut(fqn, "order_id", "shipment_id", 101, _clamp(f * 0.5),
-             "CAST(NULL AS BIGINT)", f"cast(pmod(shipment_id, {n_orders}) + 1 AS BIGINT)"),
-        _mut(fqn, "tracking_no", "shipment_id", 17, _clamp(f * 1.1),
-             "CASE WHEN pmod(hash(shipment_id, 17), 2) = 0 THEN CAST(NULL AS STRING) ELSE 'AB' END",
-             "concat('TRK', lpad(cast(shipment_id AS STRING), 10, '0'))"),
-        _mut(fqn, "shipped_at", "shipment_id", 103, _clamp(f * 0.6),
-             _FUTURE, _past("shipment_id", 1460)),
-        _mut(fqn, "delivered_at", "shipment_id", 71, _clamp(f * 0.9),
-             "timestampadd(DAY, -2, shipped_at)",
-             "timestampadd(DAY, cast(pmod(shipment_id, 10) + 1 AS INT), shipped_at)"),
+        _mut(
+            fqn,
+            "order_id",
+            "shipment_id",
+            101,
+            _clamp(f * 0.5),
+            "CAST(NULL AS BIGINT)",
+            f"cast(pmod(shipment_id, {n_orders}) + 1 AS BIGINT)",
+        ),
+        _mut(
+            fqn,
+            "tracking_no",
+            "shipment_id",
+            17,
+            _clamp(f * 1.1),
+            "CASE WHEN pmod(hash(shipment_id, 17), 2) = 0 THEN CAST(NULL AS STRING) ELSE 'AB' END",
+            "concat('TRK', lpad(cast(shipment_id AS STRING), 10, '0'))",
+        ),
+        _mut(fqn, "shipped_at", "shipment_id", 103, _clamp(f * 0.6), _FUTURE, _past("shipment_id", 1460)),
+        _mut(
+            fqn,
+            "delivered_at",
+            "shipment_id",
+            71,
+            _clamp(f * 0.9),
+            "timestampadd(DAY, -2, shipped_at)",
+            "timestampadd(DAY, cast(pmod(shipment_id, 10) + 1 AS INT), shipped_at)",
+        ),
     ]
 
 

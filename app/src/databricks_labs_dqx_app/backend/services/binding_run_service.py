@@ -336,7 +336,9 @@ class BindingRunService:
             try:
                 self._view_service.drop_view(view_fqn)
             except Exception as cleanup_err:
-                logger.warning("Failed to drop temp view %s after submit failure for %s: %s", view_fqn, binding_id, cleanup_err)
+                logger.warning(
+                    "Failed to drop temp view %s after submit failure for %s: %s", view_fqn, binding_id, cleanup_err
+                )
             raise
 
         minted_run_set = run_set_id is None
@@ -362,9 +364,7 @@ class BindingRunService:
                     )
             raise
 
-        return BindingRunResult(
-            run_set_id=resolved_run_set_id, run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn
-        )
+        return BindingRunResult(run_set_id=resolved_run_set_id, run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
 
     def _resolve_checks(
         self,
@@ -380,8 +380,7 @@ class BindingRunService:
         pinned = version if version is not None else current_version
         if version is None and current_version == 0:
             raise NeverApprovedError(
-                f"Monitored table {binding_id} has never been approved; "
-                "run source='draft' or pin a version instead."
+                f"Monitored table {binding_id} has never been approved; " "run source='draft' or pin a version instead."
             )
         try:
             checks = self._version_service.get_checks(binding_id, pinned)

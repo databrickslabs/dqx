@@ -44,12 +44,12 @@ lint: ## Check Python without modifying (black --check, ruff, mypy, pylint)
 	$(UV_RUN) mypy .
 	$(UV_RUN) pylint --output-format=colorized -j 0 src tests
 
-fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, docs URL refresh)
+fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, version sync of docs URLs + DQX pins)
 	$(UV_RUN) black .
 	$(UV_RUN) ruff check . --fix
 	$(UV_RUN) mypy .
 	$(UV_RUN) pylint --output-format=colorized -j 0 src tests
-	$(UV_RUN) python docs/dqx/update_github_urls.py
+	$(UV_RUN) python docs/dqx/sync_versions.py
 
 ##@ Tests (DQX library)
 
@@ -67,6 +67,15 @@ perf: ## Run performance benchmarks (long timeout)
 
 anomaly: ## Run anomaly integration tests (long timeout, with reruns)
 	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
+
+# The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the runner wheel with
+# `uv build ./runner` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
+# (.build-constraints.txt) would resolve against the wrong directory and fail with
+# "File not found: .build-constraints.txt". Pin it to the absolute repo-root path (same fix as
+# mcp-deploy). CI doesn't hit this — it runs via the acceptance harness, not make.
+mcp-integration: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
+mcp-integration: ## Run MCP server integration tests (deploys an isolated app; requires workspace auth + Databricks CLI)
+	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 1800 --durations 10
 
 coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
@@ -107,7 +116,7 @@ docs-clean: ## Remove docs build, .docusaurus, and generated API reference
 app-install: ## Install app frontend dependencies (yarn --frozen-lockfile)
 	yarn --cwd app install --frozen-lockfile
 
-app-build: ## Build app: openapi → orval → vite → wheels + requirements.txt (CI parity)
+app-build: ## Build app: openapi → orval → vite (CI parity)
 	cd app && $(UV_RUN) python scripts/build_app.py
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
@@ -179,6 +188,108 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
 
+# Run the MCP server's unit-test suite (pytest, no Databricks/Spark dependencies).
+# Usage:  make mcp-test           # run everything
+#         make mcp-test K=expr    # forward -k filter to pytest
+#
+# pytest is not declared in mcp-server's pyproject/uv.lock — the suite only
+# needs anyio, which ships transitively. With UV_FROZEN=1 we can't add pytest
+# to the lock from here, so inject it ephemerally with ``uv run --with pytest``
+# over the synced runtime env (anyio's pytest plugin handles the async tests).
+mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
+	cd mcp-server && uv run --with pytest pytest tests/ \
+	  $(if $(K),-k "$(K)")
+
+# Static type-check the MCP server (parity with app-check). basedpyright is not in mcp-server's
+# pyproject/uv.lock (like pytest), so inject it ephemerally with ``uv run --with basedpyright`` over
+# the synced runtime env. Scoped to ``server`` (the app package): the runner sub-project's
+# pyspark/dqx deps aren't in this env — it type-checks separately as its own wheel. ``standard`` mode
+# + ``--level error`` config lives in mcp-server/pyproject.toml [tool.basedpyright].
+mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors only)
+	cd mcp-server && uv run --with basedpyright basedpyright --level error server
+
+# One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
+# exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC
+# grants + temp-schema ownership), then deploys & starts the app via ``bundle run``. The catalog
+# is passed as CATALOG below and injected into the app as the DQX_CATALOG config value (no secret).
+#
+# Usage: make mcp-deploy PROFILE=my-profile CATALOG=main
+# CATALOG is REQUIRED: workspace.artifact_path is the UC volume /Volumes/<CATALOG>/dqx_mcp_tmp/dqx_artifacts
+# that hosts the runner wheels; it is resolved at deploy time and must pre-exist. It is also the
+# catalog the app + runner use for temp views and per-user output schemas.
+# TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
+# The bundle artifact build runs `uv build ./runner` from inside mcp-server/, so the global
+# relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong
+# directory. Pin it to the absolute repo-root path so the wheel build finds it.
+# The catalog is not bundle-managed, so catalog-level grants cannot be declared natively. Apply
+# them once per catalog with this target (idempotent). USERS_GROUP defaults to 'account users'.
+mcp-grant-prereqs: ## Apply the one-time catalog grants the bundle cannot. Requires PROFILE + CATALOG
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-grant-prereqs PROFILE=<databricks-profile> CATALOG=<catalog> [RUNNER_SP=<app-id>] [APP_SP=<app-id>] [USERS_GROUP=<group>]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-grant-prereqs PROFILE=<databricks-profile> CATALOG=<catalog> [RUNNER_SP=<app-id>] [APP_SP=<app-id>] [USERS_GROUP=<group>]"; exit 1)
+	cd mcp-server && DATABRICKS_PROFILE=$(PROFILE) DQX_MCP_CATALOG=$(CATALOG) \
+	  DQX_MCP_USERS_GROUP="$(USERS_GROUP)" DQX_MCP_RUNNER_SP="$(RUNNER_SP)" DQX_MCP_APP_SP="$(APP_SP)" \
+	  ./scripts/grant_catalog_prereqs.sh
+
+# ONE command for the whole install. Everything the bundle owns (schema, both volumes, runner job,
+# app) is created with native UC grants by `bundle deploy`. The only grants it cannot declare are on
+# the *catalog*, which it does not own — so this target applies them itself, in the order that makes
+# a single pass sufficient:
+#
+#   1. bundle deploy      — creates the app, so its service principal now exists
+#   2. grant prereqs      — USE CATALOG for users + runner SP + the app SP (resolved from the app)
+#   3. bundle run         — starts the app, which publishes the runner wheel to the volume
+#
+# Granting BEFORE the app starts is what avoids a "grant, then restart" second pass: the app's first
+# startup already has the access it needs to publish the wheel. This mirrors scripts/ci_deploy.sh.
+# RUNNER_SP is the single source of truth for the runner service principal: it is BOTH granted on
+# the catalog and passed to the bundle as runner_service_principal_id. Passing it twice used to be
+# required, and passing it only via BUNDLE_VARS deployed a working bundle whose runner SP had no
+# catalog grants — surfacing much later as a CREATE_SCHEMA denial on the first save_checks. The
+# `findstring` guard keeps an explicit --var in BUNDLE_VARS working: the CLI rejects a variable
+# assigned twice ("variable has already been assigned value"), so it must not be added again.
+mcp_runner_var = $(if $(RUNNER_SP),$(if $(findstring runner_service_principal_id,$(BUNDLE_VARS)),,--var runner_service_principal_id=$(RUNNER_SP)))
+# USERS_GROUP has the same split-source problem: it feeds the catalog grants below, while the
+# schema-level USE_SCHEMA/CREATE_TABLE grant comes from the bundle's users_group var. Feeding only
+# one of them grants a non-default group USE CATALOG but leaves its schema access on the default, so
+# a member can enter the catalog but cannot create the temp views every data tool needs. Same
+# findstring guard: an explicit --var in BUNDLE_VARS must not be duplicated.
+mcp_users_var = $(if $(USERS_GROUP),$(if $(findstring users_group,$(BUNDLE_VARS)),,--var users_group=$(USERS_GROUP)))
+# The tmp schema for the verify hint below. Only echoed, never passed to the CLI: an override
+# arrives inside BUNDLE_VARS, so parse it out rather than printing the bundle default and sending
+# the user to a path that does not exist.
+mcp_tmp_schema = $(if $(findstring tmp_schema_name=,$(BUNDLE_VARS)),$(firstword $(subst tmp_schema_name=,,$(filter tmp_schema_name=%,$(BUNDLE_VARS)))),dqx_mcp_tmp)
+mcp_bundle_flags = -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(mcp_runner_var) $(mcp_users_var) $(BUNDLE_VARS)
+
+mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
+mcp-deploy: ## Deploy the MCP server end to end: bundle, catalog grants, then start the app
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(RUNNER_SP)$(findstring runner_service_principal_id,$(BUNDLE_VARS))" || (echo "RUNNER_SP is required: the runner job needs a dedicated service principal to run as, and it must be granted USE CATALOG + CREATE_SCHEMA on $(CATALOG). See the 'Create the runner service principal' section of the MCP install docs."; exit 1)
+	@test -n "$(RUNNER_SP)" || echo "WARNING: the runner SP was supplied via BUNDLE_VARS, not RUNNER_SP, so it will NOT be granted USE CATALOG + CREATE_SCHEMA on $(CATALOG). Pass RUNNER_SP=<application-id> instead, or run 'make mcp-grant-prereqs' afterwards, otherwise save_checks fails with a CREATE_SCHEMA denial."
+	cd mcp-server && databricks bundle deploy $(mcp_bundle_flags)
+	cd mcp-server && DATABRICKS_PROFILE=$(PROFILE) DQX_MCP_CATALOG=$(CATALOG) \
+	  DQX_MCP_USERS_GROUP="$(USERS_GROUP)" DQX_MCP_RUNNER_SP="$(RUNNER_SP)" \
+	  DQX_MCP_APP_NAME="$(if $(NAME_PREFIX),$(NAME_PREFIX),mcp-dqx)" \
+	  ./scripts/grant_catalog_prereqs.sh
+	cd mcp-server && databricks bundle run mcp-dqx $(mcp_bundle_flags)
+	@echo ""
+	@echo "Deployed. The app publishes the runner wheel at startup; verify with:"
+	@echo "  databricks fs ls dbfs:/Volumes/$(CATALOG)/$(mcp_tmp_schema)/dqx_artifacts -p $(PROFILE)"
+
+# One command: the schema and both volumes are bundle resources now, so destroy removes them too
+# (it previously left the schema behind and needed a separate `volumes delete`). Per-user
+# dqx_mcp_<user> output schemas are NOT bundle-managed and survive.
+# runner_service_principal_id isn't needed to destroy, so its placeholder default is fine.
+mcp-destroy: ## Tear down the MCP server (app, job, schema, volumes). Requires PROFILE + CATALOG
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
+	cd mcp-server && databricks bundle destroy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --auto-approve --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	@echo ""
+	@echo "Destroyed the MCP app, the runner job, AND the bundle-managed $(CATALOG).$(mcp_tmp_schema) schema"
+	@echo "with its mcp_results + dqx_artifacts volumes — these are bundle resources now, so destroy"
+	@echo "removes them (it previously left the schema in place). Any $(CATALOG).dqx_mcp_<user> output"
+	@echo "schemas are not bundle-managed and survive; drop them manually for a full wipe."
+
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
 # Minimum Databricks CLI version required to deploy. The ``postgres_roles``
@@ -235,7 +346,6 @@ app-deploy: app-check-cli app-build ## Build, deploy bundle, and start app (FORC
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
-	cd app && chmod +x scripts/post_deploy_external_warehouse_grants.sh && ./scripts/post_deploy_external_warehouse_grants.sh -p $(PROFILE) -t $(TARGET) -- $(BUNDLE_VARS)
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio
@@ -259,9 +369,20 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 	# index and every per-package "/packages/..." download URL to the public hosts. Also drop the
 	# "size" field: the private proxy never reports it, so it is the only form both can reproduce.
 	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g; s|url = "https://[^/"]+/packages/|url = "https://files.pythonhosted.org/packages/|g; s|, size = \d+||g' app/uv.lock
-	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
+	# UV_FROZEN=1 for the helper below: this target sets UV_FROZEN=0 to re-lock app/uv.lock, but the
+	# `uv run` here executes from the repo root and would otherwise re-lock (and proxy-taint) the root
+	# uv.lock as a side effect. Frozen keeps it read-only against the existing root env.
+	UV_FROZEN=1 $(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > app/build-constraints-new.txt
 	mv app/build-constraints-new.txt app/.build-constraints.txt
+
+# Regenerate the MCP server lockfile and scrub private-proxy URLs so the
+# committed file resolves against whatever registry the install environment
+# is configured for (JFrog in CI, public in fork PRs).
+lock-mcp-dependencies: export UV_FROZEN := 0
+lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
+	cd mcp-server && uv lock --exclude-newer "7 days"
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g; s|url = "https://[^/"]+/packages/|url = "https://files.pythonhosted.org/packages/|g; s|, size = \d+||g' mcp-server/uv.lock
 
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt

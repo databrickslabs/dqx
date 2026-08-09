@@ -191,14 +191,14 @@ function RegistryApprovalsSection({
   const confirmApprove = (rule: RegistryRuleOut) =>
     runAction(
       rule.rule_id,
-      () => approveMutation.mutateAsync({ ruleId: rule.rule_id }),
+      () => approveMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
       t("rulesDrafts.registryToastApproved"),
       t("rulesDrafts.registryToastFailedApprove"),
     );
   const confirmReject = (rule: RegistryRuleOut) =>
     runAction(
       rule.rule_id,
-      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id }),
+      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
       t("rulesDrafts.registryToastRejected"),
       t("rulesDrafts.registryToastFailedReject"),
     );
@@ -410,14 +410,14 @@ function MonitoredTablesApprovalsSection({
   const confirmApprove = (row: MonitoredTableSummaryOut) =>
     runAction(
       row.table.binding_id,
-      () => approveMutation.mutateAsync({ bindingId: row.table.binding_id }),
+      () => approveMutation.mutateAsync({ bindingId: row.table.binding_id, data: null }),
       t("rulesDrafts.mtToastApproved"),
       t("rulesDrafts.mtToastFailedApprove"),
     );
   const confirmReject = (row: MonitoredTableSummaryOut) =>
     runAction(
       row.table.binding_id,
-      () => rejectMutation.mutateAsync({ bindingId: row.table.binding_id }),
+      () => rejectMutation.mutateAsync({ bindingId: row.table.binding_id, data: null }),
       t("rulesDrafts.mtToastRejected"),
       t("rulesDrafts.mtToastFailedReject"),
     );
@@ -589,14 +589,14 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
   const confirmApprove = (p: DataProductOut) =>
     runAction(
       p.product_id,
-      () => approveMutation.mutateAsync({ productId: p.product_id }),
+      () => approveMutation.mutateAsync({ productId: p.product_id, data: null }),
       t("dataProducts.toastApproved"),
       t("dataProducts.toastApproveFailed"),
     );
   const confirmReject = (p: DataProductOut) =>
     runAction(
       p.product_id,
-      () => rejectMutation.mutateAsync({ productId: p.product_id }),
+      () => rejectMutation.mutateAsync({ productId: p.product_id, data: null }),
       t("dataProducts.toastRejected"),
       t("dataProducts.toastRejectFailed"),
     );

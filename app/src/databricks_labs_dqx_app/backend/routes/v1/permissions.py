@@ -77,9 +77,7 @@ def _to_out(grant: ObjectGrant, owner: str | None = None) -> ObjectGrantOut:
         is_default = False
     else:
         users_group = is_users_group(grant.principal_id)
-        owner_row = bool(
-            owner and grant.principal_id.strip().lower() == owner.strip().lower()
-        )
+        owner_row = bool(owner and grant.principal_id.strip().lower() == owner.strip().lower())
         is_default = users_group or owner_row
     return ObjectGrantOut(
         principal_id=grant.principal_id,

@@ -1,12 +1,18 @@
 ---
+title: Data Contract Quality Rules Generation
 sidebar_position: 304
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Data Contract Quality Rules Generation
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.11.0" heading={false} />
+</FeatureTags>
 
 DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
 
@@ -124,6 +130,10 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 </Tabs>
 
 ### Schema validation
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
 
 When the contract defines a schema and `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. Set `generate_schema_validation=False` to skip these rules. The **strictness** of schema validation is controlled by `strict_schema_validation`: default `True` (exact columns, order, and types); set to `False` for permissive validation (expected columns must exist with compatible types; extra columns are allowed).
 

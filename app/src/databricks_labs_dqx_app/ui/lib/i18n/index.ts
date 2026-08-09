@@ -6,6 +6,7 @@ import en from "./locales/en.json";
 
 export const SUPPORTED_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English" },
+  { code: "fr", label: "French", nativeLabel: "Français" },
   { code: "pt-BR", label: "Portuguese (Brazil)", nativeLabel: "Português (Brasil)" },
   { code: "it", label: "Italian", nativeLabel: "Italiano" },
   { code: "es", label: "Spanish", nativeLabel: "Español" },
@@ -16,6 +17,7 @@ export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
 export const LANGUAGE_STORAGE_KEY = "dqx.language";
 
 const localeLoaders: Record<string, () => Promise<{ default: Record<string, unknown> }>> = {
+  fr: () => import("./locales/fr.json"),
   "pt-BR": () => import("./locales/pt-BR.json"),
   it: () => import("./locales/it.json"),
   es: () => import("./locales/es.json"),

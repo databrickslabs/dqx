@@ -29,6 +29,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from databricks_labs_dqx_app.backend.sql_utils import quote_ident, validate_identifier
+
 # --- Operator / aggregate vocabulary (mirrors ui/lib/lowcodeOperators.ts) ----
 
 # The types a text column can be validated against; ``value`` is what the AST
@@ -194,8 +196,23 @@ _NON_COLUMN_PREDECESSORS = frozenset({"AS", "FROM", "JOIN", "TABLE", "INTO"})
 # --- Value / reference helpers (mirror lowcodeCompile.ts) --------------------
 
 
+def _quote_ident_path(path: str) -> str:
+    """Validate and backtick-quote a dotted identifier path for SQL emission.
+
+    Each ``.``-separated part is validated (:func:`validate_identifier`) then
+    quoted (:func:`quote_ident`). That keeps spaces / keywords / comment markers
+    inert as identifier text — defense in depth against the SELECT-allowing
+    ``is_sql_query_safe`` gate (joined-table names and dotted column refs used
+    to be emitted raw). Raises ``ValueError`` on empty / invalid parts.
+    """
+    parts = path.split(".")
+    if not parts or any(not p for p in parts):
+        raise ValueError(f"Invalid identifier path: {path!r}")
+    return ".".join(quote_ident(validate_identifier(p)) for p in parts)
+
+
 def _ref(column: str, qualify: bool = False) -> str:
-    """Qualified (dotted) refs name a joined-table column and stay raw; plain
+    """Qualified (dotted) refs name a joined-table column and are quoted; plain
     refs name a declared slot and are wrapped as ``{{name}}`` placeholders the
     materializer substitutes with the real column.
 
@@ -206,10 +223,10 @@ def _ref(column: str, qualify: bool = False) -> str:
     materializer substitutes ``{{col}}`` with the real column, yielding
     ``<view>.<col>``. Only valid inside the QUERY TEXT (predicate / join ON), never
     for ``merge_columns`` (which the library passes verbatim to a bare-name join).
-    Joined-table (dotted) columns are already qualified and stay raw.
+    Joined-table (dotted) columns are validated + backtick-quoted per part.
     """
     if "." in column:
-        return column
+        return _quote_ident_path(column)
     return f"{{{{input_view}}}}.{{{{{column}}}}}" if qualify else f"{{{{{column}}}}}"
 
 
@@ -351,14 +368,17 @@ def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> 
         return f"{left} = {_value_sql(value, qualify)}"
     if op == "not equals":
         return f"{left} != {_value_sql(value, qualify)}"
+    # Spark string builtins take a plain literal (via ``_quote``), so ``%`` /
+    # ``_`` in the operand stay literal — unlike ``LIKE`` patterns which treat
+    # them as wildcards (PR review: contains '100%' must not become ``LIKE '%100%%'``).
     if op == "contains":
-        return f"{left} LIKE '%{_like_literal(value)}%'"
+        return f"contains({left}, {_quote(value)})"
     if op == "does not contain":
-        return f"{left} NOT LIKE '%{_like_literal(value)}%'"
+        return f"NOT contains({left}, {_quote(value)})"
     if op == "starts with":
-        return f"{left} LIKE '{_like_literal(value)}%'"
+        return f"startswith({left}, {_quote(value)})"
     if op == "ends with":
-        return f"{left} LIKE '%{_like_literal(value)}'"
+        return f"endswith({left}, {_quote(value)})"
     if op == "matches regex":
         return f"{left} RLIKE {_quote(value)}"
     if op == "between":
@@ -528,16 +548,19 @@ def compile_joins_to_sql(joins: list[dict[str, Any]]) -> str:
         keys = join.get("keys") or []
         if not target or (join_type != "CROSS" and not keys):
             continue
-        head = f"{type_sql.get(str(join_type), 'INNER JOIN')} {target}"
+        # Quote the join target so a crafted table name cannot smuggle SQL past
+        # ``is_sql_query_safe`` (which allows SELECT / subqueries by design).
+        quoted_target = _quote_ident_path(str(target))
+        head = f"{type_sql.get(str(join_type), 'INNER JOIN')} {quoted_target}"
         if join_type == "CROSS":
             out.append(head)
             continue
         # The own side of the ON condition is qualified to the input view — this
         # is query text (``{{input_view}}`` is substituted by the library), and it
         # lives in a join context so a shared column name would otherwise be
-        # ambiguous. The joined side is already table-qualified.
+        # ambiguous. The joined side is table-qualified and identifier-quoted.
         conds = [
-            f"{target}.{k['joined_column']} = {_ref(k['column_ref'], qualify=True)}"
+            f"{quoted_target}.{_quote_ident_path(str(k['joined_column']))} = {_ref(k['column_ref'], qualify=True)}"
             for k in keys
             if k.get("joined_column") and k.get("column_ref")
         ]

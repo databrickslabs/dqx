@@ -111,7 +111,7 @@ function ReviewPendingChangesButton({
     const wasClean = !editState.isDirty;
     setBusyBindingId(member.binding_id);
     approveMutation.mutate(
-      { bindingId: member.binding_id },
+      { bindingId: member.binding_id, data: null },
       {
         onSuccess: () => {
           if (wasClean) editState.markApprovedWhenClean();
@@ -134,7 +134,7 @@ function ReviewPendingChangesButton({
     setRejectTarget(null);
     setBusyBindingId(member.binding_id);
     rejectMutation.mutate(
-      { bindingId: member.binding_id },
+      { bindingId: member.binding_id, data: null },
       {
         onSuccess: () => {
           toast.success(t("dataProducts.reviewChangesToastRejected", { table: member.table_fqn }));

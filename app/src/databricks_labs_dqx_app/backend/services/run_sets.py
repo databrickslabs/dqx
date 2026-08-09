@@ -95,7 +95,7 @@ class RunSetService:
     ``oltp_sql`` is the OLTP executor (Lakebase or Delta-OLTP-fallback)
     that owns the two run-set tables; ``validation_sql`` is the Delta
     executor for ``dq_validation_runs`` (always Delta, regardless of
-    whether Lakebase is enabled — see ``app/CLAUDE.md``).
+    whether Lakebase is enabled — see ``app/AGENTS.md``).
     """
 
     def __init__(self, oltp_sql: OltpExecutorProtocol, validation_sql: SqlExecutor) -> None:
@@ -127,7 +127,9 @@ class RunSetService:
             f"{self._opt_int(product_version)}, '{escape_sql_string(source)}', "
             f"'{escape_sql_string(trigger)}', {self._opt_str(created_by)}, now())"
         )
-        logger.info("Created run set %s (product_id=%s, source=%s, trigger=%s)", run_set_id, product_id, source, trigger)
+        logger.info(
+            "Created run set %s (product_id=%s, source=%s, trigger=%s)", run_set_id, product_id, source, trigger
+        )
         return run_set_id
 
     def add_member(self, run_set_id: str, run_id: str, binding_id: str, binding_version: int | None) -> None:

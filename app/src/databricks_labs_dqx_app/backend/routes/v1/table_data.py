@@ -23,8 +23,8 @@ from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
-from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_table_data_service, require_role
+from databricks_labs_dqx_app.backend.common.authorization import get_user_email
+from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_table_data_service
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIRateLimitExceededError,
@@ -85,7 +85,9 @@ async def preview_table_data(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Failed to preview table data: %s", e, exc_info=True)
-        raise HTTPException(status_code=502, detail="Could not load table data. Check the SQL warehouse and your access.")
+        raise HTTPException(
+            status_code=502, detail="Could not load table data. Check the SQL warehouse and your access."
+        )
     return _to_out(result, ai_available=svc.ai_available())
 
 

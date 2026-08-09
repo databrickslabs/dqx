@@ -484,7 +484,10 @@ class DemoSeedService:
             if view_fqn is not None:
                 try:
                     profiler_view.drop_view(view_fqn)
-                except Exception:  # noqa: BLE001
+                except Exception:
+                    # Broad except by design (see the BLE001 policy block in
+                    # pyproject.toml): the temp view is best-effort cleanup in a
+                    # finally, so a drop failure must never mask the seed result.
                     logger.warning("Failed to drop demo profiler view %s", self._sanitize(view_fqn))
 
     def _wait_for_profile(self, run_id: str) -> str | None:
@@ -616,9 +619,11 @@ class DemoSeedService:
             return
         try:
             self._embeddings.embed_and_store(rule)
-        except Exception as exc:  # noqa: BLE001
-            # embed_and_store already swallows its own failures; this guards the
-            # (unexpected) escape so a corpus hiccup can never fail the seed.
+        except Exception as exc:
+            # Broad except by design (see the BLE001 policy block in
+            # pyproject.toml): embed_and_store already swallows its own
+            # failures; this guards the (unexpected) escape so a corpus hiccup
+            # can never fail the seed.
             logger.warning("Demo rule embed skipped for %s: %s", rule.rule_id, self._sanitize(str(exc)))
 
     @staticmethod

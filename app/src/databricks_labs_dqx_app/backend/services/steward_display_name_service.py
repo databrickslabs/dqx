@@ -33,6 +33,7 @@ def _quote_scim(s: str) -> str:
     """Escape double quotes for SCIM filter strings."""
     return s.replace('"', '\\"')
 
+
 # Maximum emails resolved per SCIM call batch (avoids very long filter strings).
 _BATCH_SIZE = 50
 

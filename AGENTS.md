@@ -66,7 +66,7 @@ src/databricks/labs/dqx/
   ├── manager.py           # DQRuleManager — build/manage rule collections
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
   ├── checks_storage.py    # WorkspaceFileChecksStorageHandler, VolumeFileChecksStorageHandler
-  ├── checks_serializer.py / checks_resolver.py / checks_validator.py / checks_formats.py
+  ├── checks_serializer.py / checks_resolver.py / checks_validator.py
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
   ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
@@ -115,13 +115,17 @@ tests/
 - **Cover all changes with tests.** New check functions and rule logic → unit tests. Workspace interactions → integration tests. Bug fixes → regression tests.
 - **Unit tests** (`tests/unit/`) run without Spark or a live workspace and must stay fast.
 - **Integration tests** (`tests/integration/`) require a real workspace and spark session; do not add workspace API calls to unit tests.
-- Test **behaviour, not implementation details**: assert on outputs and observable state, not on private methods or internal data structures.
+- Test **behaviour, not implementation details**: assert on outputs and observable state, not on private methods or internal data structures. Do not call or access private/protected members (e.g. `obj._helper`) from tests — exercise the public API instead. If something is only reachable via a private member, that is a design smell: make it public or extract a shared helper, do not reach past the boundary (and never silence the resulting `protected-access` lint — see Critical Rule 6).
 - Use **dependency injection to enable testing**: construct dependencies with `create_autospec` rather than patching internal module state.
 - Use **pytest fixtures** (`conftest.py`) to share setup and teardown logic across tests. Unit-level fixtures live in `tests/unit/conftest.py`; integration-level fixtures in `tests/integration/conftest.py`. Do not duplicate fixture logic inline in individual tests.
 - For workspace resource creation and cleanup in integration tests, use the pytester `factory` helper — see [## Testing](#testing) for the established patterns.
 - If a test requires a real `SparkSession`, it is an **integration test** — place it in `tests/integration/`, not `tests/unit/`. Unit tests must never start or depend on a Spark session; use `create_autospec(SparkSession)` for any unit-level Spark dependency.
 - Avoid `unittest.mock.patch` and `pytest.monkeypatch` unless the target is a module-level constant or a third-party boundary with no injectable seam. Patching internal symbols couples tests to implementation details.
 - Tests must be **deterministic and isolated**: no timing dependencies, randomness, shared mutable state, or real network calls in unit tests.
+
+### Naming Conventions
+- Use descriptive, easy-to-understand names for modules, classes, functions, variables, and constants
+- Use a "DQ" prefix for user-facing classes (`DQEngine`, `DQProfiler`)
 
 ### Agent Behaviour
 
@@ -161,6 +165,8 @@ Use `ConfigSerializer` — it preserves nested types. `dataclasses.asdict()` los
 ### 6. Never disable linting to silence issues
 
 Fix the code instead of adding `# pylint: disable`, `# type: ignore`, `# noqa`, or per-file ignores. Use project-wide exceptions in `pyproject.toml` only when there is no viable fix (e.g., third-party API compatibility).
+
+In particular, never disable `protected-access` (pylint `W0212`) — inline, per-file, or globally in `pyproject.toml` — to let tests or callers reach private/protected members (`_name`). That is a hack that masks a design smell and is technical debt. Instead, exercise the public API, or if a member genuinely needs outside access, make it public or extract a shared helper.
 
 ---
 
@@ -452,10 +458,29 @@ checked_df = engine.apply_checks_by_metadata(df, checks_list)
 
 ### Add a new built-in check function
 
-1. Add to `src/databricks/labs/dqx/check_funcs.py` with `@register_rule("row")` or `@register_rule("dataset")`
-2. Return a PySpark `Column`
-3. Add to `__all__` if public
-4. Add unit tests in `tests/unit/test_check_funcs_<category>.py`
+Adding a check touches code, tests, resources, and docs. Complete **all** of these so the check is
+discoverable, tested end-to-end, and covered by the repo's consistency guards:
+
+1. **Implement** in `src/databricks/labs/dqx/check_funcs.py` (or `geo/check_funcs.py` for geospatial,
+   `pii/pii_detection_funcs.py` for PII) with `@register_rule("row")` or `@register_rule("dataset")`,
+   returning a PySpark `Column` (row-level) or the `(condition, closure)` shape (dataset-level). Add to
+   `__all__` if public.
+2. **Unit tests** — add positive + negative cases in the matching file: `tests/unit/test_row_checks.py`
+   (row-level) or `tests/unit/test_dataset_checks.py` (dataset-level); geo/PII have their own test files.
+3. **Parameter-order contract** — add the check to `EXPECTED_PARAMETER_ORDER` in
+   `tests/unit/test_check_func_signatures.py`. The coverage test fails if a registered check is missing
+   from the contract; the entry encodes the *intended public parameter order* (guards positional callers).
+4. **Integration tests** — add end-to-end coverage (e.g. `tests/integration/test_apply_checks.py`,
+   `tests/integration/test_row_checks.py`) exercising the check against a real Spark session.
+5. **All-checks metadata resources** — add the check to the relevant `tests/resources/` fixture so the
+   "apply every check" tests include it: `all_row_checks.yaml`, `all_dataset_checks.yaml`,
+   `all_row_geo_checks.yaml`, or `all_dateset_geo_checks.yaml`.
+6. **`test_apply_checks_all_checks_using_classes`** — extend this test in
+   `tests/integration/test_apply_checks.py` (the programmatic counterpart to the YAML fixtures above) so
+   the new check is applied via the DQX classes too.
+7. **Performance test** — add the check to the benchmark in `tests/perf/test_apply_checks.py`.
+8. **Reference docs** — document the check (name, arguments, example) in
+   `docs/dqx/docs/reference/quality_checks.mdx`.
 
 ### Add a new CLI command
 
@@ -470,6 +495,25 @@ checked_df = engine.apply_checks_by_metadata(df, checks_list)
 - **[README.md](./README.md)** — Project description
 - **[docs/](./docs/)** — Full site including contribution workflow (Docusaurus): [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
 - **[CHANGELOG.md](./CHANGELOG.md)** — Release history
+
+### Authoring documentation (`docs/dqx/docs/`)
+
+See [Authoring Documentation](https://databrickslabs.github.io/dqx/docs/dev/docs_authoring/) for full guidance. Key convention:
+
+- **Tag new features with lifecycle stage and version** using the components in `src/components/FeatureTags.tsx`. Put a `<FeatureTags>` row directly under the heading (page, section, or subsection) with `heading={false}` on each tag:
+
+  ```mdx
+  import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
+
+  # My Feature
+
+  <FeatureTags>
+    <FeatureLifecycleStage stage="beta" heading={false} />
+    <AvailableSinceVersion version="0.16.0" heading={false} />
+  </FeatureTags>
+  ```
+
+  Version strings are literal props (a historical fact tied to a release), never inferred. Tag a subsection only when it documents functionality newer than its page; do not tag structural headings (Overview, Prerequisites, Best Practices, Troubleshooting). There is no "Changed in" component — bump `AvailableSinceVersion` and note prior behavior in an admonition.
 
 ---
 

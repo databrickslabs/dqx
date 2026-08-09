@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { labelsMatchFilter, type LabelSelection } from "./Labels";
+import { labelsMatchFilter, tagPairsMatchFilter, type LabelSelection } from "./Labels";
 
 // Unit tests for the key-first `labelsMatchFilter` semantics used by the
 // shared LabelFilter (Rules Registry overview + Drafts & Review list). A
@@ -47,5 +47,50 @@ describe("labelsMatchFilter — key-first selection", () => {
   test("absent key is skipped, not treated as a match", () => {
     const selection = sel([["team", ["finance"]]]);
     expect(labelsMatchFilter({ region: "eu" }, selection)).toBe(false);
+  });
+});
+
+describe("tagPairsMatchFilter — multi-valued bag", () => {
+  test("empty selection matches everything", () => {
+    expect(tagPairsMatchFilter([{ key: "team", value: "finance" }], new Map())).toBe(true);
+    expect(tagPairsMatchFilter([], new Map())).toBe(true);
+  });
+
+  test("key selected with no values matches when key is present with any value", () => {
+    const selection = sel([["team", []]]);
+    expect(tagPairsMatchFilter([{ key: "team", value: "finance" }], selection)).toBe(true);
+    expect(
+      tagPairsMatchFilter(
+        [
+          { key: "team", value: "finance" },
+          { key: "team", value: "sales" },
+        ],
+        selection,
+      ),
+    ).toBe(true);
+    expect(tagPairsMatchFilter([{ key: "region", value: "eu" }], selection)).toBe(false);
+  });
+
+  test("key selected with values matches if any pair carries one of them", () => {
+    const selection = sel([["team", ["finance"]]]);
+    expect(
+      tagPairsMatchFilter(
+        [
+          { key: "team", value: "sales" },
+          { key: "team", value: "finance" },
+        ],
+        selection,
+      ),
+    ).toBe(true);
+    expect(tagPairsMatchFilter([{ key: "team", value: "ops" }], selection)).toBe(false);
+  });
+
+  test("OR semantics across keys", () => {
+    const selection = sel([
+      ["team", ["finance"]],
+      ["region", ["eu"]],
+    ]);
+    expect(tagPairsMatchFilter([{ key: "region", value: "eu" }], selection)).toBe(true);
+    expect(tagPairsMatchFilter([{ key: "team", value: "ops" }], selection)).toBe(false);
   });
 });

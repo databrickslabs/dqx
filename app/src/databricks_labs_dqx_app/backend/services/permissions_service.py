@@ -314,6 +314,7 @@ class PermissionsService:
         Returns:
             The set of concrete privileges the caller effectively holds.
         """
+
         def _matches(grant: ObjectGrant) -> bool:
             # The users-group grant applies to everyone; other grants match the
             # caller's resolved principal set (own id + group ids/names) or a
@@ -530,8 +531,7 @@ class PermissionsService:
         existing_ids = {g.principal_id for g in direct}
 
         seed_users_group = object_type == ObjectType.REGISTRY_RULE.value or (
-            object_type
-            in (ObjectType.MONITORED_TABLE.value, ObjectType.DATA_PRODUCT.value)
+            object_type in (ObjectType.MONITORED_TABLE.value, ObjectType.DATA_PRODUCT.value)
             and self._app_settings.get_share_tables_with_workspace_users()
         )
         if seed_users_group and USERS_GROUP_PRINCIPAL_ID not in existing_ids:
@@ -618,7 +618,10 @@ class PermissionsService:
         # unique (object_type, object_id, principal_id) invariant.
         self._delete_row(object_type, object_id, principal_id)
         grant_id = uuid.uuid4().hex
-        cols = "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, " "privileges, inherit, grantor, created_at, updated_at)"
+        cols = (
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at)"
+        )
         vals = (
             f"('{escape_sql_string(grant_id)}', '{escape_sql_string(object_type)}', "
             f"'{escape_sql_string(object_id)}', '{escape_sql_string(principal_id)}', "
@@ -627,7 +630,9 @@ class PermissionsService:
             f"{self._opt(grantor)}, now(), now())"
         )
         self._sql.execute(f"INSERT INTO {self._table} {cols} VALUES {vals}")  # noqa: S608
-        self._record_history(object_type, object_id, principal_id, principal_name, priv_str, inherit, self._ACTION_SET, grantor)
+        self._record_history(
+            object_type, object_id, principal_id, principal_name, priv_str, inherit, self._ACTION_SET, grantor
+        )
         logger.info("Set object grant %s on %s/%s", priv_str, object_type, object_id)
         return ObjectGrant(
             object_type=object_type,
@@ -705,7 +710,9 @@ class PermissionsService:
             )
             self._sql.execute(sql)
         except Exception:
-            logger.warning("Failed to record object-grant history for %s/%s (non-fatal)", object_type, object_id, exc_info=True)
+            logger.warning(
+                "Failed to record object-grant history for %s/%s (non-fatal)", object_type, object_id, exc_info=True
+            )
 
     # ------------------------------------------------------------------
     # Admin setting — default inheritance for new grants

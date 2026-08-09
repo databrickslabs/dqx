@@ -63,8 +63,8 @@ export function usePermissions(): UsePermissionsResult {
     const isAdmin = role === "admin";
     // ``is_runner`` from the backend reflects run access (admin + rule_author).
     // OR with ``isAdmin`` defensively in case the field is missing (older
-    // deployment, cached response, etc.). The orthogonal RUNNER role has been
-    // removed — run_rules is now a permission of ADMIN and RULE_AUTHOR only.
+    // deployment, cached response, etc.). There is no separate RUNNER role —
+    // run_rules is a permission of ADMIN and RULE_AUTHOR only.
     const isRunner = (data?.is_runner ?? false) || isAdmin;
 
     const hasPermission = (permission: Permission): boolean =>

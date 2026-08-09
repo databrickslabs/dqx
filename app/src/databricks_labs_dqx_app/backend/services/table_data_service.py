@@ -206,17 +206,13 @@ class TableDataService:
     async def _table_columns(self, table_fqn: str) -> list[str]:
         """Best-effort column names for the prompt context (empty on failure)."""
         try:
-            rows = await asyncio.to_thread(
-                self._sql.query_dicts, f"SELECT * FROM {quote_fqn(table_fqn)} LIMIT 1"
-            )
+            rows = await asyncio.to_thread(self._sql.query_dicts, f"SELECT * FROM {quote_fqn(table_fqn)} LIMIT 1")
         except Exception:
             logger.warning("Could not read columns for AI query context", exc_info=True)
             return []
         return list(rows[0].keys()) if rows else []
 
-    async def _generate_sql(
-        self, table_fqn: str, question: str, columns: list[str], user_email: str
-    ) -> str:
+    async def _generate_sql(self, table_fqn: str, question: str, columns: list[str], user_email: str) -> str:
         column_hint = ", ".join(columns) if columns else "(unknown — inspect the table)"
         system = (
             "You translate a natural-language question into ONE Databricks SQL SELECT "

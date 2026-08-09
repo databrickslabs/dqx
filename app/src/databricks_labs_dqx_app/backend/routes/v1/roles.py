@@ -300,11 +300,7 @@ def list_privileged_principals(
                         continue
                     # Prefer user_name → group_name → service_principal_name → display_name
                     principal = (
-                        entry.user_name
-                        or entry.group_name
-                        or entry.service_principal_name
-                        or entry.display_name
-                        or ""
+                        entry.user_name or entry.group_name or entry.service_principal_name or entry.display_name or ""
                     )
                     if principal:
                         results.append(PrivilegedPrincipalOut(principal=principal, kind="app_owner"))

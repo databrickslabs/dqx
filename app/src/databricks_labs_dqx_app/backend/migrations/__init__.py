@@ -130,6 +130,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from databricks_labs_dqx_app.backend.rule_enums import RuleSource, RuleStatus
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -412,10 +413,10 @@ _V2_OLTP_FALLBACK = (
     ") CLUSTER BY (table_fqn, status, rule_id);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules "
     f"  ADD CONSTRAINT chk_dq_quality_rules_status "
-    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+    f"  CHECK (status IN ({RuleStatus.sql_in_list()}));"
     f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules "
     f"  ADD CONSTRAINT chk_dq_quality_rules_source "
-    f"  CHECK (source IN ('ui','sql','profiler','import','ai','registry'));"
+    f"  CHECK (source IN ({RuleSource.sql_in_list()}));"
     #
     # Append-only audit trail for rule changes. Carries the post-state
     # ``check`` payload on every row plus an explicit
@@ -1086,9 +1087,7 @@ _V16_SCORE_HISTORY = (
 # Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase when
 # enabled (the Postgres mirror is v13 in ``backend.migrations.postgres``), so
 # this only runs against Delta when Lakebase is disabled.
-_V17_MONITORED_TABLES_LAST_RUN_AT = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_run_at TIMESTAMP"
-)
+_V17_MONITORED_TABLES_LAST_RUN_AT = f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_run_at TIMESTAMP"
 
 
 # Schedulable scope: add ``schedule_kind`` to monitored tables + data products
@@ -1522,8 +1521,7 @@ MIGRATIONS: list[Migration] = [
     ),
     DeltaMigration(
         version=27,
-        description="Add notes + change-rationale columns "
-        "— used only when Lakebase is disabled",
+        description="Add notes + change-rationale columns " "— used only when Lakebase is disabled",
         sql_template=_V27_NOTES_AND_RATIONALE,
         oltp_fallback=True,
     ),

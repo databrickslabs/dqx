@@ -1449,9 +1449,7 @@ def get_require_draft_run_settings(
     Available to any authenticated user — the RR/MT/TS submit surfaces read it
     to decide whether to disable Submit until a draft run exists.
     """
-    return RequireDraftRunSettingsOut(
-        require_draft_run_before_submit=svc.get_require_draft_run_before_submit()
-    )
+    return RequireDraftRunSettingsOut(require_draft_run_before_submit=svc.get_require_draft_run_before_submit())
 
 
 @router.put(
@@ -1522,9 +1520,7 @@ def save_share_tables_with_workspace_users(
     email: Annotated[str, Depends(get_user_email)],
 ) -> ShareTablesWithWorkspaceUsersOut:
     """Enable or disable sharing new tables/collections with workspace users (admin only)."""
-    saved = svc.save_share_tables_with_workspace_users(
-        body.share_tables_with_workspace_users, user_email=email
-    )
+    saved = svc.save_share_tables_with_workspace_users(body.share_tables_with_workspace_users, user_email=email)
     logger.info("Saved share_tables_with_workspace_users = %s (by=%s)", saved, email)
     return ShareTablesWithWorkspaceUsersOut(share_tables_with_workspace_users=saved)
 

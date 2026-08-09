@@ -157,9 +157,7 @@ def build_odcs_contract(
             "physicalType": "table",
         }
         if checks:
-            entry["quality"] = [
-                {"type": "custom", "engine": "dqx", "implementation": check} for check in checks
-            ]
+            entry["quality"] = [{"type": "custom", "engine": "dqx", "implementation": check} for check in checks]
         schema.append(entry)
 
     contract: dict[str, Any] = {
@@ -338,9 +336,7 @@ class ExportService:
         per_table = [(m.table_fqn, self._render_binding(m.binding_id)) for m in detail.members]
         space_name = detail.product.name
         if fmt == "odcs":
-            contract = build_odcs_contract(
-                name=space_name, tables=per_table, description=detail.product.description
-            )
+            contract = build_odcs_contract(name=space_name, tables=per_table, description=detail.product.description)
             return ExportResult(
                 filename=f"{_slugify(space_name)}.odcs.yaml",
                 content=dump_odcs_yaml(contract),
@@ -353,9 +349,7 @@ class ExportService:
             format="dqx",
         )
 
-    def export_data_products(
-        self, fmt: ExportFormat, *, product_ids: list[str] | None = None
-    ) -> ExportResult:
+    def export_data_products(self, fmt: ExportFormat, *, product_ids: list[str] | None = None) -> ExportResult:
         """Export every (filtered) table space's member checks as DQX or ODCS YAML.
 
         ``product_ids``, when given, restricts the export to that explicit set —

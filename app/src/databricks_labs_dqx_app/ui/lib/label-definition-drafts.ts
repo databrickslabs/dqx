@@ -1,6 +1,6 @@
 /**
  * Pure draft <-> API mapping helpers for the admin Label Definitions editor
- * on the config page (`routes/_sidebar/config.tsx`).
+ * on the settings page (`routes/_sidebar/settings.tsx`).
  *
  * A `DraftDefinition` is the editor's local working copy of a
  * `LabelDefinition` — same shape plus a client-only `draftId` used as the
@@ -11,8 +11,8 @@
  * `backend/routes/v1/config.py::save_label_definitions` so the optimistic
  * dirty-diff (`JSON.stringify` against the server copy) stays stable.
  *
- * Extracted from `config.tsx` so this logic is unit-testable without
- * rendering the route — see `label-definition-drafts.test.ts`.
+ * Extracted from the settings route so this logic is unit-testable without
+ * rendering the page — see `label-definition-drafts.test.ts`.
  */
 import type { LabelDefinition } from "@/lib/api-custom";
 

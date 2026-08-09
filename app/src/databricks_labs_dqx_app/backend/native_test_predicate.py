@@ -37,7 +37,29 @@ _ROW_UNSUPPORTED: frozenset[str] = frozenset(
 
 # Every geo-registered check (side-effect import above).
 _GEO_UNSUPPORTED: frozenset[str] = frozenset(
-    name for name in CHECK_FUNC_REGISTRY if name.startswith(("is_geo", "is_geom", "is_point", "is_line", "is_polygon", "is_multi", "is_area", "is_num_points", "is_latitude", "is_longitude", "is_ogc", "is_non_empty", "is_not_null_island", "has_dimension", "has_x_coordinate", "has_y_coordinate", "are_polygons"))
+    name
+    for name in CHECK_FUNC_REGISTRY
+    if name.startswith(
+        (
+            "is_geo",
+            "is_geom",
+            "is_point",
+            "is_line",
+            "is_polygon",
+            "is_multi",
+            "is_area",
+            "is_num_points",
+            "is_latitude",
+            "is_longitude",
+            "is_ogc",
+            "is_non_empty",
+            "is_not_null_island",
+            "has_dimension",
+            "has_x_coordinate",
+            "has_y_coordinate",
+            "are_polygons",
+        )
+    )
 )
 
 
@@ -62,13 +84,13 @@ def is_native_rule_testable(function: str) -> bool:
 def compile_native_test_predicate(function: str, arguments: dict[str, Any]) -> str:
     """Compile *function* + frozen ``arguments`` into a SQL pass predicate.
 
-    The returned expression is TRUE when a row satisfies the rule under
-    ``pass`` polarity (``passed_expr`` in :mod:`rule_test_sql` handles
-  ``fail`` polarity). ``{{slot}}`` placeholders are kept verbatim.
+      The returned expression is TRUE when a row satisfies the rule under
+      ``pass`` polarity (``passed_expr`` in :mod:`rule_test_sql` handles
+    ``fail`` polarity). ``{{slot}}`` placeholders are kept verbatim.
 
-    Raises:
-        NativeTestNotSupportedError: check is dataset-level or unsupported.
-        NativeTestCompileError: required arguments are missing.
+      Raises:
+          NativeTestNotSupportedError: check is dataset-level or unsupported.
+          NativeTestCompileError: required arguments are missing.
     """
     if CHECK_FUNC_REGISTRY.get(function) != "row":
         raise NativeTestNotSupportedError(f"Rule tests aren't available for the '{function}' check.")
@@ -335,8 +357,7 @@ def _compile_is_not_in_near_future(args: dict[str, Any]) -> str:
     col = _col_arg(args)
     offset = int(args.get("offset") or 0)
     return (
-        f"({col} <= CURRENT_TIMESTAMP() OR "
-        f"{col} >= FROM_UNIXTIME(UNIX_TIMESTAMP(CURRENT_TIMESTAMP()) + {offset}))"
+        f"({col} <= CURRENT_TIMESTAMP() OR " f"{col} >= FROM_UNIXTIME(UNIX_TIMESTAMP(CURRENT_TIMESTAMP()) + {offset}))"
     )
 
 

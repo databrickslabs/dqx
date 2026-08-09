@@ -53,7 +53,7 @@ describe("defToDraft / draftToDef — value_criticality", () => {
   });
 });
 
-describe("defToDraft / draftToDef — existing color/description behavior (moved from config.tsx)", () => {
+describe("defToDraft / draftToDef — existing color/description behavior (moved from settings.tsx)", () => {
   test("prunes colors and descriptions for values not in the trimmed value list", () => {
     const draft = defToDraft(
       def({

@@ -1127,7 +1127,6 @@ async def get_current_principal_ids(
 CurrentPrincipalIds = Annotated[frozenset[str], Depends(get_current_principal_ids)]
 
 
-
 async def _fetch_catalog_names(obo_ws: WorkspaceClient) -> frozenset[str]:
     """Issue the UC ``catalogs.list`` call via the caller's OBO client."""
     catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))

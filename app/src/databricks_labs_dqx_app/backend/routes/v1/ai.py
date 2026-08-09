@@ -35,7 +35,7 @@ from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesSer
 router = APIRouter()
 
 # Rule authoring roles — data stewards are the RULE_AUTHOR role in this app's RBAC model
-# (see app/CLAUDE.md's persona table); approvers and admins can author too.
+# (see app/AGENTS.md's persona table); approvers and admins can author too.
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
 
@@ -123,7 +123,7 @@ async def ai_write_sql(
             table_fqn=body.table_fqn,
             granularity=body.granularity,
         )
-        return AiSqlOut(**result)
+        return AiSqlOut.model_validate(result)
     except AIUnavailableError as e:
         raise HTTPException(status_code=503, detail=e.reason)
     except AIRateLimitExceededError as e:
@@ -158,7 +158,7 @@ async def ai_improve_sql(
             columns=body.columns,
             granularity=body.granularity,
         )
-        return AiSqlOut(**result)
+        return AiSqlOut.model_validate(result)
     except AIUnavailableError as e:
         raise HTTPException(status_code=503, detail=e.reason)
     except AIRateLimitExceededError as e:

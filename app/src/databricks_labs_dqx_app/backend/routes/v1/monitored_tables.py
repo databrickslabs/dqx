@@ -77,7 +77,11 @@ from databricks_labs_dqx_app.backend.models import (
     SuggestRulesOut,
     TagSuggestionsOut,
 )
-from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, get_rule_name, RESERVED_COLUMN_PASS_THRESHOLDS_KEY
+from databricks_labs_dqx_app.backend.registry_models import (
+    MonitoredTable,
+    get_rule_name,
+    RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+)
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
@@ -534,8 +538,21 @@ def update_monitored_table_notes(
 def get_monitored_table_profile(
     binding_id: str,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> MonitoredTableProfileOut:
     """Return the most recent profiling result for this monitored table's underlying table."""
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.SELECT,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
         detail = svc.get(binding_id)
         if detail is None:
@@ -594,6 +611,10 @@ def get_monitored_table_version_checks(
     binding_id: str,
     version: int,
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> MonitoredTableVersionChecksOut:
     """Return the frozen ``checks_json`` for a specific monitored-table version.
 
@@ -603,6 +624,15 @@ def get_monitored_table_version_checks(
     against the proposed (current) rule set. Returns an empty ``checks`` list
     when no snapshot exists for the requested version.
     """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.SELECT,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
         checks = version_svc.get_checks(binding_id, version)
     except LookupError:
@@ -800,6 +830,10 @@ def list_pending_applications(
     binding_id: str,
     pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> list[PendingApplicationOut]:
     """List applications staged against this binding that are waiting on rule approval.
 
@@ -813,6 +847,15 @@ def list_pending_applications(
     it has no rules. Enriched with the referenced rule's name/status in one
     batched lookup; ``None`` when the rule has since been deleted.
     """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.SELECT,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
         rows = pending.list_for_binding(binding_id)
         rules = registry.get_rules_many([r.rule_id for r in rows])
@@ -1452,9 +1495,7 @@ def revert_monitored_table(
             to_status="draft",
             user_email=user_email,
         )
-        table = monitored_tables_svc.set_status(
-            binding_id, "draft", user_email, set_rationale=True
-        )
+        table = monitored_tables_svc.set_status(binding_id, "draft", user_email, set_rationale=True)
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=reverted)
     except HTTPException:
         raise

@@ -166,8 +166,8 @@ class ScoreViewService:
         # parseable in object-name positions — same convention as
         # MigrationRunner.
         self._catalog_q = sql.q(sql.catalog)
-        self._schema_q = sql.q(sql.schema)           # main schema — base tables
-        self._genie_schema_q = sql.q(genie_schema)   # genie schema — derived views
+        self._schema_q = sql.q(sql.schema)  # main schema — base tables
+        self._genie_schema_q = sql.q(genie_schema)  # genie schema — derived views
 
     @property
     def attribution_view_fqn_quoted(self) -> str:

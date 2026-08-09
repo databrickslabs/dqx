@@ -187,7 +187,9 @@ def save_compute_settings(
 ) -> ComputeSettingsOut:
     """Update one or both compute settings (admin only)."""
     if body.sql_warehouse_id is None and body.jobs_compute is None:
-        raise HTTPException(status_code=400, detail="At least one of sql_warehouse_id or jobs_compute must be provided.")
+        raise HTTPException(
+            status_code=400, detail="At least one of sql_warehouse_id or jobs_compute must be provided."
+        )
     if body.sql_warehouse_id is not None:
         app_settings.save_sql_warehouse_id(body.sql_warehouse_id, user_email=email)
     if body.jobs_compute is not None:

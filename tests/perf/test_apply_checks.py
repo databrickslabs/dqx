@@ -1315,6 +1315,49 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_aggr_matches_dataset(benchmark, ws, generated_df, make_ref_df):
+    """Benchmark dataset-wide row-count comparison against a reference DataFrame (crossJoin path)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="*",
+            check_func_kwargs={
+                "aggr_type": "count",
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_aggr_matches_dataset_count_distinct_with_group_by(benchmark, ws, generated_df, make_ref_df):
+    """Benchmark count_distinct with group_by (window-incompatible aggregate -> two-stage groupBy + join)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "group_by": ["col3"],
+                "ref_column": "ref_col2",
+                "ref_group_by": ["ref_col3"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
@@ -1350,6 +1393,21 @@ def test_benchmark_is_data_fresh_per_time_window(benchmark, ws, generated_df):
             check_func=check_funcs.is_data_fresh_per_time_window,
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_no_gaps_per_time_window(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1440},
         ),
     ]
     checked = dq_engine.apply_checks(generated_df, checks)
@@ -2163,5 +2221,173 @@ def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
     ]
     benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_email_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "case, generated_string_df",
+    [
+        pytest.param(
+            "upper",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "VALID UPPER CASE"},
+            id="upper",
+        ),
+        pytest.param(
+            "lower",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "valid lower case"},
+            id="lower",
+        ),
+        pytest.param(
+            "title",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "Notes From IEEE Meeting"},
+            id="title",
+        ),
+        pytest.param(
+            "sentence",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "First segment. Second segment."},
+            id="sentence",
+        ),
+    ],
+    indirect=["generated_string_df"],
+)
+@pytest.mark.benchmark(group="test_benchmark_has_valid_string_case")
+def test_benchmark_has_valid_string_case(benchmark, ws, generated_string_df, case):
+    columns, df, _ = generated_string_df
+    column = columns[0]
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_has_invalid_{case}_string_case",
+            criticality="warn",
+            check_func=check_funcs.has_valid_string_case,
+            column=column,
+            check_func_kwargs={"case": case},
+        ),
+    ]
+    benchmark.group += f" {case}"
+    checked = dq_engine.apply_checks(df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ssn_dashed",
+        "col2_ssn_plain",
+        "col3_ssn_valid_area",
+        "col4_ssn_spaced",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_national_id")
+def test_benchmark_is_valid_national_id(benchmark, ws, generated_national_id_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_national_id",
+            criticality="warn",
+            check_func=check_funcs.is_valid_national_id,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_national_id_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_country_code",
+        "col2_country_code",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_country_code")
+def test_benchmark_is_valid_country_code(benchmark, ws, generated_country_code_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_country_code",
+            criticality="warn",
+            check_func=check_funcs.is_valid_country_code,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_country_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_currency_code",
+        "col2_currency_code",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_currency_code")
+def test_benchmark_is_valid_currency_code(benchmark, ws, generated_currency_code_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_currency_code",
+            criticality="warn",
+            check_func=check_funcs.is_valid_currency_code,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_currency_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_subdivision_code",
+        "col2_subdivision_code",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_subdivision_code")
+def test_benchmark_is_valid_subdivision_code(benchmark, ws, generated_subdivision_code_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_subdivision_code",
+            criticality="warn",
+            check_func=check_funcs.is_valid_subdivision_code,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_subdivision_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_language_code",
+        "col2_language_code",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_language_code")
+def test_benchmark_is_valid_language_code(benchmark, ws, generated_language_code_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_language_code",
+            criticality="warn",
+            check_func=check_funcs.is_valid_language_code,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_language_code_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS

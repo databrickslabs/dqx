@@ -19,10 +19,21 @@ from dataclasses import dataclass, field
 from databricks_labs_dqx_app.backend.registry_models import ColumnMappingGroup, RuleSlot
 
 _TYPE_FAMILY: dict[str, str] = {
-    "TINYINT": "numeric", "SMALLINT": "numeric", "INT": "numeric", "INTEGER": "numeric",
-    "BIGINT": "numeric", "LONG": "numeric", "FLOAT": "numeric", "DOUBLE": "numeric", "DECIMAL": "numeric",
-    "STRING": "text", "VARCHAR": "text", "CHAR": "text",
-    "DATE": "temporal", "TIMESTAMP": "temporal", "TIMESTAMP_NTZ": "temporal",
+    "TINYINT": "numeric",
+    "SMALLINT": "numeric",
+    "INT": "numeric",
+    "INTEGER": "numeric",
+    "BIGINT": "numeric",
+    "LONG": "numeric",
+    "FLOAT": "numeric",
+    "DOUBLE": "numeric",
+    "DECIMAL": "numeric",
+    "STRING": "text",
+    "VARCHAR": "text",
+    "CHAR": "text",
+    "DATE": "temporal",
+    "TIMESTAMP": "temporal",
+    "TIMESTAMP_NTZ": "temporal",
     "BOOLEAN": "boolean",
 }
 

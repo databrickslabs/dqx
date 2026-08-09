@@ -287,9 +287,7 @@ class EntitlementService:
                     return fqn, OUTCOME_DENIED
                 # Gate 2 — fine-grained controls; fails closed too (an
                 # unverifiable state reads as "present").
-                fgac = await asyncio.to_thread(
-                    QuarantineSampleService.has_fine_grained_access_control, obo_ws, fqn
-                )
+                fgac = await asyncio.to_thread(QuarantineSampleService.has_fine_grained_access_control, obo_ws, fqn)
                 if fgac:
                     return fqn, OUTCOME_SUPPRESSED
                 recorded = await asyncio.to_thread(self.record_entitlement, user_email, fqn)

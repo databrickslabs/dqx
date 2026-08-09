@@ -124,8 +124,8 @@ def read_volume_json(ws: WorkspaceClient, path: str) -> dict[str, Any]:
 def resolve_config(ws: WorkspaceClient, config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     """Expand a staged stub into the full config dict.
 
-    Returns ``(config, staged_path)`` where *staged_path* is set when the
-  config was loaded from a volume (for post-run cleanup).
+      Returns ``(config, staged_path)`` where *staged_path* is set when the
+    config was loaded from a volume (for post-run cleanup).
     """
     staged = config.get(STAGED_CONFIG_KEY)
     if isinstance(staged, str) and staged.strip():

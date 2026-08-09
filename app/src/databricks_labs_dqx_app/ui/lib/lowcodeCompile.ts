@@ -44,15 +44,35 @@ const AGG_SQL: Record<string, (col: string, param?: number | null) => string> = 
 };
 
 // Qualified refs (containing a dot) name a joined-table column and are
-// emitted as raw SQL. Plain refs name a declared slot and stay wrapped as
-// `{{name}}` placeholders the materializer substitutes with the real column.
-// When `qualify` is set (the rule has joins), an own-table column is prefixed
-// with the `{{input_view}}` marker so it is unambiguous against a joined table
-// sharing the column name: `{{input_view}}.{{col}}`. Only valid in QUERY TEXT
-// (predicate / join ON) — never for merge_columns, which the library passes
-// verbatim to a bare-name join. Mirrors `_ref` in `backend/lowcode_compile.py`.
+// validated + backtick-quoted per part. Plain refs name a declared slot and
+// stay wrapped as `{{name}}` placeholders the materializer substitutes with
+// the real column. When `qualify` is set (the rule has joins), an own-table
+// column is prefixed with the `{{input_view}}` marker so it is unambiguous
+// against a joined table sharing the column name: `{{input_view}}.{{col}}`.
+// Only valid in QUERY TEXT (predicate / join ON) — never for merge_columns,
+// which the library passes verbatim to a bare-name join. Mirrors `_ref` /
+// `_quote_ident_path` in `backend/lowcode_compile.py`.
+
+/** Validate + backtick-quote a dotted identifier path for SQL emission. */
+export function quoteIdentPath(path: string): string {
+  const parts = path.split(".");
+  if (!parts.length || parts.some((p) => !p)) {
+    throw new Error(`Invalid identifier path: ${JSON.stringify(path)}`);
+  }
+  return parts
+    .map((part) => {
+      // Mirror sql_utils.validate_identifier: reject backticks, backslashes,
+      // and C0/C1 controls; then backtick-quote (doubling any leftover `).
+      if (part.length > 255 || /[`\\\x00-\x1f\x7f]/.test(part)) {
+        throw new Error(`Invalid identifier: '${part}'`);
+      }
+      return `\`${part.replaceAll("`", "``")}\``;
+    })
+    .join(".");
+}
+
 const ref = (c: string, qualify = false): string =>
-  c.includes(".") ? c : qualify ? `{{input_view}}.{{${c}}}` : `{{${c}}}`;
+  c.includes(".") ? quoteIdentPath(c) : qualify ? `{{input_view}}.{{${c}}}` : `{{${c}}}`;
 
 function quote(v: unknown): string {
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
@@ -68,14 +88,6 @@ function quote(v: unknown): string {
 // is made for scalar operands.
 function valueSql(value: unknown, qualify = false): string {
   return isColumnRef(value) ? ref(value.$col, qualify) : quote(value);
-}
-
-// Escape a value for embedding INSIDE a single-quoted SQL LIKE pattern
-// (e.g. `'%<value>%'`). Only the quote needs doubling so a value like
-// `O'Brien` can't terminate the literal early and break the SQL — matching
-// how `quote()` escapes ordinary string literals.
-function likeLiteral(value: unknown): string {
-  return String(value).replaceAll("'", "''");
 }
 
 // Split a comma-separated group-by / column-ref string at TOP-LEVEL commas
@@ -162,10 +174,13 @@ function rowSql(left: string, operator: string, value: unknown, qualify = false)
   if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value, qualify)}`;
   if (op === "equals") return `${left} = ${valueSql(value, qualify)}`;
   if (op === "not equals") return `${left} != ${valueSql(value, qualify)}`;
-  if (op === "contains") return `${left} LIKE '%${likeLiteral(value)}%'`;
-  if (op === "does not contain") return `${left} NOT LIKE '%${likeLiteral(value)}%'`;
-  if (op === "starts with") return `${left} LIKE '${likeLiteral(value)}%'`;
-  if (op === "ends with") return `${left} LIKE '%${likeLiteral(value)}'`;
+  // Spark string builtins take a plain literal (via `quote`), so `%` / `_` in
+  // the operand stay literal — unlike `LIKE` patterns which treat them as
+  // wildcards (keep in lock-step with backend `lowcode_compile._row_sql`).
+  if (op === "contains") return `contains(${left}, ${quote(value)})`;
+  if (op === "does not contain") return `NOT contains(${left}, ${quote(value)})`;
+  if (op === "starts with") return `startswith(${left}, ${quote(value)})`;
+  if (op === "ends with") return `endswith(${left}, ${quote(value)})`;
   if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
   if (op === "between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
@@ -302,14 +317,20 @@ export function compileJoinsToSql(joins: JoinAst[], qualifyOwnKeys = true): stri
   return joins
     .filter((j) => j.target_table && (j.join_type === "CROSS" || j.keys?.length))
     .map((j) => {
-      const head = `${typeSql[j.join_type] ?? "INNER JOIN"} ${j.target_table}`;
+      // Quote the join target so a crafted table name cannot smuggle SQL past
+      // is_sql_query_safe (which allows SELECT / subqueries by design).
+      const quotedTarget = quoteIdentPath(j.target_table);
+      const head = `${typeSql[j.join_type] ?? "INNER JOIN"} ${quotedTarget}`;
       if (j.join_type === "CROSS") return head;
       // Own side of the ON condition is qualified to the input view (query text,
-      // join context) — the joined side is already table-qualified. The raw-SQL
-      // path opts out (qualifyOwnKeys=false) to keep the author's bare {{slot}}.
+      // join context) — the joined side is table-qualified and identifier-quoted.
+      // The raw-SQL path opts out (qualifyOwnKeys=false) to keep the author's bare {{slot}}.
       const conds = j.keys
         .filter((k) => k.joined_column && k.column_ref)
-        .map((k) => `${j.target_table}.${k.joined_column} = ${ref(k.column_ref, qualifyOwnKeys)}`);
+        .map(
+          (k) =>
+            `${quotedTarget}.${quoteIdentPath(k.joined_column)} = ${ref(k.column_ref, qualifyOwnKeys)}`,
+        );
       return `${head} ON ${conds.join(" AND ")}`;
     })
     .join(" ");

@@ -89,7 +89,7 @@ def all_dataset_geo_checks():
 def table_name(make_schema, make_random):
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
-    return f"{catalog}.{schema}.{make_random(10).lower()}"
+    return f"{catalog}.{schema}.t{make_random(10).lower()}"
 
 
 @pytest.fixture
@@ -317,5 +317,119 @@ def generated_email_df(spark):
     gen = gen.withSchema(schema)
     for col, template in email_templates.items():
         gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
+
+
+@pytest.fixture
+def generated_national_id_df(spark):
+    ssn_schema_str = (
+        "col1_ssn_dashed: string, " "col2_ssn_plain: string, " "col3_ssn_valid_area: string, " "col4_ssn_spaced: string"
+    )
+    schema = _parse_datatype_string(ssn_schema_str)
+
+    ssn_templates = {
+        "col1_ssn_dashed": r"\n\n\n-\n\n-\n\n\n\n",
+        "col2_ssn_plain": r"\n\n\n\n\n\n\n\n\n",
+        "col3_ssn_valid_area": r"1\n\n-\n\n-\n\n\n\n",
+        "col4_ssn_spaced": r"\n\n\n \n\n \n\n\n\n",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(ssn_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in ssn_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
+
+
+@pytest.fixture
+def generated_country_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
+    country_schema_str = "col1_country_code: string, col2_country_code: string"
+    schema = _parse_datatype_string(country_schema_str)
+
+    country_value_lists = {
+        "col1_country_code": ["US", "GB", "DE", "FR", "JP", "AA"],
+        "col2_country_code": ["AA", "KK", "ZZ", "US"],
+    }
+
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(country_value_lists), partitions=DEFAULT_PARTITIONS
+    )
+    gen = gen.withSchema(schema)
+    for col, values in country_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
+
+    return gen.build()
+
+
+@pytest.fixture
+def generated_currency_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
+    currency_schema_str = "col1_currency_code: string, col2_currency_code: string"
+    schema = _parse_datatype_string(currency_schema_str)
+
+    currency_value_lists = {
+        "col1_currency_code": ["USD", "EUR", "JPY", "GBP", "AUD", "AAA"],
+        "col2_currency_code": ["AAA", "KKK", "ZZZ", "USD"],
+    }
+
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(currency_value_lists), partitions=DEFAULT_PARTITIONS
+    )
+    gen = gen.withSchema(schema)
+    for col, values in currency_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
+
+    return gen.build()
+
+
+@pytest.fixture
+def generated_subdivision_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
+    subdivision_schema_str = "col1_subdivision_code: string, col2_subdivision_code: string"
+    schema = _parse_datatype_string(subdivision_schema_str)
+
+    subdivision_value_lists = {
+        "col1_subdivision_code": ["US-CA", "US-NY", "GB-ENG", "DE-BY", "FR-75C", "US-ZZ"],
+        "col2_subdivision_code": ["US-ZZ", "XX-YY", "GB-ZZZ", "US-CA"],
+    }
+
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(subdivision_value_lists), partitions=DEFAULT_PARTITIONS
+    )
+    gen = gen.withSchema(schema)
+    for col, values in subdivision_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
+
+    return gen.build()
+
+
+@pytest.fixture
+def generated_language_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
+    language_schema_str = "col1_language_code: string, col2_language_code: string"
+    schema = _parse_datatype_string(language_schema_str)
+
+    language_value_lists = {
+        "col1_language_code": ["en", "fr", "de", "ja", "zh", "xx"],
+        "col2_language_code": ["xx", "qq", "zz", "en"],
+    }
+
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(language_value_lists), partitions=DEFAULT_PARTITIONS
+    )
+    gen = gen.withSchema(schema)
+    for col, values in language_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
 
     return gen.build()

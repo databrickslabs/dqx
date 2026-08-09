@@ -67,9 +67,7 @@ class AppConfig(BaseSettings):
     # the Apps runtime) → "dqx-studio" (default matching the bundle var default).
     app_slug_name: str = Field(
         default_factory=lambda: (
-            os.environ.get("DQX_APP_NAME")
-            or os.environ.get("DATABRICKS_APP_NAME")
-            or "dqx-studio"
+            os.environ.get("DQX_APP_NAME") or os.environ.get("DATABRICKS_APP_NAME") or "dqx-studio"
         ),
         validation_alias="DQX_APP_NAME",
         description="Registered Databricks App slug used for app-permissions lookups.",

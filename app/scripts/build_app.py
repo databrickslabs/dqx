@@ -1,95 +1,52 @@
-"""Build the DQX Studio application bundle (wheel + requirements model).
+"""Build the DQX Studio application bundle (source-shipped, uv-run model).
 
-Produces, under ``app/.build/`` — everything the Databricks Apps platform
-installs at deploy time and runs with plain ``uvicorn`` (NO ``uv run``
-re-resolution at container start):
+Produces, under ``app/.build/`` — a self-contained source tree the
+Databricks Apps runtime runs via ``uv run`` (no application wheel):
 
-* ``databricks_labs_dqx_app-<version>-py3-none-any.whl`` — the application
-  wheel (FastAPI backend + built React UI + generated ``_metadata.py`` /
-  ``_version.py``), built with hatchling.
-* ``wheels/databricks_labs_dqx-<version>.whl`` — the co-developed DQX library
-  built from the parent checkout. The Rules Registry integration imports DQX
-  symbols not present in the published ``databricks-labs-dqx`` release, so the
-  deployed app and the task-runner job install this LOCAL build, not the
-  registry wheel.
-* ``tasks/databricks_labs_dqx_task_runner-<version>.whl`` — the (unpublished)
-  serverless task-runner wheel, installed by the task-runner job environment
-  in ``databricks.yml`` alongside the vendored DQX wheel.
-* ``requirements.txt`` — the FIRST two lines reference the two local wheels
-  above (installed by file), followed by the fully-pinned transitive
-  dependency closure exported from ``app/uv.lock`` as plain ``name==version``
-  lines (no index URLs). The Databricks Apps ``[BUILD]`` phase pip-installs
-  this file through its OWN working package index; nothing is resolved inside
-  the app container at startup.
-* ``app.yml`` — Databricks Apps launch manifest (plain ``uvicorn`` …), a
+* ``pyproject.toml`` / ``uv.lock`` — copied from the app root so ``uv run``
+  resolves the exact locked environment (and fetches the required Python)
+  inside the Apps container, regardless of the container's system Python.
+* ``README.md`` — copied because ``[project].readme`` references it (hatch
+  needs it when ``uv run`` installs the app package).
+* ``src/databricks_labs_dqx_app/`` — the package source, including the built
+  UI (``__dist__``), ``_metadata.py``, and ``_version.py``. The ``ui/``
+  TypeScript source is excluded (only the compiled ``__dist__`` is needed at
+  runtime).
+* ``requirements.txt`` — the single line ``uv``. The Apps ``[BUILD]`` phase
+  ``pip install``s this into the platform venv; ``uv`` then builds the real
+  environment from ``pyproject.toml`` + ``uv.lock`` at launch — which is what
+  lets the app target a newer Python than the container's system Python.
+* ``app.yml`` — Databricks Apps launch manifest (``uv run uvicorn`` …), a
   fallback for non-DABs deploys; DABs overrides the command via
   ``var.app_config.command`` in ``databricks.yml``.
-* ``openapi.json`` — FastAPI-derived OpenAPI 3.x schema (input to orval).
-
-Why wheel + requirements rather than a shipped source tree + ``uv run``: the
-Apps container's egress to the internal package proxies is unreliable, so
-re-resolving/downloading dependencies at container start (what ``uv run``
-does) hangs and crashes the app. Letting the platform's own ``[BUILD]`` phase
-install a fully-pinned ``requirements.txt`` (which uses a working channel)
-and then starting plain ``uvicorn`` removes all startup-time resolution.
-
-Build-tag versioning (all three wheels): each of the three source projects
-(this app, the parent DQX library, the task-runner) pins a STATIC
-``[project].version`` — required so ``make app-check``/``make app-test`` and
-local dev see a stable version without invoking git. But a static version
-means every build produces byte-identical wheel filenames and therefore a
-byte-identical ``requirements.txt``, and the Databricks Apps ``[BUILD]``
-phase skips ``pip install`` entirely when ``requirements.txt`` is unchanged
-from the previous deploy ("Requirements have not changed. Skipping
-installation.") — so redeploying new code at the same dependency versions
-silently keeps the OLD container bytes running. To force a fresh install on
-every deploy, this script temporarily appends a PEP 440 local-version
-segment — ``+b<UTC timestamp>.<git short sha>`` — to each project's on-disk
-version, builds that project's wheel, then restores the original file. The
-three wheel filenames (and thus ``requirements.txt``) are therefore
-guaranteed unique per build while the checked-in static versions are
-untouched. The stamped app version is also written into ``_version.py`` so
-the running app's ``/api/v1/version`` endpoint reports the exact build tag
-that's deployed; ``core_version`` on that endpoint reads the installed
-``databricks-labs-dqx`` distribution metadata at runtime, which reflects the
-stamped local DQX wheel automatically.
 
 Side effects on the source tree:
 
 * ``src/databricks_labs_dqx_app/_metadata.py`` and ``_version.py`` are
-  regenerated (from ``[tool.dqx_app.metadata]`` and the build-tagged
-  ``[project].version``).
+  regenerated (from ``[tool.dqx_app.metadata]`` and ``[project].version``).
 * ``src/databricks_labs_dqx_app/ui/lib/api.ts`` is regenerated by orval.
 * ``src/databricks_labs_dqx_app/__dist__/`` is overwritten by ``vite build``.
-* ``pyproject.toml`` (this app and ``tasks/``) and the parent
-  ``src/databricks/labs/dqx/__about__.py`` are briefly rewritten with a
-  build-tagged version during their respective wheel builds, then restored
-  to their original (static) content before the script exits.
 
-The script is invoked from the ``app-build`` Makefile target and from the
-``databricks.yml`` ``artifacts.default.build`` pipeline. Designed to be
-cwd-independent — paths resolve relative to this file.
+The script is invoked from the ``app-build`` Makefile target (and
+transitively from the ``databricks.yml`` ``artifacts.default.build``
+pipeline, which additionally builds the task-runner wheel for the job).
+Designed to be cwd-independent — paths resolve relative to this file.
 """
 
-import contextlib
+from __future__ import annotations
+
 import json
-import re
+import os
 import shutil
 import subprocess
-import time
 import tomllib
-from collections.abc import Iterator
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent  # scripts/build_app.py → app/
-REPO_ROOT = APP_DIR.parent  # app/ → dqx repo root (the DQX library source)
-TASKS_DIR = APP_DIR / "tasks"  # serverless task-runner sub-project
 PYPROJECT = APP_DIR / "pyproject.toml"
-TASKS_PYPROJECT = TASKS_DIR / "pyproject.toml"
-DQX_ABOUT_PY = REPO_ROOT / "src" / "databricks" / "labs" / "dqx" / "__about__.py"
+UV_LOCK = APP_DIR / "uv.lock"
+README = APP_DIR / "README.md"
 BUILD_DIR = APP_DIR / ".build"
-WHEELS_DIR = BUILD_DIR / "wheels"  # vendored local DQX library wheel ships here
-TASKS_BUILD_DIR = BUILD_DIR / "tasks"  # task-runner wheel ships here
 NODE_BIN = APP_DIR / "node_modules" / ".bin"
 
 PKG_DIR = APP_DIR / "src" / "databricks_labs_dqx_app"
@@ -97,11 +54,6 @@ METADATA_PY = PKG_DIR / "_metadata.py"
 VERSION_PY = PKG_DIR / "_version.py"
 API_TS = PKG_DIR / "ui" / "lib" / "api.ts"
 DIST_DIR = PKG_DIR / "__dist__"
-
-# Matches ``version = "1.2.3"`` in a ``[project]`` table (app/tasks pyproject.toml).
-_PYPROJECT_VERSION_RE = re.compile(r'^(version\s*=\s*)"([^"]+)"', re.MULTILINE)
-# Matches ``__version__ = "1.2.3"`` in the parent DQX library's ``__about__.py``.
-_ABOUT_VERSION_RE = re.compile(r'^(__version__\s*=\s*)"([^"]+)"', re.MULTILINE)
 
 
 def _step(msg: str) -> None:
@@ -111,55 +63,17 @@ def _step(msg: str) -> None:
 def _run(cmd: list[str]) -> None:
     """Run a subprocess from ``APP_DIR`` with stdio passed through.
 
-    Failures abort the build via ``check=True`` — every stage must succeed
-    for the ``.build/`` output to be considered usable.
+    Failures abort the build via ``check=True`` — every stage must
+    succeed for the deploy tree to be considered usable.
     """
     print(f"  $ {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, cwd=APP_DIR, check=True)  # noqa: S603
 
 
-def _capture(cmd: list[str]) -> str:
-    """Run a subprocess from ``APP_DIR`` and return its stdout."""
-    print(f"  $ {' '.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, cwd=APP_DIR, check=True, capture_output=True, text=True)  # noqa: S603
-    return result.stdout
-
-
-def _compute_build_tag() -> str:
-    """Return a PEP 440 local-version segment unique to this build.
-
-    Format: ``b<UTC timestamp>.<git short sha>``, e.g.
-    ``b20260709t153011.fa35659``. Both components are alphanumeric and
-    joined by a single dot, satisfying PEP 440's local-version grammar.
-    Appended as ``+<tag>`` to each of the three wheels' static versions so
-    every ``make app-build`` run produces distinct wheel filenames (and thus
-    a changed ``requirements.txt``) — see the module docstring for why that
-    matters for Databricks Apps deploys.
-    """
-    timestamp = time.strftime("b%Y%m%dt%H%M%S", time.gmtime())
-    short_sha = _capture(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]).strip()
-    return f"{timestamp}.{short_sha}"
-
-
-@contextlib.contextmanager
-def _stamped_version(path: Path, pattern: re.Pattern[str], build_tag: str) -> Iterator[str]:
-    """Temporarily append ``+<build_tag>`` to the version assignment in *path*.
-
-    Yields the resulting stamped version string. Restores *path* to its
-    original content on exit — including on build failure — so the
-    checked-in static version (read by ``make app-check``/``make app-test``
-    and local dev tooling) is never left mutated.
-    """
-    original = path.read_text(encoding="utf-8")
-    match = pattern.search(original)
-    if not match:
-        raise SystemExit(f"error: no version assignment matching {pattern.pattern!r} found in {path}")
-    stamped = f"{match.group(2)}+{build_tag}"
-    path.write_text(original[: match.start(2)] + stamped + original[match.end(2) :], encoding="utf-8")
-    try:
-        yield stamped
-    finally:
-        path.write_text(original, encoding="utf-8")
+def _node_bin(name: str) -> str:
+    """Return the path to a ``node_modules/.bin`` executable for this platform."""
+    suffix = ".cmd" if os.name == "nt" else ""
+    return str(NODE_BIN / f"{name}{suffix}")
 
 
 def _load_pyproject() -> dict:
@@ -188,8 +102,7 @@ def _write_metadata_module(meta: dict[str, str]) -> None:
     """Mirror ``[tool.dqx_app.metadata]`` into a runtime-importable module.
 
     ``backend.config`` and ``backend.logger`` import ``app_name`` /
-    ``app_slug`` from here; the wheel embeds this file via
-    ``[tool.hatch.build.artifacts]``. Generating it on every build keeps
+    ``app_slug`` from here. Generating it on every build keeps
     source-of-truth in ``pyproject.toml`` while still letting runtime
     code do a plain ``from .._metadata import ...``.
 
@@ -209,25 +122,24 @@ def _write_metadata_module(meta: dict[str, str]) -> None:
 def _write_version_module(version: str) -> None:
     """Write the static ``_version.py`` imported by ``__init__``.
 
-    The app ships as a wheel with a static ``[project].version``, so the
-    version is known without git (which the Apps container lacks). The wheel
-    embeds this file via ``[tool.hatch.build.artifacts]``.
+    Replaces the old git-based ``uv-dynamic-versioning`` build hook: the
+    app ships as source with a static ``[project].version``, so the
+    version is known without git (the Apps container has none).
     """
     VERSION_PY.write_text(f'version = "{version}"\n', encoding="utf-8")
 
 
 def _write_app_yml(meta: dict[str, str]) -> None:
-    """Write the Databricks Apps launch manifest (plain ``uvicorn`` form).
+    """Write the Databricks Apps launch manifest (``uv run`` form).
 
-    Single-worker uvicorn. The in-process ``SchedulerService`` is gated by a
-    file lock that only excludes other workers in the SAME container, so
-    multi-worker would mean two schedulers fighting over each due schedule.
-    Production DABs deploys override this via ``var.app_config.command`` in
-    ``databricks.yml``; this manifest is the fallback for paths that don't go
-    through DABs (e.g. direct ``databricks apps`` CLI deploys).
+    Single-worker uvicorn under ``uv run`` so the container resolves the
+    locked environment (and required Python) at launch. Production DABs
+    deploys override this via ``var.app_config.command`` in
+    ``databricks.yml``; this manifest is the fallback for paths that don't
+    go through DABs (e.g. direct ``databricks apps`` CLI deploys).
     """
     (BUILD_DIR / "app.yml").write_text(
-        f'command: ["uvicorn", "{meta["app-module"]}", "--workers", "1"]\n',
+        f'command: ["uv", "run", "--no-dev", "uvicorn", "{meta["app-module"]}", "--workers", "1"]\n',
         encoding="utf-8",
     )
 
@@ -255,192 +167,59 @@ def _run_orval() -> None:
     locally-installed binary directly so the pinned ``orval`` is used
     regardless of which package manager is on PATH.
     """
-    _run([str(NODE_BIN / "orval")])
+    _run([_node_bin("orval")])
 
 
 def _run_vite_build() -> None:
     """Compile the React UI into ``src/databricks_labs_dqx_app/__dist__/``.
 
     Vite reads ``vite.config.ts``, which sets ``build.outDir`` to the
-    package's ``__dist__`` folder so it ships inside the app wheel.
+    package's ``__dist__`` folder so it ships inside the package source.
     """
-    _run([str(NODE_BIN / "vite"), "build"])
+    _run([_node_bin("vite"), "build"])
 
 
-def _clean_build_dir() -> None:
-    """Remove stale artifacts from previous builds of either layout.
+def _assemble_deploy_tree() -> None:
+    """Assemble the source tree the Apps runtime runs via ``uv run``.
 
-    Sweeps root/vendored wheels plus any leftovers from the old
-    source-shipped ``uv run`` layout (``pyproject.toml`` / ``uv.lock`` /
-    ``README.md`` / ``src/``) so the deploy tree can't ship a mix of the two
-    models. The UI ``__dist__`` lives under the package source (not ``.build``)
-    and is rebuilt by vite.
+    Copies the app root's ``pyproject.toml`` / ``uv.lock`` / ``README.md``
+    and the package ``src/`` (minus the ``ui/`` TS source and caches) into
+    ``.build/``, and writes ``requirements.txt`` = ``uv``. ``.build/tasks``
+    (the task-runner wheel, built by the ``databricks.yml`` pipeline after
+    this script) is left untouched.
     """
-    for stale_wheel in BUILD_DIR.glob("*.whl"):
-        stale_wheel.unlink()
-    shutil.rmtree(WHEELS_DIR, ignore_errors=True)
-    shutil.rmtree(TASKS_BUILD_DIR, ignore_errors=True)
+    # Sweep stale wheels from the previous (wheel-based) layout so they
+    # don't linger in the synced source tree.
+    for stale in list(BUILD_DIR.glob("*.whl")):
+        stale.unlink()
+
+    shutil.copy2(PYPROJECT, BUILD_DIR / "pyproject.toml")
+    shutil.copy2(UV_LOCK, BUILD_DIR / "uv.lock")
+    shutil.copy2(README, BUILD_DIR / "README.md")
+
+    dest_pkg = BUILD_DIR / "src" / "databricks_labs_dqx_app"
     shutil.rmtree(BUILD_DIR / "src", ignore_errors=True)
-    for stale in ("pyproject.toml", "uv.lock", "README.md"):
-        (BUILD_DIR / stale).unlink(missing_ok=True)
-
-
-def _build_app_wheel() -> str:
-    """Build the application wheel into ``.build/`` and return its filename.
-
-    The wheel bundles the FastAPI backend, the built React UI
-    (``__dist__``), and the generated ``_metadata.py`` / ``_version.py`` via
-    ``[tool.hatch.build.artifacts]`` — so the deployed app is a single
-    self-contained wheel. Must be called while ``pyproject.toml``'s version
-    is build-tagged (see ``_stamped_version``) so the filename is unique.
-    """
-    _run(["uv", "build", ".", "--wheel", "--out-dir", str(BUILD_DIR)])
-    wheels = sorted(BUILD_DIR.glob("databricks_labs_dqx_app-*.whl"))
-    if not wheels:
-        raise SystemExit(f"error: no app wheel produced in {BUILD_DIR}")
-    return max(wheels, key=lambda p: p.stat().st_mtime).name
-
-
-def _build_dqx_wheel() -> str:
-    """Build the co-developed DQX library wheel into ``.build/wheels/``.
-
-    The Rules Registry integration imports DQX symbols not present in the
-    published ``databricks-labs-dqx`` release, so the deployed app and the
-    task-runner job must install this LOCAL library build rather than the
-    registry wheel. The wheel is vendored inside ``.build/`` (which DABs
-    ``sync``s wholesale) and referenced by both the app (the first line of
-    ``requirements.txt``) and the task-runner job (``databricks.yml``
-    environment dependencies).
-
-    Must be called while ``__about__.py``'s version is build-tagged (see
-    ``_stamped_version``) so the filename is unique per build. Returns the
-    built wheel's filename.
-    """
-    WHEELS_DIR.mkdir(parents=True, exist_ok=True)
-    _run(["uv", "build", str(REPO_ROOT), "--wheel", "--out-dir", str(WHEELS_DIR)])
-    wheels = sorted(WHEELS_DIR.glob("databricks_labs_dqx-*.whl"))
-    if not wheels:
-        raise SystemExit(f"error: no DQX library wheel produced in {WHEELS_DIR}")
-    return wheels[-1].name
-
-
-def _build_task_runner_wheel() -> None:
-    """Build the serverless task-runner wheel into ``.build/tasks/``.
-
-    The task-runner is an unpublished sub-project; its job environment in
-    ``databricks.yml`` installs this wheel plus the vendored DQX library
-    wheel (its ``databricks-labs-dqx==0.15.0`` pin is satisfied by the same
-    local build the app runs).
-    """
-    TASKS_BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    _run(["uv", "build", str(TASKS_DIR), "--wheel", "--out-dir", str(TASKS_BUILD_DIR)])
-    wheels = sorted(TASKS_BUILD_DIR.glob("databricks_labs_dqx_task_runner-*.whl"))
-    if not wheels:
-        raise SystemExit(f"error: no task-runner wheel produced in {TASKS_BUILD_DIR}")
-
-
-def _export_locked_pins() -> str:
-    """Export the app's transitive dependency closure as plain pins.
-
-    ``uv export`` reads ``app/uv.lock`` (never the network) and emits
-    ``name==version`` lines with environment markers. We drop:
-
-    * the app project itself (``--no-emit-project``) — it's installed from the
-      built wheel, and
-    * ``databricks-labs-dqx`` (``--no-emit-package``) — it's installed from the
-      vendored local wheel; its extra (llm/datacontract) transitive deps are
-      still emitted as normal pins.
-
-    ``--no-hashes`` keeps the lines as plain names (the platform's package
-    index resolves them). uv's autogenerated ``#`` header lines are stripped so
-    the only comments in ``requirements.txt`` are the ones this script writes.
-    Emits NO index URLs — asserted afterwards by ``_assert_no_pypi_proxy_urls``.
-    """
-    raw = _capture(
-        [
-            "uv",
-            "export",
-            "--frozen",
-            "--no-dev",
-            "--no-hashes",
-            "--no-emit-project",
-            "--no-emit-package",
-            "databricks-labs-dqx",
-            "--no-annotate",
-            "--format",
-            "requirements-txt",
-        ]
+    shutil.copytree(
+        PKG_DIR,
+        dest_pkg,
+        ignore=shutil.ignore_patterns("ui", "__pycache__", "*.pyc"),
     )
-    # uv colorizes its "# autogenerated" header when it thinks stdout is a
-    # terminal; an ANSI-prefixed "#" line defeats the startswith filter below
-    # and pip then rejects requirements.txt ("Invalid requirement: '\x1b[32m#…'",
-    # seen breaking a live deploy). Strip escape sequences before filtering.
-    raw = re.sub(r"\x1b\[[0-9;]*m", "", raw)
-    pins = [line for line in raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-    return "\n".join(pins) + "\n"
 
-
-def _write_requirements(dqx_wheel_name: str, app_wheel_name: str) -> None:
-    """Write ``.build/requirements.txt`` — local wheels first, then pins.
-
-    The first two lines reference the vendored DQX library wheel and the app
-    wheel by relative path (pip installs them by file, from the app root that
-    the platform's ``[BUILD]`` phase runs in). The remaining lines are the
-    fully-pinned transitive closure from ``app/uv.lock``. The platform
-    ``pip install -r requirements.txt`` installs everything up-front, so plain
-    ``uvicorn`` starts against a fully-provisioned venv with no runtime
-    resolution.
-    """
-    header = (
-        f"wheels/{dqx_wheel_name}\n"
-        f"{app_wheel_name}\n"
-        "\n"
-        "# Transitive dependency closure pinned from app/uv.lock (plain names, no\n"
-        "# index URLs). The Databricks Apps [BUILD] phase installs these through its\n"
-        "# own working package index; the two local wheels above install by file.\n"
-    )
-    (BUILD_DIR / "requirements.txt").write_text(header + _export_locked_pins(), encoding="utf-8")
-
-
-def _assert_no_pypi_proxy_urls() -> None:
-    """Fail loudly if any internal package-proxy host leaked into ``.build/``.
-
-    The Databricks Apps container's egress to internal package-proxy hosts is
-    unreliable (requests time out or 404 on wheel blobs).
-    ``requirements.txt`` must therefore carry plain pinned names
-    only, and no shipped file may reference a proxy host. If a future change
-    reintroduces one (an index URL in a generated requirements/lock file,
-    vendored metadata…), stop the build here rather than ship an app that
-    hangs and crashes at container startup.
-    """
-    marker = "pypi-proxy"
-    offenders = []
-    for path in BUILD_DIR.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        if marker in text:
-            offenders.append(str(path.relative_to(BUILD_DIR)))
-    if offenders:
-        raise SystemExit(
-            f"error: found internal package-proxy host {marker!r} in .build/ files: {offenders}. "
-            "The Databricks Apps container cannot reliably reach these hosts — requirements.txt "
-            "must contain plain pinned names only (the platform resolves them via its own index)."
-        )
+    (BUILD_DIR / "requirements.txt").write_text("uv\n", encoding="utf-8")
 
 
 def main() -> int:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    _clean_build_dir()
 
     pyproject = _load_pyproject()
     meta = _read_app_metadata(pyproject)
+    version = pyproject["project"]["version"]
 
     _step("Writing _metadata.py from pyproject [tool.dqx_app.metadata]")
     _write_metadata_module(meta)
+
+    _step(f"Writing _version.py (version={version})")
+    _write_version_module(version)
 
     _step("Writing .build/app.yml")
     _write_app_yml(meta)
@@ -454,36 +233,11 @@ def main() -> int:
     _step("Building UI bundle (vite build → src/databricks_labs_dqx_app/__dist__/)")
     _run_vite_build()
 
-    build_tag = _compute_build_tag()
-    _step(f"Computed build tag +{build_tag} — forces unique wheel filenames/requirements.txt this build")
-
-    with _stamped_version(PYPROJECT, _PYPROJECT_VERSION_RE, build_tag) as app_version:
-        _step(f"Writing _version.py (version={app_version})")
-        _write_version_module(app_version)
-
-        _step("Building application wheel → .build/")
-        app_wheel_name = _build_app_wheel()
-
-    with _stamped_version(DQX_ABOUT_PY, _ABOUT_VERSION_RE, build_tag):
-        _step("Building co-developed DQX library wheel → .build/wheels/")
-        dqx_wheel_name = _build_dqx_wheel()
-
-    with _stamped_version(TASKS_PYPROJECT, _PYPROJECT_VERSION_RE, build_tag):
-        _step("Building serverless task-runner wheel → .build/tasks/")
-        _build_task_runner_wheel()
-
-    _step("Writing .build/requirements.txt (local wheels first, then pinned closure)")
-    _write_requirements(dqx_wheel_name, app_wheel_name)
-
-    _step("Asserting no internal package-proxy hosts leaked into .build/")
-    _assert_no_pypi_proxy_urls()
+    _step("Assembling .build/ source tree (pyproject + uv.lock + src + requirements.txt=uv)")
+    _assemble_deploy_tree()
 
     _step("Build complete:")
-    print(f"  → {(BUILD_DIR / app_wheel_name).relative_to(APP_DIR)} (application wheel)")
-    print(f"  → {(WHEELS_DIR / dqx_wheel_name).relative_to(APP_DIR)} (vendored local DQX library)")
-    for wheel in sorted(TASKS_BUILD_DIR.glob("databricks_labs_dqx_task_runner-*.whl")):
-        print(f"  → {wheel.relative_to(APP_DIR)} (task-runner)")
-    print(f"  → {(BUILD_DIR / 'requirements.txt').relative_to(APP_DIR)} (wheels + pinned closure)")
+    print(f"  → {(BUILD_DIR / 'src' / 'databricks_labs_dqx_app').relative_to(APP_DIR)} (source), requirements.txt=uv")
     return 0
 
 

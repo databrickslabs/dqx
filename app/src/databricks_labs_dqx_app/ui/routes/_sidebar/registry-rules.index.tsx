@@ -441,7 +441,7 @@ function RegistryRulesPage() {
     const eligible = selectedRules.filter((r) => r.status === "pending_approval");
     bulkAction(
       eligible,
-      (ruleId) => approveMutation.mutateAsync({ ruleId }),
+      (ruleId) => approveMutation.mutateAsync({ ruleId, data: null }),
       t("rulesRegistry.bulkApproved"),
       invalidateAfterApprovalChange,
     );
@@ -452,7 +452,7 @@ function RegistryRulesPage() {
     const eligible = selectedRules.filter((r) => r.status === "pending_approval");
     bulkAction(
       eligible,
-      (ruleId) => rejectMutation.mutateAsync({ ruleId }),
+      (ruleId) => rejectMutation.mutateAsync({ ruleId, data: null }),
       t("rulesRegistry.bulkRejected"),
       invalidateAfterApprovalChange,
     );
@@ -515,14 +515,14 @@ function RegistryRulesPage() {
   const handleSubmit = (rule: RegistryRuleOut) =>
     runAction(
       rule.rule_id,
-      () => submitMutation.mutateAsync({ ruleId: rule.rule_id }),
+      () => submitMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
       t("rulesRegistry.toastSubmitted"),
       t("rulesRegistry.toastSubmitFailed"),
     );
   const handleApprove = (rule: RegistryRuleOut) =>
     runAction(
       rule.rule_id,
-      () => approveMutation.mutateAsync({ ruleId: rule.rule_id }),
+      () => approveMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
       t("rulesRegistry.toastApproved"),
       t("rulesRegistry.toastApproveFailed"),
       invalidateAfterApprovalChange,
@@ -530,7 +530,7 @@ function RegistryRulesPage() {
   const handleReject = (rule: RegistryRuleOut) =>
     runAction(
       rule.rule_id,
-      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id }),
+      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
       t("rulesRegistry.toastRejected"),
       t("rulesRegistry.toastRejectFailed"),
       invalidateAfterApprovalChange,

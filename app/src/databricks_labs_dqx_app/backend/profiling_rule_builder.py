@@ -42,7 +42,14 @@ from databricks.labs.dqx.utils import is_sql_query_safe
 
 from .builtin_rules_seed import build_builtin_metadata, humanize_function_name
 from .models import CheckFunctionDef
-from .registry_models import RESERVED_NAME_KEY, ColumnMappingGroup, RuleDefinition, RuleParameter, RuleSlot, set_reserved_tag
+from .registry_models import (
+    RESERVED_NAME_KEY,
+    ColumnMappingGroup,
+    RuleDefinition,
+    RuleParameter,
+    RuleSlot,
+    set_reserved_tag,
+)
 from .registry_seed_map import derive_slots_and_parameters
 from .routes.v1.check_functions import _introspect_check_functions
 from .sql_utils import strip_sql_line_comments

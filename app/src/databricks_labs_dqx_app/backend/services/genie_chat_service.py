@@ -67,6 +67,7 @@ def _warn_obo_fallback_once(exc: Exception) -> None:
         "procedure in DEPLOYMENT.md to run Genie conversations as the calling user."
     )
 
+
 # Map the Genie message status to a short human stage the chat UI can show
 # while the answer is still being produced. Unknown statuses fall back to a
 # generic "Thinking" label rather than leaking the raw enum.

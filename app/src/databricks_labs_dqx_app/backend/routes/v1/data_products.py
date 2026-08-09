@@ -228,8 +228,12 @@ def update_data_product(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.DATA_PRODUCT.value, product_id, Privilege.MODIFY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.DATA_PRODUCT.value,
+        product_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         updates = body.model_dump(exclude_unset=True)
@@ -266,8 +270,12 @@ def delete_data_product(
     Requires ``MODIFY`` on the table space unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.DATA_PRODUCT.value, product_id, Privilege.MODIFY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.DATA_PRODUCT.value,
+        product_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         svc.delete(product_id)
@@ -310,8 +318,12 @@ def add_data_product_member(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.DATA_PRODUCT.value, product_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.DATA_PRODUCT.value,
+        product_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         svc.add_member(product_id, body.binding_id, body.pinned_version, user_email)
@@ -348,8 +360,12 @@ def remove_data_product_member(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.DATA_PRODUCT.value, product_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.DATA_PRODUCT.value,
+        product_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         svc.remove_member(product_id, member_id, user_email)

@@ -1032,3 +1032,35 @@ export function labelsMatchFilter(
   }
   return false;
 }
+
+/**
+ * Same OR-across-keys semantics as {@link labelsMatchFilter}, but for a
+ * multi-valued tag bag (e.g. a monitored table that inherits key=value pairs
+ * from several applied registry rules). A key with no selected values matches
+ * when the bag contains that key at all; otherwise the bag must contain at
+ * least one of the selected values for that key.
+ */
+export function tagPairsMatchFilter(
+  tags: ReadonlyArray<{ key: string; value: string }>,
+  selected: LabelSelection,
+): boolean {
+  if (selected.size === 0) return true;
+  const byKey = new Map<string, Set<string>>();
+  for (const { key, value } of tags) {
+    let values = byKey.get(key);
+    if (!values) {
+      values = new Set();
+      byKey.set(key, values);
+    }
+    values.add(value);
+  }
+  for (const [key, values] of selected) {
+    const have = byKey.get(key);
+    if (!have) continue;
+    if (values.size === 0) return true;
+    for (const v of values) {
+      if (have.has(v)) return true;
+    }
+  }
+  return false;
+}

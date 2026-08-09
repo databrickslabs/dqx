@@ -1,4 +1,5 @@
 ---
+title: Quality Dashboard
 sidebar_position: 311
 ---
 
@@ -6,11 +7,16 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 
 # Quality Dashboard
 
-The data quality dashboard can be imported directly into your workspace from the [GitHub repository](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/dashboards/). For more details on installing DQX, see the [Installation Guide](/docs/installation/).
+<FeatureTags>
+  <AvailableSinceVersion version="0.13.0" heading={false} />
+</FeatureTags>
+
+The data quality dashboard can be set up in two ways: you can import it directly in your workspace from the GitHub repository, or it will be automatically deployed when you install DQX using the Databricks CLI. For more details on the installation process, see the [Installation Guide](/docs/installation/#installing-dashboard).
 
 The dashboard makes it easy to monitor and track data quality issues across all tables, with the flexibility to customize it to your specific needs.
 
@@ -111,4 +117,3 @@ Questions asked through Genie are answered from the full dataset query results b
 **Users can open the dashboard but not ask questions:** Verify Databricks SQL or consumer access entitlement and confirm users have permission on the underlying Unity Catalog objects.
 
 **Wrong or overly broad answers:** Review the Genie space configuration, attached data sources, and instructions. Genie can query beyond explicitly attached tables if permissions and context allow it.
-

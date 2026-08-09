@@ -64,9 +64,7 @@ _NO_PUBLISHED_RULES_REASON = "No published rules to suggest from yet. Publish ru
 _NO_MATCH_REASON = "No published rules matched this table's columns."
 _NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this table's columns."
 _NO_NL_MATCH_REASON = "No published rules closely matched that description."
-_NO_NL_CLEAN_MAPPING_REASON = (
-    "Found related published rules, but none mapped cleanly to this table's columns."
-)
+_NO_NL_CLEAN_MAPPING_REASON = "Found related published rules, but none mapped cleanly to this table's columns."
 
 _JUDGE_SYSTEM_PROMPT = (
     "You are a precise data-quality rule mapping assistant. Given a table's columns (each with a name, "

@@ -298,7 +298,7 @@ def render_check(
     cross-table aggregate query with nothing to bind to the monitored
     table's own columns), matching the existing
     ``__sql_check__/<name>`` synthetic-FQN convention documented in
-    ``backend/CLAUDE.md``.
+    ``app/AGENTS.md`` (Backend).
 
     Raises:
         ValueError: *mode* is not a supported rule mode, or *group* is

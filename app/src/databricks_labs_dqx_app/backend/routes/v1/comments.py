@@ -57,9 +57,7 @@ def add_comment(
 )
 def list_comments(
     svc: Annotated[CommentsService, Depends(get_comments_service)],
-    entity_type: Annotated[
-        str, Query(description="Entity type: 'run', 'rule', 'monitored_table' or 'data_product'")
-    ],
+    entity_type: Annotated[str, Query(description="Entity type: 'run', 'rule', 'monitored_table' or 'data_product'")],
     entity_id: Annotated[str, Query(description="Entity identifier: run_id, rule_id, binding_id or product_id")],
 ) -> list[CommentOut]:
     """List comments for a specific run, rule, monitored table or table space."""

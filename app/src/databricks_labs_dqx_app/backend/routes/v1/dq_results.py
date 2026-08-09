@@ -620,9 +620,11 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
                 total_tests=sum(totals) if totals else None,
                 # A batch is 'draft' only if every member is a draft run;
                 # any published member makes it a published batch.
-                run_mode=RUN_MODE_PUBLISHED
-                if any(m.run_mode == RUN_MODE_PUBLISHED for m in members)
-                else next((m.run_mode for m in members if m.run_mode), None),
+                run_mode=(
+                    RUN_MODE_PUBLISHED
+                    if any(m.run_mode == RUN_MODE_PUBLISHED for m in members)
+                    else next((m.run_mode for m in members if m.run_mode), None)
+                ),
                 breached=batch_crit is not None,
                 breach_criticality=batch_crit,
             )

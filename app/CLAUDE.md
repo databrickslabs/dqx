@@ -8,8 +8,6 @@ The DQX Studio is a **UI for authoring and managing data quality rules**. It low
 
 **Not in scope:** Running rules as part of customer production data pipelines (the app's runs target dev/UAT data and write results to the app's own catalog).
 
-**What's new:** major, user-facing Studio features are summarized in the pull request that ships them, for the release notes. There is no in-docs "What's new" page.
-
 ## Deployment
 
 - Deploys as a **Databricks App** (FastAPI backend + React frontend in a single Python wheel)
@@ -77,7 +75,7 @@ but is protected transitively by the instance-level guard.
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
 
-Lakebase project (when enabled, default project = `dqx-studio-db`, connected via its branch 'primary' endpoint — DQX_LAKEBASE_ENDPOINT):
+Lakebase instance (when enabled, default name = `dqx-studio-lakebase`):
  └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
@@ -136,7 +134,7 @@ app/
 
 ## Stack
 
-- **Backend:** Python 3.11+, FastAPI, Pydantic 2, Databricks SDK, Databricks SQL Connector, psycopg (Lakebase/Postgres), DQX library
+- **Backend:** Python 3.12+, FastAPI, Pydantic 2, Databricks SDK, Databricks SQL Connector, psycopg (Lakebase/Postgres), DQX library
 - **Frontend:** React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation:** orval (OpenAPI → TypeScript types + React Query hooks)
 

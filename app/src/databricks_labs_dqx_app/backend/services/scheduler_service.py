@@ -1319,7 +1319,7 @@ class SchedulerService:
             if not run_id:
                 continue
             self._pending_score_runs.pop(run_id, None)
-            fqn = row[1]
+            fqn = row[1] if len(row) > 1 else None
             if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
                 fqns.add(fqn)
             view_fqn = row[2] if len(row) > 2 else None
@@ -2044,7 +2044,9 @@ class SchedulerService:
                 logger.warning("Tmp-view sweep: failed to drop %s: %s", view_fqn, exc)
 
         if dropped or failed:
-            logger.info("Tmp-view sweep complete: targeted=%d dropped=%d failed=%d", len(views_to_drop), dropped, failed)
+            logger.info(
+                "Tmp-view sweep complete: targeted=%d dropped=%d failed=%d", len(views_to_drop), dropped, failed
+            )
 
     # ------------------------------------------------------------------
     # Orphan tmp-view GC (weekly, Saturday 01:00 UTC)

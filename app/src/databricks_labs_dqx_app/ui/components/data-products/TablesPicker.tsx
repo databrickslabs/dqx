@@ -7,8 +7,9 @@
  * schema / an extra facet / search) above one card per group, each card
  * holding a mini table of checkbox | table | count | status rows. Ported to this
  * dialog's actual data source — monitored tables, not approved rule sets —
- * so the extra facet is Steward (there's no label/severity concept on a
- * monitored table) and the "Rules" column shows `applied_rule_count`
+ * so the extra facets are Steward and custom tags (free-text key=value pairs
+ * inherited from applied registry rules — there is no native label concept on
+ * a monitored table itself) and the "Rules" column shows `applied_rule_count`
  * instead of a checks-array length. Grouping is client-side over the single
  * `listMonitoredTables` page (matches dqlake's pattern; no separate paged
  * fetch per group).
@@ -37,6 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
+import { LabelFilter, tagPairsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { MemberVersionPin } from "@/components/data-products/MemberVersionPin";
 import { cn } from "@/lib/utils";
 
@@ -152,6 +154,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [tagFilter, setTagFilter] = useState<LabelSelection>(new Map());
 
   const catalogOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
@@ -166,6 +169,23 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
     () => Array.from(new Set(rows.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
     [rows],
   );
+  // Distinct free-text custom tags across the loaded set, feeding the
+  // key-first LabelFilter. Reserved keys (dimension/severity/…) are already
+  // stripped by the list API.
+  const availableTags = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { key: string; value: string }[] = [];
+    for (const r of rows) {
+      for (const tag of r.custom_tags ?? []) {
+        const tok = `${tag.key}=${tag.value}`;
+        if (!seen.has(tok)) {
+          seen.add(tok);
+          out.push({ key: tag.key, value: tag.value });
+        }
+      }
+    }
+    return out;
+  }, [rows]);
 
   // Reset the schema filter if it falls out of range after a catalog change.
   useEffect(() => {
@@ -179,10 +199,11 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
       if (catalogFilter !== ALL && catalog !== catalogFilter) return false;
       if (schemaFilter !== ALL && schema !== schemaFilter) return false;
       if (stewardFilter !== ALL && (r.table.steward ?? "") !== stewardFilter) return false;
+      if (!tagPairsMatchFilter(r.custom_tags ?? [], tagFilter)) return false;
       if (q && !r.table.table_fqn.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, search, catalogFilter, schemaFilter, stewardFilter]);
+  }, [rows, search, catalogFilter, schemaFilter, stewardFilter, tagFilter]);
 
   const grouped = useMemo((): Map<string, MonitoredTableSummaryOut[]> => {
     if (groupBy === "none") {
@@ -345,6 +366,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             ))}
           </SelectContent>
         </Select>
+        <LabelFilter available={availableTags} selected={tagFilter} onChange={setTagFilter} />
 
         <Input
           placeholder={t("monitoredTables.searchTablesPlaceholder")}

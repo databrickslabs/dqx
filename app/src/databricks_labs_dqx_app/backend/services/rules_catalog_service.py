@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from databricks_labs_dqx_app.backend.rule_enums import RuleSource, RuleStatus
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -53,7 +54,8 @@ class RulesCatalogService:
     so existing callers don't have to change.
     """
 
-    VALID_STATUSES = {"draft", "pending_approval", "approved", "rejected"}
+    VALID_SOURCES = {member.value for member in RuleSource}
+    VALID_STATUSES = {member.value for member in RuleStatus}
 
     VALID_TRANSITIONS: dict[str, set[str]] = {
         "draft": {"pending_approval"},
@@ -142,6 +144,9 @@ class RulesCatalogService:
         silently skipped.  Returns the list of newly created entries.
         """
         from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+
+        if source not in self.VALID_SOURCES:
+            raise ValueError(f"Invalid source: {source}. Must be one of {self.VALID_SOURCES}")
 
         validate_fqn(table_fqn)
         checks = self._normalize_weight(checks)

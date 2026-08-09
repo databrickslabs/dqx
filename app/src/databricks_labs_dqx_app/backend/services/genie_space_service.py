@@ -76,7 +76,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
 )
-from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
+from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn, validate_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -810,11 +810,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WHERE `created_at` >= current_timestamp() - INTERVAL 7 DAYS"
     )
 
-    rules_running = (
-        "SELECT COUNT(*) AS running_rules\n"
-        f"FROM {dim_rules}\n"
-        "WHERE `status` = 'approved'"
-    )
+    rules_running = "SELECT COUNT(*) AS running_rules\n" f"FROM {dim_rules}\n" "WHERE `status` = 'approved'"
 
     table_param = [
         {
@@ -1062,8 +1058,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(rule_table_count),
             "parameters": rule_name_param,
             "usage_guidance": [
-                "Distinct published-run tables the rule runs on, from mv_dq_scores scoped by "
-                "rule_name."
+                "Distinct published-run tables the rule runs on, from mv_dq_scores scoped by " "rule_name."
             ],
         },
         {
@@ -1726,6 +1721,12 @@ def ensure_dq_genie_space(
     (provisioning|ready|error).
     """
     try:
+        # Fail fast on a misconfigured catalog/schema before emitting dozens of
+        # quote_object_fqn statements. Not an injection fix (quote_ident already
+        # keeps crafted values inert) — defense-in-depth for clear errors.
+        validate_identifier(catalog)
+        validate_identifier(schema)
+
         existing = settings.get_setting(SETTING_SPACE_ID)
         stored_hash = settings.get_setting(SETTING_CONFIG_HASH)
         desired_hash = config_hash(catalog, schema)

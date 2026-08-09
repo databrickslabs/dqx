@@ -302,6 +302,32 @@ function parseCondition(fragment: string, ctx: Ctx): ParsedRow | null {
     if (pattern === IPV4_PATTERN) return row(column, "is a valid ipv4", null);
     return row(column, "matches regex", pattern);
   }
+  // Spark string builtins (preferred compile form — %/_ stay literal).
+  if ((m = rx(`NOT\\s+contains\\(\\s*(${LHS})\\s*,\\s*(.+?)\\s*\\)`).exec(text))) {
+    const column = parseColumnRef(m[1]);
+    const value = stringLiteral(m[2]);
+    if (column && value !== null) return row(column, "does not contain", value);
+    return null;
+  }
+  if ((m = rx(`contains\\(\\s*(${LHS})\\s*,\\s*(.+?)\\s*\\)`).exec(text))) {
+    const column = parseColumnRef(m[1]);
+    const value = stringLiteral(m[2]);
+    if (column && value !== null) return row(column, "contains", value);
+    return null;
+  }
+  if ((m = rx(`startswith\\(\\s*(${LHS})\\s*,\\s*(.+?)\\s*\\)`).exec(text))) {
+    const column = parseColumnRef(m[1]);
+    const value = stringLiteral(m[2]);
+    if (column && value !== null) return row(column, "starts with", value);
+    return null;
+  }
+  if ((m = rx(`endswith\\(\\s*(${LHS})\\s*,\\s*(.+?)\\s*\\)`).exec(text))) {
+    const column = parseColumnRef(m[1]);
+    const value = stringLiteral(m[2]);
+    if (column && value !== null) return row(column, "ends with", value);
+    return null;
+  }
+  // Legacy LIKE forms (older compiled SQL / hand-written predicates).
   if ((m = rx(`(${LHS})\\s+(NOT\\s+)?LIKE\\s+(.+)`).exec(text))) {
     const column = parseColumnRef(m[1]);
     const pattern = stringLiteral(m[3]);

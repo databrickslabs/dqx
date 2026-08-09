@@ -26,21 +26,11 @@ variables:
   app_name:
     description: "Databricks App name (unique per workspace)"
     default: "dqx-studio"
-  sql_warehouse_id:
-    description: >
-      ID of the SQL warehouse the app queries. Every target MUST set this.
-      Mode A (bundle-managed): ``${resources.sql_warehouses.dqx_sql_warehouse.id}``
-      plus a ``sql_warehouses.dqx_sql_warehouse`` block under the target's
-      ``resources:``. Mode B (external / reuse): a literal warehouse ID; the
-      bundle never creates the warehouse. ``post_deploy_external_warehouse_grants.sh``
-      PATCHes CAN_USE on the external warehouse for the job SP and ``users``.
-      Default is empty so a target that forgets to set it fails fast at deploy.
-    default: ""
   sql_warehouse_name:
-    description: "Name of the bundle-managed SQL warehouse (Mode A only)."
+    description: "Name of the bundle-managed SQL warehouse the app queries through."
     default: "dqx-studio-sql-warehouse"
   sql_warehouse_size:
-    description: "Cluster size of the bundle-managed SQL warehouse (Mode A only)."
+    description: "Cluster size of the bundle-managed SQL warehouse (e.g. 2X-Small / Small / Medium)."
     default: "Small"
   wheels_volume_name:
     description: "UC volume for DQX wheel files"
@@ -81,10 +71,8 @@ variables:
     description: "Lakebase endpoint min compute units (floor 0.5; cannot be 0)."
     default: 0.5
   lakebase_max_cu:
-    description: "Lakebase endpoint max compute units (>= min). Raised to 4 to give
-      the endpoint more headroom under concurrent load; min stays 0.5 so scale-to-zero
-      idle cost is unchanged."
-    default: 4
+    description: "Lakebase endpoint max compute units (>= min)."
+    default: 1
   lakebase_suspend_timeout:
     description: >
       Idle duration after which the Lakebase endpoint scales to zero (suspends).
@@ -100,11 +88,11 @@ variables:
       # Single worker so the in-process SchedulerService (gated by a file lock)
       # doesn't fight itself across workers. The in-memory CacheFactory is per
       # worker (TTL, non-authoritative) so adding workers is otherwise safe.
-      # Plain ``uvicorn`` (NOT ``uv run``): the platform ``[BUILD]`` phase has
-      # already pip-installed the fully-pinned ``.build/requirements.txt`` into
-      # the app venv, so there is NO dependency resolution at container start
-      # (the container's egress to the internal package proxies is unreliable).
+      # ``uv run`` resolves the app's locked environment at container start.
       command:
+        - "uv"
+        - "run"
+        - "--no-dev"
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
         - "--workers"
@@ -122,8 +110,6 @@ variables:
           value: "1"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
-        - name: "DQX_GENIE_SCHEMA"
-          value: "${var.genie_schema_name}"
         - name: "DQX_ADMIN_GROUP"
           value: "${var.admin_group}"
         - name: "DQX_WHEELS_VOLUME"
@@ -132,10 +118,13 @@ variables:
           value: "${var.lakebase_endpoint}"
         - name: "DQX_LAKEBASE_DATABASE_NAME"
           value: "${var.lakebase_database_name}"
-        # Registered app slug (unique-per-workspace name the app is registered under).
-        # Used by the privileged-principals endpoint to look up CAN_MANAGE holders.
+        # Starter Insights dashboard; admins can override at runtime via Configuration.
+        - name: "DQX_DEFAULT_DASHBOARD_ID"
+          value: "${resources.dashboards.dqx_quality_overview.id}"
         - name: "DQX_APP_NAME"
           value: "${var.app_name}"
+        - name: "DQX_GENIE_SCHEMA"
+          value: "${var.genie_schema_name}"
 
 sync:
   include:
@@ -143,16 +132,15 @@ sync:
 
 artifacts:
   default:
-    # build_app.py produces, under .build/: the application wheel, the
-    # vendored local DQX library wheel (.build/wheels/ — the Rules Registry
-    # integration imports symbols absent from the published release, so the
-    # app must ship the local library build), the (unpublished) task-runner
-    # wheel (.build/tasks/), and a requirements.txt whose first two lines
-    # reference those local wheels followed by the fully-pinned transitive
-    # closure exported from app/uv.lock. The Apps [BUILD] phase pip-installs
-    # requirements.txt and the app starts with plain uvicorn (no runtime
-    # dependency resolution — see var.app_config.command).
-    build: uv run python scripts/build_app.py
+    # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
+    # uv.lock + src + requirements.txt=``uv``) — no app wheel, no local dqx wheel
+    # (the app pins databricks-labs-dqx from the registry). We still build the
+    # task-runner wheel for the job (it's not published); its dqx dep resolves
+    # from the registry at job-environment install time.
+    build: >
+      uv run python scripts/build_app.py &&
+      rm -rf .build/tasks &&
+      uv build tasks/ --wheel --out-dir .build/tasks/
 
 resources:
   apps:
@@ -168,24 +156,13 @@ resources:
         - catalog.schemas:read
         - catalog.tables:read
         - serving.serving-endpoints
-        # Ask Genie chat runs on-behalf-of the signed-in user (P4.2), so the
-        # OBO token must carry the Genie API scope. The chat service keeps
-        # its SP fallback regardless — harmless once OBO works, and it
-        # protects workspaces whose OAuth integration strips scopes.
-        - dashboards.genie
-        # NOTE: there is no valid Databricks Apps user-API scope for listing
-        # all-purpose clusters — the bundle API rejects `clusters` with a 400
-        # (INVALID_PARAMETER_VALUE), which failed the whole app-resource update.
-        # So the admin Compute section's cluster picker degrades to an empty
-        # list (ComputeService.list_clusters returns [] on the OBO
-        # PermissionDenied); do not re-add a `clusters` scope here (B2-105).
 
       resources:
-        # ``sql_warehouse_id`` is set per-target — see the variable docs above.
+        # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
         - name: "dqx-sql-warehouse"
           description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
-            id: ${var.sql_warehouse_id}
+            id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
             permission: "CAN_USE"
         - name: "dqx-task-runner-job"
           description: "Job for async profiler and dry-run tasks"
@@ -202,11 +179,25 @@ resources:
         - group_name: "users"
           level: "CAN_USE"
 
-  # ``sql_warehouses.dqx_sql_warehouse`` is intentionally NOT declared here.
-  # Mode A targets declare it under their own ``resources.sql_warehouses`` block.
-  # Mode B targets set ``sql_warehouse_id`` to a literal ID and never touch the
-  # warehouse — see ``target.demo-v2.yml`` (Mode A) and ``target.kaizen-dev.yml``
-  # (Mode B).
+  # Bundle-managed SQL warehouse. The app queries it (app SP via the binding above)
+  # and end-user OBO dry-run/preview queries run through it, so ``users`` needs CAN_USE.
+  sql_warehouses:
+    dqx_sql_warehouse:
+      name: ${var.sql_warehouse_name}
+      cluster_size: ${var.sql_warehouse_size}
+      max_num_clusters: 1
+      auto_stop_mins: 30
+      enable_serverless_compute: true
+      warehouse_type: PRO
+      # List the app SP explicitly: with ``permissions`` set, the app's warehouse
+      # binding would otherwise override them and drop its access. Use workspace
+      # ``users`` — the warehouse permissions API can't resolve account-level
+      # ``account users`` (UC ``grants`` below can).
+      permissions:
+        - level: CAN_USE
+          service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
+        - level: CAN_USE
+          group_name: "users"
 
   # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
   # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
@@ -359,12 +350,26 @@ resources:
       membership_roles:
         - DATABRICKS_SUPERUSER
 
+  dashboards:
+    dqx_quality_overview:
+      display_name: "[${bundle.target}] DQX Quality Overview"
+      file_path: ./dashboards/dqx_quality_overview.lvdash.json
+      warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
+      dataset_catalog: ${var.catalog_name}
+      dataset_schema: ${var.schema_name}
+      embed_credentials: true
+      # Workspace-scoped ACL — see the app/warehouse permissions note; use the
+      # workspace-local ``users`` group, not account-level ``account users``.
+      permissions:
+        - level: CAN_READ
+          group_name: "users"
+
   jobs:
     dqx_task_runner:
       name: "dqx-studio-task-runner"
       max_concurrent_runs: 10
       tags:
-        app: "dqx-studio"
+        app: "dqx"
       run_as:
         service_principal_name: ${var.dqx_service_principal_application_id}
       tasks:
@@ -387,31 +392,16 @@ resources:
               - "{{job.parameters.run_id}}"
               - "--requesting_user"
               - "{{job.parameters.requesting_user}}"
-              # SQL warehouse the runner uses to drop the temp view it read from
-              # (see runner.py view-cleanup path). Threaded from the admin's
-              # configured warehouse via JobService.submit_run; "" falls back to
-              # spark.sql cleanup on the job compute.
-              - "--warehouse_id"
-              - "{{job.parameters.warehouse_id}}"
-              # ``{{job.run_id}}`` is a built-in run-context reference (not a job
-              # parameter) — the Jobs service resolves it per run, so the task
-              # runner can stamp job_run_id onto its terminal result row and the
-              # Runs-History "Run" column can deep-link to this job run.
-              - "--job_run_id"
-              - "{{job.run_id}}"
           environment_key: "default"
       environments:
         - environment_key: "default"
           spec:
             client: "5"
             dependencies:
-              # Local task-runner wheel (not published) + the locally-built DQX
-              # library wheel vendored by build_app.py under .build/wheels/. The
-              # app imports Rules Registry symbols absent from the published
-              # release, so the task-runner runs the same local library build as
-              # the app (satisfies the task-runner wheel's ==0.15.0 dqx pin).
+              # Local task-runner wheel (not published) + the library pinned
+              # from the registry — same version as the app, no local dqx build.
               - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
-              - ./.build/wheels/databricks_labs_dqx-*.whl
+              - databricks-labs-dqx==0.15.0
       parameters:
         - name: "task_type"
           default: "profile"
@@ -427,8 +417,6 @@ resources:
           default: ""
         - name: "requesting_user"
           default: "unknown"
-        - name: "warehouse_id"
-          default: ""
 
 # Deploy targets are defined in the untracked ``target.dev.yml`` (see the
 # ``include`` above and ``target.dev.yml.example``).

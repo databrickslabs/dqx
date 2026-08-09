@@ -69,7 +69,7 @@ from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
 from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +339,7 @@ class DataProductService:
             f"INSERT INTO {self._products_table} "
             "(product_id, name, description, notes, steward, steward_display_name, schedule_cron, schedule_tz, "
             "schedule_kind, status, version, created_by, created_at, updated_by, updated_at) VALUES ("
-            f"'{escape_sql_string(product.product_id)}', '{escape_sql_string(product.name)}', "
+            f"'{escape_sql_string(product.product_id)}', '{escape_sql_string_strict(product.name)}', "
             f"{self._opt_str(product.description)}, {self._opt_str(product.notes)}, "
             f"{self._opt_str(product.steward)}, "
             f"{self._opt_str(product.steward_display_name)}, NULL, NULL, "
@@ -414,6 +414,10 @@ class DataProductService:
     def delete(self, product_id: str) -> None:
         """Delete a data product and its members.
 
+        Members are deleted first, then the product, inside one transaction when
+        the OLTP backend supports it (Lakebase/Postgres) so a mid-flight crash
+        cannot leave orphan member rows.
+
         Raises:
             LookupError: *product_id* does not exist.
         """
@@ -421,8 +425,20 @@ class DataProductService:
         rows = self._sql.query(f"SELECT product_id FROM {self._products_table} WHERE product_id = '{e}'")  # noqa: S608
         if not rows:
             raise LookupError(f"Data product not found: {product_id}")
-        self._sql.execute(f"DELETE FROM {self._members_table} WHERE product_id = '{e}'")  # noqa: S608
-        self._sql.execute(f"DELETE FROM {self._products_table} WHERE product_id = '{e}'")  # noqa: S608
+        delete_members = f"DELETE FROM {self._members_table} WHERE product_id = '{e}'"  # noqa: S608
+        delete_product = f"DELETE FROM {self._products_table} WHERE product_id = '{e}'"  # noqa: S608
+        connection = getattr(self._sql, "connection", None)
+        if connection is not None and self._sql.dialect == "postgres":
+            from databricks_labs_dqx_app.backend.pg_cursor_helpers import run_trusted_sql
+
+            with connection() as conn:
+                with conn.cursor() as cur:
+                    run_trusted_sql(cur, delete_members)
+                    run_trusted_sql(cur, delete_product)
+                conn.commit()
+        else:
+            self._sql.execute(delete_members)
+            self._sql.execute(delete_product)
         logger.info("Deleted data product %s", product_id)
 
     # ------------------------------------------------------------------
@@ -486,10 +502,28 @@ class DataProductService:
             member_id = uuid4().hex
             if pinned_version is None:
                 pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
-            self._sql.execute(
-                f"INSERT INTO {self._members_table} (id, product_id, binding_id, pinned_version) VALUES "
-                f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
-            )
+            try:
+                self._sql.execute(
+                    f"INSERT INTO {self._members_table} (id, product_id, binding_id, pinned_version) VALUES "
+                    f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
+                )
+            except Exception as exc:
+                # Postgres UNIQUE (product_id, binding_id) — concurrent add_member
+                # lost the race; treat as upsert onto the winner's row.
+                msg = str(exc).lower()
+                if "unique" not in msg and "duplicate" not in msg:
+                    raise
+                rows = self._sql.query(
+                    f"SELECT id FROM {self._members_table} "  # noqa: S608
+                    f"WHERE product_id = '{e_pid}' AND binding_id = '{e_bid}'"
+                )
+                if not rows:
+                    raise
+                member_id = rows[0][0]
+                self._sql.execute(
+                    f"UPDATE {self._members_table} SET pinned_version = {self._opt_int(pinned_version)} "
+                    f"WHERE id = '{escape_sql_string(member_id)}'"
+                )
         self._flip_to_draft(product_id, updated_by)
         return DataProductMember(
             id=member_id, product_id=product_id, binding_id=binding_id, pinned_version=pinned_version
@@ -679,9 +713,7 @@ class DataProductService:
         if set_last_decision_rationale:
             set_clauses.append(f"last_decision_rationale = {self._opt_str(last_decision_rationale)}")
             updates["last_decision_rationale"] = last_decision_rationale
-        self._sql.execute(
-            f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'"
-        )
+        self._sql.execute(f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'")
         logger.info("Set data product %s status to %s", product_id, status)
         return product.model_copy(update=updates)
 
@@ -1001,7 +1033,7 @@ class DataProductService:
         return {s.table.binding_id: s for s in summaries}
 
     def _assert_name_available(self, name: str, exclude_product_id: str | None) -> None:
-        e = escape_sql_string(name)
+        e = escape_sql_string_strict(name)
         rows = self._sql.query(f"SELECT product_id FROM {self._products_table} WHERE name = '{e}'")  # noqa: S608
         for row in rows:
             if exclude_product_id is None or row[0] != exclude_product_id:
@@ -1152,7 +1184,10 @@ class DataProductService:
 
     @staticmethod
     def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
+        # Free-text fields (name/description/steward display) — use the
+        # backslash-safe escape so a trailing ``\`` cannot break out of the
+        # Delta string-literal path (``escape_sql_string`` only doubles quotes).
+        return f"'{escape_sql_string_strict(value)}'" if value else "NULL"
 
     @staticmethod
     def _opt_int(value: int | None) -> str:

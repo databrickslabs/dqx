@@ -72,7 +72,7 @@ interface BeforeLoadCtx {
 
 /**
  * ``beforeLoad`` guard for routes that should only be reachable by users
- * with the orthogonal RUNNER role (admins included). Non-runners are
+ * who can run rules (`run_rules` — Admin and Rule Author). Others are
  * redirected to Runs History — which is universally readable — instead
  * of seeing a 403.
  *

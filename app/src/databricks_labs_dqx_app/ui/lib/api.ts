@@ -650,8 +650,8 @@ export interface BatchSaveRulesIn {
   table_fqns: string[];
   /** List of check metadata dictionaries */
   checks: BatchSaveRulesInChecksItem[];
-  /** Origin of the rules: ui, imported, or ai */
-  source?: string;
+  /** Origin of the rules: ui, sql, profiler, import, or ai */
+  source?: RuleSource;
 }
 
 export type BatchSaveRulesOutFailedItem = {[key: string]: string};
@@ -2464,6 +2464,8 @@ export interface MonitoredTableSummaryOut {
   dimensions?: string[];
   /** Distinct effective severities across applied rules (override-aware). */
   severities?: string[];
+  /** Distinct free-text custom tags (key=value) across applied registry rules, excluding reserved metadata keys. Used by the Table Spaces Add-tables picker. */
+  custom_tags?: TagPairOut[];
 }
 
 export type MonitoredTableVersionChecksOutChecksItem = { [key: string]: unknown };
@@ -2795,6 +2797,8 @@ export type ProfilerConfigMaxNullRatio = number | null;
 
 export type ProfilerConfigMaxEmptyRatio = number | null;
 
+export type ProfilerConfigOutliersRatio = number | null;
+
 /**
  * Configuration class for profiler.
  */
@@ -2810,6 +2814,7 @@ export interface ProfilerConfig {
   llm_primary_key_detection?: boolean;
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
+  outliers_ratio?: ProfilerConfigOutliersRatio;
 }
 
 /**
@@ -3255,7 +3260,7 @@ export interface RuleCatalogEntryOut {
   checks: RuleCatalogEntryOutChecksItem[];
   version: number;
   status: string;
-  source?: string;
+  source?: RuleSource;
   rule_id?: RuleCatalogEntryOutRuleId;
   created_by?: RuleCatalogEntryOutCreatedBy;
   created_at?: RuleCatalogEntryOutCreatedAt;
@@ -3460,6 +3465,36 @@ export interface RuleSlot {
   /** For a dqx_native column slot, the DQX check function's real parameter name (e.g. 'column') that this slot's '{{name}}' placeholder fills as a VALUE inside body.arguments[arg_key]. None for sql/lowcode slots (no function parameter to key by) and for legacy/back-compat slots where name already equals the parameter name. */
   arg_key?: RuleSlotArgKey;
 }
+
+/**
+ * Source (e.g. 'ui', 'profiler') where the rule was created.
+ */
+export type RuleSource = typeof RuleSource[keyof typeof RuleSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleSource = {
+  ui: 'ui',
+  sql: 'sql',
+  profiler: 'profiler',
+  import: 'import',
+  ai: 'ai',
+  registry: 'registry',
+} as const;
+
+/**
+ * Lifecycle status of a rule in the catalog.
+ */
+export type RuleStatus = typeof RuleStatus[keyof typeof RuleStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleStatus = {
+  draft: 'draft',
+  pending_approval: 'pending_approval',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
 
 export type RuleTestRunInMode = typeof RuleTestRunInMode[keyof typeof RuleTestRunInMode];
 
@@ -3931,8 +3966,8 @@ export interface SaveRulesIn {
   table_fqn: string;
   /** List of check metadata dictionaries */
   checks: SaveRulesInChecksItem[];
-  /** Origin of the rules: ui, imported, or ai */
-  source?: string;
+  /** Origin of the rules: ui, sql, profiler, import, or ai */
+  source?: RuleSource;
   /** If set, update existing rule instead of creating */
   rule_id?: SaveRulesInRuleId;
 }
@@ -4075,7 +4110,7 @@ export type SetStatusInExpectedVersion = number | null;
 
 export interface SetStatusIn {
   /** New status: draft | pending_approval | approved | rejected */
-  status: string;
+  status: RuleStatus;
   /** If provided, the update is rejected when the current version does not match (optimistic concurrency). */
   expected_version?: SetStatusInExpectedVersion;
 }
@@ -4250,6 +4285,14 @@ export interface TableTagsOut {
   table_tags?: string[];
   /** Column name to list of tags mapping */
   column_tags?: TableTagsOutColumnTags;
+}
+
+/**
+ * A free-text custom tag key=value pair, for list-view facets.
+ */
+export interface TagPairOut {
+  key: string;
+  value: string;
 }
 
 export type TagRuleSuggestionOutRuleName = string | null;
@@ -4574,7 +4617,7 @@ export interface UserRoleOut {
   role: string;
   /** List of permissions granted to this role */
   permissions?: string[];
-  /** Whether the user holds the orthogonal RUNNER role. Admins are always runners. Other roles only become runners when their group is explicitly mapped to RUNNER. */
+  /** Backward-compat flag: true when the resolved role grants `run_rules` (Admin and Rule Author today). There is no separate RUNNER role — see CAN_RUN_ROLES in authorization.py. */
   is_runner?: boolean;
 }
 

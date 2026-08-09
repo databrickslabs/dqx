@@ -3,6 +3,8 @@ from decimal import Decimal
 
 import pyspark.sql.functions as F
 
+from databricks.labs.dqx.checks_serializer import project_to_check_schema
+from databricks.labs.dqx.checks_validator import CheckSpec
 from databricks.labs.dqx.checks_storage import DataFrameConverter
 
 SCHEMA = "a: int, b: int, c: int"
@@ -169,6 +171,32 @@ def test_build_quality_rules_from_dataframe_with_run_config(spark):
 
     checks = DataFrameConverter.from_dataframe(df)
     assert checks == default_checks, "The loaded checks do not match the expected default checks."
+
+
+def test_from_dataframe_loaded_shape_matches_shared_projection(spark):
+    """The Delta loader must project its output through the same allow-list as the Lakebase loader.
+
+    Both load paths funnel through project_to_check_schema (derived from CheckSpec.model_fields), so
+    the loaded top-level keys must be a subset of the logical check schema and applying the shared
+    projection again must be a no-op (idempotent). This guards against the two loaders diverging on
+    the loaded shape (review finding #6).
+    """
+    checks = [
+        {
+            "name": "column_is_not_null",
+            "criticality": "error",
+            "filter": "a > 0",
+            "check": {"function": "is_not_null", "arguments": {"column": "test_col"}},
+            "user_metadata": {"check_type": "completeness"},
+        },
+    ]
+    df = DataFrameConverter.to_dataframe(spark, checks)
+    loaded = DataFrameConverter.from_dataframe(df)
+
+    allowed_keys = set(CheckSpec.model_fields)
+    for check in loaded:
+        assert set(check).issubset(allowed_keys), check
+        assert project_to_check_schema(check) == check, "Delta output is not already projected"
 
 
 def test_from_dataframe_latest_rule_set_tiebreaker_by_fingerprint(spark):

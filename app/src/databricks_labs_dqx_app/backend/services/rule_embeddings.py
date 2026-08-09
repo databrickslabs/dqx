@@ -76,9 +76,7 @@ def build_rule_embed_text(rule: RegistryRule) -> str:
     if dimension:
         parts.append(f"dimension: {dimension}")
     if rule.definition.slots:
-        slot_summaries = ", ".join(
-            f"{s.name} ({s.family}, {s.cardinality})" for s in rule.definition.slots
-        )
+        slot_summaries = ", ".join(f"{s.name} ({s.family}, {s.cardinality})" for s in rule.definition.slots)
         parts.append(f"input columns: {slot_summaries}")
     body = rule.definition.body
     check_func = body.get("function")

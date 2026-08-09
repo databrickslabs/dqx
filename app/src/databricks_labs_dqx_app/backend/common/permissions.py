@@ -112,9 +112,7 @@ _CONCRETE_PRIVILEGES: frozenset[Privilege] = frozenset(
 # so existing flows keep working day one; MODIFY is intentionally absent — it is
 # the privilege the feature gates. Surfaced in the UI as a real (removable) grant
 # row on the users group, not an invisible constant.
-DEFAULT_USERS_GROUP_PRIVILEGES: frozenset[Privilege] = frozenset(
-    {Privilege.SELECT, Privilege.APPLY, Privilege.EXECUTE}
-)
+DEFAULT_USERS_GROUP_PRIVILEGES: frozenset[Privilege] = frozenset({Privilege.SELECT, Privilege.APPLY, Privilege.EXECUTE})
 
 
 def default_users_group_privileges_for(object_type: str) -> frozenset[Privilege]:
@@ -136,6 +134,7 @@ def default_users_group_privileges_for(object_type: str) -> frozenset[Privilege]
     if object_type == ObjectType.REGISTRY_RULE.value:
         return frozenset({Privilege.SELECT, Privilege.APPLY})
     return DEFAULT_USERS_GROUP_PRIVILEGES
+
 
 # Parent object types for inheritance resolution: a grant with ``inherit=True``
 # on a parent flows to children of these child types. The parent ids

@@ -6,6 +6,7 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Profiling and Quality Checks Generation
 
@@ -89,6 +90,10 @@ Data loaded as a DataFrame can be profiled using DQX classes to generate summary
 
 ### Profiling a table
 
+<FeatureTags>
+  <AvailableSinceVersion version="0.6.0" heading={false} />
+</FeatureTags>
+
 Profiling and quality checks generation can be run on individual tables.
 
 <Tabs>
@@ -113,6 +118,10 @@ Profiling and quality checks generation can be run on individual tables.
 </Tabs>
 
 ### Profiling multiple tables
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.6.0" heading={false} />
+</FeatureTags>
 
 The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
@@ -618,6 +627,10 @@ When profiling large datasets, use sampling and limits for best performance.
 </Tabs>
 
 ## Stratified sampling by column
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.15.0" heading={false} />
+</FeatureTags>
 
 By default, the profiler uses Spark's `DataFrame.sample` to get a uniform random sample over the whole dataset. For skewed or imbalanced data, this can under-represent (or miss entirely) rare strata of the dataset.
 

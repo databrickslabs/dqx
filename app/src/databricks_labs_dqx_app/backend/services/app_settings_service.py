@@ -255,9 +255,7 @@ class AppSettingsService:
 
     def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Compatibility write that preserves the always-off policy."""
-        self.save_setting(
-            self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "false", user_email=user_email
-        )
+        self.save_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "false", user_email=user_email)
         return False
 
     # ------------------------------------------------------------------

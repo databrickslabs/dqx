@@ -636,3 +636,13 @@ def test_base_checks_storage_config_wrong_type_raises_invalid_config_error() -> 
 
     with pytest.raises(InvalidConfigError):
         _StrictConfig(location="test", count="not_a_number")  # type: ignore[arg-type]
+
+
+def test_storage_config_rejects_unknown_kwarg():
+    """Unknown/misspelled kwargs must be rejected, not silently dropped (extra='forbid').
+
+    Regression: the Pydantic migration defaulted to extra='ignore', so a typo was accepted
+    and dropped where the pre-migration dataclass raised TypeError.
+    """
+    with pytest.raises(InvalidConfigError):
+        FileChecksStorageConfig(location="/x/checks.yml", typo_field="oops")  # type: ignore[call-arg]

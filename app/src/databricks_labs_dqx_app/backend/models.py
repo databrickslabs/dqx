@@ -23,6 +23,7 @@ from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import ScheduleKind as RegistryScheduleKind
 from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEFAULT
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .rule_enums import RuleSource, RuleStatus
 from .registry_models import RuleSlot as RegistryRuleSlot
 from .registry_models import RunSetSource as RegistryRunSetSource
 from .registry_models import RunSetTrigger as RegistryRunSetTrigger
@@ -313,7 +314,7 @@ class RuleCatalogEntryOut(BaseModel):
     checks: list[dict[str, Any]]
     version: int
     status: str
-    source: str = "ui"
+    source: RuleSource = RuleSource.ui
     rule_id: str | None = None
     created_by: str | None = None
     created_at: str | None = None
@@ -351,14 +352,18 @@ class RuleHistoryEntryOut(BaseModel):
 class SaveRulesIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    source: str = Field(default="ui", description="Origin of the rules: ui, imported, or ai")
+    source: RuleSource = Field(
+        default=RuleSource.ui, description="Origin of the rules: ui, sql, profiler, import, or ai"
+    )
     rule_id: str | None = Field(default=None, description="If set, update existing rule instead of creating")
 
 
 class BatchSaveRulesIn(BaseModel):
     table_fqns: list[str] = Field(description="Fully qualified table names to apply the checks to")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    source: str = Field(default="ui", description="Origin of the rules: ui, imported, or ai")
+    source: RuleSource = Field(
+        default=RuleSource.ui, description="Origin of the rules: ui, sql, profiler, import, or ai"
+    )
 
 
 class BatchSaveRulesOut(BaseModel):
@@ -409,7 +414,7 @@ class FilterTablesByColumnsOut(BaseModel):
 
 
 class SetStatusIn(BaseModel):
-    status: str = Field(description="New status: draft | pending_approval | approved | rejected")
+    status: RuleStatus = Field(description="New status: draft | pending_approval | approved | rejected")
     expected_version: int | None = Field(
         default=None,
         description="If provided, the update is rejected when the current version does not match (optimistic concurrency).",
@@ -1095,6 +1100,13 @@ class MonitoredTableVersionChecksOut(BaseModel):
     checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class TagPairOut(BaseModel):
+    """A free-text custom tag key=value pair, for list-view facets."""
+
+    key: str
+    value: str
+
+
 class MonitoredTableSummaryOut(BaseModel):
     """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
 
@@ -1119,6 +1131,13 @@ class MonitoredTableSummaryOut(BaseModel):
         default_factory=list,
         description="Distinct effective severities across applied rules (override-aware).",
     )
+    custom_tags: list[TagPairOut] = Field(
+        default_factory=list,
+        description=(
+            "Distinct free-text custom tags (key=value) across applied registry rules, "
+            "excluding reserved metadata keys. Used by the Table Spaces Add-tables picker."
+        ),
+    )
 
     @classmethod
     def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
@@ -1132,6 +1151,7 @@ class MonitoredTableSummaryOut(BaseModel):
             score_computed_at=summary.score_computed_at,
             dimensions=list(summary.dimensions),
             severities=list(summary.severities),
+            custom_tags=[TagPairOut(key=k, value=v) for k, v in summary.custom_tags],
         )
 
 
@@ -2410,9 +2430,9 @@ class UserRoleOut(BaseModel):
     is_runner: bool = Field(
         default=False,
         description=(
-            "Whether the user holds the orthogonal RUNNER role. Admins are "
-            "always runners. Other roles only become runners when their "
-            "group is explicitly mapped to RUNNER."
+            "Backward-compat flag: true when the resolved role grants "
+            "`run_rules` (Admin and Rule Author today). There is no separate "
+            "RUNNER role — see CAN_RUN_ROLES in authorization.py."
         ),
     )
 

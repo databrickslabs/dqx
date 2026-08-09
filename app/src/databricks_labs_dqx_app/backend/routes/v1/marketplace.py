@@ -34,15 +34,11 @@ def list_marketplace_packs(
     still reads as already-added, which is the intent for the disable state.
     """
     packs = loader.load_packs(validate_fn)
-    existing_names = {
-        name for r in registry.list_rules() if (name := get_rule_name(r.user_metadata)) is not None
-    }
+    existing_names = {name for r in registry.list_rules() if (name := get_rule_name(r.user_metadata)) is not None}
     # Copy (never mutate the cached packs) with the per-rule imported flag set.
     packs_out = [
         pack.model_copy(
-            update={
-                "rules": [rule.model_copy(update={"imported": rule.name in existing_names}) for rule in pack.rules]
-            }
+            update={"rules": [rule.model_copy(update={"imported": rule.name in existing_names}) for rule in pack.rules]}
         )
         for pack in packs
     ]

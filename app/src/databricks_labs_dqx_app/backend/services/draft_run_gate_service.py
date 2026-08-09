@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 #: Cross-table SQL checks use this synthetic ``table_fqn`` prefix and have no
 #: single home table to validate, so the gate skips them (mirrors the registry
 #: rule carve-out). Kept in sync with the ``__sql_check__/`` convention
-#: documented in ``backend/CLAUDE.md``.
+#: documented in ``app/AGENTS.md`` (Backend).
 SYNTHETIC_FQN_PREFIX = "__sql_check__/"
 
 #: User-facing 409 message when the gate blocks a submit and NO qualifying run
@@ -116,9 +116,7 @@ class DraftRunGateService:
         )
         return bool(self._sql.query(sql))
 
-    def enforce(
-        self, *, enabled: bool, table_fqns: list[str], last_change_time: datetime | None = None
-    ) -> None:
+    def enforce(self, *, enabled: bool, table_fqns: list[str], last_change_time: datetime | None = None) -> None:
         """Raise :class:`DraftRunRequiredError` when the gate should block the submit.
 
         No-op when *enabled* is ``False`` (setting off) or when there are no

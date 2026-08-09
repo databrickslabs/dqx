@@ -239,9 +239,7 @@ def batch_import_registry_rules(
         try:
             fingerprint: str | None = None
             if body.skip_duplicates:
-                fingerprint = svc.compute_definition_fingerprint(
-                    rule_in.mode, rule_in.definition, rule_in.polarity
-                )
+                fingerprint = svc.compute_definition_fingerprint(rule_in.mode, rule_in.definition, rule_in.polarity)
                 # Intra-batch duplicate → reuse the earlier result, no DB work.
                 in_batch = seen_in_batch.get(fingerprint)
                 if in_batch is not None:
@@ -251,9 +249,7 @@ def batch_import_registry_rules(
                 # than minting another copy (keeps re-imports idempotent).
                 existing = svc.get_active_rule_by_fingerprint(fingerprint)
                 if existing is not None:
-                    existing_out = CreateRegistryRuleOut(
-                        rule=RegistryRuleOut.from_domain(existing), dedup_warning=None
-                    )
+                    existing_out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(existing), dedup_warning=None)
                     reused.append(existing_out)
                     seen_in_batch[fingerprint] = existing_out
                     continue

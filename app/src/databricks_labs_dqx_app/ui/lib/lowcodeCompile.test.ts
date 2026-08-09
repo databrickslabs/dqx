@@ -46,9 +46,9 @@ describe("compileAstToSql — predicate composition", () => {
     expect(compileAstToSql(ast(rows))).toBe("{{a}} IS NOT NULL AND {{b}} IS NULL OR {{c}} IS NOT NULL");
   });
 
-  test("qualified (dotted) refs pass through raw; plain refs stay wrapped", () => {
+  test("qualified (dotted) refs are backtick-quoted; plain refs stay wrapped", () => {
     expect(compileAstToSql(ast([row({ column_ref: "orders.total", operator: ">", value: 5 })]))).toBe(
-      "orders.total > 5",
+      "`orders`.`total` > 5",
     );
   });
 
@@ -58,12 +58,18 @@ describe("compileAstToSql — predicate composition", () => {
 });
 
 describe("operator SQL", () => {
-  test("LIKE value single-quotes are escaped (O'Brien cannot break the literal)", () => {
+  test("contains/starts/ends use Spark builtins so %/_ stay literal", () => {
     expect(compileAstToSql(ast([row({ column_ref: "name", operator: "contains", value: "O'Brien" })]))).toBe(
-      "{{name}} LIKE '%O''Brien%'",
+      "contains({{name}}, 'O''Brien')",
     );
     expect(compileAstToSql(ast([row({ column_ref: "name", operator: "starts with", value: "O'B" })]))).toBe(
-      "{{name}} LIKE 'O''B%'",
+      "startswith({{name}}, 'O''B')",
+    );
+    expect(compileAstToSql(ast([row({ column_ref: "amt", operator: "contains", value: "100%" })]))).toBe(
+      "contains({{amt}}, '100%')",
+    );
+    expect(compileAstToSql(ast([row({ column_ref: "s", operator: "ends with", value: "_x" })]))).toBe(
+      "endswith({{s}}, '_x')",
     );
   });
 
@@ -97,10 +103,10 @@ describe("operator SQL", () => {
     // Text
     ["equals", "x", "{{c}} = 'x'"],
     ["not equals", "x", "{{c}} != 'x'"],
-    ["contains", "x", "{{c}} LIKE '%x%'"],
-    ["does not contain", "x", "{{c}} NOT LIKE '%x%'"],
-    ["starts with", "x", "{{c}} LIKE 'x%'"],
-    ["ends with", "x", "{{c}} LIKE '%x'"],
+    ["contains", "x", "contains({{c}}, 'x')"],
+    ["does not contain", "x", "NOT contains({{c}}, 'x')"],
+    ["starts with", "x", "startswith({{c}}, 'x')"],
+    ["ends with", "x", "endswith({{c}}, 'x')"],
     ["matches regex", "^a.*$", "{{c}} RLIKE '^a.*$'"],
     ["has leading or trailing whitespace", null, "{{c}} != TRIM({{c}})"],
     ["has no leading or trailing whitespace", null, "{{c}} = TRIM({{c}})"],
@@ -289,13 +295,15 @@ describe("compileJoinsToSql", () => {
       { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
     ];
     // Default qualifies the own side to the input view (low-code path).
-    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}");
+    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{input_view}}.{{customer_id}}");
     // Raw-SQL editor path opts out — own side stays a bare {{slot}}.
-    expect(compileJoinsToSql(joins, false)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}");
+    expect(compileJoinsToSql(joins, false)).toBe("LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{customer_id}}");
   });
 
   test("CROSS JOIN emits no ON clause", () => {
-    expect(compileJoinsToSql([{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }])).toBe("CROSS JOIN c.s.dim");
+    expect(compileJoinsToSql([{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }])).toBe(
+      "CROSS JOIN `c`.`s`.`dim`",
+    );
   });
 });
 
@@ -334,7 +342,7 @@ describe("compileLowcodeBody — folding", () => {
     expect(body.sql_query).toBe(
       "SELECT {{input_view}}.{{customer_id}} AS {{customer_id}}, " +
         "(NOT ({{input_view}}.{{customer_id}} IS NOT NULL)) AS condition " +
-        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}",
+        "FROM {{input_view}} LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{input_view}}.{{customer_id}}",
     );
     // merge_columns stay BARE — the library passes them verbatim to df.join(on=);
     // an {{input_view}}-qualified value would be an invalid bare identifier at run.
@@ -356,7 +364,7 @@ describe("compileLowcodeBody — folding", () => {
     const body = compileLowcodeBody(ast([agg], joins), "{{region}}");
     expect(body.merge_columns).toEqual(["{{region}}"]);
     // ON own-side qualified under the join; GROUP BY stays bare.
-    expect(body.sql_query).toContain("INNER JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{cid}}");
+    expect(body.sql_query).toContain("INNER JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{input_view}}.{{cid}}");
     expect(body.sql_query).toContain("GROUP BY {{region}}");
   });
 
@@ -372,7 +380,7 @@ describe("compileLowcodeBody — folding", () => {
     // A CROSS join still means a joined table is present, so own predicate
     // columns are qualified to the input view (unambiguous). No merge key exists.
     expect(body.sql_query).toBe(
-      "SELECT (NOT ({{input_view}}.{{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim",
+      "SELECT (NOT ({{input_view}}.{{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN `c`.`s`.`dim`",
     );
     expect(body.merge_columns).toBeUndefined();
   });
@@ -399,18 +407,19 @@ describe("join column qualification (AMBIGUOUS_REFERENCE / INVALID_IDENTIFIER re
     expect(body.sql_query).toContain("NOT ({{input_view}}.{{customer_id}} > 0)");
     expect(body.sql_query).toContain("SELECT {{input_view}}.{{customer_id}} AS {{customer_id}},");
     expect(body.sql_query).toContain(
-      "ON dqx.dqx_studio_demo.customers.customer_id = {{input_view}}.{{customer_id}}",
+      "ON `dqx`.`dqx_studio_demo`.`customers`.`customer_id` = {{input_view}}.{{customer_id}}",
     );
     expect(body.merge_columns).toEqual(["{{customer_id}}"]);
   });
 
-  test("joined-table column stays raw under a join", () => {
+  test("joined-table column is backtick-quoted under a join", () => {
     const body = compileLowcodeBody(
       ast([row({ column_ref: "dqx.dqx_studio_demo.customers.tier", operator: "=", value: "gold" })], JOIN),
       "",
     );
-    expect(body.sql_query).toContain("dqx.dqx_studio_demo.customers.tier");
+    expect(body.sql_query).toContain("`dqx`.`dqx_studio_demo`.`customers`.`tier`");
     expect(body.sql_query).not.toContain("{{input_view}}.dqx.dqx_studio_demo.customers.tier");
+    expect(body.sql_query).not.toContain("{{input_view}}.`dqx`");
   });
 
   test("$col value qualified under a join", () => {
@@ -537,7 +546,7 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
   });
 
   test("passthrough without merge_columns stays dataset-level (no merge_columns key)", () => {
-    const q = "SELECT (NOT (COUNT(*) > 0)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim";
+    const q = "SELECT (NOT (COUNT(*) > 0)) AS condition FROM {{input_view}} CROSS JOIN `c`.`s`.`dim`";
     const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: {} });
     expect(body.sql_query).toBe(q);
     expect(body.merge_columns).toBeUndefined();
@@ -554,7 +563,7 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
     });
     expect(body.sql_query).toBe(
       "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
-        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
+        "FROM {{input_view}} LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{customer_id}}",
     );
     expect(body.merge_columns).toEqual(["{{customer_id}}"]);
   });
@@ -614,7 +623,7 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
     });
     expect(body.merge_columns).toEqual(["{{customer_id}}"]);
     expect(body.sql_query).toContain("SELECT {{customer_id}},");
-    expect(body.sql_query).toContain("FROM {{input_view}} LEFT JOIN main.sales.customers");
+    expect(body.sql_query).toContain("FROM {{input_view}} LEFT JOIN `main`.`sales`.`customers`");
     expect(body.predicate).toBeUndefined();
   });
 
@@ -838,10 +847,10 @@ describe("item42: column-ref RHS in single-value operators", () => {
     ).toBe("{{start_date}} < {{end_date}}");
   });
 
-  test("item42: a qualified (join) column RHS emits raw table.col", () => {
+  test("item42: a qualified (join) column RHS is backtick-quoted", () => {
     expect(
       compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "orders.total" } })])),
-    ).toBe("{{amount}} >= orders.total");
+    ).toBe("{{amount}} >= `orders`.`total`");
   });
 
   test("item42: literal RHS is unchanged (regression)", () => {

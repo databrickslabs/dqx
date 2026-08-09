@@ -416,9 +416,7 @@ class ScoreCacheService:
                 "latest_run_id": latest_run_id,
                 # CAST('...' AS TIMESTAMP) parses on both backends; the
                 # value is the warehouse's own stringified run_time.
-                "run_time": (
-                    RawSql(f"CAST('{escape_sql_string(run_time)}' AS TIMESTAMP)") if run_time else None
-                ),
+                "run_time": (RawSql(f"CAST('{escape_sql_string(run_time)}' AS TIMESTAMP)") if run_time else None),
                 "computed_at": RawSql("current_timestamp()"),
             },
         )

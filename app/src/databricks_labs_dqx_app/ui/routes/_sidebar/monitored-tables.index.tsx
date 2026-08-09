@@ -374,7 +374,7 @@ function MonitoredTablesPage() {
     const eligible = selectedRows.filter((r) => r.table.status === "pending_approval");
     bulkAction(
       eligible,
-      (bindingId) => approveMutation.mutateAsync({ bindingId }),
+      (bindingId) => approveMutation.mutateAsync({ bindingId, data: null }),
       t("monitoredTables.bulkApproved"),
     );
   };
@@ -384,7 +384,7 @@ function MonitoredTablesPage() {
     const eligible = selectedRows.filter((r) => r.table.status === "pending_approval");
     bulkAction(
       eligible,
-      (bindingId) => rejectMutation.mutateAsync({ bindingId }),
+      (bindingId) => rejectMutation.mutateAsync({ bindingId, data: null }),
       t("monitoredTables.bulkRejected"),
     );
   };
@@ -472,7 +472,7 @@ function MonitoredTablesPage() {
   const handleApprove = (summary: MonitoredTableSummaryOut) =>
     runRowAction(
       summary.table.binding_id,
-      () => approveMutation.mutateAsync({ bindingId: summary.table.binding_id }),
+      () => approveMutation.mutateAsync({ bindingId: summary.table.binding_id, data: null }),
       t("monitoredTables.toastApproved"),
       t("monitoredTables.toastApproveFailed"),
     );
@@ -511,7 +511,7 @@ function MonitoredTablesPage() {
     setRejectTarget(null);
     runRowAction(
       summary.table.binding_id,
-      () => rejectMutation.mutateAsync({ bindingId: summary.table.binding_id }),
+      () => rejectMutation.mutateAsync({ bindingId: summary.table.binding_id, data: null }),
       t("monitoredTables.toastRejected"),
       t("monitoredTables.toastRejectFailed"),
     );

@@ -26,6 +26,10 @@ from typing import Any, cast, get_args
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import (
+    ORIGIN_KEY,
+    RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+    RESERVED_MAPPED_COLUMNS_KEY,
+    RESERVED_RULE_METADATA_KEYS,
     SCHEDULE_KIND_DEFAULT,
     AppliedRule,
     ColumnMappingGroup,
@@ -47,6 +51,17 @@ from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, S
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
 logger = logging.getLogger(__name__)
+
+# Keys that must never surface as free-text "custom tags" on a list row —
+# reserved registry metadata plus applied-rule-only bookkeeping keys.
+_CUSTOM_TAG_EXCLUDED_KEYS: frozenset[str] = frozenset(
+    {
+        *RESERVED_RULE_METADATA_KEYS,
+        RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+        RESERVED_MAPPED_COLUMNS_KEY,
+        ORIGIN_KEY,
+    }
+)
 
 # Display / list sort order for severity labels (most severe first).
 _SEVERITY_RANK: dict[str, int] = {
@@ -139,6 +154,10 @@ class MonitoredTableSummary:
     # (effective severity honours per-application ``severity_override``).
     dimensions: list[str] = field(default_factory=list)
     severities: list[str] = field(default_factory=list)
+    # Distinct free-text custom tags (key=value) across applied registry rules,
+    # excluding reserved metadata keys. Used by the Table Spaces "Add tables"
+    # picker to filter by custom tag value.
+    custom_tags: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -282,9 +301,7 @@ class MonitoredTableService:
         logger.info("Registered monitored table %s (binding_id=%s)", table_fqn, binding.binding_id)
         return binding
 
-    def bulk_register(
-        self, table_fqns: list[str], user_email: str, steward: str | None = None
-    ) -> BulkRegisterResult:
+    def bulk_register(self, table_fqns: list[str], user_email: str, steward: str | None = None) -> BulkRegisterResult:
         """Register many *table_fqns* under Rules Registry governance in one pass.
 
         Unlike :meth:`register`, already-monitored tables are skipped
@@ -454,6 +471,7 @@ class MonitoredTableService:
         check_counts = self._materialized_check_counts([t.table_fqn for t, _, _c in tables])
         bindings_with_rules = [bid for bid in applied_counts if applied_counts[bid] > 0]
         tag_facets = self._applied_rule_tag_facets(bindings_with_rules) if bindings_with_rules else {}
+        empty_facets: tuple[list[str], list[str], list[tuple[str, str]]] = ([], [], [])
         return [
             MonitoredTableSummary(
                 table=t,
@@ -464,8 +482,9 @@ class MonitoredTableService:
                 failed_tests=cached.failed_tests,
                 total_tests=cached.total_tests,
                 score_computed_at=cached.computed_at,
-                dimensions=tag_facets.get(t.binding_id, ([], []))[0],
-                severities=tag_facets.get(t.binding_id, ([], []))[1],
+                dimensions=tag_facets.get(t.binding_id, empty_facets)[0],
+                severities=tag_facets.get(t.binding_id, empty_facets)[1],
+                custom_tags=tag_facets.get(t.binding_id, empty_facets)[2],
             )
             for t, cached, snap_check_count in tables
         ]
@@ -487,12 +506,16 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
-    def _applied_rule_tag_facets(self, binding_ids: list[str]) -> dict[str, tuple[list[str], list[str]]]:
-        """Distinct dimension / effective-severity tags per binding (one joined query).
+    def _applied_rule_tag_facets(
+        self, binding_ids: list[str]
+    ) -> dict[str, tuple[list[str], list[str], list[tuple[str, str]]]]:
+        """Distinct dimension / severity / custom-tag facets per binding (one join).
 
         Effective severity is ``severity_override`` when set, otherwise the
-        registry rule's reserved ``severity`` tag. Bindings with no tagged
-        applied rules are absent from the result — callers default to ``[]``.
+        registry rule's reserved ``severity`` tag. Custom tags are the
+        free-text ``user_metadata`` entries on the applied registry rule
+        (excluding reserved keys). Bindings with no tagged applied rules
+        still appear in the result with empty lists.
         """
         if not binding_ids:
             return {}
@@ -507,6 +530,7 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         dims: dict[str, set[str]] = {}
         sevs: dict[str, set[str]] = {}
+        custom: dict[str, set[tuple[str, str]]] = {}
         for row in rows:
             if not row or not row[0]:
                 continue
@@ -519,11 +543,16 @@ class MonitoredTableService:
             severity = override or (get_rule_severity(metadata) or "")
             if severity:
                 sevs.setdefault(binding_id, set()).add(severity)
-        out: dict[str, tuple[list[str], list[str]]] = {}
+            for key, value in metadata.items():
+                if key in _CUSTOM_TAG_EXCLUDED_KEYS or not isinstance(value, str) or not value:
+                    continue
+                custom.setdefault(binding_id, set()).add((key, value))
+        out: dict[str, tuple[list[str], list[str], list[tuple[str, str]]]] = {}
         for binding_id in binding_ids:
             out[binding_id] = (
                 sorted(dims.get(binding_id, set())),
                 sorted(sevs.get(binding_id, set()), key=_severity_list_sort_key),
+                sorted(custom.get(binding_id, set())),
             )
         return out
 
@@ -1293,6 +1322,8 @@ class MonitoredTableService:
     def _parse_applied_pass_threshold(raw: object) -> int | None:
         """Coerce a stored applied-rule ``pass_threshold`` cell to an int in [0, 100], or None."""
         if raw is None or raw == "":
+            return None
+        if not isinstance(raw, (int, float, str, bytes, bytearray)):
             return None
         try:
             return max(0, min(100, int(raw)))

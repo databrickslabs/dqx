@@ -172,9 +172,7 @@ class VectorStoreProvisioner:
         except DatabricksError as e:
             # Not every endpoint is grantable — e.g. system/foundation-model
             # endpoints reject permission changes. Non-fatal.
-            logger.warning(
-                "Could not grant CAN_QUERY on serving endpoint %s to group %s: %s", endpoint_name, group, e
-            )
+            logger.warning("Could not grant CAN_QUERY on serving endpoint %s to group %s: %s", endpoint_name, group, e)
         except Exception:
             logger.warning(
                 "Unexpected error granting CAN_QUERY on serving endpoint %s (non-fatal)", endpoint_name, exc_info=True
@@ -249,9 +247,7 @@ class VectorStoreProvisioner:
             primary_key=PRIMARY_KEY_COLUMN,
             index_type=VectorIndexType.DIRECT_ACCESS,
             direct_access_index_spec=DirectAccessVectorIndexSpec(
-                embedding_vector_columns=[
-                    EmbeddingVectorColumn(name=EMBEDDING_COLUMN, embedding_dimension=dimension)
-                ],
+                embedding_vector_columns=[EmbeddingVectorColumn(name=EMBEDDING_COLUMN, embedding_dimension=dimension)],
                 schema_json=json.dumps(
                     {
                         PRIMARY_KEY_COLUMN: "string",
