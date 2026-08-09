@@ -459,56 +459,75 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
         f"{col_str_norm}_is_not_in_the_list",
     )
 
+
 @register_rule("dataset")
-def is_in_list_distribuion(column: str | Column,
-                           distribution: dict[Any, float],
-                           distance: float,
-                           case_sensitive: bool = True,
-                           impute: bool = True) -> Column:
+def is_in_distribution(
+    column: str | Column,
+    distribution: dict[bool | str | int | float | datetime.date, float],
+    distance: float,
+    case_sensitive: bool = True,
+    impute: bool = True,
+) -> tuple[Column, Callable]:
     """
-    Check whether the discrete values distributions of the column is within a distance less then or equal to given distnace
-    comparing to the given values distribution. The distance distance is calculated **Total variation distance of probability measures**
-    (https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures) method.
+    Check whether the discrete value distribution of the column is within a distance less than or equal to the given
+    distance, compared to the given values distribution. The distance is calculated using the
+    [Total variation distance of probability measures](https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures)
+    method.
 
-    The sum of the supplied distribution values must be less then or equals to 1. The distance must be less then or equals to 1 as well.
-    The values distribution has no size limitation, but its highly recommended to keep it reasonably small as the check intended to be used
-    for enumerated data.
-    This check is suited for a primitive type of columns, such as boolean, string, integer. However, in the same type it does not validate
-    or limit in this.
-    The distribution is not allowed to have `None` values in it. Please, consider using corresponding completeness functions for this purpose.
-    The distribution dict is not allowed to have `inf`, `-inf` or `nan` among values.
+    This check aims to supplement *is_in_list* at the dataset level by verifying that the column not only stays within
+    the boundaries of enumerated values, but also that these values follow the expected distribution.
 
-    Values distribution can cover a subset of all values in the checked dataframe. Handing the difference of distribution keys depends on the
-    `impute` boolean parameter. If its `True` then, the distance will be calculated for a merge between two distributions: intersation of actual
-    and given distribution combinted with 0 distribution values for the actual distribution.
-    If its `False` then whole check would fail indicating which keys are missing among target distribution.
-    **NOTE**: the unknown or unexpected values in the target distribution compared to given distribution will be ignored. Consider using
-    `is_in_list` row level for checking individual values.
+    Supported column types: Boolean, Char, String, Byte, Short, Integer, Float, Long, Double, and Date. For any other
+    column type a validation error is raised.
 
-    For string columns, case normalisation can be applied if `case_sensitive` is `True`.
+    The sum of the supplied distribution values must be less than or equal to 1. A sum strictly less than 1 is allowed
+    when the intent is to check only a subset of the possible values (e.g., some enumerated values are intentionally
+    omitted from the expected distribution). The distance must also be between 0 and 1 (inclusive).
+    The distribution is not allowed to contain *None* values; please consider using the corresponding completeness
+    functions for that purpose.
+    The distribution dict is not allowed to contain *inf*, *-inf*, or *nan* among its values, nor negative values.
+    The values distribution has no size limitation, but it is highly recommended to keep it reasonably small as the
+    check is intended to be used for enumerated data.
 
-    This check aim to suplement `is_in_list` at dataset level, by verifying that column not just stays in boundaries of enumerated values,
-    but also that these values have expected distribution.
+    The values distribution can cover a subset of all values in the checked dataframe. Regardless of the given
+    distribution, the actual distribution is still calculated over all non-null values in the column (equivalent to
+    *df.groupBy(col).count()*). *NULL* values in the checked column are skipped, so the distribution is calculated
+    over non-null values only.
+
+    Handling the difference of distribution keys depends on the *impute* boolean parameter.
+    If it is *True*, keys present in the given distribution but missing from the actual distribution are imputed with
+    a value of 0 in the actual distribution, so that the distance can be calculated across the union of keys.
+    If it is *False*, the check fails with an error specifying which keys from the given distribution are missing in
+    the actual distribution. Dataset-level checks apply to the whole dataset (not per-row), so the failure applies to
+    all rows.
+    *NOTE*: unknown or unexpected values present in the actual distribution but not in the given distribution are
+    ignored. Consider using *is_in_list* at the row level for checking individual values.
+
+    Case normalisation is applied when *case_sensitive* is *False*.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        distribution: expected distribution of literal values to compare with.
-        distance: max distance between target and given values distribution.
-        case_sensitive: whether to perform a case-sensitive comparison (default: True)
-        impute: whether substitue missing values in target distribution with 0 or fail the check.
+        column: column to check; can be a string column name or a column expression.
+        distribution: expected distribution of literal values to compare with. Keys must be of a supported primitive
+            type matching the column type; values must be non-negative and sum to 1 or less.
+        distance: max distance between the actual and given values distribution; must be between 0 and 1 (inclusive).
+        case_sensitive: whether to perform a case-sensitive comparison (default: True).
+        impute: whether to substitute keys missing from the actual distribution with 0 (True) or fail the check
+            (False).
 
     Returns:
-        Column object for condition
+        A tuple of:
+            - A Spark Column representing the condition for distribution violations.
+            - A closure that applies the distribution check and adds the necessary condition/count columns.
 
     Raises:
         MissingParameterError: If the distribution or distance is not provided.
-        InvalidParameterError: If the distribution parameter is not a dict or empty.
-        InvalidParameterError: If the distribution parameter dict contains `None` value.
-        InvalidParameterError: If sum of the distribution parameter values is greater then 1.
-        InvalidParameterError: If the distance parameter value is greater then 1.
+        InvalidParameterError: If the distribution parameter is not a dict or is empty; if the distribution dict
+            contains a *None* value; if the distribution values contain *inf*, *-inf*, or *nan*; if any distribution
+            value is negative; if the sum of the distribution values is greater than 1; if the distance parameter
+            value is not between 0 and 1 (inclusive); or if the column type is not one of the supported primitive
+            types.
     """
     pass
-
 
 
 @register_rule("row")
