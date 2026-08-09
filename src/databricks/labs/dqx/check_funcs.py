@@ -1,4 +1,5 @@
 import datetime
+import math
 import re
 import warnings
 import ipaddress
@@ -460,6 +461,81 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     )
 
 
+_SUPPORTED_DISTRIBUTION_KEY_TYPES: tuple[type, ...] = (bool, str, int, datetime.date)
+
+
+def _validate_distribution(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+    case_sensitive: bool,
+) -> None:
+    """Validate the *distribution* argument of *is_in_distribution*.
+
+    Raises:
+        MissingParameterError: If *distribution* is None.
+        InvalidParameterError: For any structural, value, key-type, or case-collision violation.
+    """
+    if distribution is None:
+        raise MissingParameterError("'distribution' is not provided.")
+    if not isinstance(distribution, dict):
+        raise InvalidParameterError(f"'distribution' must be a dict, got {type(distribution).__name__} instead.")
+    if not distribution:
+        raise InvalidParameterError("'distribution' must not be empty.")
+
+    for key, value in distribution.items():
+        if key is None:
+            raise InvalidParameterError("'distribution' must not contain None as a key.")
+        if value is None:
+            raise InvalidParameterError(f"'distribution' must not contain None as a value (key={key!r}).")
+        if not math.isfinite(value):
+            raise InvalidParameterError(
+                f"'distribution' value {value} for key {key!r} must be finite (no inf, -inf, or nan)."
+            )
+        if value < 0:
+            raise InvalidParameterError(f"'distribution' value {value} for key {key!r} must be non-negative.")
+
+    total = math.fsum(distribution.values())
+    if total > 1:
+        raise InvalidParameterError(f"'distribution' values sum ({total}) is greater than 1.")
+
+    key_types = {type(k) for k in distribution.keys()}
+    if len(key_types) > 1:
+        type_names = sorted(t.__name__ for t in key_types)
+        raise InvalidParameterError(
+            f"'distribution' keys must be homogeneous (all of the same type), got mixed types: {type_names}."
+        )
+
+    key_type = next(iter(key_types))
+    if not issubclass(key_type, _SUPPORTED_DISTRIBUTION_KEY_TYPES):
+        raise InvalidParameterError(
+            f"'distribution' keys of type {key_type.__name__!r} are not supported; "
+            f"expected one of: bool, str, int, datetime.date."
+        )
+
+    if not case_sensitive:
+        str_keys = [k for k in distribution.keys() if isinstance(k, str)]
+        normalized_to_original: dict[str, list[str]] = {}
+        for key in str_keys:
+            normalized_to_original.setdefault(key.lower(), []).append(key)
+        colliding = {norm: originals for norm, originals in normalized_to_original.items() if len(originals) > 1}
+        if colliding:
+            raise InvalidParameterError(
+                f"'distribution' keys collide after case-insensitive normalisation: {colliding}."
+            )
+
+
+def _validate_distance(distance: float) -> None:
+    """Validate the *distance* argument of *is_in_distribution*.
+
+    Raises:
+        MissingParameterError: If *distance* is None.
+        InvalidParameterError: If *distance* is not within the inclusive range [0, 1].
+    """
+    if distance is None:
+        raise MissingParameterError("'distance' is not provided.")
+    if not 0 <= distance <= 1:
+        raise InvalidParameterError(f"'distance' must be between 0 and 1 (inclusive), got {distance}.")
+
+
 @register_rule("dataset")
 def is_in_distribution(
     column: str | Column,
@@ -551,6 +627,9 @@ def is_in_distribution(
             types; if the distribution dict is not homogeneous (contains keys of more than one type); or if two keys
             in the given distribution collide after case normalisation when *case_sensitive* is *False*.
     """
+    _validate_distribution(distribution, case_sensitive)
+    _validate_distance(distance)
+
     pass
 
 
