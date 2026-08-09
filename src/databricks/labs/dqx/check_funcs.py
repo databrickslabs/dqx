@@ -463,10 +463,11 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 @register_rule("dataset")
 def is_in_distribution(
     column: str | Column,
-    distribution: dict[bool | str | int | float | datetime.date, float],
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
     distance: float,
     case_sensitive: bool = True,
     impute: bool = True,
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Check whether the discrete value distribution of the column is within a distance less than or equal to the given
@@ -477,42 +478,64 @@ def is_in_distribution(
     This check aims to supplement *is_in_list* at the dataset level by verifying that the column not only stays within
     the boundaries of enumerated values, but also that these values follow the expected distribution.
 
-    Supported column types: Boolean, Char, String, Byte, Short, Integer, Float, Long, Double, and Date. For any other
-    column type a validation error is raised.
+    Supported column types: Boolean, Char, String, Byte, Short, Integer, Long, and Date. These types have been chosen
+    because they are the most suitable for representing categorical data and produce stable, well-defined distributions
+    when aggregated. Floating-point types (Float, Double) are excluded because equality-based grouping is unstable due
+    to precision issues; complex types (Array, Struct, Variant) are excluded because they lack a natural
+    equality-based grouping semantics; and potentially large types (Binary) are excluded because they can lead to
+    performance and correctness issues when used as grouping keys. For any other column type a validation error is
+    raised.
 
-    The sum of the supplied distribution values must be less than or equal to 1. A sum strictly less than 1 is allowed
-    when the intent is to check only a subset of the possible values (e.g., some enumerated values are intentionally
-    omitted from the expected distribution). The distance must also be between 0 and 1 (inclusive).
-    The distribution is not allowed to contain *None* values; please consider using the corresponding completeness
-    functions for that purpose.
+    The sum of the supplied distribution values must be less than or equal to 1. The distance must also be between 0
+    and 1 (inclusive).
+    The distribution is not allowed to contain *None* — neither as a key nor as a value; please consider using the
+    corresponding completeness functions for that purpose.
     The distribution dict is not allowed to contain *inf*, *-inf*, or *nan* among its values, nor negative values.
+    The distribution dict must be homogeneous: all keys must be of the same supported primitive type (matching the
+    column type). Mixing key types (e.g., a dict containing both string and integer keys) raises a validation error.
     The values distribution has no size limitation, but it is highly recommended to keep it reasonably small as the
     check is intended to be used for enumerated data.
 
-    The values distribution can cover a subset of all values in the checked dataframe. Regardless of the given
-    distribution, the actual distribution is still calculated over all non-null values in the column (equivalent to
-    *df.groupBy(col).count()*). *NULL* values in the checked column are skipped, so the distribution is calculated
-    over non-null values only.
+    The actual distribution is calculated over all non-null values in the column (equivalent to
+    *df.groupBy(col).count()*). *NULL* values in the checked column are skipped, so the distribution is computed over
+    non-null values only.
 
-    Handling the difference of distribution keys depends on the *impute* boolean parameter.
-    If it is *True*, keys present in the given distribution but missing from the actual distribution are imputed with
-    a value of 0 in the actual distribution, so that the distance can be calculated across the union of keys.
+    A sum strictly less than 1 is allowed when the intent is to check only a subset of the possible values (e.g.,
+    some enumerated values are intentionally omitted from the expected distribution). To calculate the TVD properly in
+    this case, the function creates an internal *residual* bucket in the expected distribution to hold the missing
+    mass (1 - sum), and the actual distribution is computed with the same bucketing: all non-null column values not
+    listed as explicit keys in the given distribution are aggregated into the *residual* bucket. For example, given a
+    distribution of {A: 0.5, B: 0.3}, an internal *residual* bucket holds the remaining 0.2; the actual distribution
+    is then calculated over *A*, *B*, and *residual*, where *residual* counts every non-null column value other than
+    *A* and *B*. When the sum equals 1, the expected *residual* mass is 0 and any actual values not listed in the
+    given distribution will contribute to the distance.
+
+    Handling of keys present in the given distribution but missing from the actual distribution depends on the
+    *impute* boolean parameter.
+    If it is *True*, such keys are imputed with a value of 0 in the actual distribution, so that the distance can be
+    calculated across the union of keys.
     If it is *False*, the check fails with an error specifying which keys from the given distribution are missing in
     the actual distribution. Dataset-level checks apply to the whole dataset (not per-row), so the failure applies to
     all rows.
-    *NOTE*: unknown or unexpected values present in the actual distribution but not in the given distribution are
-    ignored. Consider using *is_in_list* at the row level for checking individual values.
+    *NOTE*: values present in the actual distribution but not listed as explicit keys in the given distribution are
+    aggregated into the *residual* bucket rather than compared individually. Consider using *is_in_list* at the row
+    level for checking individual values.
 
-    Case normalisation is applied when *case_sensitive* is *False*.
+    Case normalisation is applied when *case_sensitive* is *False*. The same normalisation is applied to the keys of
+    the given *distribution* before the check runs, so both sides are compared consistently. If two distribution keys
+    collide after normalisation a validation error is raised.
 
     Args:
         column: column to check; can be a string column name or a column expression.
-        distribution: expected distribution of literal values to compare with. Keys must be of a supported primitive
-            type matching the column type; values must be non-negative and sum to 1 or less.
+        distribution: expected distribution of literal values to compare with. The dict must be homogeneous — all
+            keys must be of the same supported primitive type matching the column type; values must be non-negative
+            and sum to 1 or less.
         distance: max distance between the actual and given values distribution; must be between 0 and 1 (inclusive).
         case_sensitive: whether to perform a case-sensitive comparison (default: True).
         impute: whether to substitute keys missing from the actual distribution with 0 (True) or fail the check
             (False).
+        row_filter: Optional SQL expression for filtering rows before the distribution is computed. Auto-injected
+            from the check filter.
 
     Returns:
         A tuple of:
@@ -522,10 +545,11 @@ def is_in_distribution(
     Raises:
         MissingParameterError: If the distribution or distance is not provided.
         InvalidParameterError: If the distribution parameter is not a dict or is empty; if the distribution dict
-            contains a *None* value; if the distribution values contain *inf*, *-inf*, or *nan*; if any distribution
+            contains a *None* key or *None* value; if the distribution values contain *inf*, *-inf*, or *nan*; if any distribution
             value is negative; if the sum of the distribution values is greater than 1; if the distance parameter
-            value is not between 0 and 1 (inclusive); or if the column type is not one of the supported primitive
-            types.
+            value is not between 0 and 1 (inclusive); if the column type is not one of the supported primitive
+            types; if the distribution dict is not homogeneous (contains keys of more than one type); or if two keys
+            in the given distribution collide after case normalisation when *case_sensitive* is *False*.
     """
     pass
 
