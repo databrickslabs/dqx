@@ -433,3 +433,26 @@ def generated_language_code_df(spark):
         gen = gen.withColumnSpec(col, values=values)
 
     return gen.build()
+
+
+# Number of distinct categorical values used by generated_distribution_df.
+# is_in_distribution is designed for enumerated data, so 20 values approximates a
+# realistic "bounded enum" workload while keeping the driver-side aggregation bounded.
+DISTRIBUTION_VALUE_COUNT = 20
+
+
+@pytest.fixture
+def generated_distribution_df(spark):
+    """DEFAULT_ROWS rows with a single categorical column drawn from 20 distinct int values.
+
+    dbldatagen produces a uniform-like distribution over the supplied ``values`` list, so the
+    actual proportions come out close to 1/20 per key — matched by the paired benchmark's
+    expected distribution.
+    """
+    schema = _parse_datatype_string("col_categorical: int")
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=1, partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema).withColumnSpec(
+        "col_categorical",
+        values=list(range(1, DISTRIBUTION_VALUE_COUNT + 1)),
+    )
+    return gen.build()

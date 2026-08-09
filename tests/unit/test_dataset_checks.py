@@ -421,6 +421,36 @@ def test_is_in_distribution_none_value():
 @pytest.mark.parametrize(
     "bad_value, expected_message",
     [
+        ("0.5", "'distribution' value for key 'A' must be a number, got str instead."),
+        ([0.5], "'distribution' value for key 'A' must be a number, got list instead."),
+        ({"nested": 0.5}, "'distribution' value for key 'A' must be a number, got dict instead."),
+        (True, "'distribution' value for key 'A' must be a number, got bool instead."),
+    ],
+)
+def test_is_in_distribution_non_numeric_values(bad_value, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={"A": bad_value, "B": 0.5})
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "bad_distance, expected_message",
+    [
+        ("0.5", "'distance' must be a number, got str instead."),
+        ([0.5], "'distance' must be a number, got list instead."),
+        ({"nested": 0.5}, "'distance' must be a number, got dict instead."),
+        (True, "'distance' must be a number, got bool instead."),
+    ],
+)
+def test_is_in_distribution_non_numeric_distance(bad_distance, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distance=bad_distance)
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "bad_value, expected_message",
+    [
         (math.inf, "'distribution' value inf for key 'A' must be finite (no inf, -inf, or nan)."),
         (-math.inf, "'distribution' value -inf for key 'A' must be finite (no inf, -inf, or nan)."),
         (math.nan, "'distribution' value nan for key 'A' must be finite (no inf, -inf, or nan)."),

@@ -265,3 +265,17 @@
       aggr_type: avg
       lookback_num_intervals: 2
       warmup_num_intervals: 2
+
+# is_in_distribution check — validates that the actual value distribution of a categorical
+# column stays within a Total Variation Distance of an expected distribution.
+# Uses col10 (int) which is constant (all 2s) in the integration fixture — matches {2: 1.0}
+# exactly (TVD=0). distance=1.0 keeps the check safely passing on the perf fixture too,
+# where col10 carries arbitrary integer values.
+- criticality: error
+  check:
+    function: is_in_distribution
+    arguments:
+      column: col10
+      distribution:
+        2: 1.0
+      distance: 1.0
