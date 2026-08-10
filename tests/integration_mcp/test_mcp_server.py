@@ -548,6 +548,68 @@ def _assert_schema_reads_and_guards(client: McpClient, table: str, seed_schema: 
     _assert_inaccessible_paths_are_refused(client)
 
 
+def _assert_get_run_result_waits_server_side(client: McpClient, table: str) -> None:
+    """A poll of a pending run must BLOCK server-side rather than return instantly.
+
+    This is the property that makes the submit→poll pattern usable by an agent, and it can only be
+    observed end to end: an LLM has no sleep primitive, so when get_run_result returned immediately
+    the agent called straight back, its own loop detection saw a repeated no-progress action, and it
+    stopped to ask the user — observed against a live deployment, on every job-backed tool. Unit tests
+    patch `time.sleep`, so they verify the loop's shape but not that a real deployment waits.
+
+    Asserted on the *first* poll of a freshly submitted run, which is certain to still be pending: the
+    call must take meaningfully longer than a bare round-trip, and its message must tell the caller to
+    come straight back rather than to wait (which it cannot do).
+    """
+    submitted = client.call("profile_table", {"table_name": table}, poll=False)
+    run_id = submitted.get("run_id")
+    assert run_id, f"profile_table did not return a run_id: {submitted}"
+
+    started = time.monotonic()
+    status = client.call("get_run_result", {"run_id": run_id}, poll=False)
+    elapsed = time.monotonic() - started
+
+    if status.get("status") == "running":
+        # The server polls on a backoff until the run is terminal or its budget expires, so a pending
+        # run cannot come back in the time of a single HTTP round-trip.
+        assert elapsed > 2.0, (
+            f"get_run_result returned in {elapsed:.1f}s while the run was still pending, so the server "
+            "is not waiting. An agent will call straight back, see no change, and stall."
+        )
+        message = (status.get("message") or "").lower()
+        assert "again" in message, f"the 'running' message must tell the caller to retry: {message!r}"
+        assert (
+            "wait a moment" not in message
+        ), f"the 'running' message must not tell a sleepless caller to wait: {message!r}"
+    # Drain the run so it does not outlive the test and trip the result-file sweeper mid-suite.
+    client.wait(run_id)
+
+
+def _assert_tool_calls_are_instrumented(client: McpClient, table: str) -> None:
+    """Telemetry must not break a tool call, on the real wrapped path.
+
+    Weak by necessity — the signal is a User-Agent header on a call to the workspace's own control
+    plane, so a black-box client cannot read it back. What this *can* prove is the part that actually
+    regressed: the wrapper runs inline before every tool body now (it used to dispatch to a thread), so
+    a fault in it would surface as a failed or slowed tool call rather than as missing data.
+
+    Kept because the failure mode is silent. The bug shipped in this PR was telemetry never sending at
+    all, with every unit test green; a live call that returns correctly and promptly is the cheapest
+    evidence that the inline ping is not on the critical path in a real deployment.
+    """
+    started = time.monotonic()
+    schema = client.call("get_table_schema", {"table_name": table})
+    elapsed = time.monotonic() - started
+
+    assert schema.get("columns"), f"an instrumented tool returned no result: {schema}"
+    # The ping is capped at 5s and deduped per tool per process. Even a first call that pays for it in
+    # full must stay well inside this; a hang here means telemetry is blocking the request path.
+    assert elapsed < 20.0, (
+        f"get_table_schema took {elapsed:.1f}s — telemetry is inline, so a stalled control-plane ping "
+        "would show up exactly like this."
+    )
+
+
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
@@ -579,6 +641,11 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
 
         # 5. get_table_schema, a nonexistent table, and the input guards.
         _assert_schema_reads_and_guards(client, table, data["schema"])
+
+        # 5b. The submit→poll contract itself: a pending poll blocks server-side (an agent cannot
+        # sleep), and the inline telemetry wrapper does not break or stall a tool call.
+        _assert_get_run_result_waits_server_side(client, table)
+        _assert_tool_calls_are_instrumented(client, table)
 
         # 6. profile_table (full scan) -> generate_rules; generated rules must validate.
         profile = client.call("profile_table", {"table_name": table, "options": {"sample_fraction": 1.0}})

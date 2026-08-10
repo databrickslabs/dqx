@@ -74,8 +74,12 @@ anomaly: ## Run anomaly integration tests (long timeout, with reruns)
 # "File not found: .build-constraints.txt". Pin it to the absolute repo-root path (same fix as
 # mcp-deploy). CI doesn't hit this — it runs via the acceptance harness, not make.
 mcp-integration: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
+# Timeout raised from 1800s: a passing run measured 1773s, i.e. 98.5% of the old budget, so any
+# workspace slowness turned a green suite red. The test deploys an app, a runner job and volumes, then
+# drives ~33 job-backed tool calls, so its duration tracks control-plane latency rather than anything
+# under this repo's control.
 mcp-integration: ## Run MCP server integration tests (deploys an isolated app; requires workspace auth + Databricks CLI)
-	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 1800 --durations 10
+	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 2700 --durations 10
 
 coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/

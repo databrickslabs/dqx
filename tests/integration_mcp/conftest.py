@@ -374,7 +374,16 @@ class McpClient:
             return self.wait(payload["run_id"], timeout=timeout)
         return payload
 
-    def wait(self, run_id: int, *, timeout: float = 300.0, interval: float = 4.0) -> dict:
+    def wait(self, run_id: int, *, timeout: float = 300.0, interval: float = 0.0) -> dict:
+        """Poll get_run_result until the run is terminal.
+
+        *interval* defaults to 0 because the **server** now blocks for up to ~30s inside
+        get_run_result (an agent has no sleep primitive, so the wait had to move server-side — see
+        utils.get_run_status). Sleeping here as well would stack a client delay on top of a server
+        delay that already returned as soon as the run finished, adding dead time to every one of the
+        suite's ~33 polled calls. That is not hypothetical: it pushed a run that took 1773s of an
+        1800s budget over the limit.
+        """
         deadline = time.monotonic() + timeout
         last = "unknown"
         while True:
@@ -404,7 +413,8 @@ class McpClient:
                 raise AssertionError(
                     f"run {run_id} not finished within {timeout:.0f}s (last status={last}){self._run_hint(run_id)}"
                 )
-            time.sleep(interval)
+            if interval:
+                time.sleep(interval)
 
     def _run_hint(self, run_id: int) -> str:
         """A clickable run URL, so a failed run is one click from its driver logs."""
