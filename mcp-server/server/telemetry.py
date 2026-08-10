@@ -41,6 +41,10 @@ _TELEMETRY_TIMEOUT_SECONDS = 5
 _TELEMETRY_CACHE_MAX_SIZE = 10_000
 _sent_telemetry: "OrderedDict[tuple[str, str], None]" = OrderedDict()
 
+# Guards _sent_telemetry. Tools are served concurrently, so an unguarded read-then-write lets N
+# simultaneous first invocations of the same tool all observe "not sent yet" and each fire a ping.
+_cache_lock = threading.Lock()
+
 # Namespaces the signal so MCP usage is separable from direct DQX library usage.
 TELEMETRY_KEY = "dqx_mcp"
 
@@ -77,7 +81,24 @@ def _dqx_version() -> str:
 
 def reset_telemetry_cache() -> None:
     """Clear the per-process dedup cache so previously sent signals can be sent again (tests)."""
-    _sent_telemetry.clear()
+    with _cache_lock:
+        _sent_telemetry.clear()
+
+
+def _claim_signal(key: str, value: str) -> bool:
+    """Atomically claim the right to send *(key, value)*, returning False if already claimed.
+
+    Check-and-insert under one lock, so concurrent first invocations of the same tool produce exactly
+    one send rather than one per caller. Claiming on *attempt* rather than success is deliberate — the
+    same choice the DQX library makes — so a brownout costs one stalled ping, not one per later call.
+    """
+    with _cache_lock:
+        if (key, value) in _sent_telemetry:
+            return False
+        _sent_telemetry[(key, value)] = None
+        if len(_sent_telemetry) > _TELEMETRY_CACHE_MAX_SIZE:
+            _sent_telemetry.popitem(last=False)
+        return True
 
 
 def _telemetry_disabled() -> bool:
@@ -99,13 +120,10 @@ def log_telemetry(ws, key: str, value: str) -> None:
     """
     if _telemetry_disabled():
         return
-    # Mark on *attempt*, not success: at most one control-plane call per signal per process, so a
-    # brownout cannot re-stall every later request. Same rationale as the DQX library.
-    if (key, value) in _sent_telemetry:
+    # Claiming here as well as in _send_async keeps this function correct when called directly; the
+    # claim is idempotent, so the second check is a cheap no-op on the wrapped path.
+    if not _claim_signal(key, value):
         return
-    _sent_telemetry[(key, value)] = None
-    if len(_sent_telemetry) > _TELEMETRY_CACHE_MAX_SIZE:
-        _sent_telemetry.popitem(last=False)
 
     try:
         new_config = ws.config.copy().with_user_agent_extra(key, value)
@@ -153,10 +171,15 @@ def _send_async(tool_name: str) -> None:
     The ping is an HTTP round-trip to the control plane: ~0.6s on a healthy workspace and up to the
     5s timeout on an unhealthy one. Doing that inline made every first-call-per-tool pay for
     instrumentation, which is the wrong trade — the user's request must not wait on telemetry.
-    Daemon so it can never hold up interpreter shutdown; the dedup cache still bounds this to one
-    thread per distinct signal per process.
+    Daemon so it can never hold up interpreter shutdown.
+
+    The dedup slot is claimed *before* the thread is created, so a tool that has already reported
+    costs nothing at all on later calls — no thread, no client construction. Doing this inside the
+    thread instead would spawn one per request and let concurrent first calls race into N pings.
     """
     if _telemetry_disabled():
+        return
+    if not _claim_signal(TELEMETRY_KEY, tool_name):
         return
 
     def _run() -> None:

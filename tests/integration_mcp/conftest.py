@@ -488,16 +488,17 @@ _COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS = 3600
 def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float) -> list[str]:
     """Download this run's ``.coverage*`` data files from the UC volume dir into the repo root.
 
-    Only files this run produced are downloaded, and only files it downloaded are deleted. That
-    coupling matters because the coverage directory is genuinely shared: it is derived from the
-    catalog plus a fixed schema, not from ``name_prefix``, so every concurrent CI run writes into the
-    same place. Deleting purely by age could therefore reap a *live* file belonging to a run that
-    started earlier and is still checkpointing — losing that run's coverage silently, which is the
-    exact failure this whole mechanism exists to prevent.
+    Under the normal layout each run has this directory to itself: it lives under the per-run
+    ``tmp_schema`` (``<name_prefix>_tmp``, and ``name_prefix`` carries a fresh uuid), so concurrent CI
+    runs do not share it. Two cases still put a foreign file here — an explicit ``DQX_MCP_COVERAGE_DIR``
+    pointing several runs at one directory, and a re-run against a surviving schema whose previous
+    ``bundle destroy`` did not complete.
 
-    Age is still used, but only to decide what NOT to download (a previous run's leftovers must stay
-    out of this run's merged report). Reaping those leftovers is left to the run that owns them, and
-    to `bundle destroy` removing the volume with the schema.
+    So age decides what NOT to download (an earlier run's leftovers must stay out of this run's merged
+    report), and only files this run downloaded are deleted. Age alone is deliberately not used for
+    deletion: in the shared-directory case that could reap a *live* file from a run still
+    checkpointing, silently losing the coverage this mechanism exists to collect. Leftovers are left
+    for the run that owns them and for `bundle destroy` removing the volume with the schema.
     """
     downloaded: list[str] = []
     skipped = 0
@@ -515,8 +516,15 @@ def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: floa
             skipped += 1
             continue
         body = ws.files.download(path).contents
+        payload = body.read() if body is not None else b""
+        if not payload:
+            # Never write a zero-byte .coverage.* file: it is not a valid coverage database, and the
+            # combine step would have to cope with it. Leave the remote file alone so the run that owns
+            # it can still flush; an empty body here means nothing has been written yet.
+            sys.stderr.write(f"coverage: skipped empty data file {name}\n")
+            continue
         dest = _REPO_ROOT / name
-        dest.write_bytes(body.read() if body is not None else b"")
+        dest.write_bytes(payload)
         downloaded.append(str(dest))
         # Safe to delete now: this process holds the bytes, so nothing is lost, and the volume does
         # not accumulate. A failure here is ignored — the file is merely left for teardown.

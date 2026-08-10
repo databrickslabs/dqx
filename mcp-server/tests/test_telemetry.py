@@ -216,6 +216,56 @@ class TestWithTelemetry:
             assert wrapped() == "ok"
             assert time.monotonic() - started < 1.0
 
+    def test_no_thread_is_spawned_once_the_signal_has_been_sent(self):
+        """The point of the dedup cache: a reported tool costs nothing on every later call."""
+        from server.telemetry import with_telemetry
+
+        def sample_tool() -> str:
+            return "ok"
+
+        wrapped = with_telemetry(sample_tool)
+        with patch("server.utils.get_sp_client_for_telemetry", return_value=_client()):
+            with patch("server.telemetry.threading.Thread") as thread:
+                for _ in range(5):
+                    assert wrapped() == "ok"
+
+        assert thread.call_count == 1, f"spawned {thread.call_count} threads for one signal"
+
+    def test_concurrent_first_calls_send_exactly_one_signal(self):
+        """N simultaneous first invocations must not race into N control-plane pings."""
+        import threading as _threading
+
+        from server.telemetry import with_telemetry
+
+        def sample_tool() -> str:
+            return "ok"
+
+        wrapped = with_telemetry(sample_tool)
+        start = _threading.Barrier(8)
+        threads_made: list[object] = []
+        lock = _threading.Lock()
+
+        real_thread = _threading.Thread
+
+        def _record(*args, **kwargs):
+            with lock:
+                threads_made.append(object())
+            return real_thread(*args, **kwargs)
+
+        def _call() -> None:
+            start.wait()  # maximise the overlap on the dedup check
+            wrapped()
+
+        with patch("server.utils.get_sp_client_for_telemetry", return_value=_client()):
+            with patch("server.telemetry.threading.Thread", side_effect=_record):
+                callers = [real_thread(target=_call) for _ in range(8)]
+                for c in callers:
+                    c.start()
+                for c in callers:
+                    c.join(timeout=10)
+
+        assert len(threads_made) == 1, f"{len(threads_made)} pings fired for one signal"
+
     def test_tool_still_runs_when_the_thread_cannot_start(self):
         from server.telemetry import with_telemetry
 
