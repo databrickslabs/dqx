@@ -1,7 +1,5 @@
 """Unit tests for has_no_aggr_outliers — validation and registration only (no Spark required)."""
 
-import inspect
-
 import pytest
 
 from databricks.labs.dqx.check_funcs import has_no_aggr_outliers
@@ -25,23 +23,8 @@ class TestIsAggrNotAnomalousRegistration:
         _, apply_fn = result
         assert callable(apply_fn)
 
-    def test_rule_exposes_expected_parameter_names(self):
-        """The public API must include all spec-mandated keyword arguments."""
-        sig = inspect.signature(has_no_aggr_outliers)
-        params = set(sig.parameters.keys())
-        required = {
-            "column",
-            "time_column",
-            "aggr_type",
-            "sigma",
-            "lookback_num_intervals",
-            "warmup_num_intervals",
-            "time_interval",
-            "group_by",
-            "row_filter",
-            "aggr_params",
-        }
-        assert required.issubset(params), f"Missing parameters: {required - params}"
+    # Exact parameter name, order, and kind for every registered check are asserted centrally by the
+    # signature-contract test, which supersedes the parameter-name subset check that used to live here.
 
 
 class TestIsAggrNotAnomalousValidation:
