@@ -34,10 +34,10 @@ class TestLogTelemetry:
 
         ws = _client()
         with patch("server.telemetry.type", create=True):
-            log_telemetry(ws, "dqx_mcp", "run_checks")
+            log_telemetry(ws, "mcp", "run_checks")
 
         extras = {c.args for c in ws.config.with_user_agent_extra.call_args_list}
-        assert ("dqx_mcp", "run_checks") in extras, extras
+        assert ("mcp", "run_checks") in extras, extras
 
     def test_sends_each_signal_at_most_once_per_process(self):
         """Adoption signal, not an invocation counter — the library dedups the same way."""
@@ -45,19 +45,19 @@ class TestLogTelemetry:
 
         ws = _client()
         for _ in range(5):
-            log_telemetry(ws, "dqx_mcp", "run_checks")
+            log_telemetry(ws, "mcp", "run_checks")
 
-        signals = [c.args for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx_mcp"]
-        assert signals == [("dqx_mcp", "run_checks")], signals
+        signals = [c.args for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "mcp"]
+        assert signals == [("mcp", "run_checks")], signals
 
     def test_distinct_values_are_sent_separately(self):
         from server.telemetry import log_telemetry
 
         ws = _client()
-        log_telemetry(ws, "dqx_mcp", "run_checks")
-        log_telemetry(ws, "dqx_mcp", "profile_table")
+        log_telemetry(ws, "mcp", "run_checks")
+        log_telemetry(ws, "mcp", "profile_table")
 
-        signals = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx_mcp"]
+        signals = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "mcp"]
         assert sorted(signals) == ["profile_table", "run_checks"], signals
 
     def test_a_failed_ping_is_swallowed(self):
@@ -67,7 +67,7 @@ class TestLogTelemetry:
         ws = _client()
         ws.config.copy.side_effect = RuntimeError("control plane down")
 
-        log_telemetry(ws, "dqx_mcp", "run_checks")  # must not raise
+        log_telemetry(ws, "mcp", "run_checks")  # must not raise
 
     def test_marks_on_attempt_so_a_brownout_is_not_retried_every_call(self):
         """A failure still consumes the dedup slot, bounding the cost of an unhealthy workspace."""
@@ -76,7 +76,7 @@ class TestLogTelemetry:
         ws = _client()
         ws.config.copy.side_effect = RuntimeError("boom")
         for _ in range(4):
-            log_telemetry(ws, "dqx_mcp", "run_checks")
+            log_telemetry(ws, "mcp", "run_checks")
 
         assert ws.config.copy.call_count == 1
 
@@ -85,7 +85,7 @@ class TestLogTelemetry:
 
         monkeypatch.setenv("DQX_MCP_DISABLE_TELEMETRY", "true")
         ws = _client()
-        log_telemetry(ws, "dqx_mcp", "run_checks")
+        log_telemetry(ws, "mcp", "run_checks")
 
         ws.config.copy.assert_not_called()
 
@@ -96,7 +96,7 @@ class TestLogTelemetry:
         monkeypatch.setattr(tel, "_TELEMETRY_CACHE_MAX_SIZE", 3)
         ws = _client()
         for i in range(10):
-            tel.log_telemetry(ws, "dqx_mcp", f"tool_{i}")
+            tel.log_telemetry(ws, "mcp", f"tool_{i}")
 
         assert len(tel._sent_telemetry) <= 3
 
@@ -109,11 +109,11 @@ class TestReleaseVersion:
 
         monkeypatch.setenv("DQX_VERSION", "0.15.0")
         ws = _client()
-        log_telemetry(ws, "dqx_mcp", "run_checks")
+        log_telemetry(ws, "mcp", "run_checks")
 
         extras = {c.args for c in ws.config.with_user_agent_extra.call_args_list}
         assert ("dqx", "0.15.0") in extras, extras
-        assert ("dqx_mcp", "run_checks") in extras, extras
+        assert ("mcp", "run_checks") in extras, extras
 
     def test_rejects_a_version_that_could_break_the_header(self, monkeypatch):
         """A newline in DQX_VERSION would make the HTTP client reject the whole request.
@@ -126,7 +126,7 @@ class TestReleaseVersion:
 
         monkeypatch.setenv("DQX_VERSION", "0.15\n0")
         ws = _client()
-        log_telemetry(ws, "dqx_mcp", "run_checks")
+        log_telemetry(ws, "mcp", "run_checks")
 
         versions = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx"]
         assert versions == ["0.0.0"], versions
@@ -137,7 +137,7 @@ class TestReleaseVersion:
 
         monkeypatch.delenv("DQX_VERSION", raising=False)
         ws = _client()
-        log_telemetry(ws, "dqx_mcp", "run_checks")
+        log_telemetry(ws, "mcp", "run_checks")
 
         versions = [c.args[1] for c in ws.config.with_user_agent_extra.call_args_list if c.args[0] == "dqx"]
         assert versions == ["0.0.0"], versions
@@ -176,7 +176,7 @@ class TestWithTelemetry:
             return "ok"
 
         wrapped = with_telemetry(profile_table)
-        with patch("server.telemetry._send_async") as mock_send:
+        with patch("server.telemetry._send") as mock_send:
             wrapped()
 
         mock_send.assert_called_once_with("profile_table")
@@ -189,47 +189,83 @@ class TestWithTelemetry:
             raise ValueError("tool failed")
 
         wrapped = with_telemetry(failing_tool)
-        with patch("server.telemetry._send_async") as mock_send, pytest.raises(ValueError):
+        with patch("server.telemetry._send") as mock_send, pytest.raises(ValueError):
             wrapped()
 
         mock_send.assert_called_once_with("failing_tool")
 
-    def test_never_blocks_the_tool_on_a_slow_control_plane(self):
-        """The ping runs off-thread: a hung workspace must not add latency to a tool call.
+    def test_a_slow_control_plane_is_bounded_not_unbounded(self):
+        """Inline means a tool DOES wait for the ping, so the bound is what keeps that safe.
 
-        Regression guard — doing this inline made every first-call-per-tool wait for an HTTP
-        round-trip (~0.6s healthy, up to the 5s timeout otherwise).
+        This replaces an earlier "never blocks" guard that held only while the ping ran on a daemon
+        thread. That thread was removed: it put the dedup claim and the send on opposite sides of the
+        cache check, so the signal was never actually sent (and the DQX library is synchronous too).
+        The accepted cost is a bounded wait, paid once per tool per process — never the SDK's default
+        300s retry window, which is the failure that made telemetry dangerous in the library (#1355).
         """
-        import time
+        import server.telemetry as tel
 
+        assert tel._TELEMETRY_TIMEOUT_SECONDS <= 5, (
+            "the inline ping must stay tightly bounded; without a low cap a control-plane brownout "
+            "stalls the first call of every tool for the SDK's full retry window"
+        )
+
+        captured = {}
+
+        def _capture(config=None, **_kwargs):
+            captured["retry"] = config.retry_timeout_seconds
+            captured["http"] = config.http_timeout_seconds
+            return MagicMock()
+
+        ws = _client()
+        with patch("server.telemetry.type", return_value=_capture):
+            tel.log_telemetry(ws, "mcp", "run_checks")
+
+        # Both caps must be applied to the config that actually makes the call.
+        assert captured["retry"] == tel._TELEMETRY_TIMEOUT_SECONDS, captured
+        assert captured["http"] == tel._TELEMETRY_TIMEOUT_SECONDS, captured
+
+    def test_the_wrapped_path_actually_sends_the_signal(self):
+        """The end-to-end guard: drive the REAL wrapped path and assert the ping goes out.
+
+        Regression guard for the bug this feature shipped with. An earlier version claimed the dedup
+        slot before spawning a thread and then called log_telemetry inside it, which claimed the SAME
+        (key, value) again, saw it taken, and returned before sending — so telemetry NEVER reached the
+        wire on the production path, while every unit test still passed. They passed because they
+        called log_telemetry directly with a fresh cache, or patched _send/Thread, so none of them
+        exercised wrapper -> _send -> log_telemetry as a whole. This one patches nothing but the
+        client resolution.
+        """
         from server.telemetry import with_telemetry
 
-        def sample_tool() -> str:
+        def profile_table() -> str:
             return "ok"
 
-        def _hang(*_args, **_kwargs):
-            time.sleep(30)  # never completes within the assertion window
-
-        wrapped = with_telemetry(sample_tool)
-        with patch("server.utils.get_sp_client_for_telemetry", side_effect=_hang):
-            started = time.monotonic()
+        ws = _client()
+        wrapped = with_telemetry(profile_table)
+        with patch("server.utils.get_sp_client_for_telemetry", return_value=ws):
             assert wrapped() == "ok"
-            assert time.monotonic() - started < 1.0
 
-    def test_no_thread_is_spawned_once_the_signal_has_been_sent(self):
-        """The point of the dedup cache: a reported tool costs nothing on every later call."""
+        extras = {c.args for c in ws.config.with_user_agent_extra.call_args_list}
+        assert ("mcp", "profile_table") in extras, f"signal never sent: {extras}"
+        # The config was copied and stamped, which is what puts the header on the wire. (The client is
+        # rebuilt via type(ws)(config=...), so the send itself lands on a different mock object.)
+        assert ws.config.copy.called, "config never copied, so log_telemetry returned before sending"
+
+    def test_the_wrapped_path_sends_once_across_repeated_calls(self):
+        """Dedup still holds through the wrapper, so later calls cost nothing."""
         from server.telemetry import with_telemetry
 
-        def sample_tool() -> str:
+        def profile_table() -> str:
             return "ok"
 
-        wrapped = with_telemetry(sample_tool)
-        with patch("server.utils.get_sp_client_for_telemetry", return_value=_client()):
-            with patch("server.telemetry.threading.Thread") as thread:
-                for _ in range(5):
-                    assert wrapped() == "ok"
+        ws = _client()
+        wrapped = with_telemetry(profile_table)
+        with patch("server.utils.get_sp_client_for_telemetry", return_value=ws):
+            for _ in range(5):
+                assert wrapped() == "ok"
 
-        assert thread.call_count == 1, f"spawned {thread.call_count} threads for one signal"
+        assert ws.config.copy.call_count == 1, "should build the signal exactly once for one tool"
 
     def test_concurrent_first_calls_send_exactly_one_signal(self):
         """N simultaneous first invocations must not race into N control-plane pings."""
@@ -240,38 +276,30 @@ class TestWithTelemetry:
         def sample_tool() -> str:
             return "ok"
 
+        ws = _client()
         wrapped = with_telemetry(sample_tool)
         start = _threading.Barrier(8)
-        threads_made: list[object] = []
-        lock = _threading.Lock()
-
-        real_thread = _threading.Thread
-
-        def _record(*args, **kwargs):
-            with lock:
-                threads_made.append(object())
-            return real_thread(*args, **kwargs)
 
         def _call() -> None:
             start.wait()  # maximise the overlap on the dedup check
             wrapped()
 
-        with patch("server.utils.get_sp_client_for_telemetry", return_value=_client()):
-            with patch("server.telemetry.threading.Thread", side_effect=_record):
-                callers = [real_thread(target=_call) for _ in range(8)]
-                for c in callers:
-                    c.start()
-                for c in callers:
-                    c.join(timeout=10)
+        with patch("server.utils.get_sp_client_for_telemetry", return_value=ws):
+            callers = [_threading.Thread(target=_call) for _ in range(8)]
+            for c in callers:
+                c.start()
+            for c in callers:
+                c.join(timeout=10)
 
-        assert len(threads_made) == 1, f"{len(threads_made)} pings fired for one signal"
+        assert ws.config.copy.call_count == 1, f"{ws.config.copy.call_count} pings fired for one signal"
 
-    def test_tool_still_runs_when_the_thread_cannot_start(self):
+    def test_a_failing_client_never_breaks_the_tool(self):
+        """Inline means the tool now shares a thread with the ping — a failure must stay invisible."""
         from server.telemetry import with_telemetry
 
         def sample_tool() -> str:
             return "ok"
 
         wrapped = with_telemetry(sample_tool)
-        with patch("server.telemetry.threading.Thread", side_effect=RuntimeError("no threads")):
+        with patch("server.utils.get_sp_client_for_telemetry", side_effect=RuntimeError("no creds")):
             assert wrapped() == "ok"

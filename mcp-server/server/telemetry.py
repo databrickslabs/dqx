@@ -15,7 +15,7 @@ on this deployment" for the lifetime of an app replica, and is deliberately *not
 counter — that keeps the load on the control plane bounded and stops a brownout from re-stalling
 every subsequent request.
 
-The ``dqx_mcp`` key distinguishes MCP-driven usage from a notebook user calling DQX directly: the
+The ``mcp`` key distinguishes MCP-driven usage from a notebook user calling DQX directly: the
 runner job installs the real DQX library, so its ``engine/*`` signals are indistinguishable from any
 other caller's without this.
 """
@@ -41,12 +41,14 @@ _TELEMETRY_TIMEOUT_SECONDS = 5
 _TELEMETRY_CACHE_MAX_SIZE = 10_000
 _sent_telemetry: "OrderedDict[tuple[str, str], None]" = OrderedDict()
 
-# Guards _sent_telemetry. Tools are served concurrently, so an unguarded read-then-write lets N
-# simultaneous first invocations of the same tool all observe "not sent yet" and each fire a ping.
+# Guards _sent_telemetry. Tools are served concurrently (each request runs on its own anyio worker
+# thread), so an unguarded read-then-write lets N simultaneous first invocations of the same tool all
+# observe "not sent yet" and each fire a ping. The DQX library needs no lock because its callers are
+# single-threaded per process; a server does.
 _cache_lock = threading.Lock()
 
 # Namespaces the signal so MCP usage is separable from direct DQX library usage.
-TELEMETRY_KEY = "dqx_mcp"
+TELEMETRY_KEY = "mcp"
 
 # Fallback when DQX_VERSION is not injected. Reported rather than omitted: an unknown-but-present
 # version still satisfies the pipeline's `release_version IS NOT NULL` filter, so the signal is
@@ -115,13 +117,14 @@ def log_telemetry(ws, key: str, value: str) -> None:
 
     Args:
         ws: WorkspaceClient whose config carries the signal.
-        key: telemetry key (e.g. ``dqx_mcp``).
+        key: telemetry key (e.g. ``mcp``).
         value: telemetry value (e.g. the tool name).
     """
     if _telemetry_disabled():
         return
-    # Claiming here as well as in _send_async keeps this function correct when called directly; the
-    # claim is idempotent, so the second check is a cheap no-op on the wrapped path.
+    # The SOLE dedup claim. It deliberately lives here and nowhere else: an earlier version also
+    # claimed in the caller before dispatching to a thread, so this call saw the slot already taken
+    # and returned before sending — telemetry silently never reached the wire on the wrapped path.
     if not _claim_signal(key, value):
         return
 
@@ -146,7 +149,7 @@ def log_telemetry(ws, key: str, value: str) -> None:
 
 
 def with_telemetry(tool: Callable) -> Callable:
-    """Wrap an MCP tool so its first invocation records a ``dqx_mcp/<tool_name>`` signal.
+    """Wrap an MCP tool so its first invocation records a ``mcp/<tool_name>`` signal.
 
     Applied once in ``load_tools`` to every registered tool, so a new tool is instrumented by
     construction rather than by remembering to annotate it.
@@ -159,40 +162,30 @@ def with_telemetry(tool: Callable) -> Callable:
 
     @functools.wraps(tool)
     def wrapper(*args, **kwargs):
-        _send_async(tool.__name__)
+        _send(tool.__name__)
         return tool(*args, **kwargs)
 
     return wrapper
 
 
-def _send_async(tool_name: str) -> None:
-    """Fire the signal on a daemon thread so it never adds latency to a tool call.
+def _send(tool_name: str) -> None:
+    """Resolve a client and send the signal inline. Never raises.
 
-    The ping is an HTTP round-trip to the control plane: ~0.6s on a healthy workspace and up to the
-    5s timeout on an unhealthy one. Doing that inline made every first-call-per-tool pay for
-    instrumentation, which is the wrong trade — the user's request must not wait on telemetry.
-    Daemon so it can never hold up interpreter shutdown.
+    Deliberately synchronous, exactly like the DQX library. An earlier version dispatched this on a
+    daemon thread to keep the round-trip off the first call of each tool, but that traded a bounded
+    ~0.6s (healthy) / 5s-worst-case cost, paid once per tool per process, for a whole class of
+    concurrency bug — and duly produced one: the thread and the claim ended up on opposite sides of
+    the dedup check, so the send was skipped every time and the feature silently did nothing.
 
-    The dedup slot is claimed *before* the thread is created, so a tool that has already reported
-    costs nothing at all on later calls — no thread, no client construction. Doing this inside the
-    thread instead would spawn one per request and let concurrent first calls race into N pings.
+    The timeouts are what make inline safe: `log_telemetry` caps both the retry window and the HTTP
+    timeout at `_TELEMETRY_TIMEOUT_SECONDS`, so the worst case is a few seconds once per signal
+    rather than the SDK's default 300s retry window. Dedup means later calls cost nothing at all.
     """
-    if _telemetry_disabled():
-        return
-    if not _claim_signal(TELEMETRY_KEY, tool_name):
-        return
-
-    def _run() -> None:
-        try:
-            # Imported here, not at module scope: keeps SDK construction off the import path and
-            # avoids a circular import (utils imports nothing from this module).
-            from .utils import get_sp_client_for_telemetry
-
-            log_telemetry(get_sp_client_for_telemetry(), TELEMETRY_KEY, tool_name)
-        except Exception as e:  # never let instrumentation break anything
-            logger.debug(f"Telemetry skipped for {tool_name}: {e}")
-
     try:
-        threading.Thread(target=_run, name=f"dqx-mcp-telemetry-{tool_name}", daemon=True).start()
-    except Exception as e:  # thread creation can fail under resource pressure
-        logger.debug(f"Telemetry thread not started for {tool_name}: {e}")
+        # Imported here, not at module scope: keeps SDK construction off the import path and avoids a
+        # circular import (utils imports nothing from this module).
+        from .utils import get_sp_client_for_telemetry
+
+        log_telemetry(get_sp_client_for_telemetry(), TELEMETRY_KEY, tool_name)
+    except Exception as e:  # never let instrumentation break a tool call
+        logger.debug(f"Telemetry skipped for {tool_name}: {e}")
