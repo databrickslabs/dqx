@@ -94,6 +94,24 @@ if [ -n "${DQX_MCP_COVERAGE_DIR:-}" ]; then
   uv build ../tests/integration_mcp/coverage_bootstrap --wheel --out-dir ./.build
   BOOTSTRAP_WHEEL="$(ls -t ./.build/dqx_mcp_coverage_bootstrap-*.whl | head -1)"
   printf './%s\n' "${BOOTSTRAP_WHEEL#./}" >> requirements.txt
+
+  # Build DQX from THIS repo's source so the runner job tests the code in the PR rather than the last
+  # published release (see the dev-coverage runner_environment_dependencies). Production deploys keep
+  # the PyPI pin and never reach this branch. The app publishes the wheel to the wheels volume at
+  # startup; the runner installs it from there by absolute /Volumes path.
+  echo "building the in-repo DQX wheel for the CI runner"
+  uv build .. --wheel --out-dir ./.build
+  DQX_WHEEL="$(ls -t ./.build/databricks_labs_dqx-*.whl | head -1)"
+  echo "built $(basename "${DQX_WHEEL}")"
+  # Fail loudly on drift: the bundle names this file in a job dependency list, and a missing wheel
+  # surfaces as an opaque pip error inside the job rather than a deploy failure.
+  EXPECTED_DQX_WHEEL="$(databricks bundle validate -t "${BUNDLE_TARGET}" "${PROFILE_ARG[@]+${PROFILE_ARG[@]}}" -o json 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin)["variables"]["dqx_wheel_filename"]["value"])' 2>/dev/null || echo "")"
+  if [ -n "${EXPECTED_DQX_WHEEL}" ] && [ "$(basename "${DQX_WHEEL}")" != "${EXPECTED_DQX_WHEEL}" ]; then
+    echo "ERROR: built $(basename "${DQX_WHEEL}") but the bundle expects ${EXPECTED_DQX_WHEEL}." >&2
+    echo "Update var.dqx_wheel_filename in mcp-server/databricks.yml to match the repo version." >&2
+    exit 1
+  fi
 fi
 
 echo "::group::one-time catalog grants (users + runner SP)"

@@ -158,10 +158,12 @@ def publish_runner_wheel() -> str | None:
 def publish_extra_wheels() -> list[str]:
     """Publish any additional local wheels the runner job installs from the volume. Never raises.
 
-    Only relevant to coverage-enabled test deploys: the `dev-coverage` target adds the test-only
-    coverage bootstrap wheel to the runner job's dependencies, and a job dependency must be an
-    absolute /Volumes path (there is no workspace.artifact_path to upload it for us). Production
-    deploys build no such wheel, so this is a no-op for them — the glob simply finds nothing.
+    Only relevant to coverage-enabled test deploys. The `dev-coverage` target adds two extra wheels to
+    the runner job's dependencies — the test-only coverage bootstrap, and DQX built from this repo's
+    source so CI tests the code in the PR rather than the last published release — and a job
+    dependency must be an absolute /Volumes path (there is no workspace.artifact_path to upload it for
+    us). Production deploys build neither wheel, so this is a no-op for them: the globs find nothing,
+    and the runner installs the published `databricks-labs-dqx==<version>` pin instead.
 
     Kept separate from publish_runner_wheel: that one is pinned by filename and refuses to publish on
     drift, whereas these are auxiliary and matched by pattern. Failures are logged and swallowed, so a
@@ -181,7 +183,11 @@ def publish_extra_wheels() -> list[str]:
     for root in roots:
         if not root.is_dir():
             continue
-        for wheel in sorted(root.glob("dqx_mcp_coverage_bootstrap-*.whl")):
+        candidates = [
+            *sorted(root.glob("dqx_mcp_coverage_bootstrap-*.whl")),
+            *sorted(root.glob("databricks_labs_dqx-*.whl")),
+        ]
+        for wheel in candidates:
             destination = f"{volume}/{wheel.name}"
             try:
                 from databricks.sdk import WorkspaceClient

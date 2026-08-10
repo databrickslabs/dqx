@@ -48,6 +48,14 @@ variables:
   # /Volumes paths in a job dependency list.
   coverage_bootstrap_wheel_filename:
     default: "dqx_mcp_coverage_bootstrap-0.1.0-py3-none-any.whl"
+  # The DQX wheel built from THIS repo's source, installed by the runner job on the dev-coverage
+  # (CI) target only — see that target's runner_environment_dependencies for why. Production keeps
+  # the published `databricks-labs-dqx==<version>` pin, so this filename is unused there. Built by
+  # scripts/ci_deploy.sh (which needs it before `bundle deploy`) and published to the wheels volume
+  # by the app at startup, like the other two wheels. Tracks the repo's __about__.py version; a unit
+  # test asserts they match, so a version bump cannot silently point the runner at a missing file.
+  dqx_wheel_filename:
+    default: "databricks_labs_dqx-0.15.0-py3-none-any.whl"
   # The app's runtime environment, as a complex variable so the dev-coverage target can extend it
   # (DAB target overrides don't merge into a list). The default is what every real deploy gets.
   # DQX release the runner job installs. Reported as the `dqx/<version>` User-Agent token so the
@@ -319,11 +327,12 @@ targets:
   # production/user deploys must not ship test instrumentation, and no production module is
   # coverage-aware. Selected by scripts/ci_deploy.sh when DQX_MCP_COVERAGE_DIR is set.
   dev-coverage:
-    # Target-scoped so a production (`dev`) deploy never builds it and does not need the repo's
-    # tests/ tree present.
-    artifacts:
-      dqx_mcp_coverage_bootstrap_wheel:
-        build: uv build ../tests/integration_mcp/coverage_bootstrap --wheel --out-dir ./.build
+    # NOTE: the bootstrap wheel is NOT built here. scripts/ci_deploy.sh builds it, because it needs
+    # the resolved filename to append to requirements.txt *before* `bundle deploy` runs (the bundle
+    # snapshots source files at sync time, and requirements.txt has no glob support). A duplicate
+    # `artifacts:` entry here ran the identical `uv build` a second time on every coverage deploy —
+    # wasted work, and two copies of the same command that could silently drift apart.
+    #
     # Opt this target into syncing the test-only wheel. The base list names just the runner wheel, so
     # a stale bootstrap wheel in ./.build cannot ride along on a production deploy.
     #
@@ -333,6 +342,8 @@ targets:
     sync:
       include:
         - ".build/dqx_mcp_coverage_bootstrap-*.whl"
+        # The in-repo DQX wheel, so the app can publish it to the wheels volume for the runner job.
+        - ".build/databricks_labs_dqx-*.whl"
     variables:
       # Sweep every submission (interval 0) so a single test run exercises the stale-view and
       # stale-result-file sweepers, which the hour-long production interval makes untestable. Only
@@ -362,6 +373,15 @@ targets:
             value: "${var.dqx_version}"
           - name: DQX_SWEEP_INTERVAL_SECONDS
             value: "0"
+          # Notice a finished run sooner. get_run_result blocks server-side while the run is pending
+          # (see utils.get_run_status), polling on a 2s→8s backoff; that backoff is dead time once the
+          # job has actually completed. A flat 1s here trims it for the ~33 job-backed calls the
+          # integration suite makes. The 30s *budget* is deliberately unchanged — shortening it would
+          # not make a job finish sooner, it would only spend more HTTP round-trips waiting.
+          - name: DQX_RUN_POLL_INITIAL_SECONDS
+            value: "1"
+          - name: DQX_RUN_POLL_MAX_SECONDS
+            value: "1"
       # Overrides the dependency-list variable — DAB target overrides don't merge into an
       # environment's spec list, so the base list is repeated here plus the bootstrap wheel
       # (which depends on `coverage`, so that need not be listed separately).
@@ -370,8 +390,24 @@ targets:
       # upload a relative ./.build/ wheel any more, so the app publishes both at startup — the runner
       # wheel via publish_runner_wheel and the bootstrap wheel via publish_extra_wheels. A unit test
       # asserts this list stays a superset of the base one.
+      # DQX comes from the IN-REPO SOURCE WHEEL here, not the published release the base list pins.
+      # That is the whole point of running this suite in CI: with the PyPI pin, a PR that breaks
+      # src/databricks/labs/dqx/ left the MCP suite green because the runner installed the last
+      # *release* — so the suite could not catch a library regression at all. Production deploys keep
+      # the pin (reproducible, and what users actually get); CI tests the code in the PR.
+      #
+      # The `[datacontract]` extra CANNOT ride along on a wheel path. The obvious PEP 508 form
+      #   databricks-labs-dqx[datacontract] @ file:///Volumes/.../databricks_labs_dqx-<v>.whl
+      # is valid for pip (verified: pip does resolve the extra's dependencies from a wheel path) but
+      # the Databricks CLI rejects it while normalising dependency paths:
+      #   failed to normalize paths: parse "...": first path segment in URL cannot contain colon
+      # So the extra's own dependencies are listed explicitly below instead. A unit test asserts this
+      # list stays in sync with the [datacontract] extra in the repo's pyproject.toml, because the
+      # duplication is the whole risk of doing it this way.
       runner_environment_dependencies:
         default:
           - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.runner_wheel_filename}"
-          - databricks-labs-dqx[datacontract]==0.15.0
+          - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.dqx_wheel_filename}"
+          # Stands in for the [datacontract] extra, which a wheel path cannot carry (see above).
+          - "datacontract-cli>=0.11.1,<1.0"
           - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.coverage_bootstrap_wheel_filename}"
