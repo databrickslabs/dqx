@@ -110,6 +110,35 @@ class TestCoverageTargetMirrorsBase:
             "Telemetry would attribute MCP usage to a DQX release that never ran."
         )
 
+    def test_base_sync_does_not_ship_the_test_only_wheel(self):
+        """A production deploy must not sync the coverage bootstrap wheel.
+
+        Regression guard. The base list was once `.build/**`, which looks harmless because only
+        `dev-coverage` *builds* the bootstrap wheel — but `.build/` is never cleaned, so a wheel left
+        there by an earlier coverage deploy was synced by the next production deploy and published by
+        `publish_extra_wheels`, shipping test instrumentation to a user deploy from nothing but a stale
+        local file. Observed on a real `dev` deploy before the fix.
+        """
+        text = _BUNDLE.read_text()
+        base_sync = re.search(r"^sync:\s*\n\s*include:\s*\n", text, re.MULTILINE)
+        assert base_sync, "no top-level sync.include block found in databricks.yml"
+        entries = _list_entries(text, base_sync.end())
+
+        assert entries, "the base sync.include list is empty; the runner wheel must be synced"
+        assert not any("coverage_bootstrap" in e for e in entries), (
+            f"the base sync.include names the coverage bootstrap wheel: {entries}. Only dev-coverage " "may sync it."
+        )
+        wildcards = [e for e in entries if e.strip('"').strip("'") in (".build/**", ".build/*")]
+        assert not wildcards, (
+            f"the base sync.include uses a wildcard over .build ({wildcards}), which sweeps up a stale "
+            "coverage bootstrap wheel from an earlier dev-coverage deploy. Name the runner wheel "
+            "explicitly instead."
+        )
+        assert any("dqx_mcp_runner" in e for e in entries), (
+            f"the base sync.include must still ship the runner wheel; it lists {entries}. Without it "
+            "the app cannot publish the wheel and every data tool fails on library install."
+        )
+
     def test_dqx_pin_is_identical_in_every_target(self):
         """The DQX pin appears in several places; production and CI must never test different versions."""
         pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", _BUNDLE.read_text()))

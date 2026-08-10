@@ -290,7 +290,14 @@ sync:
   include:
     # The built runner wheel rides along as app source code, so the app can publish it to the
     # wheels volume at startup (server/bootstrap.py). ("notebooks/**" is gone with the setup job.)
-    - ".build/**"
+    #
+    # Deliberately NOT ".build/**": that directory is not cleaned between builds, so a coverage
+    # bootstrap wheel left there by an earlier `dev-coverage` deploy would be synced by a later
+    # production `dev` deploy and published by publish_extra_wheels — shipping test instrumentation
+    # to a user deploy from nothing but a stale local file. Naming the runner wheel explicitly means
+    # a production deploy carries the test wheel only if the target asks for it; `dev-coverage`
+    # extends this list to do exactly that.
+    - ".build/dqx_mcp_runner-*.whl"
 
 # Build only the MCP runner wheel (this sub-project's ./runner). DQX is a pinned published release
 # installed from the registry by the runner job's environment spec — not built from source here.
@@ -317,6 +324,15 @@ targets:
     artifacts:
       dqx_mcp_coverage_bootstrap_wheel:
         build: uv build ../tests/integration_mcp/coverage_bootstrap --wheel --out-dir ./.build
+    # Opt this target into syncing the test-only wheel. The base list names just the runner wheel, so
+    # a stale bootstrap wheel in ./.build cannot ride along on a production deploy.
+    #
+    # Note `sync.include` APPENDS to the base list rather than replacing it (unlike an environment
+    # spec or a complex variable, which replace) — so this adds to the runner wheel instead of
+    # shadowing it, and repeating the runner wheel here would duplicate the entry.
+    sync:
+      include:
+        - ".build/dqx_mcp_coverage_bootstrap-*.whl"
     variables:
       # Sweep every submission (interval 0) so a single test run exercises the stale-view and
       # stale-result-file sweepers, which the hour-long production interval makes untestable. Only
