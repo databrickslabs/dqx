@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import MagicMock, call, create_autospec, patch
 
 import pytest
 
@@ -31,6 +31,20 @@ def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> Mag
     task_run.run_id = 456
     run.tasks = [task_run]
     # Recorded submitter matches the caller the TestGetRunStatus autouse fixture sets.
+    run.job_parameters = [JobParameter(name="requesting_user", value="user@example.com")]
+    return run
+
+
+def _make_running_run(run_id: int = 123) -> MagicMock:
+    """Build a mock Run that is still in progress."""
+    run = MagicMock(spec=Run)
+    run.run_id = run_id
+    run.run_page_url = f"https://workspace.databricks.com/jobs/{run_id}"
+    run.state = MagicMock(spec=RunState)
+    run.state.life_cycle_state = RunLifeCycleState.RUNNING
+    run.state.result_state = None
+    run.state.state_message = ""
+    run.tasks = []
     run.job_parameters = [JobParameter(name="requesting_user", value="user@example.com")]
     return run
 
@@ -454,6 +468,91 @@ class TestGetRunStatus:
         assert "PERMISSION_DENIED" in result["error"]  # task-level detail now surfaced
         ws.jobs.get_run_output.assert_called_once_with(456)
 
+    def test_waits_for_a_running_job_then_returns_its_result(self):
+        """get_run_status absorbs the wait, because an agent cannot sleep between calls.
+
+        Regression guard. It used to poll once and tell the caller to "call again after a short
+        wait" — but an LLM agent has no sleep primitive, so it called straight back, its own
+        loop detection saw a repeated no-progress action, and it stopped to ask the user. Observed
+        against a live deployment: every job-backed tool stalled that way.
+        """
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.side_effect = [
+            _make_running_run(),
+            _make_running_run(),
+            _make_terminated_run(RunResultState.SUCCESS),
+        ]
+        ws.files.download.return_value.contents.read.return_value = json.dumps({"profiles": []}).encode()
+
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils.time.sleep") as sleep,
+            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "dqx_mcp_tmp"}),
+        ):
+            result = get_run_status(123)
+
+        assert result["status"] == "completed", result
+        assert ws.jobs.get_run.call_count == 3, "should keep polling until the run is terminal"
+        assert sleep.call_count == 2, "should sleep between polls rather than spinning"
+
+    def test_still_running_tells_the_caller_to_call_straight_back(self):
+        """The 'running' message must not tell an agent to wait — it cannot, and it will stop."""
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.return_value = _make_running_run()
+
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils.time.sleep"),
+        ):
+            result = get_run_status(123, wait_seconds=0)
+
+        assert result["status"] == "running"
+        message = result["message"].lower()
+        assert "again" in message, message
+        # The whole point: never instruct a sleepless caller to wait, or to check with the user.
+        assert "wait a moment" not in message, message
+        assert "confirm" not in message or "do not ask" in message, message
+
+    def test_the_wait_budget_is_clamped_below_the_client_timeout(self):
+        """A configured wait above the ceiling must be capped, not honoured.
+
+        The wait is only safe because it stays under the ~60s at which MCP clients and the Apps front
+        door abandon an idle request. An operator setting DQX_RUN_WAIT_SECONDS=300 to "be patient"
+        would instead turn every poll of a slow run into a hung request, which is strictly worse than
+        reporting 'running' and being called back.
+        """
+        import importlib
+
+        import server.utils as utils_module
+
+        with patch.dict("os.environ", {"DQX_RUN_WAIT_SECONDS": "300"}):
+            reloaded = importlib.reload(utils_module)
+            try:
+                assert reloaded._RUN_WAIT_SECONDS == reloaded._RUN_WAIT_CEILING_SECONDS
+                assert reloaded._RUN_WAIT_CEILING_SECONDS < 60, "the ceiling must stay under the client timeout"
+            finally:
+                importlib.reload(utils_module)  # restore the default for every later test
+
+    def test_wait_seconds_zero_polls_once(self):
+        """An operator (or a test) can opt out of waiting entirely."""
+        from server.utils import get_run_status
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.return_value = _make_running_run()
+
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils.time.sleep") as sleep,
+        ):
+            get_run_status(123, wait_seconds=0)
+
+        assert ws.jobs.get_run.call_count == 1
+        sleep.assert_not_called()
+
     def test_not_found_when_run_does_not_exist(self):
         from server.utils import get_run_status
         from databricks.sdk.errors import ResourceDoesNotExist
@@ -828,15 +927,20 @@ class TestSweepStaleResultFiles:
 
         tok = _user_email_var.set("user@example.com")  # caller owns the run (IDOR guard passes)
         try:
-            with patch("server.utils._get_sp_client", return_value=ws):
+            with (
+                patch("server.utils._get_sp_client", return_value=ws),
+                patch("server.utils.time.sleep"),
+            ):
                 result = get_run_status(123)
         finally:
             _user_email_var.reset(tok)
 
         assert result["status"] == "running"
         assert result["run_id"] == 123
-        # Single non-blocking poll — exactly one get_run call, no internal wait.
-        ws.jobs.get_run.assert_called_once_with(123)
+        # Polls repeatedly within the wait budget (see get_run_status: an agent cannot sleep, so the
+        # server absorbs the wait), and still reports 'running' if the job outlives it.
+        assert ws.jobs.get_run.call_count >= 1
+        assert ws.jobs.get_run.call_args == call(123)
 
 
 class TestOBOAuthMiddleware:

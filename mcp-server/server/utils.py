@@ -623,6 +623,13 @@ _MIN_VIEW_TTL_SECONDS = 900
 # "Contract file not found". 24h means an input is only reclaimed once its job could not possibly
 # still be pending, while the volume no longer grows without bound.
 _STAGED_TTL_SECONDS = int(os.environ.get("DQX_STAGED_TTL_SECONDS", str(24 * 60 * 60)))
+
+# TTL for `<run_id>.json` result files. Its own knob, deliberately: this used to default to
+# _VIEW_TTL_SECONDS, so DQX_SWEEP_TTL_SECONDS — documented as tuning the *view* sweep — silently drove
+# result-file deletion too, and the view TTL's 900s safety floor leaked across to files it was never
+# reasoned about. Same 3600s default, so behaviour is unchanged; the two thresholds are now
+# independent and the constant name no longer misleads.
+_RESULT_TTL_SECONDS = int(os.environ.get("DQX_RESULT_TTL_SECONDS", "3600"))
 _last_sweep_at = 0.0
 
 
@@ -698,7 +705,7 @@ def sweep_stale_views(
     return dropped
 
 
-def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
+def sweep_stale_result_files(ws: Any, ttl_seconds: int = _RESULT_TTL_SECONDS) -> int:
     """Delete stale files from the results volume. Best-effort.
 
     Backstop for result files whose caller never polled get_run_result. Uses each file's
@@ -845,6 +852,31 @@ def submit_job_async(operation: str, params: dict[str, Any]) -> int:
     return run_id
 
 
+# How long get_run_status waits for a run to finish before reporting 'running'.
+#
+# Chosen against two hard limits, not preference: MCP clients and the Databricks Apps front door
+# commonly time out an idle HTTP request around 60s, and each in-flight poll holds an anyio worker
+# thread (the tools are sync). 30s stays clear of both while covering a large share of runs — the
+# job-backed tools take 50–90s end to end, so one submit plus two polls now completes the common
+# case instead of the agent giving up on the first one.
+#
+# Configurable via DQX_RUN_WAIT_SECONDS (the bundle exposes it as an app config value) so an operator
+# whose client has a tighter timeout can lower it. Note that lowering it does NOT make a run finish
+# sooner — the job takes as long as it takes — it only changes how many HTTP round-trips are spent
+# waiting: a 70s job costs 3 calls at 30s and ~470 at 0s. The upper bound is clamped below, because a
+# value above the client/proxy timeout converts a working poll into a hung request.
+_RUN_WAIT_CEILING_SECONDS = 55.0
+_RUN_WAIT_SECONDS = min(float(os.environ.get("DQX_RUN_WAIT_SECONDS", "30")), _RUN_WAIT_CEILING_SECONDS)
+
+# Poll fast at first (a short job should return promptly), then back off so a multi-minute run does
+# not cost one control-plane request per second. These bound how soon a *finished* run is noticed, so
+# they are what to lower if a test wants tighter latency — up to _RUN_POLL_MAX_SECONDS of the measured
+# time is just the gap before the sweep notices a job that has already completed.
+_RUN_POLL_INITIAL_SECONDS = float(os.environ.get("DQX_RUN_POLL_INITIAL_SECONDS", "2"))
+_RUN_POLL_MAX_SECONDS = float(os.environ.get("DQX_RUN_POLL_MAX_SECONDS", "8"))
+_RUN_POLL_BACKOFF = 1.5
+
+
 def _run_not_found(run_id: int) -> dict[str, Any]:
     """Structured 'not_found' result for an invalid/expired/foreign run_id."""
     return {
@@ -857,23 +889,49 @@ def _run_not_found(run_id: int) -> dict[str, Any]:
     }
 
 
-def get_run_status(run_id: int) -> dict[str, Any]:
-    """Check the status of a submitted job run with a single, non-blocking poll.
+def get_run_status(run_id: int, *, wait_seconds: float | None = None) -> dict[str, Any]:
+    """Check the status of a submitted job run, waiting briefly for it to finish.
 
-    Performs one status check and returns immediately as 'completed' (with result),
-    'failed', or 'running'. When 'running', the caller polls again — the client drives
-    the cadence. We deliberately do NOT wait/sleep internally: holding the HTTP
-    connection (and an anyio worker thread, since the tools are sync) open for the whole
-    job would risk client/proxy timeouts and saturate the thread pool under concurrent
-    polls.
+    Blocks up to *wait_seconds* (default `_RUN_WAIT_SECONDS`) for the run to reach a terminal
+    state, then returns 'completed' (with result), 'failed', or 'running'.
+
+    **Why this waits at all.** An LLM agent has no sleep primitive: told to "call again after a
+    short wait", it calls again *immediately*, which looks to its own loop detection like a
+    repeated no-progress action — so it stops and asks the user to confirm, mid-workflow, on every
+    submitted tool. Observed end-to-end against a real deployment: every single job-backed tool
+    stalled with "I kept repeating the same action without making progress". Absorbing the wait
+    server-side is what makes the submit→poll pattern usable by an agent.
+
+    The wait is deliberately bounded well below the ~60s that clients and proxies commonly
+    time out at, and it returns as soon as the run is terminal, so a fast job stays fast. A longer
+    job still needs more than one call — but each call now makes visible progress, which is what
+    the agent needs to keep going. Polling is done with a backoff so a slow job costs few requests.
 
     Args:
         run_id: The Databricks job run_id from a prior submit call.
+        wait_seconds: Maximum seconds to wait for a terminal state. 0 polls once and returns.
 
     Returns:
         Dict with 'status' ('running', 'completed', 'failed', 'not_found') and optionally 'result'.
         'not_found' means the run_id is invalid, expired, or not from this MCP's runner job.
     """
+    budget = _RUN_WAIT_SECONDS if wait_seconds is None else max(0.0, wait_seconds)
+    deadline = time.monotonic() + budget
+    interval = _RUN_POLL_INITIAL_SECONDS
+    while True:
+        result = _get_run_status_once(run_id)
+        if result["status"] != "running":
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return result
+        time.sleep(min(interval, remaining))
+        # Back off so a multi-minute job does not cost one control-plane call per second.
+        interval = min(interval * _RUN_POLL_BACKOFF, _RUN_POLL_MAX_SECONDS)
+
+
+def _get_run_status_once(run_id: int) -> dict[str, Any]:
+    """One non-blocking status check. See get_run_status for the authorization rules."""
     from databricks.sdk.errors.base import DatabricksError
 
     ws = _get_sp_client()
@@ -893,7 +951,12 @@ def get_run_status(run_id: int) -> dict[str, Any]:
         # disclosure the ownership guard exists to prevent — run ids are guessable integers. The job
         # ACL blocking the read first is defence in depth, not a licence to leak. Logged so an
         # operator can still distinguish a misconfigured ACL from a genuinely stale run_id.
-        if error_code == "PERMISSION_DENIED" or "permission" in str(e).lower():
+        # Gate on the STRUCTURED code only. A substring match on "permission" also swallowed unrelated
+        # failures whose text happens to mention it (e.g. "insufficient permissions to attach
+        # warehouse"), telling the run's rightful owner it does not exist and hiding the real error —
+        # a debugging dead end. Anything else propagates; the submitter/caller check below is what
+        # actually prevents the disclosure, so this branch does not need to be greedy.
+        if error_code == "PERMISSION_DENIED":
             logger.warning(f"Denying run {run_id}: the app service principal cannot read it ({error_code})")
             return _run_not_found(run_id)
         raise
@@ -922,7 +985,18 @@ def get_run_status(run_id: int) -> dict[str, Any]:
 
     life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
     if life_cycle in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
-        return {"status": "running", "run_id": run_id, "message": "Job is still running. Call get_run_result again."}
+        return {
+            "status": "running",
+            "run_id": run_id,
+            # Say explicitly that calling straight back is correct. Without this an agent treats an
+            # unchanged 'running' as making no progress and stops to ask the user, because it has no
+            # way to sleep between calls — the server already absorbed the wait before returning.
+            "message": (
+                f"Job is still running (waited {int(_RUN_WAIT_SECONDS)}s). This is expected for a long job. "
+                f"Call get_run_result with run_id={run_id} again right away — the call itself waits, so "
+                f"repeating it is progress, not a retry loop. Do not ask the user to confirm."
+            ),
+        }
 
     # No local cleanup here: the runner job drops its own temp view, and any orphans are
     # reaped by the sweeper. This keeps get_run_status stateless and replica-independent.
