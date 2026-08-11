@@ -2000,6 +2000,33 @@ def test_is_aggr_count_distinct_star_unfiltered(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_is_aggr_star_column_expr_unfiltered_runs_natively(spark: SparkSession):
+    """Regression for #1435: count(*) and count(DISTINCT *) built with F.col("*") and no row_filter must
+    run end-to-end (F.count / F.countDistinct over F.col("*")), not just pass build-time validation."""
+    # 4 rows, (a, 1) duplicated -> 3 distinct rows
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["a", 1], ["c", 3]], SCHEMA)
+
+    checks = [
+        is_aggr_not_less_than(F.col("*"), limit=10, aggr_type="count"),
+        is_aggr_not_less_than(F.col("*"), limit=10, aggr_type="count_distinct"),
+    ]
+    actual = _apply_checks(test_df, checks)
+
+    count_msg = "Count value 4 in column '*' is less than limit: 10"
+    cd_msg = "Distinct count value 3 in column '*' is less than limit: 10"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, count_msg, cd_msg],
+            ["b", 2, count_msg, cd_msg],
+            ["a", 1, count_msg, cd_msg],
+            ["c", 3, count_msg, cd_msg],
+        ],
+        f"{SCHEMA}, count_less_than_limit STRING, count_distinct_less_than_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_aggr_matches_dataset_ref_column_override(spark: SparkSession):
     """ref_column targets a differently-named column on the reference side and is correctly aggregated."""
     test_df = spark.createDataFrame([["p", 7, 500], ["q", 13, 500]], "a: string, b: int, c: int")

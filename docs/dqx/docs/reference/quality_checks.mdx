@@ -2197,7 +2197,7 @@ Complex data types are supported as well.
     arguments:
       column: '*'
       time_column: event_date
-      aggr_type: count              # '*' supports count only; other aggregates need an explicit column
+      aggr_type: count              # '*' supports count / count_distinct (count only when a filter is set); others need an explicit column
       sigma: 3.0                    # fire when |current - baseline| > 3 * stddev
       lookback_num_intervals: 14    # number of preceding buckets for the rolling baseline
       warmup_num_intervals: 7       # suppress the check until at least 7 historical buckets exist

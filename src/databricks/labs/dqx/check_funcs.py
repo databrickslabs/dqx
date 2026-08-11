@@ -4636,8 +4636,11 @@ def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str, ag
 
 # Aggregates that accept a star column when evaluated natively: count(*) always, and count(DISTINCT *)
 # (count_distinct expands "*" through its varargs). Single-arg aggregates (sum, avg, min, ...) never
-# accept "*". Through the filtered-count placeholder (F.lit(1)) only "count" stays correct — see below.
+# accept "*".
 _STAR_NATIVE_AGGREGATES = frozenset({"count", "count_distinct"})
+# Through the filtered-count placeholder (F.lit(1)) only count stays correct: the literal collapses
+# count_distinct to 1 and makes other aggregates meaningless. See build_filtered_aggregate_input.
+_STAR_PLACEHOLDER_AGGREGATES = frozenset({"count"})
 
 
 def validate_star_aggregate(aggr_col_str: str, aggr_type: str, *, uses_placeholder: bool) -> None:
@@ -4667,7 +4670,7 @@ def validate_star_aggregate(aggr_col_str: str, aggr_type: str, *, uses_placehold
     """
     if aggr_col_str != "*":
         return
-    allowed = frozenset({"count"}) if uses_placeholder else _STAR_NATIVE_AGGREGATES
+    allowed = _STAR_PLACEHOLDER_AGGREGATES if uses_placeholder else _STAR_NATIVE_AGGREGATES
     if aggr_type not in allowed:
         supported = "'count'" if uses_placeholder else "'count' or 'count_distinct'"
         qualifier = " with a row filter" if uses_placeholder else ""
