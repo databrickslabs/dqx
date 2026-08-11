@@ -2783,7 +2783,10 @@ def aggr_matches_dataset(
             The DataFrame with additional condition and metric columns for upstream comparison.
         """
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-        ref_filtered_df = ref_df.filter(ref_row_filter) if ref_row_filter else ref_df
+        # Validate ref_row_filter with safe_filter_expr, like every other filter in this module: it is
+        # user/templated SQL, so a destructive predicate must raise UnsafeSqlQueryError (with sanitized
+        # logging) rather than reach ref_df.filter() as a raw string. SELECT subqueries stay allowed.
+        ref_filtered_df = ref_df.filter(safe_filter_expr(ref_row_filter)) if ref_row_filter else ref_df
         ref_aggr_expr = _build_aggregate_expression(aggr_type, ref_col_expr, aggr_params)
 
         if group_by_names and ref_group_by_names:
