@@ -44,6 +44,7 @@ EXPECTED_PARAMETER_ORDER = {
     "is_valid_ipv4_address": ("column",),
     "is_valid_email": ("column",),
     "is_valid_national_id": ("column", "country"),
+    "is_valid_uuid": ("column", "strict"),
     "is_valid_country_code": ("column", "code_format", "case_sensitive"),
     "is_valid_currency_code": ("column", "code_format", "case_sensitive"),
     "is_valid_subdivision_code": ("column", "case_sensitive", "country_column"),

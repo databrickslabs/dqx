@@ -112,6 +112,12 @@ class DQPattern(Enum):
     # 000/666/9xx (9xx covers ITINs), group 00, serial 0000. Anchored, fixed-width; ReDoS-safe.
     SSN_US = r"^(?!000|666|9\d{2})\d{3}([- ]?)(?!00)\d{2}\1(?!0000)\d{4}$"
 
+    # Canonical UUID form per RFC 9562: 8-4-4-4-12 hex groups. UUID validates the shape
+    # only, so RFC-defined Nil/Max sentinels and legacy variant GUIDs pass; UUID_STRICT
+    # also pins the version nibble to 1-8 and variant bits to 8/9/a/b. Anchored, fixed-width; ReDoS-safe.
+    UUID = r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+    UUID_STRICT = r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$"
+
 
 # ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
 # point for additional countries: add a new DQPattern member and map its ISO 3166
@@ -1472,6 +1478,29 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     return _matches_pattern(column, pattern)
 
 
+@register_rule("row")
+def is_valid_uuid(column: str | Column, strict: bool = False) -> Column:
+    """Checks whether the values in the input column are valid UUIDs (RFC 9562, obsoletes RFC 4122).
+
+    By default, validates the canonical 8-4-4-4-12 hyphenated hex string form, case-insensitively.
+    The all-zero Nil UUID, the all-one Max UUID, and legacy variant GUIDs all pass, since every
+    common UUID library treats them as valid.
+
+    When *strict* is True, the version nibble (1-8) and variant bits (8/9/a/b) are additionally
+    enforced, so out-of-range version/variant values and the Nil and Max UUIDs are rejected.
+
+    Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        strict: if True, also validate the version nibble and variant bits per RFC 9562 (default: False)
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.UUID_STRICT if strict else DQPattern.UUID)
+
+
 def load_iso_codes(resource_name: str) -> frozenset[str]:
     """Load a set of standard codes from a newline-delimited data file in the resources package.
 
@@ -2196,7 +2225,7 @@ def is_unique(
 
         df = (
             # Add condition column used in make_condition
-            df.withColumn(condition_col, F.col(window_count_col) > 1)
+            df.withColumn(condition_col, filter_condition & (F.col(window_count_col) > 1))
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
         )

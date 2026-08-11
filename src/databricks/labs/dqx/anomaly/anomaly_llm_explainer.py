@@ -11,8 +11,6 @@ Databricks Model Serving endpoint — no driver collect of LLM output, scales wi
 cluster, and needs no extra Python dependency.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re

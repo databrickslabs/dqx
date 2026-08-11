@@ -388,6 +388,32 @@ def test_is_unique(spark: SparkSession):
     assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
+def test_is_unique_row_filter_excludes_non_matching_rows(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["duplicate", 1],
+            ["duplicate", 1],
+            ["duplicate", 0],
+            ["single", 1],
+        ],
+        SCHEMA,
+    )
+
+    condition, apply_method = is_unique(["a"], row_filter="b = 1")
+    actual_condition_df = apply_method(test_df).select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["duplicate", 1, "Value 'duplicate' in column 'a' is not unique, found 2 duplicates"],
+            ["duplicate", 1, "Value 'duplicate' in column 'a' is not unique, found 2 duplicates"],
+            ["duplicate", 0, None],
+            ["single", 1, None],
+        ],
+        SCHEMA + ", a_is_not_unique: string",
+    )
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
+
+
 def test_is_unique_null_distinct(spark: SparkSession):
     test_df = spark.createDataFrame(
         [

@@ -4,15 +4,12 @@ from collections.abc import Callable
 from typing import Any
 
 import dspy  # type: ignore
-from pyspark.sql import SparkSession
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator, LLMRuleCompiler
-from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
 from databricks.labs.dqx.llm.llm_utils import (
     get_required_check_functions_definitions,
     get_required_summary_stats,
 )
-from databricks.labs.dqx.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,31 +20,30 @@ class DQLLMEngine:
 
     This class serves as a Facade pattern, providing a simple interface
     to the underlying complex LLM system.
+
+    Note:
+        For LLM-based primary key detection, which scans the data to verify uniqueness and
+        requires a Spark session, use *DQLLMPrimaryKeyEngine* instead.
     """
 
     def __init__(
         self,
         model_config: LLMModelConfig,
-        spark: SparkSession | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """
-        Initialize the LLM engine.
+        Initializes the LLM engine.
 
         Args:
             model_config: Configuration for the LLM model.
-            spark: Optional Spark session. If None, a new session is created.
             custom_check_functions: Optional custom check functions to include.
         """
-        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
         # Store configurator for creating per-request LM instances with current token
         # We do NOT call configure() - each request uses context() with the current token
         self._configurator = LLMModelConfigurator(model_config)
         self._llm_rule_compiler = LLMRuleCompiler(custom_check_functions=custom_check_functions)
-        self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
 
     def detect_business_rules_with_llm(
         self, user_input: str = "", schema_info: str = "", summary_stats: dict[str, Any] | None = None
@@ -72,7 +68,7 @@ class DQLLMEngine:
                 - assumptions_bullets: Assumptions made (if schema was inferred)
                 - schema_info: The final schema used (if schema was inferred)
         """
-        with dspy.settings.context(lm=self._configurator.create_lm()):
+        with self._configurator.lm_context():
             if summary_stats is not None:
                 return self._llm_rule_compiler.model_using_data_stats(
                     business_description=user_input or None,
@@ -84,26 +80,3 @@ class DQLLMEngine:
                 business_description=user_input,
                 available_functions=self._available_check_functions,
             )
-
-    def detect_primary_keys_with_llm(self, table: str) -> dict[str, Any]:
-        """
-        Detects primary keys using LLM-based analysis.
-
-        This method analyzes table schema and metadata to identify primary key columns.
-
-        Args:
-            table: The table name to analyze.
-
-        Returns:
-            A dictionary containing the primary key detection result with the following keys:
-            - table: The table name
-            - success: Whether detection was successful
-            - primary_key_columns: List of detected primary key columns (if successful)
-            - confidence: Confidence level (high/medium/low)
-            - reasoning: LLM reasoning for the selection
-            - has_duplicates: Whether duplicates were found (if validation performed)
-            - duplicate_count: Number of duplicate combinations (if validation performed)
-            - error: Error message (if failed)
-        """
-        with dspy.settings.context(lm=self._configurator.create_lm()):
-            return self._llm_pk_detector.detect_primary_keys_with_llm(table=table)
