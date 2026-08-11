@@ -9268,7 +9268,7 @@ def test_apply_aggr_star_check_with_filter_by_metadata(ws, spark):
     expected_df = spark.createDataFrame(
         [
             [1, 1, 1, [error], None],
-            [2, None, 2, [error], None],
+            [2, None, 2, None, None],  # filtered out by "b is not null" -> check not applied to this row
             [3, 3, 3, [error], None],
         ],
         EXPECTED_SCHEMA,
