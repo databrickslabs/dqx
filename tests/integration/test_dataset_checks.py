@@ -1901,6 +1901,34 @@ def test_aggr_matches_dataset_star_column_with_row_filter_mismatch(spark: SparkS
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_is_aggr_count_star_column_expr_with_row_filter(spark: SparkSession):
+    """Regression for #1435: a count(*) check built programmatically with F.col("*") and a row_filter must
+    not raise INVALID_USAGE_OF_STAR_OR_REGEX, and must count only the filtered rows exactly like the
+    declarative string "*" form (identical metric, message and check name)."""
+    # 2 of the 3 rows have b is not null
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3]], SCHEMA)
+
+    checks = [
+        is_aggr_not_less_than(F.col("*"), limit=3, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_greater_than(F.col("*"), limit=1, aggr_type="count", row_filter="b is not null"),
+    ]
+    actual = _apply_checks(test_df, checks)
+
+    # count over the filtered rows is 2: 2 < 3 -> violation, 2 > 1 -> violation, reported on every row
+    less_msg = "Count value 2 in column '*' is less than limit: 3"
+    greater_msg = "Count value 2 in column '*' is greater than limit: 1"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, less_msg, greater_msg],
+            ["b", None, less_msg, greater_msg],
+            ["c", 3, less_msg, greater_msg],
+        ],
+        f"{SCHEMA}, count_less_than_limit STRING, count_greater_than_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_aggr_matches_dataset_ref_column_override(spark: SparkSession):
     """ref_column targets a differently-named column on the reference side and is correctly aggregated."""
     test_df = spark.createDataFrame([["p", 7, 500], ["q", 13, 500]], "a: string, b: int, c: int")

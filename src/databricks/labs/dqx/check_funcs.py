@@ -4329,6 +4329,15 @@ def _is_aggr_compare(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+
+    # A "*" column (count(*) over all rows) can arrive as the string "*" or F.expr("*") — both of which
+    # normalize to ("", "*") — or as F.col("*"), which stringifies to ("unresolvedstar", "unresolvedstar()").
+    # Canonicalize the F.col form to match, so a count(*) check built programmatically yields the same name
+    # and message as the declarative one, and so the CASE WHEN placeholder substitution in apply() triggers
+    # regardless of how the check was constructed. See #1435.
+    if aggr_col_str in {"*", "unresolvedstar()"}:
+        aggr_col_str_norm, aggr_col_str = "", "*"
+
     name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
@@ -4351,11 +4360,11 @@ def _is_aggr_compare(
             The DataFrame with additional condition and metric columns for aggregation validation.
         """
         if row_filter:
-            # aggr_col_str == "*" only for count(*) over all rows (the only valid use of column="*").
-            # F.expr("*") can't be embedded as the THEN value of a CASE WHEN: Spark's star-expansion
-            # resolves it against every column in scope instead of treating it as a placeholder value.
-            # count() only cares about nullness, so a non-null literal is a safe stand-in.
-            # safe_filter_expr rejects unsafe SQL in the filter (see #1303).
+            # aggr_col_str == "*" only for count(*) over all rows (the only valid use of column="*"),
+            # canonicalized above so every star form is caught. A star can't be embedded as the THEN value
+            # of a CASE WHEN: Spark's star-expansion resolves it against every column in scope instead of
+            # treating it as a placeholder value. count() only cares about nullness, so a non-null literal
+            # is a safe stand-in. safe_filter_expr rejects unsafe SQL in the filter (see #1303).
             then_expr = F.lit(1) if aggr_col_str == "*" else aggr_col_expr
             filtered_expr = F.when(safe_filter_expr(row_filter), then_expr)
         else:
