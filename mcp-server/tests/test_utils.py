@@ -517,6 +517,33 @@ class TestGetRunStatus:
         assert "wait a moment" not in message, message
         assert "confirm" not in message or "do not ask" in message, message
 
+    def test_running_message_reports_the_actual_wait_budget_not_the_default(self):
+        """The 'waited Ns' message must reflect the caller's wait_seconds, not the module default.
+
+        Regression guard: the message hardcoded _RUN_WAIT_SECONDS (30s), so a call overriding
+        wait_seconds reported a wait that never happened. It must state the budget it actually blocked
+        for — the agent reads this number to decide the call was progress, not a stalled retry.
+        """
+        from server.utils import get_run_status, _RUN_WAIT_SECONDS
+
+        ws = create_autospec(WorkspaceClient)
+        ws.jobs.get_run.return_value = _make_running_run()
+
+        # Drive monotonic so the 5s budget expires right after the first poll — deterministic, and no
+        # busy-spin (sleep is a no-op): deadline = 1000 + 5, then the loop sees monotonic == 1005.
+        with (
+            patch("server.utils._get_sp_client", return_value=ws),
+            patch("server.utils.time.sleep"),
+            patch("server.utils.time.monotonic", side_effect=[1000.0, 1005.0]),
+        ):
+            result = get_run_status(123, wait_seconds=5)
+
+        assert result["status"] == "running"
+        message = result["message"]
+        assert "waited 5s" in message, message
+        # Guard against the old bug specifically: the default must not leak in when overridden.
+        assert f"waited {int(_RUN_WAIT_SECONDS)}s" not in message, message
+
     def test_the_wait_budget_is_clamped_below_the_client_timeout(self):
         """A configured wait above the ceiling must be capped, not honoured.
 

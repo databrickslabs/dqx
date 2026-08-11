@@ -12,7 +12,7 @@ from pathlib import Path
 
 def get_dqx_version(about_path: Path) -> str:
     """Extract the version string from the __about__.py file."""
-    content = about_path.read_text()
+    content = about_path.read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"(?P<version>[\d.]+)"', content)
     if not match:
         raise ValueError(f"Version not found in {about_path}")
@@ -31,11 +31,11 @@ def update_mdx_files(mdx_dir: Path, version: str):
     replacement = f"https://github.com/databrickslabs/dqx/blob/v{version}/"
 
     for mdx_file in mdx_files:
-        content = mdx_file.read_text()
+        content = mdx_file.read_text(encoding="utf-8")
         updated_content = pattern.sub(replacement, content)
 
         if updated_content != content:
-            mdx_file.write_text(updated_content)
+            mdx_file.write_text(updated_content, encoding="utf-8")
             print(f"Updated GitHub URLs in {mdx_file} to point to the latest DQX released version")
 
 
@@ -47,11 +47,23 @@ def update_dqx_pins(version: str):
     bumped to the repo's version on every release. Running this as part of ``make fmt`` keeps it in
     lockstep with __about__.py: bump __about__.py, run ``make fmt``, and the new version propagates
     everywhere. Any extras (e.g. ``[llm,datacontract]``) are preserved.
+
+    The MCP server's ``databricks.yml`` goes one step further: its ``dqx_version`` bundle variable is
+    the single value a release edits, and the ``==`` pin and the in-repo wheel filename both derive
+    from it via ``${var.dqx_version}``. So the literal ``==<version>`` pin regex below intentionally
+    does NOT match there (it has no digits to rewrite); the ``dqx_version`` default is bumped instead,
+    and DAB propagates it to the pin and the wheel name.
     """
-    # Match ``databricks-labs-dqx`` with optional extras, pinned with ``==<version>``. Only the
-    # version digits are rewritten; the package name and any extras are kept verbatim.
-    pattern = re.compile(r"(databricks-labs-dqx(?:\[[^\]]*\])?==)\d+\.\d+\.\d+")
-    replacement = rf"\g<1>{version}"
+    # Match ``databricks-labs-dqx`` with optional extras, pinned with a LITERAL ``==<version>``. Only
+    # the version digits are rewritten; the package name and any extras are kept verbatim. A pin that
+    # derives its version (``==${var.dqx_version}``) has no digits here and is left untouched.
+    pin_pattern = re.compile(r"(databricks-labs-dqx(?:\[[^\]]*\])?==)\d+\.\d+\.\d+")
+    pin_replacement = rf"\g<1>{version}"
+
+    # Match the ``dqx_version`` bundle variable's ``default:`` in an MCP-style databricks.yml. This is
+    # the single source the derived pin + wheel filename hang off, so bumping it propagates the rest.
+    var_pattern = re.compile(r'(dqx_version:\s*\n\s*default:\s*")\d+\.\d+\.\d+(")')
+    var_replacement = rf"\g<1>{version}\g<2>"
 
     pin_files = [
         Path("app/pyproject.toml"),
@@ -62,12 +74,12 @@ def update_dqx_pins(version: str):
     for pin_file in pin_files:
         if not pin_file.exists():
             continue
-        content = pin_file.read_text()
-        updated_content = pattern.sub(replacement, content)
+        content = pin_file.read_text(encoding="utf-8")
+        updated_content = var_pattern.sub(var_replacement, pin_pattern.sub(pin_replacement, content))
 
         if updated_content != content:
-            pin_file.write_text(updated_content)
-            print(f"Updated databricks-labs-dqx pin in {pin_file} to =={version}")
+            pin_file.write_text(updated_content, encoding="utf-8")
+            print(f"Updated databricks-labs-dqx version references in {pin_file} to {version}")
 
 
 def main():

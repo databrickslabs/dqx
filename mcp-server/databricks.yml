@@ -52,10 +52,10 @@ variables:
   # (CI) target only — see that target's runner_environment_dependencies for why. Production keeps
   # the published `databricks-labs-dqx==<version>` pin, so this filename is unused there. Built by
   # scripts/ci_deploy.sh (which needs it before `bundle deploy`) and published to the wheels volume
-  # by the app at startup, like the other two wheels. Tracks the repo's __about__.py version; a unit
-  # test asserts they match, so a version bump cannot silently point the runner at a missing file.
+  # by the app at startup, like the other two wheels. Derived from var.dqx_version so a release bump
+  # only edits that one value; the name here is exactly what `uv build` produces for that version.
   dqx_wheel_filename:
-    default: "databricks_labs_dqx-0.15.0-py3-none-any.whl"
+    default: "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl"
   # The app's runtime environment, as a complex variable so the dev-coverage target can extend it
   # (DAB target overrides don't merge into a list). The default is what every real deploy gets.
   # DQX release the runner job installs. Reported as the `dqx/<version>` User-Agent token so the
@@ -101,9 +101,9 @@ variables:
       # which must track runner/pyproject.toml; a unit test asserts they match.
       - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.runner_wheel_filename}"
       # A PINNED, published DQX release from the registry (mirrors the DQX Studio task runner, which
-      # also pins databricks-labs-dqx==<version>). Keep this version in sync with the repo's current
-      # release; bump it when upgrading DQX. The [datacontract] extra can be applied here because
-      # this is a PyPI spec, not a wheel path.
+      # also pins databricks-labs-dqx==<version>). The version is derived from var.dqx_version, the
+      # single place a release bump edits (sync_versions.py rewrites that one value). The
+      # [datacontract] extra can be applied here because this is a PyPI spec, not a wheel path.
       #
       # The [llm] extra (dspy) is intentionally NOT installed — the runner stays lean and
       # deterministic, mirroring the DQX Studio task runner. As a result the
@@ -111,7 +111,7 @@ variables:
       # contract's free-text expectations (DQX's LLM "text rules" path). Enabling that is a
       # follow-up: add the dspy/litellm deps from the DQX [llm] extra here, plumb an LLM
       # endpoint config through to the runner, and re-expose the parameter in server/tools.py.
-      - databricks-labs-dqx[datacontract]==0.15.0
+      - "databricks-labs-dqx[datacontract]==${var.dqx_version}"
 
 # Deliberately NO workspace.artifact_path. `bundle deploy` uploads artifacts BEFORE it creates
 # resources, so a volume named as artifact_path can never be bundle-managed — it has to pre-exist,

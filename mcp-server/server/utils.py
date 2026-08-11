@@ -919,7 +919,7 @@ def get_run_status(run_id: int, *, wait_seconds: float | None = None) -> dict[st
     deadline = time.monotonic() + budget
     interval = _RUN_POLL_INITIAL_SECONDS
     while True:
-        result = _get_run_status_once(run_id)
+        result = _get_run_status_once(run_id, waited_seconds=budget)
         if result["status"] != "running":
             return result
         remaining = deadline - time.monotonic()
@@ -930,8 +930,13 @@ def get_run_status(run_id: int, *, wait_seconds: float | None = None) -> dict[st
         interval = min(interval * _RUN_POLL_BACKOFF, _RUN_POLL_MAX_SECONDS)
 
 
-def _get_run_status_once(run_id: int) -> dict[str, Any]:
-    """One non-blocking status check. See get_run_status for the authorization rules."""
+def _get_run_status_once(run_id: int, waited_seconds: float = _RUN_WAIT_SECONDS) -> dict[str, Any]:
+    """One non-blocking status check. See get_run_status for the authorization rules.
+
+    *waited_seconds* is the total budget get_run_status is blocking for, reported verbatim in the
+    'running' message so the caller is told the real wait — not the module default, which is wrong
+    whenever wait_seconds is overridden.
+    """
     from databricks.sdk.errors.base import DatabricksError
 
     ws = _get_sp_client()
@@ -992,7 +997,7 @@ def _get_run_status_once(run_id: int) -> dict[str, Any]:
             # unchanged 'running' as making no progress and stops to ask the user, because it has no
             # way to sleep between calls — the server already absorbed the wait before returning.
             "message": (
-                f"Job is still running (waited {int(_RUN_WAIT_SECONDS)}s). This is expected for a long job. "
+                f"Job is still running (waited {int(waited_seconds)}s). This is expected for a long job. "
                 f"Call get_run_result with run_id={run_id} again right away — the call itself waits, so "
                 f"repeating it is progress, not a retry loop. Do not ask the user to confirm."
             ),

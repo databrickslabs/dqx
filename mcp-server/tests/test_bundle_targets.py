@@ -139,41 +139,63 @@ class TestCoverageTargetMirrorsBase:
             "and must be kept in sync with pyproject.toml."
         )
 
-    def test_the_in_repo_dqx_wheel_matches_the_repo_version(self):
-        """var.dqx_wheel_filename must name the wheel `uv build` actually produces.
+    def test_dqx_version_is_the_single_source_and_matches_the_repo(self):
+        """`dqx_version` is the one value a release bump edits, and it must match __about__.py.
 
-        The bundle names this file in a job dependency list, so a stale version here surfaces as an
-        opaque pip failure inside the runner job rather than a deploy error.
+        The wheel filename and the published pin both derive from ``${var.dqx_version}`` (see the two
+        tests below), so this is the only literal that can drift from the repo. sync_versions.py
+        rewrites it on ``make fmt``; this test fails if that step was skipped, before a stale value
+        reaches a deploy as an opaque pip failure.
         """
         text = _BUNDLE.read_text()
-        declared = re.search(r"^\s*dqx_wheel_filename:\s*\n\s*default:\s*\"([^\"]+)\"", text, re.MULTILINE)
-        assert declared, "dqx_wheel_filename variable not found in databricks.yml"
+        reported = re.search(r"^\s*dqx_version:\s*\n\s*default:\s*\"([^\"]+)\"", text, re.MULTILINE)
+        assert reported, "dqx_version variable not found in databricks.yml"
 
         about = (_BUNDLE.parent.parent / "src" / "databricks" / "labs" / "dqx" / "__about__.py").read_text()
         version = re.search(r'__version__\s*=\s*"([^"]+)"', about)
         assert version, "could not read __version__ from src/databricks/labs/dqx/__about__.py"
 
-        expected = f"databricks_labs_dqx-{version.group(1)}-py3-none-any.whl"
-        assert declared.group(1) == expected, (
-            f"dqx_wheel_filename is {declared.group(1)!r} but the repo is at version "
-            f"{version.group(1)!r}, so `uv build` produces {expected!r}. Update the variable."
+        assert reported.group(1) == version.group(1), (
+            f"dqx_version is {reported.group(1)!r} but the repo is at {version.group(1)!r}. Run "
+            "`make fmt` (docs/dqx/sync_versions.py) to propagate the release version, or bump it here."
         )
 
-    def test_reported_dqx_version_matches_the_installed_pin(self):
-        """The version reported to telemetry must be the one the runner actually installs.
+    def test_the_in_repo_dqx_wheel_derives_from_dqx_version(self):
+        """var.dqx_wheel_filename must derive from ${var.dqx_version}, not carry its own literal.
 
-        `dqx_version` feeds the `dqx/<version>` User-Agent token that the telemetry pipeline reads
-        into release_version. If it drifts from the databricks-labs-dqx pin, adoption data is
-        attributed to a release that never ran — worse than having no version at all, because it is
-        wrong rather than absent.
+        The bundle names this file in a job dependency list. Deriving it means `uv build` (which
+        produces ``databricks_labs_dqx-<dqx_version>-py3-none-any.whl``) and the bundle can never
+        disagree — a version bump touches only dqx_version. A hard-coded version here could drift and
+        surface as an opaque pip failure inside the runner job.
         """
         text = _BUNDLE.read_text()
-        reported = re.search(r"^\s*dqx_version:\s*\n\s*default:\s*\"([^\"]+)\"", text, re.MULTILINE)
-        assert reported, "dqx_version variable not found in databricks.yml"
-        pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", text))
-        assert pins == {reported.group(1)}, (
-            f"dqx_version reports {reported.group(1)!r} but the runner installs {sorted(pins)}. "
-            "Telemetry would attribute MCP usage to a DQX release that never ran."
+        declared = re.search(r"^\s*dqx_wheel_filename:\s*\n\s*default:\s*\"([^\"]+)\"", text, re.MULTILINE)
+        assert declared, "dqx_wheel_filename variable not found in databricks.yml"
+        assert declared.group(1) == "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl", (
+            f"dqx_wheel_filename is {declared.group(1)!r}; it must derive from ${{var.dqx_version}} so it "
+            "cannot drift from the wheel `uv build` produces. Do not hard-code the version here."
+        )
+
+    def test_the_published_pin_derives_from_dqx_version(self):
+        """The runner's published DQX pin must derive from ${var.dqx_version}, not a literal.
+
+        `dqx_version` also feeds the `dqx/<version>` User-Agent token the telemetry pipeline reads into
+        release_version. Deriving the pin from the same variable makes it structurally impossible for
+        the installed release and the reported version to disagree — a literal pin could drift and
+        attribute MCP usage to a release that never ran, which is worse than a missing version.
+        """
+        text = _BUNDLE.read_text()
+        # No LITERAL databricks-labs-dqx==<digits> pin may remain: it would be a second source of the
+        # version, able to drift from dqx_version. The app/ files still pin literally; this guards the
+        # MCP bundle only.
+        literal_pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", text))
+        assert not literal_pins, (
+            f"the MCP bundle has a literal DQX pin {sorted(literal_pins)}; pin via "
+            "==${var.dqx_version} instead so it cannot drift from the reported telemetry version."
+        )
+        assert "databricks-labs-dqx[datacontract]==${var.dqx_version}" in text, (
+            "the runner dependency list must pin databricks-labs-dqx[datacontract]==${var.dqx_version} "
+            "so the installed release and the dqx_version telemetry token stay in lockstep."
         )
 
     def test_base_sync_does_not_ship_the_test_only_wheel(self):
@@ -205,10 +227,21 @@ class TestCoverageTargetMirrorsBase:
             "the app cannot publish the wheel and every data tool fails on library install."
         )
 
-    def test_dqx_pin_is_identical_in_every_target(self):
-        """The DQX pin appears in several places; production and CI must never test different versions."""
-        pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", _BUNDLE.read_text()))
-        assert len(pins) == 1, (
-            f"databricks.yml pins more than one DQX version: {sorted(pins)}. The base and dev-coverage "
-            "dependency lists are separate copies, so a bump has to be applied to both."
+    def test_no_literal_dqx_version_can_drift_from_dqx_version_var(self):
+        """Every DQX version reference derives from ${var.dqx_version}; no literal may reintroduce drift.
+
+        The pin and the in-repo wheel filename used to carry their own version digits, so a bump had to
+        be applied in three places or production and CI would test different releases. Both now derive
+        from the single dqx_version variable — this guards that no literal ``databricks-labs-dqx==<v>``
+        or ``databricks_labs_dqx-<v>-py3-none-any.whl`` creeps back in and becomes a second source.
+        """
+        text = _BUNDLE.read_text()
+        literal_pins = set(re.findall(r"databricks-labs-dqx(?:\[[^\]]*\])?==([0-9][^\s\"']*)", text))
+        # The wheel-name comment intentionally shows a ``<v>`` placeholder, not real digits, so a match
+        # here is a genuine hard-coded version.
+        literal_wheels = set(re.findall(r"databricks_labs_dqx-(\d+\.\d+\.\d+)-py3-none-any\.whl", text))
+        assert not (literal_pins or literal_wheels), (
+            f"databricks.yml hard-codes DQX version(s) pins={sorted(literal_pins)} "
+            f"wheels={sorted(literal_wheels)}; derive them from ${{var.dqx_version}} so a release bump "
+            "touches only that one value and production and CI can never test different releases."
         )

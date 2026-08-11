@@ -451,8 +451,13 @@ def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -
         sys.stderr.write(f"coverage: app stop failed (non-fatal): {exc}\n")
     downloaded: list[str] = []
     coverage_dir = _coverage_dir(tmp_schema)
+    # This run owns the directory exclusively only when the path is the per-run derived one (a fresh
+    # uuid schema, so no concurrent run shares it). An explicit DQX_MCP_COVERAGE_DIR can point several
+    # runs at one directory, and then deleting is unsafe — see _download_coverage_files.
+    explicit = os.environ.get("DQX_MCP_COVERAGE_DIR", "").rstrip("/")
+    owns_dir = not explicit or explicit == "1"
     try:
-        downloaded = _download_coverage_files(ws, coverage_dir, since)
+        downloaded = _download_coverage_files(ws, coverage_dir, since, owns_dir=owns_dir)
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
     if not downloaded:
@@ -495,7 +500,7 @@ def _coverage_dir(tmp_schema: str = "") -> str:
 _COVERAGE_CLOCK_SKEW_TOLERANCE_SECONDS = 3600
 
 
-def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float) -> list[str]:
+def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: float, owns_dir: bool = True) -> list[str]:
     """Download this run's ``.coverage*`` data files from the UC volume dir into the repo root.
 
     Under the normal layout each run has this directory to itself: it lives under the per-run
@@ -504,11 +509,13 @@ def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: floa
     pointing several runs at one directory, and a re-run against a surviving schema whose previous
     ``bundle destroy`` did not complete.
 
-    So age decides what NOT to download (an earlier run's leftovers must stay out of this run's merged
-    report), and only files this run downloaded are deleted. Age alone is deliberately not used for
-    deletion: in the shared-directory case that could reap a *live* file from a run still
-    checkpointing, silently losing the coverage this mechanism exists to collect. Leftovers are left
-    for the run that owns them and for `bundle destroy` removing the volume with the schema.
+    Age decides what NOT to download (an earlier run's leftovers must stay out of this run's merged
+    report). Deletion is the delicate part: a file newer than ``since`` is not necessarily ours — in
+    the shared-directory case it can be a *concurrent* run's file that is still being checkpointed,
+    and deleting it silently loses the coverage this mechanism exists to collect. So we delete only
+    when *owns_dir* — this run has the directory to itself (the per-run derived path, not an explicit
+    shared ``DQX_MCP_COVERAGE_DIR``). When the directory is shared, downloaded files are left in place
+    for their owning run and for ``bundle destroy`` to remove with the volume.
     """
     downloaded: list[str] = []
     skipped = 0
@@ -536,6 +543,10 @@ def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: floa
         dest = _REPO_ROOT / name
         dest.write_bytes(payload)
         downloaded.append(str(dest))
+        if not owns_dir:
+            # Shared directory: this file may belong to a concurrent run still checkpointing. We hold
+            # a copy, so our report is complete; leave the remote file so its owner does not lose it.
+            continue
         # Safe to delete now: this process holds the bytes, so nothing is lost, and the volume does
         # not accumulate. A failure here is ignored — the file is merely left for teardown.
         try:
