@@ -222,7 +222,7 @@ export const cancelDryRun = (
 ): Promise<AxiosResponse<{ status: string; run_id: string }>> => {
   return axios.default.post(`/api/v1/dryrun/runs/${runId}/cancel`, null, {
     ...options,
-    params,
+    params: { ...params, ...options?.params },
   });
 };
 
@@ -237,7 +237,7 @@ export const getDryRunStatusCustom = (
 ): Promise<AxiosResponse<RunStatusOut>> => {
   return axios.default.get(`/api/v1/dryrun/runs/${runId}/status`, {
     ...options,
-    params,
+    params: { ...params, ...options?.params },
   });
 };
 
@@ -252,7 +252,7 @@ export const cancelProfileRun = (
 ): Promise<AxiosResponse<{ status: string; run_id: string }>> => {
   return axios.default.post(`/api/v1/profiler/runs/${runId}/cancel`, null, {
     ...options,
-    params,
+    params: { ...params, ...options?.params },
   });
 };
 
@@ -496,7 +496,7 @@ export const listComments = (
 ): Promise<AxiosResponse<CommentOut[]>> => {
   return axios.default.get(`/api/v1/comments`, {
     ...options,
-    params: { entity_type: entityType, entity_id: entityId },
+    params: { entity_type: entityType, entity_id: entityId, ...options?.params },
   });
 };
 

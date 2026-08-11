@@ -2300,6 +2300,32 @@ def test_benchmark_is_valid_national_id(benchmark, ws, generated_national_id_df,
 @pytest.mark.parametrize(
     "column",
     [
+        "col1_uuid_v4_lowercase",
+        "col2_uuid_v4_uppercase",
+        "col3_uuid_v1_lowercase",
+        "col4_uuid_mixed_case",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_uuid")
+def test_benchmark_is_valid_uuid(benchmark, ws, generated_uuid_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_uuid",
+            criticality="warn",
+            check_func=check_funcs.is_valid_uuid,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_uuid_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
         "col1_country_code",
         "col2_country_code",
     ],
@@ -2341,6 +2367,30 @@ def test_benchmark_is_valid_currency_code(benchmark, ws, generated_currency_code
     ]
     benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_currency_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_subdivision_code",
+        "col2_subdivision_code",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_subdivision_code")
+def test_benchmark_is_valid_subdivision_code(benchmark, ws, generated_subdivision_code_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_subdivision_code",
+            criticality="warn",
+            check_func=check_funcs.is_valid_subdivision_code,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_subdivision_code_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 

@@ -32,9 +32,11 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_uuid,
     is_valid_national_id,
     is_valid_country_code,
     is_valid_currency_code,
+    is_valid_subdivision_code,
     is_valid_language_code,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
@@ -2066,6 +2068,121 @@ def test_col_is_valid_email(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_is_valid_uuid(spark):
+    schema_uuid = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid - canonical 8-4-4-4-12 hex shape, any case
+            ["550e8400-e29b-41d4-a716-446655440000"],
+            ["550E8400-E29B-41D4-A716-446655440000"],  # uppercase
+            ["550e8400-E29B-41d4-A716-446655440000"],  # mixed case
+            ["6ba7b810-9dad-11d1-80b4-00c04fd430c8"],
+            # Valid by default - version/variant not enforced (accepted like every UUID library)
+            ["12345678-1234-0234-8234-123456789abc"],  # version nibble 0
+            ["12345678-1234-9234-8234-123456789abc"],  # version nibble 9
+            ["12345678-1234-4234-c234-123456789abc"],  # variant nibble c (legacy GUID)
+            ["00000000-0000-0000-0000-000000000000"],  # Nil UUID
+            ["ffffffff-ffff-ffff-ffff-ffffffffffff"],  # Max UUID
+            [None],  # Null - passes (no violation reported)
+            # Invalid - structural
+            ["550e8400e29b41d4a716446655440000"],  # missing hyphens
+            ["550e8400-e29b-41d4-a716-44665544000"],  # last group too short
+            ["{550e8400-e29b-41d4-a716-446655440000}"],  # wrapped in braces
+            ["urn:uuid:550e8400-e29b-41d4-a716-446655440000"],  # URN prefix
+            ["550e8400-e29b-41d4-a716-44665544000g"],  # non-hex character
+            [""],  # empty string
+        ],
+        schema_uuid,
+    )
+
+    actual = test_df.select(is_valid_uuid("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'UUID'"
+
+    checked_schema = "a_does_not_match_pattern_uuid: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid - structural
+        [violation("550e8400e29b41d4a716446655440000")],
+        [violation("550e8400-e29b-41d4-a716-44665544000")],
+        [violation("{550e8400-e29b-41d4-a716-446655440000}")],
+        [violation("urn:uuid:550e8400-e29b-41d4-a716-446655440000")],
+        [violation("550e8400-e29b-41d4-a716-44665544000g")],
+        [violation("")],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_uuid_strict(spark):
+    schema_uuid = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid - versions 1-8, variants 8/9/a/b, any case
+            ["550e8400-e29b-41d4-a716-446655440000"],  # version 4, variant a
+            ["550E8400-E29B-41D4-A716-446655440000"],  # uppercase
+            ["6ba7b810-9dad-11d1-80b4-00c04fd430c8"],  # version 1, variant 8
+            ["12345678-1234-8234-9234-123456789abc"],  # version 8, variant 9
+            ["12345678-1234-3234-b234-123456789abc"],  # version 3, variant b
+            [None],  # Null - passes (no violation reported)
+            # Invalid - version nibble out of range (must be 1-8)
+            ["12345678-1234-0234-8234-123456789abc"],
+            ["12345678-1234-9234-8234-123456789abc"],
+            # Invalid - variant bits out of range (must be 8/9/a/b)
+            ["12345678-1234-4234-0234-123456789abc"],
+            ["12345678-1234-4234-c234-123456789abc"],
+            # Invalid - Nil and Max UUIDs (no valid version/variant)
+            ["00000000-0000-0000-0000-000000000000"],
+            ["ffffffff-ffff-ffff-ffff-ffffffffffff"],
+            # Invalid - structural
+            ["550e8400e29b41d4a716446655440000"],
+        ],
+        schema_uuid,
+    )
+
+    actual = test_df.select(is_valid_uuid("a", strict=True))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'UUID_STRICT'"
+
+    checked_schema = "a_does_not_match_pattern_uuid_strict: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid - version out of range
+        [violation("12345678-1234-0234-8234-123456789abc")],
+        [violation("12345678-1234-9234-8234-123456789abc")],
+        # Invalid - variant out of range
+        [violation("12345678-1234-4234-0234-123456789abc")],
+        [violation("12345678-1234-4234-c234-123456789abc")],
+        # Invalid - Nil and Max UUIDs
+        [violation("00000000-0000-0000-0000-000000000000")],
+        [violation("ffffffff-ffff-ffff-ffff-ffffffffffff")],
+        # Invalid - structural
+        [violation("550e8400e29b41d4a716446655440000")],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_valid_national_id(spark):
     schema_ssn = "a: string"
     test_df = spark.createDataFrame(
@@ -2532,6 +2649,136 @@ def test_col_is_valid_currency_code_numeric_int_column(spark):
         [None],
         ["Value '8' in Column 'a' is not a valid ISO 4217 currency code"],
         [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code(spark):
+    schema_sub = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 3166-2 codes
+            ["US-CA"],
+            ["GB-ENG"],
+            ["DE-BY"],
+            # Invalid - unassigned pairing, lowercase (case-sensitive), no separator, or empty
+            ["US-ZZ"],
+            ["us-ca"],
+            ["USCA"],
+            [""],
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("US-ZZ")],
+        [violation("us-ca")],
+        [violation("USCA")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_case_insensitive(spark):
+    schema_sub = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["us-ca"],  # lowercase accepted when case_sensitive is False
+            ["Gb-Eng"],  # mixed case accepted
+            ["DE-BY"],  # canonical case still accepted
+            ["US-ZZ"],  # not an assigned pairing, still invalid
+            [""],
+            [None],
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", case_sensitive=False))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("US-ZZ")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_with_country_column(spark):
+    schema_sub = "a: string, country: string"
+    test_df = spark.createDataFrame(
+        [
+            ["US-CA", "US"],  # valid code, matches country
+            ["US-CA", "GB"],  # valid code, but does not belong to the given country
+            ["US-ZZ", "US"],  # invalid code, regardless of country match
+            ["US-CA", None],  # null country - nothing to cross-check, passes
+            [None, "US"],  # null code - passes regardless of country
+            ["US-ZZ", None],  # invalid code with a null country - still flagged, message shows 'null'
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", country_column="country"))
+
+    def violation(value: str, country: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code for country '{country}' in Column 'country'"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [violation("US-CA", "GB")],
+        [violation("US-ZZ", "US")],
+        [None],
+        [None],
+        [violation("US-ZZ", "null")],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_subdivision_code_case_insensitive_with_country_column(spark):
+    schema_sub = "a: string, country: string"
+    test_df = spark.createDataFrame(
+        [
+            ["us-ca", "us"],  # lowercase code and country both accepted, still match
+            ["us-ca", "gb"],  # lowercase code valid, but does not belong to the given country
+        ],
+        schema_sub,
+    )
+
+    actual = test_df.select(is_valid_subdivision_code("a", case_sensitive=False, country_column="country"))
+
+    def violation(value: str, country: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-2 subdivision code for country '{country}' in Column 'country'"
+
+    checked_schema = "a_is_not_a_valid_subdivision_code: string"
+    checked_data = [
+        [None],
+        [violation("us-ca", "gb")],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 

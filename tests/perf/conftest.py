@@ -344,6 +344,31 @@ def generated_national_id_df(spark):
 
 
 @pytest.fixture
+def generated_uuid_df(spark):
+    uuid_schema_str = (
+        "col1_uuid_v4_lowercase: string, "
+        "col2_uuid_v4_uppercase: string, "
+        "col3_uuid_v1_lowercase: string, "
+        "col4_uuid_mixed_case: string"
+    )
+    schema = _parse_datatype_string(uuid_schema_str)
+
+    uuid_templates = {
+        "col1_uuid_v4_lowercase": r"xxxxxxxx-xxxx-4xxx-9xxx-xxxxxxxxxxxx",
+        "col2_uuid_v4_uppercase": r"XXXXXXXX-XXXX-4XXX-9XXX-XXXXXXXXXXXX",
+        "col3_uuid_v1_lowercase": r"xxxxxxxx-xxxx-1xxx-8xxx-xxxxxxxxxxxx",
+        "col4_uuid_mixed_case": r"xxxxXXXX-xxXX-4xXx-9xXx-xxxxXXXXxxxx",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(uuid_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in uuid_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
+
+
+@pytest.fixture
 def generated_country_code_df(spark):
     # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
     # exercises isin() with a realistic hit ratio in both directions, since isin performance can
@@ -384,6 +409,29 @@ def generated_currency_code_df(spark):
     )
     gen = gen.withSchema(schema)
     for col, values in currency_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
+
+    return gen.build()
+
+
+@pytest.fixture
+def generated_subdivision_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
+    subdivision_schema_str = "col1_subdivision_code: string, col2_subdivision_code: string"
+    schema = _parse_datatype_string(subdivision_schema_str)
+
+    subdivision_value_lists = {
+        "col1_subdivision_code": ["US-CA", "US-NY", "GB-ENG", "DE-BY", "FR-75C", "US-ZZ"],
+        "col2_subdivision_code": ["US-ZZ", "XX-YY", "GB-ZZZ", "US-CA"],
+    }
+
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(subdivision_value_lists), partitions=DEFAULT_PARTITIONS
+    )
+    gen = gen.withSchema(schema)
+    for col, values in subdivision_value_lists.items():
         gen = gen.withColumnSpec(col, values=values)
 
     return gen.build()

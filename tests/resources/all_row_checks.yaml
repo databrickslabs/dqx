@@ -484,6 +484,13 @@
     arguments:
       column: col_email
 
+# is_valid_uuid check
+- criticality: error
+  check:
+    function: is_valid_uuid
+    arguments:
+      column: col_uuid
+
 # has_valid_string_case check
 - criticality: error
   check:
@@ -514,6 +521,13 @@
     arguments:
       column: col_currency
       code_format: alphabetic
+
+# is_valid_subdivision_code check
+- criticality: error
+  check:
+    function: is_valid_subdivision_code
+    arguments:
+      column: col_subdivision
 
 # is_valid_language_code check
 - criticality: error

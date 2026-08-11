@@ -34,7 +34,7 @@ from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 
 try:
-    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
+    from databricks.labs.dqx.llm.llm_pk_engine import DQLLMPrimaryKeyEngine
 
     LLM_ENABLED = True
 except ImportError:
@@ -56,7 +56,9 @@ class DQProfiler(DQEngineBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
         llm_model_config = llm_model_config or LLMModelConfig()
-        self.llm_engine = DQLLMEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
+        self.llm_engine = (
+            DQLLMPrimaryKeyEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
+        )
 
     @staticmethod
     def get_columns_or_fields(columns: list[T.StructField]) -> list[T.StructField]:

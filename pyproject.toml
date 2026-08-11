@@ -147,7 +147,7 @@ test = [
     "fastapi>=0.119.0,<1.0",
     "dbt-core~=1.11.6",
     "dbt-databricks~=1.11.6",
-    "pycountry~=26.2.16",  # used only to test that the packaged ISO 3166-1, ISO 4217, and ISO 639 code lists stay up to date
+    "pycountry~=26.2.16",
 ]
 docs = [
     "pydoc-markdown>=4.8.2,<5.0",
@@ -887,6 +887,8 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
 "tests/unit/test_engine.py" = "protected-access"
+"tests/unit/test_engine_actions.py" = "protected-access"
+"tests/unit/test_engine_actions_run_config.py" = "protected-access"
 "tests/unit/test_anomaly_llm_explainer.py" = "protected-access"
 "tests/unit/test_anomaly_check_funcs_validation.py" = "protected-access"
 "tests/unit/test_anomaly_scoring_run.py" = "protected-access"

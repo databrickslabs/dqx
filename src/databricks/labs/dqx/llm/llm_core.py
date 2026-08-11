@@ -1,12 +1,17 @@
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import cached_property
 
 import dspy  # type: ignore
 
 from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.llm.llm_utils import create_optimizer_training_set, create_optimizer_training_set_with_stats
+from databricks.labs.dqx.llm.llm_utils import (
+    create_optimizer_training_set,
+    create_optimizer_training_set_with_stats,
+    extract_json_rules,
+)
 from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.labs.dqx.llm.optimizers import BootstrapFewShotOptimizer
 from databricks.labs.dqx.llm.validators import RuleValidator
@@ -95,6 +100,20 @@ class LLMModelConfigurator:
             max_retries=self._model_config.max_retries,
         )
 
+    @contextmanager
+    def lm_context(self) -> Iterator[None]:
+        """
+        Scope a block of work to a freshly created LM instance.
+
+        Each call creates a new LM so that the current credentials are picked up, rather than relying
+        on a globally configured model. Use this to wrap any DSPy module invocation.
+
+        Yields:
+            None. The LM is active for the duration of the *with* block.
+        """
+        with dspy.settings.context(lm=self.create_lm()):
+            yield
+
 
 class DspySchemaGuesserSignature(dspy.Signature):
     """Guess a table schema based on business description."""
@@ -158,8 +177,8 @@ class DspyRuleSignature(dspy.Signature):
             "Use the exact argument names from the function signature in available_functions — do not invent synonyms (e.g. regex_match takes 'regex', not 'pattern'). "
             "Include every required parameter for that function in check arguments (per its signature); filter does not substitute for missing arguments (e.g. regex_match still requires 'column' even when a filter mentions that column). "
             "When using sql_query, set input_placeholder in arguments (default input_view). In the query, use double curly braces around that value, e.g. input_placeholder=orders yields FROM {{ orders }}. The placeholder name in {{ }} must match the input_placeholder argument value. "
-            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
-            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
+            'Format: [{"criticality":"error","check":{"function":"name","arguments":{"column":"col"}},"filter":"expression"}] '
+            'Example: [{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}},"filter":"customer_name is not null"}]'
         )
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
@@ -197,7 +216,7 @@ class DspyRuleGeneration(dspy.Module):
         # Validate JSON output and filter unsafe sql_query rules
         if result.quality_rules:
             try:
-                parsed = json.loads(result.quality_rules)
+                parsed = extract_json_rules(result.quality_rules)
             except json.JSONDecodeError as e:
                 logger.warning(f"Generated invalid JSON: {e}. Returning empty rules.")
                 result.quality_rules = "[]"
@@ -288,8 +307,8 @@ class DspyRuleUsingDataStatsSignature(dspy.Signature):
             "Use the exact argument names from the function signature in available_functions — do not invent synonyms (e.g. regex_match takes 'regex', not 'pattern'). "
             "Include every required parameter for that function in check arguments (per its signature); filter does not substitute for missing arguments (e.g. regex_match still requires 'column' even when a filter mentions that column). "
             "When using sql_query, set input_placeholder in arguments (default input_view). In the query, use double curly braces around that value, e.g. input_placeholder=orders yields FROM {{ orders }}. The placeholder name in {{ }} must match the input_placeholder argument value. "
-            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
-            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
+            'Format: [{"criticality":"error","check":{"function":"name","arguments":{"column":"col"}},"filter":"expression"}] '
+            'Example: [{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}},"filter":"customer_name is not null"}]'
         )
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
@@ -327,7 +346,7 @@ class DspyRuleUsingDataStats(dspy.Module):
         # Validate JSON output and filter unsafe sql_query rules
         if result.quality_rules:
             try:
-                parsed = json.loads(result.quality_rules)
+                parsed = extract_json_rules(result.quality_rules)
             except json.JSONDecodeError as e:
                 logger.warning(f"Generated invalid JSON: {e}. Returning empty rules.")
                 result.quality_rules = "[]"
