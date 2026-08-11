@@ -1,0 +1,131 @@
+"""Abstract base for webhook-based alert destinations.
+
+*WebhookAlertDestination* handles the common delivery logic — URL resolution,
+auth building, and the actual HTTP POST — while delegating payload assembly to
+concrete subclasses via *_build_payload*.
+"""
+
+import abc
+import logging
+from typing import ClassVar
+
+from pydantic import PrivateAttr, model_validator
+
+from databricks.labs.dqx.actions.base import ActionContext, ActionServices
+from databricks.labs.dqx.actions.delivery import WebhookAuth
+from databricks.labs.dqx.actions.destinations.base import AlertDestination
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
+from databricks.labs.dqx.actions.message import AlertMessage
+from databricks.labs.dqx.actions.secret_field import SecretOrStr
+from databricks.labs.dqx.config import DQSecret
+from databricks.labs.dqx.errors import InvalidActionError
+
+logger = logging.getLogger(__name__)
+
+
+class WebhookAlertDestination(AlertDestination, abc.ABC):
+    """Abstract Pydantic base for webhook alert destinations.
+
+    Provides a concrete *deliver* implementation and exposes two extension
+    hooks: *_build_payload* (required) for producing the wire-format payload,
+    and *_build_auth* (optional, returns *None* by default) for attaching HTTP
+    Basic-auth credentials.
+
+    Subclasses declare *type* (the literal discriminator) and may override
+    *allowed_host_suffixes*, and implement *_build_payload*.
+
+    Class attributes:
+        allowed_host_suffixes: Optional list of allowed host suffixes passed
+            to *WebhookClient.post*.  *None* means no restriction (use for
+            internal or generic webhooks).
+
+    Attributes:
+        name: Logical name for this destination instance.
+        webhook_url: The webhook endpoint URL, either as a plain string or as
+            a *DQSecret* scope/key reference resolved at delivery time.
+    """
+
+    allowed_host_suffixes: ClassVar[list[str] | None] = None
+    # Set True by subclasses whose webhook URL embeds a secret token (Slack, Teams). Such URLs should
+    # be supplied as a DQSecret; a plain string is accepted for simplicity but warns.
+    url_contains_secret: ClassVar[bool] = False
+
+    webhook_url: SecretOrStr
+
+    # Guards the plaintext-secret warning so it is emitted at most once per instance. This validator
+    # is a mode="after" validator, which pydantic re-runs whenever the instance is re-validated —
+    # e.g. when the destination is nested into a DQAlert(destinations=[...]) — which would otherwise
+    # log the same warning twice. The flag is instance state preserved across those re-validations.
+    _plaintext_secret_warned: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="after")
+    def _validate_webhook_url(self) -> "WebhookAlertDestination":
+        """Validate *webhook_url* and warn when a token-bearing URL is a plaintext string.
+
+        Returns:
+            This destination instance.
+
+        Raises:
+            InvalidActionError: If *webhook_url* is an empty string.
+        """
+        if isinstance(self.webhook_url, str) and not self.webhook_url:
+            raise InvalidActionError("AlertDestination 'webhook_url' must be a non-empty string or DQSecret.")
+        # Token-bearing webhook URLs (Slack/Teams) should be secret references. Allow a plain string
+        # for local development but warn — the token would otherwise sit in config/logs in plaintext.
+        # Warn only once per instance (see _plaintext_secret_warned) so nested re-validation does not
+        # emit the warning multiple times.
+        if (
+            self.url_contains_secret
+            and not isinstance(self.webhook_url, DQSecret)
+            and not self._plaintext_secret_warned
+        ):
+            logger.warning(
+                f"Destination '{sanitize_for_log(self.name)}' ({type(self).__name__}) was given a plaintext "
+                "webhook_url that embeds a secret token. Prefer a DQSecret (scope/key) reference; plaintext is "
+                "for local development only."
+            )
+            self._plaintext_secret_warned = True
+        return self
+
+    @abc.abstractmethod
+    def _build_payload(self, message: AlertMessage) -> dict[str, object]:
+        """Build the wire-format payload dict for *message*.
+
+        Args:
+            message: The alert message to render.
+
+        Returns:
+            A JSON-serialisable dict representing the notification payload.
+        """
+
+    def _build_auth(self, _services: ActionServices) -> WebhookAuth | None:
+        """Build HTTP Basic-auth credentials, if applicable.
+
+        The default implementation returns *None* (no auth).  Override in
+        subclasses that support credential injection.  The *services* argument
+        is available to overrides for secret resolution; the base
+        implementation does not use it.
+
+        Returns:
+            A *WebhookAuth* instance when credentials are available, or *None*.
+        """
+        return None
+
+    def deliver(self, message: AlertMessage, context: ActionContext, services: ActionServices) -> None:
+        """Resolve the URL, build the payload, and POST it to the endpoint.
+
+        Args:
+            message: Immutable alert message to deliver.
+            context: Immutable snapshot of run-time DQX state.
+            services: Injected services (secret resolver, webhook client, etc.).
+        """
+        resolved_url = services.secret_resolver.resolve(self.webhook_url)
+        services.webhook_client.post(
+            resolved_url,
+            self._build_payload(message),
+            auth=self._build_auth(services),
+            allowed_host_suffixes=self.allowed_host_suffixes,
+        )
+
+
+__all__ = ["WebhookAlertDestination"]

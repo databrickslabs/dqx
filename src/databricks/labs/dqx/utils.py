@@ -29,6 +29,25 @@ from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 
+def to_utc(value: datetime.datetime) -> datetime.datetime:
+    """Return *value* as a timezone-aware UTC datetime.
+
+    Datetimes read back from Spark or SQL *TIMESTAMP* columns can be timezone-naive (for example,
+    Spark Connect returns naive datetimes), while values produced in-process are timezone-aware UTC.
+    Mixing the two in arithmetic raises *TypeError*, so this normalizes everything to UTC: a naive
+    value is assumed to already be in UTC and given UTC tzinfo, and an aware value is converted to UTC.
+
+    Args:
+        value: A timezone-aware or timezone-naive datetime.
+
+    Returns:
+        The equivalent timezone-aware UTC datetime.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value.astimezone(datetime.timezone.utc)
+
+
 def _validate_spark_column(value: Any) -> Any:
     """Accept both classic pyspark.sql.Column and the Spark Connect variant.
 
@@ -678,6 +697,31 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]:
     except Exception:
         # Silently handle errors (table not found, permissions, etc.)
         return set()
+
+
+def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> str:
+    """
+    Gets column metadata for a Unity Catalog table using the Databricks SDK.
+
+    Note:
+        This method is used in place of *databricks.labs.dqx.llm.llm_utils.get_column_metadata*
+        when no Spark session is available. Schemas are read from Unity Catalog. The returned JSON
+        has the same shape, so methods can be used interchangeably for LLM-based rule generation.
+
+    Args:
+        workspace_client: Databricks WorkspaceClient instance.
+        table: Fully qualified table name (e.g. *catalog.schema.table*). Backtick-quoted identifiers
+            are accepted and unquoted before the lookup.
+
+    Returns:
+        A JSON string containing the column metadata with columns wrapped in a "columns" key.
+
+    Raises:
+        NotFound: If the table does not exist or is not accessible.
+    """
+    table_info = workspace_client.tables.get(table.replace("`", ""))
+    columns = [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
+    return json.dumps({"columns": columns})
 
 
 def missing_required_packages(packages: list[str]) -> bool:

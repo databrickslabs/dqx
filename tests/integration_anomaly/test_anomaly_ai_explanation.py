@@ -6,8 +6,6 @@ end-to-end. Tests that need a live endpoint skip themselves when the workspace c
 configured endpoint (override with the DQX_AI_QUERY_TEST_ENDPOINT env var).
 """
 
-from __future__ import annotations
-
 import os
 import re
 

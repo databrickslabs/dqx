@@ -45,6 +45,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
     RunConfig,
+    is_table_location,
 )
 from databricks.labs.dqx.errors import (
     CheckDownloadError,
@@ -57,7 +58,6 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.checks_serializer import (
     ChecksSerializer,
     ChecksDeserializer,
-    SerializerFactory,
     ChecksNormalizer,
     deserialize_checks,
     project_to_check_schema,
@@ -68,7 +68,6 @@ from databricks.labs.dqx.rule import compute_rule_fingerprint
 from databricks.labs.dqx.utils import get_file_extension, safe_json_load
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.installer.mixins import InstallationMixin
-from databricks.labs.dqx.io import TABLE_PATTERN
 from databricks.labs.dqx.telemetry import telemetry_logger
 
 logger = logging.getLogger(__name__)
@@ -1438,19 +1437,3 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             )
 
         return self.create_for_location(run_config.checks_location, run_config.name)
-
-
-def is_table_location(location: str) -> bool:
-    """
-    True if location points to a Delta table (catalog.schema.table) and is not a file path
-    with a known checks serializer extension.
-
-    Args:
-        location (str): The checks location to validate.
-
-    Returns:
-        bool: True if the location is a valid table name and not a file path, False otherwise.
-    """
-    return bool(TABLE_PATTERN.match(location)) and not location.lower().endswith(
-        SerializerFactory.get_supported_extensions()
-    )
