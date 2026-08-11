@@ -3,7 +3,7 @@ import json
 import pytest
 from databricks.sdk.service.catalog import ColumnInfo, TableInfo
 
-from databricks.labs.dqx.io import UC_TABLE_PATTERN
+from databricks.labs.dqx.config import UC_TABLE_PATTERN
 from databricks.labs.dqx.utils import get_table_column_metadata
 
 
