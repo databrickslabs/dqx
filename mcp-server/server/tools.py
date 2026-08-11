@@ -5,8 +5,27 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 
 from server import utils
+from server.telemetry import with_telemetry
 
 logger = logging.getLogger(__name__)
+
+
+class _TelemetryRegistrar:
+    """Stands in for the FastMCP server during registration, wrapping each tool with telemetry.
+
+    Only ``.tool`` is intercepted — the decorator is used bare (``@mcp_server.tool``), so this
+    receives the function, instruments it, and hands the result to the real registrar. Everything
+    else is delegated untouched, so this cannot change how the server behaves.
+    """
+
+    def __init__(self, server) -> None:
+        self._server = server
+
+    def tool(self, fn):
+        return self._server.tool(with_telemetry(fn))
+
+    def __getattr__(self, name):
+        return getattr(self._server, name)
 
 
 def _get_tmp_view_config() -> tuple[str, str]:
@@ -46,6 +65,11 @@ def load_tools(mcp_server):
     Long-running tools (profile_table, run_checks, generate_rules, etc.) return
     a run_id immediately. Use get_run_result to poll for results.
     """
+    # Instrument every tool by construction: wrapping the registrar (rather than annotating each
+    # tool) means a tool added later is covered without anyone remembering to. `with_telemetry`
+    # preserves the wrapped function's name, signature and docstring via functools.wraps, which
+    # FastMCP relies on to derive the tool's name and input schema.
+    mcp_server = _TelemetryRegistrar(mcp_server)
 
     @mcp_server.tool
     def get_table_schema(table_name: str):
@@ -91,7 +115,9 @@ def load_tools(mcp_server):
         """Profile a Databricks table to get summary statistics and auto-generated data quality profiles.
 
         This tool submits a profiling job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             table_name: Fully qualified table name (e.g. 'catalog.schema.table').
@@ -128,7 +154,9 @@ def load_tools(mcp_server):
         """Generate DQX data quality check definitions from profiling output.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             profiles: List of profile dicts from profile_table result.
@@ -177,7 +205,9 @@ def load_tools(mcp_server):
         rules are generated.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             contract_file: Path to the contract file (UC volume or workspace). Mutually exclusive
@@ -236,7 +266,9 @@ def load_tools(mcp_server):
         path is a UC volume file, any other '/...' path is a workspace file.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             location: Table name or file path where the checks are stored.
@@ -289,7 +321,9 @@ def load_tools(mcp_server):
         see your schema, and names can't collide across users.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             checks: List of DQX check definitions (metadata format) to save.
@@ -331,7 +365,9 @@ def load_tools(mcp_server):
         """Validate a list of DQX data quality check definitions for correctness.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Returns a dict with:
             - 'status': 'submitted'
@@ -355,7 +391,9 @@ def load_tools(mcp_server):
         """Execute DQX data quality checks against a Databricks table.
 
         This tool submits a check job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             table_name: Fully qualified table name (e.g. 'catalog.schema.table').
@@ -406,7 +444,9 @@ def load_tools(mcp_server):
         users cannot see your schema.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             table_name: Fully qualified source table name (e.g. 'catalog.schema.table').
@@ -463,7 +503,12 @@ def load_tools(mcp_server):
         """Check the status of a submitted job and retrieve results when complete.
 
         Call this after profile_table, generate_rules, validate_checks, or run_checks.
-        If the job is still running, call this tool again after a short wait.
+
+        **This call waits for the job.** It blocks for up to ~30s for the run to finish, so it
+        already absorbs the wait for you. If it returns 'running', the job simply needs longer:
+        call this tool again straight away with the same run_id. Each call waits again, so calling
+        repeatedly IS forward progress, not a stuck retry loop — do not stop to ask the user, and
+        do not try to wait or sleep yourself. A typical job finishes within one or two calls.
 
         Args:
             run_id: The run_id returned by a prior tool call.
@@ -485,7 +530,9 @@ def load_tools(mcp_server):
         """List built-in DQX check functions available for use in rules.
 
         This tool submits a job and returns a run_id immediately.
-        Call get_run_result with the run_id to check status and retrieve results.
+        Call get_run_result with the run_id to check status and retrieve results. That call waits
+        for the job internally, so if it reports 'running', call it again immediately — repeating it
+        is how you make progress, and no wait of your own is needed.
 
         Args:
             filter: Optional case-insensitive substring to narrow the list by function name or
@@ -515,12 +562,22 @@ def load_tools(mcp_server):
         Call this tool FIRST to understand the correct sequence of tool calls.
 
         IMPORTANT: Most tools return a run_id immediately instead of blocking.
-        After calling a tool, use get_run_result(run_id) to poll for results.
-        If status is 'running', wait a moment and call get_run_result again.
+        After calling a tool, use get_run_result(run_id) to retrieve the result.
+
+        get_run_result WAITS for the job (up to ~30s per call), so you do not need to wait or sleep
+        yourself — you have no way to. If it returns 'running', call it again immediately with the
+        same run_id. Repeated calls are forward progress, not a stuck loop: each one waits again.
+        Never stop to ask the user to confirm while a run is still in progress.
         """
         return {
             "description": "DQX data quality workflow for profiling a table, generating rules, and running checks.",
-            "async_pattern": "Most tools submit a job and return a run_id immediately. Call get_run_result(run_id) to poll for results. If status is 'running', wait and call get_run_result again.",
+            "async_pattern": (
+                "Most tools submit a job and return a run_id immediately. Call get_run_result(run_id) to "
+                "retrieve the result. That call blocks for up to ~30s waiting for the job, so do NOT wait or "
+                "sleep yourself. If status is 'running', call get_run_result again right away with the same "
+                "run_id — each call waits again, so repeating it is progress, not a retry loop. Typical jobs "
+                "need one or two calls. Do not ask the user to confirm mid-run."
+            ),
             "steps": [
                 {
                     "step": 1,
