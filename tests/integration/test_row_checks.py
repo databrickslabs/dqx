@@ -3362,7 +3362,6 @@ def test_ipv4_cidr_invalid_blocks_raise_error(spark):
         "192.168.1.g/24",  # Invalid character in IP
         "192.168..1/24",  # Double dots in IP
         "192.168.01.0/24",  # Leading zeros in IP
-        "192.168.1.0/24\n",  # Otherwise-valid CIDR with a trailing newline (issue #1440, re \\Z anchor)
     ]
 
     for invalid_cidr in invalid_cidr_blocks:

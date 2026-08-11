@@ -102,6 +102,14 @@ def test_col_is_ipv4_address_in_cidr_invalid_cidr_block():
         is_ipv4_address_in_cidr("a", cidr_block="invalid")
 
 
+def test_col_is_ipv4_address_in_cidr_trailing_newline_cidr_block():
+    # Regression for issue #1440: an otherwise-valid CIDR with a trailing newline must be rejected.
+    # Validated by re.match (the \Z anchor produced by _pattern_for_python_re), so this raises before
+    # any Spark call - keep it at the fast unit layer.
+    with pytest.raises(InvalidParameterError, match="is not a valid IPv4 CIDR block"):
+        is_ipv4_address_in_cidr("a", cidr_block="192.168.1.0/24\n")
+
+
 def test_col_is_ipv6_address_in_cidr_missing_cidr_block():
     with pytest.raises(MissingParameterError, match="'cidr_block' is not provided."):
         is_ipv6_address_in_cidr("a", cidr_block=None)
