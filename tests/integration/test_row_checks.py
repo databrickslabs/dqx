@@ -678,6 +678,32 @@ def test_col_is_not_null_and_is_in_list_mismatch_datatype(spark):
         actual.count()
 
 
+def test_col_is_in_list_resolves_bare_string_as_column_reference(spark):
+    """A bare (unquoted) string in the allowed list resolves as a column expression, not a literal,
+    so a row passes when the checked column's value matches the referenced column's value."""
+    input_schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ["match", "match"],  # a == b -> allowed
+            ["x", "y"],  # a != b -> flagged
+        ],
+        input_schema,
+    )
+
+    actual = test_df.select(is_in_list("a", ["b"]))  # "b" is a column reference, not the literal "b"
+
+    checked_schema = "a_is_not_in_the_list: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["Value 'x' in Column 'a' is not in the allowed list: [y]"],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_is_not_in_list(spark):
     """Test is_not_in_list check function - blacklist functionality."""
     input_schema = "a: string, b: int, c: map<string, string>, d: array<string>"

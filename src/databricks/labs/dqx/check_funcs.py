@@ -355,7 +355,14 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
 
 
 def _get_limit_exprs(values: list[Any]) -> list[Column]:
-    return [item if isinstance(item, Column) else get_limit_expr(item) for item in values]
+    """Resolve a list of allowed/forbidden values into Spark Column expressions.
+
+    Each value is resolved through *get_limit_expr* (which returns *Column* inputs unchanged), so the
+    same conventions as the comparison checks apply: a bare string is interpreted as a **column
+    expression**, a numeric string such as "3" is parsed as a number, and an ISO-date string such as
+    "2024-01-01" as a date. To match a string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
+    """
+    return [get_limit_expr(item) for item in values]
 
 
 @register_rule("row")
@@ -366,7 +373,10 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
 
     Args:
         column: column to check; can be a string column name or a column expression
-        allowed: list of allowed values (actual values or Column objects)
+        allowed: list of allowed values. Each entry is resolved like the comparison-check limits: a
+            bare string is treated as a **column expression**, a numeric string such as "3" as a
+            number, and an ISO-date string such as "2024-01-01" as a date. To compare against a
+            string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
@@ -424,7 +434,10 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 
     Args:
         column: column to check; can be a string column name or a column expression
-        allowed: list of allowed values (actual values or Column objects)
+        allowed: list of allowed values. Each entry is resolved like the comparison-check limits: a
+            bare string is treated as a **column expression**, a numeric string such as "3" as a
+            number, and an ISO-date string such as "2024-01-01" as a date. To compare against a
+            string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
@@ -481,7 +494,10 @@ def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool =
 
     Args:
         column: column to check; can be a string column name or a column expression
-        forbidden: list of forbidden values (actual values or Column objects)
+        forbidden: list of forbidden values. Each entry is resolved like the comparison-check limits: a
+            bare string is treated as a **column expression**, a numeric string such as "3" as a
+            number, and an ISO-date string such as "2024-01-01" as a date. To compare against a
+            string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
