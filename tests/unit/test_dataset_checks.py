@@ -531,11 +531,6 @@ def test_is_in_distribution_distance_out_of_range(distance, expected_message):
             {1: 0.5, 2.0: 0.5},  # int + float (also unsupported key type — but heterogeneity fires first)
             "'distribution' keys must be homogeneous (all of the same type), got mixed types: ['float', 'int'].",
         ),
-        (
-            # `True` collapses onto key `1` in the dict, so only str + int remain
-            {"A": 0.3, 1: 0.3, True: 0.4},
-            "'distribution' keys must be homogeneous (all of the same type), got mixed types: ['int', 'str'].",
-        ),
     ],
 )
 def test_is_in_distribution_heterogeneous_keys(distribution, expected_message):

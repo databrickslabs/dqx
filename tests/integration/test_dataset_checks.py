@@ -4276,9 +4276,7 @@ def test_is_in_distribution_matches_within_distance(spark: SparkSession):
     Actual proportions A=0.7, B=0.2, C=0.1 differ from expected by TVD=0.05 which is not greater
     than the allowed 0.05, so no rows are flagged."""
     df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05)
     assert all(v is None for v in _apply_and_collect_violations(condition, apply_method, df))
 
 
@@ -4298,9 +4296,7 @@ def test_is_in_distribution_expected_omits_key_falls_into_residual_bucket(spark:
 def test_is_in_distribution_fails_when_distance_too_small(spark: SparkSession):
     """Case 3: same 10 rows and exact expected, but distance=0 → TVD=0.05 flags every row."""
     df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.0
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.0)
     violations = _apply_and_collect_violations(condition, apply_method, df)
     expected_message = (
         "Column 'value' actual distribution deviates from expected by TVD=0.050000, "
@@ -4340,9 +4336,7 @@ def test_is_in_distribution_extra_value_aggregated_into_residual(spark: SparkSes
     Actual: A=0.6, B=0.2, C=0.1, residual=0.1 → TVD = 0.5*(0.1+0+0+0.1) = 0.1 → passes at distance=0.15."""
     values = ["A"] * 6 + ["B"] * 2 + ["C"] + ["D"]
     df = spark.createDataFrame([(v,) for v in values], "value: string")
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.7, "B": 0.2, "C": 0.1}, distance=0.15
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.7, "B": 0.2, "C": 0.1}, distance=0.15)
     actual = apply_method(df).select("value", condition)
     expected = spark.createDataFrame(
         [(v, None) for v in values],
@@ -4368,9 +4362,7 @@ def test_is_in_distribution_case_insensitive_normalisation(spark: SparkSession):
     """Case 7: case_sensitive=False lowercases both the column and expected keys before comparing."""
     values = ["a", "A", "A", "B", "b"]
     df = spark.createDataFrame([(v,) for v in values], "value: string")
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.6, "B": 0.4}, distance=0.001, case_sensitive=False
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.6, "B": 0.4}, distance=0.001, case_sensitive=False)
     actual = apply_method(df).select("value", condition)
     expected = spark.createDataFrame(
         [(v, None) for v in values],
@@ -4440,17 +4432,18 @@ def test_is_in_distribution_unsupported_column_types(
     """Case 9: unsupported column types must be rejected at apply time with a clear error."""
     df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
     _, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.5)
-    with pytest.raises(InvalidParameterError)  as exc_info:
+    with pytest.raises(InvalidParameterError) as exc_info:
         apply_method(df)
-    exc_info.value.message = f"Column 'value' has unsupported type '{spark_type_display}' for 'is_in_distribution'; expected one of: boolean, string, char, byte, short, integer, long, date."
+    assert str(exc_info.value) == (
+        f"Column 'value' has unsupported type '{spark_type_display}' for 'is_in_distribution'; "
+        "expected one of: boolean, string, char, byte, short, integer, long, date."
+    )
 
 
 def test_is_in_distribution_impute_false_flags_missing_expected_keys(spark: SparkSession):
     """impute=False fails the check when a key from the expected distribution is absent from the column."""
     df = spark.createDataFrame([("A",), ("A",), ("A",), ("B",)], "value: string")
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.5, impute=False
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.5, impute=False)
     violations = _apply_and_collect_violations(condition, apply_method, df)
     expected_message = "Column 'value' distribution is missing expected keys ['C'] and impute=False."
     assert violations == [expected_message] * len(violations)
@@ -4462,9 +4455,7 @@ def test_is_in_distribution_impute_true_treats_missing_expected_key_as_zero(spar
     values = ["A", "A", "A", "B"]
     df = spark.createDataFrame([(v,) for v in values], "value: string")
     # actual A=0.75, B=0.25, C=0 (imputed) → TVD = 0.5*(|0.5-0.75|+|0.4-0.25|+|0.1-0|) = 0.25
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.3, impute=True
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.3, impute=True)
     actual = apply_method(df).select("value", condition)
     expected = spark.createDataFrame(
         [(v, None) for v in values],
@@ -4477,9 +4468,7 @@ def test_is_in_distribution_row_filter_applied_before_distribution(spark: SparkS
     """row_filter narrows the dataset before the actual distribution is computed."""
     rows = [("A", 1), ("A", 1), ("A", 1), ("B", 1), ("X", 2), ("Y", 2)]
     df = spark.createDataFrame(rows, "value: string, keep: int")
-    condition, apply_method = is_in_distribution(
-        "value", {"A": 0.75, "B": 0.25}, distance=0.001, row_filter="keep = 1"
-    )
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.25}, distance=0.001, row_filter="keep = 1")
     actual = apply_method(df).select("value", "keep", condition)
     expected = spark.createDataFrame(
         [(v, k, None) for v, k in rows],
@@ -4511,9 +4500,7 @@ def test_is_in_distribution_accepts_column_expression(spark: SparkSession):
     """The check accepts a Spark Column expression in addition to a plain column name."""
     values = ["A"] * 7 + ["B"] * 2 + ["C"]
     df = spark.createDataFrame([(v,) for v in values], "value: string")
-    condition, apply_method = is_in_distribution(
-        F.col("value"), {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05
-    )
+    condition, apply_method = is_in_distribution(F.col("value"), {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05)
     actual = apply_method(df).select("value", condition)
     expected = spark.createDataFrame(
         [(v, None) for v in values],

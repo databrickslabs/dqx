@@ -582,7 +582,7 @@ def is_in_distribution(
             group_expr = col_expr
             normalized_distribution = distribution
 
-        # Single-pass conditional aggregation bounded by len(distribution):
+        # Single-pass conditional aggregation bounded by length of distribution:
         # one COUNT(when col == key) per expected key + one COUNT(col) for the total.
         # F.count(group_expr) natively skips nulls, matching the docstring's contract that NULLs are
         # excluded from the actual distribution. F.when(col == key, 1) also returns NULL when col
@@ -628,9 +628,7 @@ def is_in_distribution(
             expected_residual = 1.0 - math.fsum(normalized_distribution.values())
             actual_residual = residual_count / total
 
-            deviations = [
-                abs(normalized_distribution[k] - actual_counts.get(k, 0) / total) for k in expected_keys
-            ]
+            deviations = [abs(normalized_distribution[k] - actual_counts.get(k, 0) / total) for k in expected_keys]
             deviations.append(abs(expected_residual - actual_residual))
             tvd = 0.5 * math.fsum(deviations)
 
@@ -682,6 +680,57 @@ def _validate_distribution(
     if not distribution:
         raise InvalidParameterError("'distribution' must not be empty.")
 
+    _validate_distribution_items(distribution)
+    _validate_distribution_values(distribution)
+    _validate_distribution_keys_types(distribution)
+    _validate_distribution_keys_collision(case_sensitive, distribution)
+
+
+def _validate_distribution_values(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
+):
+    total = math.fsum(distribution.values())
+    if total > 1:
+        raise InvalidParameterError(f"'distribution' values sum ({total}) is greater than 1.")
+
+
+def _validate_distribution_keys_collision(
+    case_sensitive: bool,
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+):
+    if not case_sensitive:
+        str_keys = [k for k in distribution.keys() if isinstance(k, str)]
+        normalized_to_original: dict[str, list[str]] = {}
+        for key in str_keys:
+            normalized_to_original.setdefault(key.lower(), []).append(key)
+        colliding = {norm: originals for norm, originals in normalized_to_original.items() if len(originals) > 1}
+        if colliding:
+            raise InvalidParameterError(
+                f"'distribution' keys collide after case-insensitive normalisation: {colliding}."
+            )
+
+
+def _validate_distribution_keys_types(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
+):
+    key_types = {type(k) for k in distribution.keys()}
+    if len(key_types) > 1:
+        type_names = sorted(t.__name__ for t in key_types)
+        raise InvalidParameterError(
+            f"'distribution' keys must be homogeneous (all of the same type), got mixed types: {type_names}."
+        )
+
+    key_type = next(iter(key_types))
+    if not issubclass(key_type, _SUPPORTED_DISTRIBUTION_KEY_TYPES):
+        raise InvalidParameterError(
+            f"'distribution' keys of type {key_type.__name__!r} are not supported; "
+            f"expected one of: bool, str, int, datetime.date."
+        )
+
+
+def _validate_distribution_items(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
+):
     for key, value in distribution.items():
         if key is None:
             raise InvalidParameterError("'distribution' must not contain None as a key.")
@@ -697,35 +746,6 @@ def _validate_distribution(
             )
         if value < 0:
             raise InvalidParameterError(f"'distribution' value {value} for key {key!r} must be non-negative.")
-
-    total = math.fsum(distribution.values())
-    if total > 1:
-        raise InvalidParameterError(f"'distribution' values sum ({total}) is greater than 1.")
-
-    key_types = {type(k) for k in distribution.keys()}
-    if len(key_types) > 1:
-        type_names = sorted(t.__name__ for t in key_types)
-        raise InvalidParameterError(
-            f"'distribution' keys must be homogeneous (all of the same type), got mixed types: {type_names}."
-        )
-
-    key_type = next(iter(key_types))
-    if not issubclass(key_type, _SUPPORTED_DISTRIBUTION_KEY_TYPES):
-        raise InvalidParameterError(
-            f"'distribution' keys of type {key_type.__name__!r} are not supported; "
-            f"expected one of: bool, str, int, datetime.date."
-        )
-
-    if not case_sensitive:
-        str_keys = [k for k in distribution.keys() if isinstance(k, str)]
-        normalized_to_original: dict[str, list[str]] = {}
-        for key in str_keys:
-            normalized_to_original.setdefault(key.lower(), []).append(key)
-        colliding = {norm: originals for norm, originals in normalized_to_original.items() if len(originals) > 1}
-        if colliding:
-            raise InvalidParameterError(
-                f"'distribution' keys collide after case-insensitive normalisation: {colliding}."
-            )
 
 
 def _validate_distance(distance: float) -> None:
