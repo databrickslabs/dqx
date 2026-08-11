@@ -61,6 +61,21 @@ def test_generate_for_backticked_uc_table_reads_schema_without_spark(uc_workspac
     uc_workspace_client.tables.get.assert_called_once_with("my-catalog.my-schema.users")
 
 
+def test_generate_for_three_level_hive_metastore_table_uses_workspace_client(uc_workspace_client, mock_spark):
+    """A 3-level hive_metastore name is a valid UC namespace, so it is read via the workspace client, not Spark."""
+    captured: dict = {}
+    generator = DQGenerator(workspace_client=uc_workspace_client, spark=mock_spark)
+    generator.llm_engine = _stub_llm_engine(captured)
+
+    generator.generate_dq_rules_ai_assisted(
+        user_input="age must be positive", input_config=InputConfig(location="hive_metastore.default.users")
+    )
+
+    assert json.loads(captured["schema_info"]) == UC_COLUMNS
+    uc_workspace_client.tables.get.assert_called_once_with("hive_metastore.default.users")
+    assert not mock_spark.read.options.called
+
+
 @pytest.mark.parametrize("location", ["not a location", "users", "main..users"])
 def test_generate_rejects_unsupported_input_location(mock_workspace_client, location):
     """An unclassifiable location fails with a clear error instead of falling through to Spark."""

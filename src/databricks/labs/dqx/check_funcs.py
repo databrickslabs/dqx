@@ -1917,7 +1917,7 @@ def is_unique(
 
         df = (
             # Add condition column used in make_condition
-            df.withColumn(condition_col, F.col(window_count_col) > 1)
+            df.withColumn(condition_col, filter_condition & (F.col(window_count_col) > 1))
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
         )
