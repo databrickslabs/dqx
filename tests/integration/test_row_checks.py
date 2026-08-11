@@ -2261,6 +2261,42 @@ def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
     assertDataFrameEqual(actual, expected)
 
 
+# Regression for issue #1440: the DQPattern family is anchored with \A...\z, not ^...$. Under Java
+# regex (Spark rlike) $ also matches just before a final line terminator, so an otherwise-valid value
+# with one trailing newline used to pass. Each case is a valid value plus that value with a trailing
+# newline, which must now be reported as a violation.
+@pytest.mark.parametrize(
+    "check, base_value, pattern_name, result_column",
+    [
+        (is_valid_ipv4_address("a"), "192.168.1.1", "IPV4_ADDRESS", "a_does_not_match_pattern_ipv4_address"),
+        (is_valid_email("a"), "user@example.com", "EMAIL_ADDRESS", "a_does_not_match_pattern_email_address"),
+        (is_valid_uuid("a"), "550e8400-e29b-41d4-a716-446655440000", "UUID", "a_does_not_match_pattern_uuid"),
+        (
+            is_valid_uuid("a", strict=True),
+            "550e8400-e29b-41d4-a716-446655440000",
+            "UUID_STRICT",
+            "a_does_not_match_pattern_uuid_strict",
+        ),
+        (is_valid_national_id("a", country="US"), "123-45-6789", "SSN_US", "a_does_not_match_pattern_ssn_us"),
+    ],
+)
+def test_pattern_checks_reject_a_trailing_newline(spark, check, base_value, pattern_name, result_column):
+    newline_value = base_value + "\n"
+    test_df = spark.createDataFrame([[base_value], [newline_value]], "a: string")
+
+    actual = test_df.select(check)
+
+    expected = spark.createDataFrame(
+        [
+            [None],  # base value stays valid
+            [f"Value '{newline_value}' in Column 'a' does not match pattern '{pattern_name}'"],
+        ],
+        f"{result_column}: string",
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_valid_country_code_alpha_2(spark):
     schema = "a: string"
     test_df = spark.createDataFrame(
@@ -3326,6 +3362,7 @@ def test_ipv4_cidr_invalid_blocks_raise_error(spark):
         "192.168.1.g/24",  # Invalid character in IP
         "192.168..1/24",  # Double dots in IP
         "192.168.01.0/24",  # Leading zeros in IP
+        "192.168.1.0/24\n",  # Otherwise-valid CIDR with a trailing newline (issue #1440, re \\Z anchor)
     ]
 
     for invalid_cidr in invalid_cidr_blocks:
