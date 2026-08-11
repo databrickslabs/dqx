@@ -1834,6 +1834,20 @@ def test_aggr_matches_dataset_row_filters(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_aggr_matches_dataset_rejects_destructive_ref_row_filter(spark: SparkSession):
+    """aggr_matches_dataset routes ref_row_filter through safe_filter_expr, so a destructive filter is
+    rejected with UnsafeSqlQueryError instead of reaching ref_df.filter() as a raw string - matching the
+    checked-side row_filter and the is_sql_query_safe requirement in CLAUDE.md."""
+    test_df = spark.createDataFrame([["a", 1]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 1]], SCHEMA)
+
+    _, apply_method = aggr_matches_dataset(
+        "a", ref_df_name="ref_df", aggr_type="count", ref_row_filter="b = 1 OR DROP TABLE users"
+    )
+    with pytest.raises(UnsafeSqlQueryError):
+        apply_method(test_df, spark, {"ref_df": ref_df})
+
+
 def test_aggr_matches_dataset_star_column_with_row_filter(spark: SparkSession):
     """column='*' (count(*) over all rows) combined with row_filter counts filtered rows correctly, no violation."""
     # 5 rows total, but only 3 have b is not null
