@@ -9232,6 +9232,51 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
     assert_df_equality(all_df, expected_df)
 
 
+def test_apply_aggr_star_check_with_filter_by_metadata(ws, spark):
+    """Regression for #1435: the exact declarative repro shape - a count(*) aggregate check combined with
+    a filter - must apply without raising INVALID_USAGE_OF_STAR_OR_REGEX and count only the filtered rows."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    # SCHEMA = "a: int, b: int, c: int"; 2 of the 3 rows have b is not null
+    test_df = spark.createDataFrame([[1, 1, 1], [2, None, 2], [3, 3, 3]], SCHEMA)
+
+    checks = [
+        {
+            "criticality": "error",
+            "filter": "b is not null",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "*", "aggr_type": "count", "limit": 100},
+            },
+        }
+    ]
+
+    # Applying the check must not raise INVALID_USAGE_OF_STAR_OR_REGEX.
+    checked_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    # count over the 2 filtered rows is 2 (< 100) -> a single violation reported on every row,
+    # since the aggregation is computed over all filtered rows (no group_by).
+    error = {
+        "name": "count_less_than_limit",
+        "message": "Count value 2 in column '*' is less than limit: 100",
+        "columns": ["*"],
+        "filter": "b is not null",
+        "function": "is_aggr_not_less_than",
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": {},
+    }
+    expected_df = spark.createDataFrame(
+        [
+            [1, 1, 1, [error], None],
+            [2, None, 2, [error], None],
+            [3, 3, 3, [error], None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked_df, expected_df)
+
+
 def test_apply_checks_raises_error_when_passed_dict_instead_of_dqrules(ws, spark):
     dq_engine = DQEngine(ws)
     src_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
