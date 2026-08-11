@@ -6001,7 +6001,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string, col_ssn: string, col_country: string, col_currency: string, "
+        "col_email: string, col_uuid: string, col_ssn: string, col_country: string, col_currency: string, "
         "col_subdivision: string, col_language: string"
     )
     test_df = spark.createDataFrame(
@@ -6022,6 +6022,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "550e8400-e29b-41d4-a716-446655440000",
                 "123-45-6789",
                 "US",
                 "USD",
@@ -6044,6 +6045,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
                 "223-45-6789",
                 "GB",
                 "EUR",
@@ -6066,6 +6068,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "12345678-1234-8234-9234-123456789abc",
                 "323-45-6789",
                 "DE",
                 "GBP",
@@ -6112,6 +6115,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "550e8400-e29b-41d4-a716-446655440000",
                 "123-45-6789",
                 "US",
                 "USD",
@@ -6136,6 +6140,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
                 "223-45-6789",
                 "GB",
                 "EUR",
@@ -6160,6 +6165,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "12345678-1234-8234-9234-123456789abc",
                 "323-45-6789",
                 "DE",
                 "GBP",
@@ -6319,7 +6325,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string, col_ssn: string, col_country: string, col_currency: string, "
+        "col_email: string, col_uuid: string, col_ssn: string, col_country: string, col_currency: string, "
         "col_subdivision: string, col_language: string"
     )
     test_df = spark.createDataFrame(
@@ -6340,6 +6346,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "550e8400-e29b-41d4-a716-446655440000",
                 "123-45-6789",
                 "US",
                 "USD",
@@ -6362,6 +6369,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
                 "223-45-6789",
                 "GB",
                 "EUR",
@@ -6384,6 +6392,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "12345678-1234-8234-9234-123456789abc",
                 "323-45-6789",
                 "DE",
                 "GBP",
@@ -6418,6 +6427,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "550e8400-e29b-41d4-a716-446655440000",
                 "123-45-6789",
                 "US",
                 "USD",
@@ -6442,6 +6452,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
                 "223-45-6789",
                 "GB",
                 "EUR",
@@ -6466,6 +6477,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "12345678-1234-8234-9234-123456789abc",
                 "323-45-6789",
                 "DE",
                 "GBP",

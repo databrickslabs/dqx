@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
 
+# catalog.schema.table or schema.table or database.table (backticks allow special chars like hyphens)
+TABLE_PATTERN = re.compile(r"^(?:(?:`[^`]+`|[a-zA-Z0-9_]+)\.)?(?:`[^`]+`|[a-zA-Z0-9_]+)\.(?:`[^`]+`|[a-zA-Z0-9_]+)$")
+# catalog.schema.table only (3-level), the namespace resolvable through the Unity Catalog tables API
+UC_TABLE_PATTERN = re.compile(r"^(?:`[^`]+`|[a-zA-Z0-9_]+)\.(?:`[^`]+`|[a-zA-Z0-9_]+)\.(?:`[^`]+`|[a-zA-Z0-9_]+)$")
+
 
 def read_input_data(
     spark: SparkSession,
