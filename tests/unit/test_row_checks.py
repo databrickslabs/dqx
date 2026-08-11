@@ -102,6 +102,21 @@ def test_col_is_ipv4_address_in_cidr_invalid_cidr_block():
         is_ipv4_address_in_cidr("a", cidr_block="invalid")
 
 
+# The six line terminators Java $ tolerates at end of input (LF, CR, CRLF, NEL, LS, PS). The DQPattern
+# anchors are \A...\z, and _pattern_for_python_re maps \z to Python's \Z (absolute end), so re.match
+# rejects a CIDR argument ending in any of them. See issue #1440.
+_TRAILING_LINE_TERMINATORS = ["\n", "\r", "\r\n", "\u0085", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("terminator", _TRAILING_LINE_TERMINATORS)
+def test_col_is_ipv4_address_in_cidr_trailing_line_terminator_cidr_block(terminator):
+    # Regression for issue #1440: an otherwise-valid CIDR with a trailing line terminator must be
+    # rejected. Validated by re.match (the \Z anchor produced by _pattern_for_python_re), so this raises
+    # before any Spark call - keep it at the fast unit layer.
+    with pytest.raises(InvalidParameterError, match="is not a valid IPv4 CIDR block"):
+        is_ipv4_address_in_cidr("a", cidr_block="192.168.1.0/24" + terminator)
+
+
 def test_col_is_ipv6_address_in_cidr_missing_cidr_block():
     with pytest.raises(MissingParameterError, match="'cidr_block' is not provided."):
         is_ipv6_address_in_cidr("a", cidr_block=None)

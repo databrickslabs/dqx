@@ -2315,6 +2315,57 @@ def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
     assertDataFrameEqual(actual, expected)
 
 
+# The six Java-regex line terminators. Under Java regex (Spark rlike) $ matches just before any one of
+# these at the end of input, so ^...$ leaks a value ending in one; \A...\z (this fix) anchors on the
+# absolute end and rejects all of them. Verified on Spark 4.0.0: $ leaked exactly these six and nothing
+# else (VT/FF/other controls were already rejected), so this is the complete regression set. See #1440.
+_TRAILING_LINE_TERMINATORS = [
+    "\n",  # LF
+    "\r",  # CR
+    "\r\n",  # CRLF
+    "\u0085",  # NEL (next line)
+    "\u2028",  # LS (line separator)
+    "\u2029",  # PS (paragraph separator)
+]
+
+
+# Regression for issue #1440: the DQPattern family is anchored with \A...\z, not ^...$. Each case is a
+# valid value plus that value with a trailing line terminator, which must now be reported as a violation.
+@pytest.mark.parametrize(
+    "check, base_value, pattern_name, result_column",
+    [
+        (is_valid_ipv4_address("a"), "192.168.1.1", "IPV4_ADDRESS", "a_does_not_match_pattern_ipv4_address"),
+        (is_valid_email("a"), "user@example.com", "EMAIL_ADDRESS", "a_does_not_match_pattern_email_address"),
+        (is_valid_uuid("a"), "550e8400-e29b-41d4-a716-446655440000", "UUID", "a_does_not_match_pattern_uuid"),
+        (
+            is_valid_uuid("a", strict=True),
+            "550e8400-e29b-41d4-a716-446655440000",
+            "UUID_STRICT",
+            "a_does_not_match_pattern_uuid_strict",
+        ),
+        (is_valid_national_id("a", country="US"), "123-45-6789", "SSN_US", "a_does_not_match_pattern_ssn_us"),
+    ],
+)
+@pytest.mark.parametrize("terminator", _TRAILING_LINE_TERMINATORS)
+def test_pattern_checks_reject_a_trailing_line_terminator(
+    spark, terminator, check, base_value, pattern_name, result_column
+):
+    terminated_value = base_value + terminator
+    test_df = spark.createDataFrame([[base_value], [terminated_value]], "a: string")
+
+    actual = test_df.select(check)
+
+    expected = spark.createDataFrame(
+        [
+            [None],  # base value stays valid
+            [f"Value '{terminated_value}' in Column 'a' does not match pattern '{pattern_name}'"],
+        ],
+        f"{result_column}: string",
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_valid_country_code_alpha_2(spark):
     schema = "a: string"
     test_df = spark.createDataFrame(
