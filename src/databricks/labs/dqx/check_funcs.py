@@ -2491,6 +2491,7 @@ def has_no_aggr_outliers(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
+    validate_star_aggregate(aggr_col_str, aggr_type)
 
     # Unique suffix so multiple applications of this check don't collide
     unique_str = uuid.uuid4().hex
@@ -2731,7 +2732,9 @@ def aggr_matches_dataset(
         ref_group_by_names = get_columns_as_strings(resolved_ref_group_by, allow_simple_expressions_only=True)
 
     ref_column = column if ref_column is None else ref_column
-    _, ref_col_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
+    # Canonicalize the star the same way the checked side does (via _is_aggr_compare) so a count(*)
+    # comparison built with F.col("*") reports '*' consistently on both sides of the message. See #1435.
+    _, ref_col_str, ref_col_expr = resolve_aggregate_column(ref_column)
     ref_label = f"table '{ref_table}'" if ref_table else f"DataFrame '{ref_df_name}'"
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -4329,6 +4332,7 @@ def _is_aggr_compare(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
+    validate_star_aggregate(aggr_col_str, aggr_type)
     name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
@@ -4600,6 +4604,28 @@ def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str, ag
         return aggr_col_expr
     then_expr = F.lit(1) if aggr_col_str == "*" else aggr_col_expr
     return F.when(safe_filter_expr(row_filter), then_expr)
+
+
+def validate_star_aggregate(aggr_col_str: str, aggr_type: str) -> None:
+    """Reject a star column with any aggregate other than *count*.
+
+    *"*"* only means "all rows" for *count(*)*; other aggregates (sum, avg, ...) need a concrete column.
+    Because a filtered star is aggregated via a non-null literal placeholder (see
+    *build_filtered_aggregate_input*), a non-count star would otherwise silently behave like a filtered
+    count instead of surfacing the misuse, so reject it explicitly at build time. See #1435.
+
+    Args:
+        aggr_col_str: Canonicalized display name of the column (as returned by *resolve_aggregate_column*).
+        aggr_type: The aggregate function name.
+
+    Raises:
+        InvalidParameterError: If *aggr_col_str* is the star *"*"* and *aggr_type* is not *count*.
+    """
+    if aggr_col_str == "*" and aggr_type.lower() != "count":
+        raise InvalidParameterError(
+            f"Column '*' is only supported with the 'count' aggregate (count(*)), but got '{aggr_type}'. "
+            "Use an explicit column for other aggregate types."
+        )
 
 
 def _get_aggregate_display_name(aggr_type: str, aggr_params: dict[str, Any] | None = None) -> str:

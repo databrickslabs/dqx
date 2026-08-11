@@ -1901,6 +1901,40 @@ def test_aggr_matches_dataset_star_column_with_row_filter_mismatch(spark: SparkS
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_aggr_matches_dataset_star_as_column_expression(spark: SparkSession):
+    """Regression for #1435: passing the star as F.col("*") must report '*' consistently on both the
+    checked and reference sides of the message (not the raw 'unresolvedstar()' rendering)."""
+    # 5 rows total, only 3 have b is not null
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3], ["d", None], ["e", 5]], SCHEMA)
+    # 5 rows total, all 5 have b is not null
+    ref_df = spark.createDataFrame([["v", 1], ["w", 2], ["x", 3], ["y", 4], ["z", 5]], SCHEMA)
+
+    checks = [
+        aggr_matches_dataset(
+            F.col("*"),  # star as a column expression, not the string "*"
+            ref_df_name="ref_df",
+            aggr_type="count",
+            row_filter="b is not null",
+            ref_row_filter="b is not null",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message = "Count value 3 in column '*' is not equal to DataFrame 'ref_df' column '*' limit: 5"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, expected_message],
+            ["b", None, expected_message],
+            ["c", 3, expected_message],
+            ["d", None, expected_message],
+            ["e", 5, expected_message],
+        ],
+        f"{SCHEMA}, count_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_is_aggr_count_star_column_expr_with_row_filter(spark: SparkSession):
     """Regression for #1435: a count(*) check built programmatically with F.col("*") and a row_filter must
     not raise INVALID_USAGE_OF_STAR_OR_REGEX, and must count only the filtered rows exactly like the

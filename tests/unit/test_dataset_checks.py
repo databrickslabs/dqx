@@ -360,3 +360,24 @@ def test_resolve_aggregate_column_preserves_non_star_columns():
     """A non-star column is returned unchanged by resolve_aggregate_column."""
     col_str_norm, col_str, _ = check_funcs.resolve_aggregate_column(F.col("revenue"))
     assert (col_str_norm, col_str) == ("revenue", "revenue")
+
+
+def test_validate_star_aggregate_rejects_non_count():
+    """A star column is only valid with count(*); other aggregates are rejected. See #1435."""
+    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+        check_funcs.validate_star_aggregate("*", "sum")
+
+
+def test_validate_star_aggregate_allows_count_and_non_star():
+    """count (any case) is allowed for the star column, and non-star columns are never rejected."""
+    check_funcs.validate_star_aggregate("*", "count")
+    check_funcs.validate_star_aggregate("*", "COUNT")
+    check_funcs.validate_star_aggregate("revenue", "sum")
+
+
+@pytest.mark.parametrize("column", ["*", F.col("*"), F.expr("*")])
+def test_is_aggr_star_rejects_non_count_aggregate(column):
+    """is_aggr_* with column='*' and a non-count aggregate is rejected at build time, regardless of the
+    star form, instead of silently behaving like a filtered count. See #1435."""
+    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+        check_funcs.is_aggr_not_less_than(column, limit=1, aggr_type="sum")

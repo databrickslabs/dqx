@@ -65,6 +65,11 @@ class TestIsAggrNotAnomalousValidation:
         with pytest.raises(InvalidParameterError, match="time_interval"):
             has_no_aggr_outliers("value", "ts", time_interval="Day")
 
+    def test_validates_star_column_requires_count(self):
+        """column='*' is only meaningful for count(*); other aggregates must raise (#1435)."""
+        with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+            has_no_aggr_outliers("*", "ts", aggr_type="sum")
+
     def test_valid_parameters_do_not_raise(self):
         """Typical valid call must not raise any exception."""
         has_no_aggr_outliers(
