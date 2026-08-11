@@ -279,7 +279,7 @@ class TestStandardMessageBuilderBuild:
         assert msg.fields["user_metadata.owner"] == "data-eng"
         assert msg.fields["user_metadata.pipeline"] == "sales_daily"
 
-    def test_user_metadata_values_are_stringified(self):
+    def test_user_metadata_values_are_stringified(self) -> None:
         # Non-string metadata values are coerced to str for the flat fields mapping.
         non_str_metadata: dict[str, str] = {"retries": 3}  # type: ignore[dict-item]
         msg = StandardMessageBuilder.build(

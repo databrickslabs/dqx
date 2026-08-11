@@ -404,6 +404,9 @@ class WorkspaceConfig:
 # backtick-quoted.
 _IDENT = r"(?:`[^`]+`|[a-zA-Z0-9_]+)"
 TABLE_PATTERN = re.compile(rf"^(?:{_IDENT}\.)?{_IDENT}\.{_IDENT}$")
+# A three-part table identifier only (catalog.schema.table), i.e. a namespace resolvable through the
+# Unity Catalog tables API. Unlike TABLE_PATTERN, the catalog part is required.
+UC_TABLE_PATTERN = re.compile(rf"^{_IDENT}\.{_IDENT}\.{_IDENT}$")
 
 
 def is_table_location(location: str) -> bool:
