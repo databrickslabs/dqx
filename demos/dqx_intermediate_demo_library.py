@@ -210,10 +210,10 @@ row_rules = yaml.safe_load(
         arguments:
           column: payment_method
           allowed:
-            - credit_card
-            - debit_card
-            - paypal
-            - bank_transfer
+            - "'credit_card'"
+            - "'debit_card'"
+            - "'paypal'"
+            - "'bank_transfer'"
       criticality: error
     - name: invalid_payment_method
       check:
