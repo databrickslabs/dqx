@@ -8,9 +8,9 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import LLMModelConfig, InputConfig
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig, TABLE_PATTERN, UC_TABLE_PATTERN
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.io import STORAGE_PATH_PATTERN, TABLE_PATTERN, UC_TABLE_PATTERN
+from databricks.labs.dqx.io import STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger

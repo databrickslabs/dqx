@@ -1,7 +1,5 @@
 """Semantic (ruleset-level) validation for DQ checks."""
 
-from __future__ import annotations
-
 import json
 import logging
 
