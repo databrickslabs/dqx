@@ -36,6 +36,9 @@ from databricks.labs.dqx.errors import (
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
+# Unanchored dotted-quad body, shared by the IPV4_ADDRESS and IPV4_CIDR_BLOCK patterns so each can
+# apply its own \A...\z anchors without one deriving from the other's (already-anchored) value.
+_IPV4_ADDRESS_BODY = rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 _VALID_STRING_CASES = {"upper", "lower", "title", "sentence"}
@@ -84,13 +87,17 @@ WINDOW_INCOMPATIBLE_AGGREGATES = {
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
-    IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
-    IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
+    # Anchored with \A...\z (Java regex, used by Spark rlike), NOT ^...$: in Java $ also matches
+    # just before a final line terminator, so a value with a trailing newline would pass. \z is the
+    # absolute end of input, so "1.2.3.4\n" is correctly rejected. See issue #1440.
+    IPV4_ADDRESS = rf"\A{_IPV4_ADDRESS_BODY}\z"
+    IPV4_CIDR_BLOCK = rf"\A{_IPV4_ADDRESS_BODY}/{_IPV4_CIDR_SUFFIX}\z"
     # RFC 5322 pragmatic subset: dot-atom or quoted-string local part, dot-atom or
     # IP-literal domain, with RFC 5321 length caps (local ≤ 64, total ≤ 254).
     # Excludes CFWS, obsolete grammar, and SMTPUTF8/IDN. ReDoS-safe.
+    # \A...\z anchors (not ^...$) so a trailing newline is rejected under Java regex - see IPV4_ADDRESS.
     EMAIL_ADDRESS = (
-        rf"^(?=.{{1,254}}$)"
+        rf"\A(?=.{{1,254}}\z)"
         # Local part: dot-atom or quoted-string limited to 64-characters
         rf"(?=[^@]{{1,64}}@)"
         rf"(?:"
@@ -103,19 +110,19 @@ class DQPattern(Enum):
         rf"(?:{_EMAIL_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}"
         rf"|\[(?:{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}|IPv6:[A-Fa-f0-9:]+)\]"
         rf")"
-        rf"$"
+        rf"\z"
     )
 
     # US Social Security Number AAA-GG-SSSS: the separator (hyphen, single space, or
     # none) must be consistent via backreference \1. Excludes invalid ranges - area
     # 000/666/9xx (9xx covers ITINs), group 00, serial 0000. Anchored, fixed-width; ReDoS-safe.
-    SSN_US = r"^(?!000|666|9\d{2})\d{3}([- ]?)(?!00)\d{2}\1(?!0000)\d{4}$"
+    SSN_US = r"\A(?!000|666|9\d{2})\d{3}([- ]?)(?!00)\d{2}\1(?!0000)\d{4}\z"
 
     # Canonical UUID form per RFC 9562: 8-4-4-4-12 hex groups. UUID validates the shape
     # only, so RFC-defined Nil/Max sentinels and legacy variant GUIDs pass; UUID_STRICT
     # also pins the version nibble to 1-8 and variant bits to 8/9/a/b. Anchored, fixed-width; ReDoS-safe.
-    UUID = r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
-    UUID_STRICT = r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$"
+    UUID = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\z"
+    UUID_STRICT = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\z"
 
 
 # ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
@@ -124,6 +131,18 @@ class DQPattern(Enum):
 _NATIONAL_ID_PATTERNS_BY_COUNTRY: dict[str, DQPattern] = {
     "US": DQPattern.SSN_US,
 }
+
+
+def _pattern_for_python_re(pattern: DQPattern) -> str:
+    """Return a *DQPattern* value usable with Python's *re* module.
+
+    *DQPattern* values are Java regular expressions (consumed by Spark *rlike*), where the absolute
+    end-of-input anchor is *\\z*. Python's *re* does not understand *\\z* (it raises *bad escape*) and
+    spells the same anchor *\\Z*. The start anchor *\\A* is identical in both engines. Translating only
+    the end anchor keeps a single source of truth for each pattern while letting *re* validate scalar
+    arguments (e.g. a *cidr_block* string) with the same shape Spark applies to column values.
+    """
+    return pattern.value.replace(r"\z", r"\Z")
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -1630,7 +1649,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not cidr_block:
         raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
-    if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
+    if not re.match(_pattern_for_python_re(DQPattern.IPV4_CIDR_BLOCK), cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
