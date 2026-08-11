@@ -678,25 +678,53 @@ def test_col_is_not_null_and_is_in_list_mismatch_datatype(spark):
         actual.count()
 
 
-def test_col_is_in_list_resolves_bare_string_as_column_reference(spark):
-    """A bare (unquoted) string in the allowed list resolves as a column expression, not a literal,
-    so a row passes when the checked column's value matches the referenced column's value."""
+def test_col_is_not_in_list_resolves_bare_string_as_column_reference(spark):
+    """A bare (unquoted) string in the forbidden list resolves as a column expression, not a literal,
+    so a row is flagged when the checked column's value matches the referenced column's value."""
     input_schema = "a: string, b: string"
     test_df = spark.createDataFrame(
         [
-            ["match", "match"],  # a == b -> allowed
-            ["x", "y"],  # a != b -> flagged
+            ["match", "match"],  # a == b -> in forbidden list -> flagged
+            ["x", "y"],  # a != b -> allowed
         ],
         input_schema,
     )
 
-    actual = test_df.select(is_in_list("a", ["b"]))  # "b" is a column reference, not the literal "b"
+    actual = test_df.select(is_not_in_list("a", ["b"]))  # "b" is a column reference, not the literal "b"
 
-    checked_schema = "a_is_not_in_the_list: string"
+    checked_schema = "a_is_in_the_forbidden_list: string"
+    expected = spark.createDataFrame(
+        [
+            ["Value 'match' in Column 'a' is in the forbidden list: [match]"],
+            [None],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_not_null_and_is_in_list_resolves_bare_string_as_column_reference(spark):
+    """A bare (unquoted) string in the allowed list resolves as a column expression, not a literal,
+    so a row passes only when the non-null checked column value matches the referenced column value."""
+    input_schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ["match", "match"],  # a == b and not null -> allowed
+            ["x", "y"],  # a != b -> not in allowed list -> flagged
+            [None, "y"],  # a is null -> flagged
+        ],
+        input_schema,
+    )
+
+    actual = test_df.select(is_not_null_and_is_in_list("a", ["b"]))  # "b" is a column reference
+
+    checked_schema = "a_is_null_or_is_not_in_the_list: string"
     expected = spark.createDataFrame(
         [
             [None],
-            ["Value 'x' in Column 'a' is not in the allowed list: [y]"],
+            ["Value 'x' in Column 'a' is null or not in the allowed list: [y]"],
+            ["Value 'null' in Column 'a' is null or not in the allowed list: [y]"],
         ],
         checked_schema,
     )

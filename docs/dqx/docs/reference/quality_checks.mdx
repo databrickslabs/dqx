@@ -107,6 +107,12 @@ If your validation logic requires data from other tables, you can either referen
 See more [here](/docs/reference/quality_checks#applying-checks-on-multiple-data-sets).
 </Admonition>
 
+<Admonition type="warning" title="String values in `is_in_list`, `is_not_in_list` and `is_not_null_and_is_in_list` are resolved as column expressions">
+Starting with version 0.16.0, the `allowed` / `forbidden` values of `is_in_list`, `is_not_in_list` and `is_not_null_and_is_in_list` are resolved the same way as the limits of the range checks: a **bare string is interpreted as a column expression** (not a string literal), a numeric string such as `"3"` is parsed as a number, and an ISO-date string such as `"2024-01-01"` as a date.
+
+Previously, string values were always treated as literals. To compare against a **string literal**, single-quote it — including numeric-looking values such as ZIP codes, e.g. `"'active'"` or `"'01234'"` — or pass `F.lit("active")`. An unquoted string that matches a column name resolves to that column's value; otherwise the check fails at runtime with an `AnalysisException`.
+</Admonition>
+
 ### Usage examples
 
 Below are fully specified examples of how to define row-level checks declaratively in YAML format and programmatically with DQX classes. Both are equivalent and can be used interchangeably.
@@ -4664,7 +4670,8 @@ Converting a list of class-based check definitions into their equivalent diction
         criticality="warn",
         check_func=check_funcs.is_not_null_and_is_in_list,
         column=F.col("c"),
-        check_func_kwargs={"allowed": ["a", F.col("d")]},
+        # "'a'" is a quoted string literal; F.col("d") is a column reference
+        check_func_kwargs={"allowed": ["'a'", F.col("d")]},
       ),
       DQDatasetRule(
         criticality="error",
@@ -4715,8 +4722,8 @@ Converting a list of DQX dictionary representations (metadata format loaded from
           arguments:
             column: c
             allowed:
-            - "'a'"
-            - "'d'"
+            - "'a'" # quoted string literal
+            - d # column reference
 
       - name: col1_is_not_unique
         criticality: error
