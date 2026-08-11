@@ -4380,16 +4380,17 @@ def test_is_in_distribution_case_insensitive_normalisation(spark: SparkSession):
 
 
 @pytest.mark.parametrize(
-    "spark_type, values, distribution",
+    "spark_type, arrow_type, values, distribution",
     [
-        ("boolean", [True, True, True, False], {True: 0.75, False: 0.25}),
-        ("string", ["x", "x", "x", "y"], {"x": 0.75, "y": 0.25}),
-        ("char(3)", ["abc", "abc", "abc", "xyz"], {"abc": 0.75, "xyz": 0.25}),
-        ("byte", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
-        ("short", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
-        ("int", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
-        ("long", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("boolean", "boolean", [True, True, True, False], {True: 0.75, False: 0.25}),
+        ("string", "string", ["x", "x", "x", "y"], {"x": 0.75, "y": 0.25}),
+        ("char(3)", "string", ["abc", "abc", "abc", "xyz"], {"abc": 0.75, "xyz": 0.25}),
+        ("byte", "byte", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("short", "short", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("int", "int", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("long", "long", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
         (
+            "date",
             "date",
             [date(2024, 1, 1)] * 3 + [date(2024, 2, 1)],
             {date(2024, 1, 1): 0.75, date(2024, 2, 1): 0.25},
@@ -4399,17 +4400,19 @@ def test_is_in_distribution_case_insensitive_normalisation(spark: SparkSession):
 def test_is_in_distribution_supported_column_types(
     spark: SparkSession,
     spark_type: str,
+    arrow_type: str,
     values: list,
     distribution: dict,
 ):
     """Case 8: every supported Spark type must be accepted and evaluated correctly."""
-    df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
+    df = spark.createDataFrame([(v,) for v in values], f"value: {arrow_type}")
+    df = df.withColumn("value", F.col("value").cast(spark_type))
     condition, apply_method = is_in_distribution("value", distribution, distance=0.001)
     actual = apply_method(df).select("value", condition)
     expected = spark.createDataFrame(
         [(v, None) for v in values],
-        f"value: {spark_type}, value_is_not_in_distribution: string",
-    )
+        f"value: {arrow_type}, value_is_not_in_distribution: string",
+    ).withColumn("value", F.col("value").cast(spark_type))
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -4437,11 +4440,9 @@ def test_is_in_distribution_unsupported_column_types(
     """Case 9: unsupported column types must be rejected at apply time with a clear error."""
     df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
     _, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.5)
-    with pytest.raises(
-        InvalidParameterError,
-        match=f"Column 'value' has unsupported type '{spark_type_display}' for 'is_in_distribution'; expected one of: boolean, string, char, byte, short, integer, long, date.",
-    ):
+    with pytest.raises(InvalidParameterError)  as exc_info:
         apply_method(df)
+    exc_info.value.message = f"Column 'value' has unsupported type '{spark_type_display}' for 'is_in_distribution'; expected one of: boolean, string, char, byte, short, integer, long, date."
 
 
 def test_is_in_distribution_impute_false_flags_missing_expected_keys(spark: SparkSession):
