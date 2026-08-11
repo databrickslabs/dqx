@@ -403,7 +403,7 @@ banking_checks_yaml = f"""
     function: is_in_list
     arguments:
       column: currency
-      allowed: ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "CNY", "INR", "BRL", "MXN"]
+      allowed: ["'USD'", "'EUR'", "'GBP'", "'JPY'", "'CHF'", "'CAD'", "'AUD'", "'CNY'", "'INR'", "'BRL'", "'MXN'"]
     name: valid_iso_currency
   user_metadata:
     version: v1

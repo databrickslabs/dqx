@@ -11,7 +11,7 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig, TABLE_PATTERN, UC_TABLE_PATTERN
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import STORAGE_PATH_PATTERN
-from databricks.labs.dqx.profiler.common import val_maybe_to_str
+from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
@@ -314,8 +314,12 @@ class DQGenerator(DQEngineBase):
         Returns:
                 A dictionary representing the data quality rule.
         """
+        # is_in_list resolves bare strings as column expressions, so string values must be quoted
+        # to be compared as string literals. Non-string values (numbers, dates) are passed through
+        # unchanged and resolved as literals. See _get_limit_exprs / get_limit_expr in check_funcs.
+        allowed = [val_to_str(value) if isinstance(value, str) else value for value in params["in"]]
         return {
-            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
+            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": allowed}},
             "name": f"{column}_other_value",
             "criticality": criticality,
         }

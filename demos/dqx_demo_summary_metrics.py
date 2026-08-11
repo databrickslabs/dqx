@@ -85,8 +85,8 @@ checks_from_yaml = yaml.safe_load("""
       - country
     arguments:
       allowed:
-        - Germany
-        - France
+        - "'Germany'"
+        - "'France'"
   criticality: warn
 
 # 4. Error if id is not unique across the dataset

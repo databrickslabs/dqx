@@ -75,3 +75,19 @@ def test_generate_has_no_outliers(generator, caplog):
     assert "has_no_outliers" in rules[0]["check"]["function"]
     assert "measurement" in rules[0]["check"]["arguments"]["column"]
     assert "error" in rules[0]["criticality"]
+
+
+def test_generate_is_in_quotes_string_values(generator):
+    """is_in_list resolves bare strings as column expressions, so generated string allowlist values
+    must be quoted to be compared as string literals. Single quotes are escaped; non-string values
+    (numbers) are passed through unchanged."""
+    profiles = [
+        DQProfile(name="is_in", column="status", parameters={"in": ["active", "O'Brien"]}),
+        DQProfile(name="is_in", column="code", parameters={"in": [1, 2, 3]}),
+    ]
+
+    rules = generator.generate_dq_rules(profiles)
+
+    assert rules[0]["check"]["function"] == "is_in_list"
+    assert rules[0]["check"]["arguments"]["allowed"] == ["'active'", "'O\\'Brien'"]
+    assert rules[1]["check"]["arguments"]["allowed"] == [1, 2, 3]

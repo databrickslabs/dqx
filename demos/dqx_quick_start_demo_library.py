@@ -108,8 +108,8 @@ checks_from_yaml = yaml.safe_load("""
       - country
     arguments:
       allowed:
-        - Germany
-        - France
+        - "'Germany'"
+        - "'France'"
   criticality: warn
 
 # 4. Error if id is not unique across the dataset
@@ -202,7 +202,7 @@ checks = [
         columns=["country"],
         check_func=check_funcs.is_in_list,
         criticality=Criticality.WARN.value,
-        check_func_kwargs={"allowed": ["Germany", "France"]},
+        check_func_kwargs={"allowed": ["'Germany'", "'France'"]},
     ).get_rules(),
 
     # 4. Error if id is not unique across the dataset
