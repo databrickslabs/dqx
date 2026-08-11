@@ -2315,10 +2315,22 @@ def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
     assertDataFrameEqual(actual, expected)
 
 
-# Regression for issue #1440: the DQPattern family is anchored with \A...\z, not ^...$. Under Java
-# regex (Spark rlike) $ also matches just before a final line terminator, so an otherwise-valid value
-# with one trailing newline used to pass. Each case is a valid value plus that value with a trailing
-# newline, which must now be reported as a violation.
+# The six Java-regex line terminators. Under Java regex (Spark rlike) $ matches just before any one of
+# these at the end of input, so ^...$ leaks a value ending in one; \A...\z (this fix) anchors on the
+# absolute end and rejects all of them. Verified on Spark 4.0.0: $ leaked exactly these six and nothing
+# else (VT/FF/other controls were already rejected), so this is the complete regression set. See #1440.
+_TRAILING_LINE_TERMINATORS = [
+    "\n",  # LF
+    "\r",  # CR
+    "\r\n",  # CRLF
+    "\u0085",  # NEL (next line)
+    "\u2028",  # LS (line separator)
+    "\u2029",  # PS (paragraph separator)
+]
+
+
+# Regression for issue #1440: the DQPattern family is anchored with \A...\z, not ^...$. Each case is a
+# valid value plus that value with a trailing line terminator, which must now be reported as a violation.
 @pytest.mark.parametrize(
     "check, base_value, pattern_name, result_column",
     [
@@ -2334,16 +2346,19 @@ def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
         (is_valid_national_id("a", country="US"), "123-45-6789", "SSN_US", "a_does_not_match_pattern_ssn_us"),
     ],
 )
-def test_pattern_checks_reject_a_trailing_newline(spark, check, base_value, pattern_name, result_column):
-    newline_value = base_value + "\n"
-    test_df = spark.createDataFrame([[base_value], [newline_value]], "a: string")
+@pytest.mark.parametrize("terminator", _TRAILING_LINE_TERMINATORS)
+def test_pattern_checks_reject_a_trailing_line_terminator(
+    spark, terminator, check, base_value, pattern_name, result_column
+):
+    terminated_value = base_value + terminator
+    test_df = spark.createDataFrame([[base_value], [terminated_value]], "a: string")
 
     actual = test_df.select(check)
 
     expected = spark.createDataFrame(
         [
             [None],  # base value stays valid
-            [f"Value '{newline_value}' in Column 'a' does not match pattern '{pattern_name}'"],
+            [f"Value '{terminated_value}' in Column 'a' does not match pattern '{pattern_name}'"],
         ],
         f"{result_column}: string",
     )
