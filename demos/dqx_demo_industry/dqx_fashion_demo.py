@@ -454,7 +454,7 @@ fashion_checks_yaml = f"""
     function: is_in_list
     arguments:
       column: category
-      allowed: ["Tops", "Bottoms", "Dresses", "Outerwear", "Footwear", "Accessories", "Activewear", "Swimwear", "Loungewear"]
+      allowed: ["'Tops'", "'Bottoms'", "'Dresses'", "'Outerwear'", "'Footwear'", "'Accessories'", "'Activewear'", "'Swimwear'", "'Loungewear'"]
     name: valid_product_category
   user_metadata:
     version: v1
