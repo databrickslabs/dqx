@@ -1977,6 +1977,29 @@ def test_is_aggr_count_star_column_expr_with_row_filter(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_is_aggr_count_distinct_star_unfiltered(spark: SparkSession):
+    """Regression for #1435: count(DISTINCT *) over '*' is valid Spark and must run end-to-end (not be
+    rejected by the star validation, which only guards the filtered-count placeholder path)."""
+    # (a, 1) is duplicated -> 3 distinct rows out of 4
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["a", 1], ["c", 3]], SCHEMA)
+
+    checks = [is_aggr_not_less_than("*", limit=10, aggr_type="count_distinct")]
+    actual = _apply_checks(test_df, checks)
+
+    msg = "Distinct count value 3 in column '*' is less than limit: 10"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, msg],
+            ["b", 2, msg],
+            ["a", 1, msg],
+            ["c", 3, msg],
+        ],
+        f"{SCHEMA}, count_distinct_less_than_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_aggr_matches_dataset_ref_column_override(spark: SparkSession):
     """ref_column targets a differently-named column on the reference side and is correctly aggregated."""
     test_df = spark.createDataFrame([["p", 7, 500], ["q", 13, 500]], "a: string, b: int, c: int")

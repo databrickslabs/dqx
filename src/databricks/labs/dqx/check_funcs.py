@@ -2235,6 +2235,10 @@ def is_aggr_not_greater_than(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2280,6 +2284,10 @@ def is_aggr_not_less_than(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2329,6 +2337,10 @@ def is_aggr_equal(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2380,6 +2392,10 @@ def is_aggr_not_equal(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2461,7 +2477,8 @@ def has_no_aggr_outliers(
 
     Raises:
         InvalidParameterError: If *sigma <= 0*, *lookback_num_intervals < 2*,
-            *warmup_num_intervals* is out of range, or *time_interval* is unknown.
+            *warmup_num_intervals* is out of range, *time_interval* is unknown, or *column* is *"*"* with
+            an unsupported aggregate (see *validate_star_aggregate*).
         MissingParameterError: If *aggr_type* requires *aggr_params* that
             are not supplied (e.g. percentile functions).
     """
@@ -2491,7 +2508,8 @@ def has_no_aggr_outliers(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
-    validate_star_aggregate(aggr_col_str, aggr_type)
+    # The star is aggregated via the filtered-count placeholder only when a row filter is present.
+    validate_star_aggregate(aggr_col_str, aggr_type, uses_placeholder=bool(row_filter))
 
     # Unique suffix so multiple applications of this check don't collide
     unique_str = uuid.uuid4().hex
@@ -2735,9 +2753,10 @@ def aggr_matches_dataset(
     # Canonicalize the star the same way the checked side does (via _is_aggr_compare) so a count(*)
     # comparison built with F.col("*") reports '*' consistently on both sides of the message. See #1435.
     _, ref_col_str, ref_col_expr = resolve_aggregate_column(ref_column)
-    # The reference aggregate is built directly (F.count/F.sum/... over ref_col_expr), bypassing
-    # _is_aggr_compare, so validate the reference star here too: "*" is only valid for count(*).
-    validate_star_aggregate(ref_col_str, aggr_type)
+    # The reference aggregate is built directly (F.count/F.count_distinct/... over ref_col_expr) on a
+    # DataFrame.filter'd frame, bypassing _is_aggr_compare and its placeholder — so this is the native
+    # path: count(*) and count(DISTINCT *) are valid, other aggregates are not.
+    validate_star_aggregate(ref_col_str, aggr_type, uses_placeholder=False)
     ref_label = f"table '{ref_table}'" if ref_table else f"DataFrame '{ref_df_name}'"
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -4338,7 +4357,8 @@ def _is_aggr_compare(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
-    validate_star_aggregate(aggr_col_str, aggr_type)
+    # The star is aggregated via the filtered-count placeholder only when a row filter is present.
+    validate_star_aggregate(aggr_col_str, aggr_type, uses_placeholder=bool(row_filter))
     name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
@@ -4565,16 +4585,11 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
 
 
 # count(*) over all rows can be provided three ways that otherwise stringify differently: the string
-# "*" and F.expr("*") normalize to ("", "*"), while F.col("*") normalizes to ("unresolvedstar",
-# "unresolvedstar()"). These are the string forms get_column_name_or_alias produces for a bare star.
-# The paren-less "unresolvedstar" and the case/whitespace-insensitive match below guard against runtime
-# rendering differences (e.g. Databricks Serverless renders some column strings differently); see #1435.
-_STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()", "unresolvedstar"})
-
-
-def _is_star_column_name(col_str: str) -> bool:
-    """Return True if *col_str* is one of the rendered forms of a bare star column."""
-    return col_str.strip().lower() in _STAR_COLUMN_FORMS
+# "*" and F.expr("*") render as "*", while F.col("*") renders as "unresolvedstar()". These are the exact
+# forms get_column_name_or_alias produces for a bare star, and are pinned by a unit test. Match them
+# exactly: broadening (case-insensitive or the paren-less "unresolvedstar") would misclassify a real
+# column literally named "unresolvedstar" as count(*). See #1435.
+_STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()"})
 
 
 def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
@@ -4592,7 +4607,7 @@ def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
         A tuple of the normalized column name, the display column name, and the Column expression.
     """
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
-    if _is_star_column_name(aggr_col_str):
+    if aggr_col_str in _STAR_COLUMN_FORMS:
         return "", "*", aggr_col_expr
     return aggr_col_str_norm, aggr_col_str, aggr_col_expr
 
@@ -4619,27 +4634,46 @@ def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str, ag
     return F.when(safe_filter_expr(row_filter), then_expr)
 
 
-def validate_star_aggregate(aggr_col_str: str, aggr_type: str) -> None:
-    """Reject a star column with any aggregate other than *count*.
+# Aggregates that accept a star column when evaluated natively: count(*) always, and count(DISTINCT *)
+# (count_distinct expands "*" through its varargs). Single-arg aggregates (sum, avg, min, ...) never
+# accept "*". Through the filtered-count placeholder (F.lit(1)) only "count" stays correct — see below.
+_STAR_NATIVE_AGGREGATES = frozenset({"count", "count_distinct"})
 
-    *"*"* only means "all rows" for *count(*)*; other aggregates (sum, avg, ...) need a concrete column.
-    Because a filtered star is aggregated via a non-null literal placeholder (see
-    *build_filtered_aggregate_input*), a non-count star would otherwise silently behave like a filtered
-    count instead of surfacing the misuse, so reject it explicitly at build time. See #1435.
+
+def validate_star_aggregate(aggr_col_str: str, aggr_type: str, *, uses_placeholder: bool) -> None:
+    """Reject star-column/aggregate combinations that are unsupported or would be silently wrong.
+
+    *"*"* means "all rows" and is only meaningful for counting. Two evaluation paths exist:
+
+    - Native (*uses_placeholder=False*: no row filter, or *aggr_matches_dataset*'s reference side which
+      filters the DataFrame directly): *count* and *count_distinct* both accept *"*"*; single-arg
+      aggregates (sum, avg, ...) do not, so they are rejected at build time with a clear error rather than
+      failing later in Spark.
+    - Placeholder (*uses_placeholder=True*: a row filter on the checked/outlier side wraps the column in a
+      CASE WHEN whose THEN is a non-null literal, see *build_filtered_aggregate_input*): only *count* is
+      correct — the literal placeholder makes *count_distinct* collapse to 1 and other aggregates
+      meaningless — so everything except *count* is rejected.
+
+    Comparison is case-sensitive to match the case-sensitive aggregate resolution (*getattr(F, aggr_type)*).
 
     Args:
         aggr_col_str: Canonicalized display name of the column (as returned by *resolve_aggregate_column*).
         aggr_type: The aggregate function name.
+        uses_placeholder: True when the star will be aggregated via the filtered-count placeholder.
 
     Raises:
-        InvalidParameterError: If *aggr_col_str* is the star *"*"* and *aggr_type* is not *count*.
+        InvalidParameterError: If *aggr_col_str* is the star *"*"* and *aggr_type* is not a supported
+            star aggregate for the evaluation path.
     """
-    # Compare case-sensitively: aggregate names are resolved case-sensitively elsewhere (getattr(F, aggr_type)
-    # in _build_aggregate_expression), so only the exact lowercase "count" is a valid count(*).
-    if aggr_col_str == "*" and aggr_type != "count":
+    if aggr_col_str != "*":
+        return
+    allowed = frozenset({"count"}) if uses_placeholder else _STAR_NATIVE_AGGREGATES
+    if aggr_type not in allowed:
+        supported = "'count'" if uses_placeholder else "'count' or 'count_distinct'"
+        qualifier = " with a row filter" if uses_placeholder else ""
         raise InvalidParameterError(
-            f"Column '*' is only supported with the 'count' aggregate (count(*)), but got '{aggr_type}'. "
-            "Use an explicit column for other aggregate types."
+            f"Column '*'{qualifier} is only supported with {supported} (got '{aggr_type}'). "
+            "Use an explicit column for other aggregates."
         )
 
 

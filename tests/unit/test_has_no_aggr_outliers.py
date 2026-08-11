@@ -65,10 +65,17 @@ class TestIsAggrNotAnomalousValidation:
         with pytest.raises(InvalidParameterError, match="time_interval"):
             has_no_aggr_outliers("value", "ts", time_interval="Day")
 
-    def test_validates_star_column_requires_count(self):
-        """column='*' is only meaningful for count(*); other aggregates must raise (#1435)."""
-        with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+    def test_validates_star_column_rejects_single_arg_aggregate(self):
+        """column='*' does not work with single-arg aggregates (sum, avg, ...); must raise (#1435)."""
+        with pytest.raises(InvalidParameterError, match="only supported with"):
             has_no_aggr_outliers("*", "ts", aggr_type="sum")
+
+    def test_validates_star_column_count_distinct_allowed_unfiltered_rejected_filtered(self):
+        """count(DISTINCT *) is valid unfiltered but the filtered-count placeholder makes it wrong, so it is
+        rejected only when a row_filter is set (#1435)."""
+        has_no_aggr_outliers("*", "ts", aggr_type="count_distinct")  # unfiltered: allowed
+        with pytest.raises(InvalidParameterError, match="with a row filter is only supported with 'count'"):
+            has_no_aggr_outliers("*", "ts", aggr_type="count_distinct", row_filter="value > 0")
 
     def test_valid_parameters_do_not_raise(self):
         """Typical valid call must not raise any exception."""

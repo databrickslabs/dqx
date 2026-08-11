@@ -362,36 +362,62 @@ def test_resolve_aggregate_column_preserves_non_star_columns():
     assert (col_str_norm, col_str) == ("revenue", "revenue")
 
 
-def test_validate_star_aggregate_rejects_non_count():
-    """A star column is only valid with count(*); other aggregates are rejected. See #1435."""
-    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
-        check_funcs.validate_star_aggregate("*", "sum")
+@pytest.mark.parametrize("uses_placeholder", [True, False])
+def test_validate_star_aggregate_rejects_single_arg_aggregates(uses_placeholder):
+    """A star column never works with single-arg aggregates (sum, avg, ...) on either path. See #1435."""
+    with pytest.raises(InvalidParameterError, match="Column '\\*'.*only supported with"):
+        check_funcs.validate_star_aggregate("*", "sum", uses_placeholder=uses_placeholder)
 
 
-def test_validate_star_aggregate_allows_count_and_non_star():
-    """Exact lowercase 'count' is allowed for the star column, and non-star columns are never rejected."""
-    check_funcs.validate_star_aggregate("*", "count")
-    check_funcs.validate_star_aggregate("revenue", "sum")
+def test_validate_star_aggregate_allows_count_everywhere_and_non_star():
+    """count(*) is valid on both paths, and a non-star column is never rejected."""
+    check_funcs.validate_star_aggregate("*", "count", uses_placeholder=True)
+    check_funcs.validate_star_aggregate("*", "count", uses_placeholder=False)
+    check_funcs.validate_star_aggregate("revenue", "sum", uses_placeholder=True)
+
+
+def test_validate_star_aggregate_count_distinct_native_only():
+    """count(DISTINCT *) works natively (allowed) but the filtered-count placeholder collapses it to 1,
+    so it is rejected on the placeholder path. See #1435."""
+    check_funcs.validate_star_aggregate("*", "count_distinct", uses_placeholder=False)  # native: allowed
+    with pytest.raises(InvalidParameterError, match="with a row filter is only supported with 'count'"):
+        check_funcs.validate_star_aggregate("*", "count_distinct", uses_placeholder=True)
 
 
 def test_validate_star_aggregate_is_case_sensitive():
     """Aggregate names resolve case-sensitively elsewhere (getattr(F, aggr_type)), so 'COUNT' with the star
     column must be rejected rather than passing validation and failing later with a confusing error (#1435)."""
-    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
-        check_funcs.validate_star_aggregate("*", "COUNT")
+    with pytest.raises(InvalidParameterError, match="only supported with"):
+        check_funcs.validate_star_aggregate("*", "COUNT", uses_placeholder=False)
 
 
 @pytest.mark.parametrize("column", ["*", F.col("*"), F.expr("*")])
-def test_is_aggr_star_rejects_non_count_aggregate(column):
-    """is_aggr_* with column='*' and a non-count aggregate is rejected at build time, regardless of the
-    star form, instead of silently behaving like a filtered count. See #1435."""
-    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+def test_is_aggr_star_rejects_single_arg_aggregate(column):
+    """is_aggr_* with column='*' and a single-arg aggregate is rejected at build time, regardless of the
+    star form, rather than failing later in Spark. See #1435."""
+    with pytest.raises(InvalidParameterError, match="only supported with"):
         check_funcs.is_aggr_not_less_than(column, limit=1, aggr_type="sum")
 
 
+@pytest.mark.parametrize("column", ["*", F.col("*"), F.expr("*")])
+def test_is_aggr_star_count_distinct_allowed_unfiltered_rejected_when_filtered(column):
+    """count(DISTINCT *) is valid unfiltered (must not raise), but the filtered-count placeholder would make
+    it silently wrong, so it is rejected when a row_filter is present. See #1435."""
+    check_funcs.is_aggr_not_less_than(column, limit=1, aggr_type="count_distinct")  # unfiltered: allowed
+    with pytest.raises(InvalidParameterError, match="with a row filter is only supported with 'count'"):
+        check_funcs.is_aggr_not_less_than(column, limit=1, aggr_type="count_distinct", row_filter="id > 0")
+
+
 @pytest.mark.parametrize("ref_column", ["*", F.col("*"), F.expr("*")])
-def test_aggr_matches_dataset_star_ref_column_rejects_non_count(ref_column):
-    """A star *reference* column with a non-count aggregate is rejected at build time too, since the
-    reference aggregate is built directly (bypassing _is_aggr_compare's validation). See #1435."""
-    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+def test_aggr_matches_dataset_star_ref_column_rejects_single_arg(ref_column):
+    """A star *reference* column with a single-arg aggregate is rejected at build time, since the reference
+    aggregate is built directly (bypassing _is_aggr_compare's validation). See #1435."""
+    with pytest.raises(InvalidParameterError, match="only supported with"):
         check_funcs.aggr_matches_dataset("revenue", ref_table="cat.sch.ref", ref_column=ref_column, aggr_type="sum")
+
+
+@pytest.mark.parametrize("ref_column", ["*", F.col("*"), F.expr("*")])
+def test_aggr_matches_dataset_star_ref_column_allows_count_distinct(ref_column):
+    """count(DISTINCT *) as a reference column is valid: the reference side aggregates natively via
+    DataFrame.filter, so it must not be rejected. See #1435."""
+    check_funcs.aggr_matches_dataset("id", ref_table="cat.sch.ref", ref_column=ref_column, aggr_type="count_distinct")
