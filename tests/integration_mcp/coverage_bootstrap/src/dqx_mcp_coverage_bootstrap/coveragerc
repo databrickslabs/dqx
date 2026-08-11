@@ -1,0 +1,18 @@
+# Remote-side coverage config, shipped as package data and passed explicitly via
+# Coverage(config_file=...) so nothing in the container's working directory can override it.
+#
+# Keep [run] branch in sync with tests/integration_mcp/.coveragerc (the merge side): combining
+# branch ("arc") data with line data is a hard DataError.
+[run]
+# Match by MODULE NAME, not path: the same config then works in the app container
+# (/app/python/source_code/server) and the runner job (.../site-packages/dqx_mcp_runner)
+# with no knowledge of either layout.
+source_pkgs =
+    server
+    dqx_mcp_runner
+branch = true
+# Absolute paths here; tests/integration_mcp/.coveragerc maps them onto repo paths at merge time.
+relative_files = false
+# Uniqueness already comes from the data_file name (role + run id / pid), so no suffixing is
+# needed — and the flusher can then copy a known filename rather than globbing for it.
+parallel = false
