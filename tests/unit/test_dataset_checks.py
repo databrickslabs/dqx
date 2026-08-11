@@ -369,10 +369,16 @@ def test_validate_star_aggregate_rejects_non_count():
 
 
 def test_validate_star_aggregate_allows_count_and_non_star():
-    """count (any case) is allowed for the star column, and non-star columns are never rejected."""
+    """Exact lowercase 'count' is allowed for the star column, and non-star columns are never rejected."""
     check_funcs.validate_star_aggregate("*", "count")
-    check_funcs.validate_star_aggregate("*", "COUNT")
     check_funcs.validate_star_aggregate("revenue", "sum")
+
+
+def test_validate_star_aggregate_is_case_sensitive():
+    """Aggregate names resolve case-sensitively elsewhere (getattr(F, aggr_type)), so 'COUNT' with the star
+    column must be rejected rather than passing validation and failing later with a confusing error (#1435)."""
+    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+        check_funcs.validate_star_aggregate("*", "COUNT")
 
 
 @pytest.mark.parametrize("column", ["*", F.col("*"), F.expr("*")])
@@ -381,3 +387,11 @@ def test_is_aggr_star_rejects_non_count_aggregate(column):
     star form, instead of silently behaving like a filtered count. See #1435."""
     with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
         check_funcs.is_aggr_not_less_than(column, limit=1, aggr_type="sum")
+
+
+@pytest.mark.parametrize("ref_column", ["*", F.col("*"), F.expr("*")])
+def test_aggr_matches_dataset_star_ref_column_rejects_non_count(ref_column):
+    """A star *reference* column with a non-count aggregate is rejected at build time too, since the
+    reference aggregate is built directly (bypassing _is_aggr_compare's validation). See #1435."""
+    with pytest.raises(InvalidParameterError, match="only supported with the 'count' aggregate"):
+        check_funcs.aggr_matches_dataset("revenue", ref_table="cat.sch.ref", ref_column=ref_column, aggr_type="sum")

@@ -2735,6 +2735,9 @@ def aggr_matches_dataset(
     # Canonicalize the star the same way the checked side does (via _is_aggr_compare) so a count(*)
     # comparison built with F.col("*") reports '*' consistently on both sides of the message. See #1435.
     _, ref_col_str, ref_col_expr = resolve_aggregate_column(ref_column)
+    # The reference aggregate is built directly (F.count/F.sum/... over ref_col_expr), bypassing
+    # _is_aggr_compare, so validate the reference star here too: "*" is only valid for count(*).
+    validate_star_aggregate(ref_col_str, aggr_type)
     ref_label = f"table '{ref_table}'" if ref_table else f"DataFrame '{ref_df_name}'"
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -4561,7 +4564,14 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
 # count(*) over all rows can be provided three ways that otherwise stringify differently: the string
 # "*" and F.expr("*") normalize to ("", "*"), while F.col("*") normalizes to ("unresolvedstar",
 # "unresolvedstar()"). These are the string forms get_column_name_or_alias produces for a bare star.
-_STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()"})
+# The paren-less "unresolvedstar" and the case/whitespace-insensitive match below guard against runtime
+# rendering differences (e.g. Databricks Serverless renders some column strings differently); see #1435.
+_STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()", "unresolvedstar"})
+
+
+def _is_star_column_name(col_str: str) -> bool:
+    """Return True if *col_str* is one of the rendered forms of a bare star column."""
+    return col_str.strip().lower() in _STAR_COLUMN_FORMS
 
 
 def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
@@ -4579,7 +4589,7 @@ def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
         A tuple of the normalized column name, the display column name, and the Column expression.
     """
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
-    if aggr_col_str in _STAR_COLUMN_FORMS:
+    if _is_star_column_name(aggr_col_str):
         return "", "*", aggr_col_expr
     return aggr_col_str_norm, aggr_col_str, aggr_col_expr
 
@@ -4621,7 +4631,9 @@ def validate_star_aggregate(aggr_col_str: str, aggr_type: str) -> None:
     Raises:
         InvalidParameterError: If *aggr_col_str* is the star *"*"* and *aggr_type* is not *count*.
     """
-    if aggr_col_str == "*" and aggr_type.lower() != "count":
+    # Compare case-sensitively: aggregate names are resolved case-sensitively elsewhere (getattr(F, aggr_type)
+    # in _build_aggregate_expression), so only the exact lowercase "count" is a valid count(*).
+    if aggr_col_str == "*" and aggr_type != "count":
         raise InvalidParameterError(
             f"Column '*' is only supported with the 'count' aggregate (count(*)), but got '{aggr_type}'. "
             "Use an explicit column for other aggregate types."
