@@ -2027,6 +2027,38 @@ def test_is_aggr_star_column_expr_unfiltered_runs_natively(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_aggr_matches_dataset_count_distinct_star_runs_natively(spark: SparkSession):
+    """Regression for #1435: count(DISTINCT *) on the reference side (built with F.col("*")) must run
+    end-to-end via the native DataFrame aggregation, not just pass build-time validation."""
+    # 2 distinct rows ((a, 1) duplicated)
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["a", 1]], SCHEMA)
+    # 3 distinct rows
+    ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
+
+    checks = [
+        aggr_matches_dataset(
+            "*",
+            ref_df_name="ref_df",
+            ref_column=F.col("*"),  # reference star as a column expression
+            aggr_type="count_distinct",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # checked distinct rows = 2, reference distinct rows = 3 -> mismatch -> violation on every row
+    expected_message = "Distinct count value 2 in column '*' is not equal to DataFrame 'ref_df' column '*' limit: 3"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, expected_message],
+            ["b", 2, expected_message],
+            ["a", 1, expected_message],
+        ],
+        f"{SCHEMA}, count_distinct_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_aggr_matches_dataset_ref_column_override(spark: SparkSession):
     """ref_column targets a differently-named column on the reference side and is correctly aggregated."""
     test_df = spark.createDataFrame([["p", 7, 500], ["q", 13, 500]], "a: string, b: int, c: int")
