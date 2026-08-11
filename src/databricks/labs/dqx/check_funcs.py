@@ -2490,7 +2490,7 @@ def has_no_aggr_outliers(
             stacklevel=2,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
 
     # Unique suffix so multiple applications of this check don't collide
     unique_str = uuid.uuid4().hex
@@ -2521,7 +2521,7 @@ def has_no_aggr_outliers(
                 f"but got type '{time_col_type.simpleString()}' instead."
             )
 
-        filtered_expr = F.when(safe_filter_expr(row_filter), aggr_col_expr) if row_filter else aggr_col_expr
+        filtered_expr = build_filtered_aggregate_input(row_filter, aggr_col_str, aggr_col_expr)
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
@@ -4328,16 +4328,7 @@ def _is_aggr_compare(
             stacklevel=3,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
-
-    # A "*" column (count(*) over all rows) can arrive as the string "*" or F.expr("*") — both of which
-    # normalize to ("", "*") — or as F.col("*"), which stringifies to ("unresolvedstar", "unresolvedstar()").
-    # Canonicalize the F.col form to match, so a count(*) check built programmatically yields the same name
-    # and message as the declarative one, and so the CASE WHEN placeholder substitution in apply() triggers
-    # regardless of how the check was constructed. See #1435.
-    if aggr_col_str in {"*", "unresolvedstar()"}:
-        aggr_col_str_norm, aggr_col_str = "", "*"
-
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
     name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
@@ -4359,16 +4350,7 @@ def _is_aggr_compare(
         Returns:
             The DataFrame with additional condition and metric columns for aggregation validation.
         """
-        if row_filter:
-            # aggr_col_str == "*" only for count(*) over all rows (the only valid use of column="*"),
-            # canonicalized above so every star form is caught. A star can't be embedded as the THEN value
-            # of a CASE WHEN: Spark's star-expansion resolves it against every column in scope instead of
-            # treating it as a placeholder value. count() only cares about nullness, so a non-null literal
-            # is a safe stand-in. safe_filter_expr rejects unsafe SQL in the filter (see #1303).
-            then_expr = F.lit(1) if aggr_col_str == "*" else aggr_col_expr
-            filtered_expr = F.when(safe_filter_expr(row_filter), then_expr)
-        else:
-            filtered_expr = aggr_col_expr
+        filtered_expr = build_filtered_aggregate_input(row_filter, aggr_col_str, aggr_col_expr)
 
         # Build aggregation expression
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
@@ -4570,6 +4552,54 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+# count(*) over all rows can be provided three ways that otherwise stringify differently: the string
+# "*" and F.expr("*") normalize to ("", "*"), while F.col("*") normalizes to ("unresolvedstar",
+# "unresolvedstar()"). These are the string forms get_column_name_or_alias produces for a bare star.
+_STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()"})
+
+
+def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
+    """Resolve an aggregate column like *get_normalized_column_and_expr*, canonicalizing every "*" form.
+
+    Any bare-star form (the string *"*"*, *F.expr("*")*, or *F.col("*")*) is canonicalized to the
+    *("", "*")* name pair, so a *count(*)* check produces identical names and messages regardless of
+    how it was constructed, and callers can detect the star with a simple *aggr_col_str == "*"* check.
+    See #1435.
+
+    Args:
+        column: Column name (str) or Column expression to aggregate.
+
+    Returns:
+        A tuple of the normalized column name, the display column name, and the Column expression.
+    """
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    if aggr_col_str in _STAR_COLUMN_FORMS:
+        return "", "*", aggr_col_expr
+    return aggr_col_str_norm, aggr_col_str, aggr_col_expr
+
+
+def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str, aggr_col_expr: Column) -> Column:
+    """Build the (optionally row-filtered) column expression fed into an aggregate function.
+
+    When *row_filter* is present the column is wrapped in a CASE WHEN. A star (*"*"*) cannot be the THEN
+    value of a CASE WHEN — Spark star-expands it against every column in scope, raising
+    *INVALID_USAGE_OF_STAR_OR_REGEX* — so for *count(*)* a non-null literal placeholder is used instead
+    (*count()* only cares about nullness). *safe_filter_expr* rejects unsafe SQL (see #1303, #1435).
+
+    Args:
+        row_filter: Optional SQL expression to filter rows before aggregation.
+        aggr_col_str: Canonicalized display name of the column (as returned by *resolve_aggregate_column*).
+        aggr_col_expr: The Column expression to aggregate.
+
+    Returns:
+        The column expression to pass to the aggregate function.
+    """
+    if not row_filter:
+        return aggr_col_expr
+    then_expr = F.lit(1) if aggr_col_str == "*" else aggr_col_expr
+    return F.when(safe_filter_expr(row_filter), then_expr)
 
 
 def _get_aggregate_display_name(aggr_type: str, aggr_params: dict[str, Any] | None = None) -> str:

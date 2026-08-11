@@ -344,3 +344,19 @@ def test_aggr_matches_dataset_invalid_tolerance_exceptions(abs_tolerance, rel_to
                 "rel_tolerance": rel_tolerance,
             },
         )
+
+
+@pytest.mark.parametrize("column", ["*", F.expr("*"), F.col("*")])
+def test_resolve_aggregate_column_canonicalizes_star_forms(column):
+    """Contract for #1435: every "*" form (the string "*", F.expr("*"), F.col("*")) must resolve to the
+    same canonical ("", "*") name pair, so count(*) checks are identical however they are constructed and
+    the CASE WHEN placeholder substitution can rely on aggr_col_str == "*". This pins the Spark string
+    rendering the canonicalization depends on (notably F.col("*") -> "unresolvedstar()")."""
+    col_str_norm, col_str, _ = check_funcs.resolve_aggregate_column(column)
+    assert (col_str_norm, col_str) == ("", "*")
+
+
+def test_resolve_aggregate_column_preserves_non_star_columns():
+    """A non-star column is returned unchanged by resolve_aggregate_column."""
+    col_str_norm, col_str, _ = check_funcs.resolve_aggregate_column(F.col("revenue"))
+    assert (col_str_norm, col_str) == ("revenue", "revenue")

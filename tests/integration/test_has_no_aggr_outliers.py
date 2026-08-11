@@ -459,6 +459,45 @@ def test_count_star_aggr_type(spark: SparkSession):
     assert any(m is not None for m in msgs), f"Expected count(*) spike to be detected but got: {msgs}"
 
 
+def test_count_star_aggr_type_with_row_filter(spark: SparkSession):
+    """Regression for #1435: column='*' with aggr_type='count' combined with a row_filter must not raise
+    INVALID_USAGE_OF_STAR_OR_REGEX. Only GOOD rows are counted per bucket; today's GOOD-row count spike fires.
+    """
+    rows = []
+    for i in range(14):
+        event_date = BASE_DATE + timedelta(days=i)
+        # Alternate 4 and 6 GOOD rows per day so stddev_pop > 0 and the constant-series guard does not fire.
+        for _ in range(4 if i % 2 == 0 else 6):
+            rows.append((event_date, "GOOD"))
+        # Noise rows excluded by the row_filter - they must not affect the per-bucket counts.
+        for _ in range(20):
+            rows.append((event_date, "JUNK"))
+
+    # Today: 100 GOOD rows (spike) plus filtered-out noise.
+    today = BASE_DATE + timedelta(days=14)
+    for _ in range(100):
+        rows.append((today, "GOOD"))
+    for _ in range(5):
+        rows.append((today, "JUNK"))
+
+    df = spark.createDataFrame(rows, "event_date: date, status: string")
+
+    condition, apply_fn = has_no_aggr_outliers(
+        "*",
+        "event_date",
+        aggr_type="count",
+        sigma=3.0,
+        lookback_num_intervals=14,
+        warmup_num_intervals=3,
+        row_filter="status = 'GOOD'",
+    )
+    result = apply_fn(df).select(condition)
+
+    msgs = [r[0] for r in result.collect()]
+    # The check must apply (no INVALID_USAGE_OF_STAR_OR_REGEX) and detect the GOOD-row count spike.
+    assert any(m is not None for m in msgs), f"Expected count(*) spike with row_filter but got: {msgs}"
+
+
 # ---------------------------------------------------------------------------
 # 12. sum aggregate with group_by
 # ---------------------------------------------------------------------------
