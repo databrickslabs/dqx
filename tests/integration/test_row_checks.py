@@ -2298,6 +2298,68 @@ def test_col_is_valid_national_id(spark):
 
     assertDataFrameEqual(actual, expected)
 
+    schema_nino = "nino: string"
+    nino_df = spark.createDataFrame(
+        [
+            ["AB123456A"],
+            ["AB 12 34 56 A"],
+            ["BX586745C"],
+            ["DF123456A"],  # invalid first letter
+            ["BG123456A"],  # unallocated prefix
+            ["AB123456E"],  # invalid suffix
+            [None],
+        ],
+        schema_nino,
+    )
+    nino_actual = nino_df.select(is_valid_national_id("nino", country="GB"))
+
+    def nino_violation(value: str) -> str:
+        return f"Value '{value}' in Column 'nino' does not match pattern 'NINO_GB'"
+
+    nino_expected = spark.createDataFrame(
+        [
+            [None],
+            [None],
+            [None],
+            [nino_violation("DF123456A")],
+            [nino_violation("BG123456A")],
+            [nino_violation("AB123456E")],
+            [None],
+        ],
+        "nino_does_not_match_pattern_nino_gb: string",
+    )
+    assertDataFrameEqual(nino_actual, nino_expected)
+
+    schema_pan = "pan: string"
+    pan_df = spark.createDataFrame(
+        [
+            ["ABCPD1234F"],
+            ["AACTA1234A"],
+            ["ABCZD1234F"],  # Z is not a valid holder type
+            ["AB12E1234F"],  # letters and digits in the wrong positions
+            ["ABCPD12345"],  # final character must be a letter
+            [None],
+        ],
+        schema_pan,
+    )
+    pan_actual = pan_df.select(is_valid_national_id("pan", country="IN"))
+
+    def pan_violation(value: str) -> str:
+        return f"Value '{value}' in Column 'pan' does not match pattern 'PAN_IN'"
+
+    pan_expected = spark.createDataFrame(
+        [
+            [None],
+            [None],
+            [pan_violation("ABCZD1234F")],
+            [pan_violation("AB12E1234F")],
+            [pan_violation("ABCPD12345")],
+            [None],
+        ],
+        "pan_does_not_match_pattern_pan_in: string",
+    )
+    assertDataFrameEqual(pan_actual, pan_expected)
+
 
 def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
     schema_ssn = "a: string"

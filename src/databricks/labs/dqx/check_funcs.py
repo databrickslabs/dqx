@@ -120,12 +120,11 @@ class DQPattern(Enum):
     # UK National Insurance Number: two-letter prefix, six digits, and an A-D
     # suffix. Exclude prefixes that HMRC does not allocate.
     NINO_GB = (
-        r"\A(?!(?:BG|GB|KN|NK|NT|TN|ZZ))(?!(?:[DFIQUV]))[A-Z]"
-        r"(?![DFIOQUV])[A-Z] ?\d{2} ?\d{2} ?\d{2} ?[ABCD]\z"
+        r"\A(?!(?:BG|GB|KN|NK|NT|TN|ZZ))(?!(?:[DFIQUV]))[A-Z]" r"(?![DFIOQUV])[A-Z] ?\d{2} ?\d{2} ?\d{2} ?[ABCD]\z"
     )
-    # Indian Permanent Account Number (PAN): five letters, four digits, and a
-    # final letter.
-    PAN_IN = r"\A[A-Z]{5}\d{4}[A-Z]\z"
+    # Indian Permanent Account Number (PAN): three letters, a holder-type letter,
+    # another letter, four digits, and a final letter.
+    PAN_IN = r"\A[A-Z]{3}[ABCFGHJLPT][A-Z]\d{4}[A-Z]\z"
 
     # Canonical UUID form per RFC 9562: 8-4-4-4-12 hex groups. UUID validates the shape
     # only, so RFC-defined Nil/Max sentinels and legacy variant GUIDs pass; UUID_STRICT
@@ -1191,9 +1190,10 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     rejected (area *000*, *666* and *900-999* - the latter covering ITINs; group
     *00*; serial *0000*). For *GB*, a National Insurance number consists of two
     letters, six digits, and a final *A*, *B*, *C*, or *D*; unallocated prefixes
-    are rejected. For *IN*, a PAN consists of five letters, four digits, and a
-    final letter. These checks validate format only, not whether an identifier
-    was issued.
+    are rejected. For *IN*, a PAN consists of three letters, a holder-type letter
+    (*A*, *B*, *C*, *F*, *G*, *H*, *J*, *L*, *P*, or *T*), another letter, four
+    digits, and a final letter. These checks validate format only, not whether an
+    identifier was issued.
 
     Null values will pass the check with no violation reported.
 
