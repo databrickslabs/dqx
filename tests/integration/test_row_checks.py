@@ -32,6 +32,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_url,
     is_valid_uuid,
     is_valid_national_id,
     is_valid_country_code,
@@ -2116,6 +2117,129 @@ def test_col_is_valid_email(spark):
         [violation("user@localhost")],
         [violation("missing@tld")],
         [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_url(spark):
+    schema_url = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid - common web forms
+            ["https://example.com"],
+            ["http://example.com/"],
+            ["https://example.com/path/to/page"],
+            ["https://example.com/path?query=1&other=2"],
+            ["https://example.com/path?query=1#fragment"],
+            ["https://example.com#fragment"],
+            ["https://sub.domain.example.co.uk/a/b/c"],
+            ["HTTPS://EXAMPLE.COM"],  # scheme and host are case-insensitive
+            # Valid - authority components
+            ["https://user@example.com/p"],
+            ["https://user:pw@example.com:8080/p"],
+            ["https://example.com:8080"],
+            ["https://example.com:/p"],  # RFC 3986 permits an empty port
+            ["https://192.0.2.1/p"],  # IPv4 host
+            ["https://[2001:db8::1]:443/p"],  # IPv6 literal host
+            # Valid - non-network schemes (any syntactically valid scheme is accepted)
+            ["ftp://files.example.org/pub/file.txt"],
+            ["s3://bucket/key/part-00001.parquet"],
+            ["mailto:user@example.com"],
+            ["urn:isbn:0451450523"],
+            ["file:///var/log/app.log"],  # empty host is permitted by RFC 3986
+            ["custom-scheme+v2://host/p"],  # scheme may contain '+', '-', '.'
+            # Valid - percent-encoding and sub-delims
+            ["https://example.com/a%20b"],
+            ["https://example.com/a,b;c=d"],
+            ["https://example.com/p?a=1+2"],
+            # Valid but NOT safe - syntax-only validation, see the docstring caveat
+            ["javascript:alert(1)"],
+            ["data:text/plain,hello"],
+            [None],  # Null - passes (no violation reported)
+            # Invalid - missing or malformed scheme
+            ["example.com"],  # no scheme
+            ["example.com/path"],
+            ["/relative/path"],
+            ["//example.com/p"],  # network-path reference, not an absolute URI
+            ["://example.com"],  # empty scheme
+            ["1https://example.com"],  # scheme must start with a letter
+            ["ht tp://example.com"],  # space in scheme
+            [""],  # empty string
+            # Invalid - whitespace and control characters
+            ["https://exa mple.com"],
+            ["https://example.com/a b"],
+            ["http://example.com\n"],  # trailing newline must be rejected (see issue #1440)
+            ["https://example.com\t/p"],
+            # Invalid - characters that must be percent-encoded
+            ["https://example.com/a<b"],
+            ['https://example.com/a"b'],
+            ["https://example.com/a|b"],
+            ["https://example.com/a\\b"],  # backslash is not a valid path character
+            ["https://example.com/p?q=1#a#b"],  # '#' may not repeat in a fragment
+            # Valid - lowercase hex in percent-encoding is accepted (contrast with the cases above)
+            ["https://example.com/a%2b"],
+        ],
+        schema_url,
+    )
+
+    actual = test_df.select(is_valid_url("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'URL'"
+
+    checked_schema = "a_does_not_match_pattern_url: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],  # https://example.com
+        [None],  # http://example.com/
+        [None],  # https://example.com/path/to/page
+        [None],  # https://example.com/path?query=1&other=2
+        [None],  # https://example.com/path?query=1#fragment
+        [None],  # https://example.com#fragment
+        [None],  # https://sub.domain.example.co.uk/a/b/c
+        [None],  # HTTPS://EXAMPLE.COM
+        [None],  # https://user@example.com/p
+        [None],  # https://user:pw@example.com:8080/p
+        [None],  # https://example.com:8080
+        [None],  # https://example.com:/p
+        [None],  # https://192.0.2.1/p
+        [None],  # https://[2001:db8::1]:443/p
+        [None],  # ftp://files.example.org/pub/file.txt
+        [None],  # s3://bucket/key/part-00001.parquet
+        [None],  # mailto:user@example.com
+        [None],  # urn:isbn:0451450523
+        [None],  # file:///var/log/app.log
+        [None],  # custom-scheme+v2://host/p
+        [None],  # https://example.com/a%20b
+        [None],  # https://example.com/a,b;c=d
+        [None],  # https://example.com/p?a=1+2
+        [None],  # javascript:alert(1) - syntactically valid
+        [None],  # data:text/plain,hello - syntactically valid
+        [None],  # Null
+        # Invalid - missing or malformed scheme
+        [violation("example.com")],
+        [violation("example.com/path")],
+        [violation("/relative/path")],
+        [violation("//example.com/p")],
+        [violation("://example.com")],
+        [violation("1https://example.com")],
+        [violation("ht tp://example.com")],
+        [violation("")],
+        # Invalid - whitespace and control characters
+        [violation("https://exa mple.com")],
+        [violation("https://example.com/a b")],
+        [violation("http://example.com\n")],
+        [violation("https://example.com\t/p")],
+        # Invalid - characters that must be percent-encoded
+        [violation("https://example.com/a<b")],
+        [violation('https://example.com/a"b')],
+        [violation("https://example.com/a|b")],
+        [violation("https://example.com/a\\b")],
+        [violation("https://example.com/p?q=1#a#b")],
+        # Valid
+        [None],  # https://example.com/a%2b
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 
