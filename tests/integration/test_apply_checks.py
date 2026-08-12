@@ -139,6 +139,53 @@ def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_t
     assert_check_and_split_results(checked, good, bad, expected, ["event_ts", "val"])
 
 
+def test_apply_checks_and_split_has_no_sequence_gaps(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "invoice_no int, val int"
+    test_df = spark.createDataFrame(
+        [
+            (1001, 1),  # 1002 missing -> gap, boundary row is quarantined
+            (1003, 2),  # consecutive with 1004 -> valid
+            (1004, 3),  # valid
+        ],
+        schema,
+    )
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_sequence_gaps,
+            column="invoice_no",
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+    good, bad = dq_engine.apply_checks_and_split(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1001,
+                1,
+                [
+                    build_quality_violation(
+                        "invoice_no_has_no_sequence_gaps",
+                        "Gap in sequence: no data between the value at 1001.0 " "and the next present value at 1003.0",
+                        ["invoice_no"],
+                        function="has_no_sequence_gaps",
+                    ),
+                ],
+                None,
+            ],
+            [1003, 2, None, None],
+            [1004, 3, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_check_and_split_results(checked, good, bad, expected, ["invoice_no", "val"])
+
+
 def test_apply_checks_passed(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
@@ -7241,6 +7288,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.has_no_gaps_per_time_window,
             column="col6",
             check_func_kwargs={"window_minutes": 1440},
+        ),
+        # has_no_sequence_gaps check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_sequence_gaps,
+            column="col2",
+            check_func_kwargs={"step": 1},
         ),
         # aggr_matches_dataset check — row count matches the reference dataset
         DQDatasetRule(
