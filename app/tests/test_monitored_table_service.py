@@ -56,8 +56,8 @@ def svc(sql, profiling_sql):
 def _table_row(
     binding_id: str = "b1",
     table_fqn: str = "cat.schema.tbl",
-    steward: str | None = "alice@x",
-    steward_display_name: str | None = None,
+    owner: str | None = "alice@x",
+    owner_display_name: str | None = None,
     status: str = "draft",
     version: int = 0,
     schedule_cron: str | None = None,
@@ -75,7 +75,7 @@ def _table_row(
     version_state_json: str | None = None,
 ) -> list[str]:
     # ``schedule_kind`` (B2-52) is at index 13;
-    # ``steward_display_name`` at index 14;
+    # ``owner_display_name`` at index 14;
     # notes / pending_rationale / last_decision_rationale at 15..17;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN columns
     # (P3.4, indices 18..21) — all None when the table has never been scored.
@@ -83,28 +83,28 @@ def _table_row(
     # LEFT JOIN. The single-row read paths select only the first 18 columns;
     # the extra cells are simply ignored by _row_to_table.
     return [
-        binding_id,        # 0
-        table_fqn,         # 1
-        steward,           # 2
-        status,            # 3
-        version,           # 4
-        schedule_cron,     # 5
-        schedule_tz,       # 6
+        binding_id,  # 0
+        table_fqn,  # 1
+        owner,  # 2
+        status,  # 3
+        version,  # 4
+        schedule_cron,  # 5
+        schedule_tz,  # 6
         last_profiled_at,  # 7
-        last_run_at,       # 8
-        "alice@x",         # 9 created_by
+        last_run_at,  # 8
+        "alice@x",  # 9 created_by
         "2026-07-02T00:00:00+00:00",  # 10 created_at
-        "alice@x",         # 11 updated_by
+        "alice@x",  # 11 updated_by
         "2026-07-02T00:00:00+00:00",  # 12 updated_at
-        schedule_kind,     # 13
-        steward_display_name,  # 14
-        notes,             # 15
+        schedule_kind,  # 13
+        owner_display_name,  # 14
+        notes,  # 15
         pending_rationale,  # 16
         last_decision_rationale,  # 17
-        score,             # 18
-        failed_tests,      # 19
-        total_tests,       # 20
-        score_computed_at, # 21
+        score,  # 18
+        failed_tests,  # 19
+        total_tests,  # 20
+        score_computed_at,  # 21
         version_state_json,  # 22
     ]
 
@@ -141,10 +141,10 @@ def _applied_row(
 class TestRegister:
     def test_registers_new_binding_as_draft(self, svc, sql):
         sql.query.return_value = []  # no existing binding
-        table = svc.register("cat.schema.tbl", "alice@x", steward="bob@x")
+        table = svc.register("cat.schema.tbl", "alice@x", owner="bob@x")
         assert table.table_fqn == "cat.schema.tbl"
         assert table.status == "draft"
-        assert table.steward == "bob@x"
+        assert table.owner == "bob@x"
         assert table.binding_id
         sql.execute.assert_called_once()
         insert_sql = sql.execute.call_args[0][0]
@@ -162,12 +162,12 @@ class TestRegister:
         assert "schedule_kind" in insert_sql
         assert "'dq_only'" in insert_sql
 
-    def test_defaults_steward_to_creator_when_unset(self, svc, sql):
-        # No steward supplied (owner unresolved upstream) -> the creator becomes
-        # the accountable steward so no binding is ever left ownerless.
+    def test_defaults_owner_to_creator_when_unset(self, svc, sql):
+        # No owner supplied (owner unresolved upstream) -> the creator becomes
+        # the accountable owner so no binding is ever left ownerless.
         sql.query.return_value = []
         table = svc.register("cat.schema.tbl", "alice@x")
-        assert table.steward == "alice@x"
+        assert table.owner == "alice@x"
         insert_sql = sql.execute.call_args[0][0]
         assert "alice@x" in insert_sql
 
@@ -188,7 +188,7 @@ class TestRegister:
         # like single quotes — discovery must not block registering them.
         sql.query.return_value = []  # no existing binding
         fqn = "main.'ftr_mv_test'.'ftr_gold_mv_bkp'"
-        table = svc.register(fqn, "alice@x", steward="bob@x")
+        table = svc.register(fqn, "alice@x", owner="bob@x")
         assert table.table_fqn == fqn
         insert_sql = sql.execute.call_args[0][0]
         # table_fqn is stored as a SQL string literal, so the embedded single
@@ -212,7 +212,7 @@ class TestRegister:
         perms = create_autospec(PermissionsService, instance=True)
         svc = MonitoredTableService(sql=sql, profiling_sql=profiling_sql, permissions=perms)
         sql.query.return_value = []  # no existing binding
-        table = svc.register("cat.schema.tbl", "alice@x", steward="bob@x")
+        table = svc.register("cat.schema.tbl", "alice@x", owner="bob@x")
         perms.seed_default_grants.assert_called_once_with(
             ObjectType.MONITORED_TABLE.value,
             table.binding_id,
@@ -249,7 +249,7 @@ class TestBulkRegister:
         result = svc.bulk_register(
             ["cat.schema.existing", "cat.schema.new1", "cat.schema.new2", "bad-fqn"],
             "alice@x",
-            steward="bob@x",
+            owner="bob@x",
         )
         assert sorted(result.registered) == ["cat.schema.new1", "cat.schema.new2"]
         assert result.skipped_existing == ["cat.schema.existing"]
@@ -259,8 +259,8 @@ class TestBulkRegister:
         assert any("cat.schema.new1" in v for v in inserted_fqns)
         assert any("cat.schema.new2" in v for v in inserted_fqns)
 
-    def test_defaults_steward_to_creator_when_unset(self, svc, sql):
-        # Bulk register with no shared steward -> each binding defaults to the
+    def test_defaults_owner_to_creator_when_unset(self, svc, sql):
+        # Bulk register with no shared owner -> each binding defaults to the
         # creator (no per-table UC owner lookup on the bulk path).
         sql.query.return_value = []
         svc.bulk_register(["cat.schema.new1"], "alice@x")
@@ -344,6 +344,7 @@ class TestListMonitoredTables:
         assert summaries[1].check_count == 0
         assert summaries[0].dimensions == []
         assert summaries[0].severities == []
+        assert summaries[0].custom_tags == []
         # Counts are batched: bindings query + ONE grouped query per count
         # kind + tag facets for bindings with rules, regardless of how many
         # bindings are listed (no per-binding N+1).
@@ -362,11 +363,11 @@ class TestListMonitoredTables:
         list_sql = sql.query.call_args[0][0]
         assert "status = 'approved'" in list_sql
 
-    def test_filters_by_steward_pushed_to_sql(self, svc, sql):
+    def test_filters_by_owner_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
-        svc.list_monitored_tables(steward="bob@x")
+        svc.list_monitored_tables(owner="bob@x")
         list_sql = sql.query.call_args[0][0]
-        assert "steward = 'bob@x'" in list_sql
+        assert "owner = 'bob@x'" in list_sql
 
     def test_filters_by_catalog_in_python(self, svc, sql):
         sql.query.side_effect = [
@@ -435,6 +436,38 @@ class TestListMonitoredTables:
         summary = svc.list_monitored_tables()[0]
         assert summary.dimensions == ["Completeness", "Validity"]
         assert summary.severities == ["Critical", "High"]
+        assert summary.custom_tags == []
+
+    def test_list_aggregates_custom_tags_excluding_reserved(self, svc, sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1", table_fqn="cat.schema.t1")],
+            [["b1", "2"]],
+            [],
+            [
+                [
+                    "b1",
+                    None,
+                    json.dumps(
+                        {
+                            "dimension": "Completeness",
+                            "severity": "High",
+                            "name": "email_not_null",
+                            "team": "finance",
+                            "region": "eu",
+                        }
+                    ),
+                ],
+                [
+                    "b1",
+                    None,
+                    json.dumps({"team": "finance", "region": "us", "origin": "tag_auto"}),
+                ],
+            ],
+        ]
+        summary = svc.list_monitored_tables()[0]
+        assert summary.custom_tags == [("region", "eu"), ("region", "us"), ("team", "finance")]
+        assert summary.dimensions == ["Completeness"]
+        assert summary.severities == ["High"]
 
     def test_list_score_fields_none_when_never_scored(self, svc, sql):
         sql.query.side_effect = [
@@ -806,12 +839,12 @@ class TestUpdateSchedule:
 
 class TestUpdateOwner:
     def test_sets_owner_without_touching_status(self, svc, sql):
-        sql.query.return_value = [_table_row(binding_id="b1", status="approved", steward="alice@x")]
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved", owner="alice@x")]
         table = svc.update_owner("b1", "bob@x", "alice@x")
-        assert table.steward == "bob@x"
+        assert table.owner == "bob@x"
         assert table.updated_by == "alice@x"
         update_sql = sql.execute.call_args[0][0]
-        assert "steward = 'bob@x'" in update_sql
+        assert "owner = 'bob@x'" in update_sql
         assert "status =" not in update_sql
 
     def test_rejects_blank_owner(self, svc, sql):

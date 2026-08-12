@@ -2,9 +2,9 @@
  * PrincipalPicker — a Popover + Command combobox for picking a workspace
  * user or group, backed by the debounced `useSearchPrincipals` API.
  *
- * Ported from dqlake's `StewardPicker`, adapted to the Permissions API's
+ * Ported from dqlake's `OwnerPicker` (formerly StewardPicker), adapted to the Permissions API's
  * principal shape (`kind: 'user' | 'group'`, lowercase) and generalised so
- * it can back both the free-text steward field (stores `display_name`) and
+ * it can back both the free-text owner field (stores `display_name`) and
  * the grant editor's principal selection.
  */
 import { useCallback, useEffect, useState } from "react";
@@ -24,7 +24,7 @@ import { Check, ChevronDown, Loader2, User as UserIcon, Users } from "lucide-rea
 import { cn } from "@/lib/utils";
 import { useSearchPrincipals, type PrincipalSearchOut } from "@/lib/api";
 
-/** The picked principal, in the shape the grant/steward callers store. */
+/** The picked principal, in the shape the grant/owner callers store. */
 export interface PickedPrincipal {
   principal_id: string;
   principal_type: string;

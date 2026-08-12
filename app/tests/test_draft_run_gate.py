@@ -249,8 +249,13 @@ def _rules_svc(*, table_fqn: str = "c.s.t") -> MagicMock:
         table_fqn=table_fqn, checks=[], created_by="alice@x", rule_id="r1"
     )
     svc.set_status.return_value = RuleCatalogEntry(
-        table_fqn=table_fqn, checks=[], version=1, status="pending_approval", source="ui",
-        created_by="alice@x", rule_id="r1",
+        table_fqn=table_fqn,
+        checks=[],
+        version=1,
+        status="pending_approval",
+        source="ui",
+        created_by="alice@x",
+        rule_id="r1",
     )
     return svc
 

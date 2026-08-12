@@ -181,9 +181,7 @@ class TestListRecentValidationFailures:
         app_conf: AppConfig,
     ) -> None:
         over_limit = DRYRUN_LIMIT + 5
-        job_service_mock.list_dryrun_rows.return_value = [
-            _make_row(f"run-{i}", "FAILED") for i in range(over_limit)
-        ]
+        job_service_mock.list_dryrun_rows.return_value = [_make_row(f"run-{i}", "FAILED") for i in range(over_limit)]
         sql_executor.query_dicts.return_value = []
 
         result = list_recent_validation_failures(
@@ -282,9 +280,7 @@ class TestListRecentProfileFailures:
         app_conf: AppConfig,
     ) -> None:
         over_limit = PROFILER_LIMIT + 5
-        job_service_mock.list_run_rows.return_value = [
-            _make_row(f"p-{i}", "FAILED") for i in range(over_limit)
-        ]
+        job_service_mock.list_run_rows.return_value = [_make_row(f"p-{i}", "FAILED") for i in range(over_limit)]
 
         result = list_recent_profile_failures(
             job_svc=job_service_mock,

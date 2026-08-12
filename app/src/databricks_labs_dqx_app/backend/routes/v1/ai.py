@@ -34,7 +34,7 @@ from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesSer
 
 router = APIRouter()
 
-# Rule authoring roles — data stewards are the RULE_AUTHOR role in this app's RBAC model
+# Rule authoring roles — data owners are the RULE_AUTHOR role in this app's RBAC model
 # (see app/AGENTS.md's persona table); approvers and admins can author too.
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 

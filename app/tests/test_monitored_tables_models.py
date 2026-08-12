@@ -25,19 +25,19 @@ class TestMonitoredTable:
         table = MonitoredTable(
             binding_id="b1",
             table_fqn="cat.schema.tbl",
-            steward="alice@example.com",
+            owner="alice@example.com",
             status="draft",
         )
         assert table.binding_id == "b1"
         assert table.table_fqn == "cat.schema.tbl"
-        assert table.steward == "alice@example.com"
+        assert table.owner == "alice@example.com"
         assert table.status == "draft"
         assert table.last_profiled_at is None
 
     def test_defaults(self, MonitoredTable):
         table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl")
         assert table.status == "draft"
-        assert table.steward is None
+        assert table.owner is None
         assert table.created_by is None
         assert table.updated_at is None
         # schedule_kind defaults to "dq_only" (B2-52) — preserves prior DQ-only behavior.

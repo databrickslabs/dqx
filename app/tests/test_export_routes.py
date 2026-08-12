@@ -79,7 +79,7 @@ class TestDataProductRoutes:
         svc.export_data_products.return_value = _result("odcs")
         out = export_data_products(svc=svc, format="odcs")
         assert out.format == "odcs"
-        svc.export_data_products.assert_called_once_with("odcs")
+        svc.export_data_products.assert_called_once_with("odcs", product_ids=None)
 
     def test_export_single(self):
         svc = MagicMock()

@@ -30,23 +30,29 @@ The Studio is a separate uv sub-project with its own pyproject + lockfile under 
 ```bash
 make app-install              # yarn install --frozen-lockfile
 make app-build                # OpenAPI dump + orval + Vite build + wheels
-make app-check                # bun tsc -b  +  basedpyright (type-check only, no lint)
+make app-check                # bun tsc -b + basedpyright + bun UI unit tests (app-test-ui)
 make app-test                 # backend pytest
+make app-test-ui              # UI unit tests only (bun test)
 make app-start-dev            # uvicorn (:9002) + Vite (:9001), foreground
 make app-stop-dev             # pkill the two dev servers
 make app-regen-api            # dump OpenAPI + run orval (after backend model changes)
 make app-deploy   PROFILE=<p> TARGET=<t>   # build + bundle deploy (creates resources + native UC grants) + bundle run
-make lock-app-dependencies    # refresh app/uv.lock + app/yarn.lock
+make lock-app-dependencies    # refresh app/uv.lock + app/yarn.lock (+ app/.build-constraints.txt)
 ```
 
-App docs (read these before touching `app/`): [`app/CLAUDE.md`](app/CLAUDE.md), [`app/DEPLOYMENT.md`](app/DEPLOYMENT.md), [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md), [`app/README.md`](app/README.md), and the backend / UI CLAUDEs under `app/src/databricks_labs_dqx_app/`.
+App docs (read these before touching `app/`): [`app/AGENTS.md`](app/AGENTS.md) (agent + architecture context; thin `CLAUDE.md` stubs under `app/` link here), [`app/DEPLOYMENT.md`](app/DEPLOYMENT.md), [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md), [`app/README.md`](app/README.md).
 
-**What's new:** major, user-facing DQX Studio features are summarized in the pull request that ships them, for the release notes. There is no in-docs "What's new" page.
+**Contributing to DQX Studio** (separate from DQX Core):
+
+- **Code** lives under [`app/`](app/) (its own `pyproject.toml` / lockfiles). Prefer `make app-*` targets from the repo root.
+- **User docs** live under [`docs/dqx/docs/studio/`](docs/dqx/docs/studio/) (published at `/docs/studio/`). Do not bury Studio how-tos in Core guide pages — link to `/docs/studio/` instead. See [Authoring Documentation](https://databrickslabs.github.io/dqx/docs/dev/docs_authoring/).
+- **Issues / PRs** that touch Studio should use the GitHub label **`DQX App`** (use **`DQX Core`** for the Python library under `src/`). See [Contributing](https://databrickslabs.github.io/dqx/docs/dev/contributing/).
+- **What's new:** major, user-facing Studio features are summarized in the pull request that ships them (for release notes). There is no in-docs "What's new" page.
 
 ### Dependency installs and lock files
 
 - Use **`make dev`** from the repo root to create `.venv` and install Python dependencies. Do **not** run `uv sync`, `uv lock`, or `uv add` for normal setup — that bypasses `UV_FROZEN=1` and may modify `uv.lock` or bake in internal registry URLs.
-- To **update lock files** after intentional dependency changes: `make lock-dependencies` (root `uv.lock` and `.build-constraints.txt`) and/or `make lock-app-dependencies` (`app/uv.lock`) of the app.
+- To **update lock files** after intentional dependency changes: `make lock-dependencies` (root `uv.lock` and `.build-constraints.txt`) and/or `make lock-app-dependencies` (`app/uv.lock`, `app/yarn.lock`, and `app/.build-constraints.txt`).
 
 ---
 

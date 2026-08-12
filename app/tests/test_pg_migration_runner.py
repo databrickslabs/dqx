@@ -196,6 +196,18 @@ class TestPgMigrationsCatalogue:
         # Postgres uses IF NOT EXISTS, so re-running is a no-op.
         assert "IF NOT EXISTS" in sql, "v22 must use ADD COLUMN IF NOT EXISTS for idempotency"
 
+    def test_v24_renames_steward_columns_to_owner(self):
+        """v24 renames steward/steward_display_name → owner/owner_display_name."""
+        v24 = next(m for m in PG_MIGRATIONS if m.version == 24)
+        sql = v24.sql
+        assert "RENAME COLUMN steward TO owner" in sql
+        assert "RENAME COLUMN steward_display_name TO owner_display_name" in sql
+        assert "dq_rules" in sql
+        assert "dq_monitored_tables" in sql
+        assert "dq_data_products" in sql
+        assert "idx_dq_rules_owner" in sql
+        assert "idx_dq_rules_steward" in sql
+
     def test_v23_adds_notes_and_rationale_columns(self):
         """v23 adds notes + pending/last_decision_rationale (+ history rationale)."""
         v23 = next(m for m in PG_MIGRATIONS if m.version == 23)
@@ -227,9 +239,9 @@ class TestPgMigrationsCatalogue:
         assert "array_to_string" in sql
         # Must NOT touch ALL_PRIVILEGES rows (owner rows)
         assert "ALL_PRIVILEGES" in sql, "must guard against touching ALL_PRIVILEGES rows"
-        assert "<> 'ALL_PRIVILEGES'" in sql or "!= 'ALL_PRIVILEGES'" in sql, (
-            "must explicitly exclude ALL_PRIVILEGES rows from the UPDATE"
-        )
+        assert (
+            "<> 'ALL_PRIVILEGES'" in sql or "!= 'ALL_PRIVILEGES'" in sql
+        ), "must explicitly exclude ALL_PRIVILEGES rows from the UPDATE"
 
 
 # ---------------------------------------------------------------------------

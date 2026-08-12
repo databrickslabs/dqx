@@ -5,7 +5,7 @@
  * separate binding concept), the schedule buffer is a flat
  * `schedule_cron`/`schedule_tz` pair (no nested cadence object — that
  * shape is reconstructed from/to a 5-field cron string by Task 9's
- * `ProductSchedulingTab`), and steward is a plain string field rather than
+ * `ProductSchedulingTab`), and owner is a plain string field rather than
  * a principal-search result.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,7 +28,7 @@ import {
   type UpdateDataProductIn,
 } from "@/lib/api";
 import { useSubmitDataProductWithRationale } from "@/lib/api-custom";
-import type { StewardGrantIntent } from "@/components/permissions/PermissionsTab";
+import type { OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -61,11 +61,11 @@ export function useEditProductState(product: DataProductOut) {
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description ?? "");
   const [notes, setNotes] = useState(product.notes ?? "");
-  const [steward, setStewardLocal] = useState(product.steward ?? "");
-  const [stewardDisplayName, setStewardDisplayNameLocal] = useState(product.steward_display_name ?? "");
-  // Pending steward grant intent — stashed when the user confirms the
-  // StewardGrantDialog, consumed and cleared in `persist`.
-  const [stewardGrantIntent, setStewardGrantIntent] = useState<StewardGrantIntent | null>(null);
+  const [owner, setOwnerLocal] = useState(product.owner ?? "");
+  const [ownerDisplayName, setOwnerDisplayNameLocal] = useState(product.owner_display_name ?? "");
+  // Pending owner grant intent — stashed when the user confirms the
+  // OwnerGrantDialog, consumed and cleared in `persist`.
+  const [ownerGrantIntent, setOwnerGrantIntent] = useState<OwnerGrantIntent | null>(null);
   const [scheduleCron, setScheduleCronLocal] = useState<string | null>(product.schedule_cron ?? null);
   const [scheduleTz, setScheduleTzLocal] = useState<string>(product.schedule_tz ?? "UTC");
   const [scheduleKind, setScheduleKindLocal] = useState<ScheduleKind>(product.schedule_kind ?? DEFAULT_SCHEDULE_KIND);
@@ -76,8 +76,8 @@ export function useEditProductState(product: DataProductOut) {
   const [scheduleCronInvalid, setScheduleCronInvalid] = useState(false);
   const [members, setMembers] = useState<DataProductMemberOut[]>(() => product.members ?? []);
 
-  const setSteward = useCallback((v: string) => setStewardLocal(v), []);
-  const setStewardDisplayName = useCallback((v: string) => setStewardDisplayNameLocal(v), []);
+  const setOwner = useCallback((v: string) => setOwnerLocal(v), []);
+  const setOwnerDisplayName = useCallback((v: string) => setOwnerDisplayNameLocal(v), []);
   const setSchedule = useCallback((cron: string | null, tz?: string) => {
     setScheduleCronLocal(cron);
     if (tz) setScheduleTzLocal(tz);
@@ -147,7 +147,7 @@ export function useEditProductState(product: DataProductOut) {
   }, [product.members]);
 
   // --- Dirty detection vs server ---
-  const stewardDirty = steward !== (product.steward ?? "");
+  const ownerDirty = owner !== (product.owner ?? "");
 
   const scheduleDirty = useMemo(() => {
     const serverCron = product.schedule_cron ?? null;
@@ -176,11 +176,11 @@ export function useEditProductState(product: DataProductOut) {
     if (name !== product.name) return true;
     if (description !== (product.description ?? "")) return true;
     if (notes !== (product.notes ?? "")) return true;
-    if (stewardDirty) return true;
+    if (ownerDirty) return true;
     if (scheduleDirty) return true;
     if (membersDirty) return true;
     return false;
-  }, [name, description, notes, product.name, product.description, product.notes, stewardDirty, scheduleDirty, membersDirty]);
+  }, [name, description, notes, product.name, product.description, product.notes, ownerDirty, scheduleDirty, membersDirty]);
 
   // Save is blocked while the Schedule tab's raw-cron editor holds an
   // expression the backend scheduler can't parse — otherwise a PATCH would
@@ -189,7 +189,7 @@ export function useEditProductState(product: DataProductOut) {
   const canSave = isDirty && !scheduleCronInvalid;
 
   // Bypasses the unsaved-changes nav guard right after a successful save.
-  // The local buffer (name/description/steward/schedule/members) is only
+  // The local buffer (name/description/owner/schedule/members) is only
   // reconciled against the server via an async invalidate+refetch, so between
   // a save resolving and that refetch settling, `isDirty` is transiently TRUE
   // (buffer != still-stale query data) even though the user JUST saved and
@@ -217,7 +217,7 @@ export function useEditProductState(product: DataProductOut) {
     qc.invalidateQueries({ queryKey: getListRunSetsQueryKey() });
   }, [qc, product.product_id]);
 
-  /** Persist all buffered edits: PATCH name/description/steward/schedule, then
+  /** Persist all buffered edits: PATCH name/description/owner/schedule, then
    *  reconcile members (add new, remove dropped, re-add pin-only changes).
    *  Throws on failure. */
   const persist = useCallback(async () => {
@@ -240,9 +240,9 @@ export function useEditProductState(product: DataProductOut) {
       patch.notes = notes.trim() || null;
       patchNeeded = true;
     }
-    if (stewardDirty) {
-      patch.steward = steward.trim() || null;
-      patch.steward_display_name = stewardDisplayName.trim() || null;
+    if (ownerDirty) {
+      patch.owner = owner.trim() || null;
+      patch.owner_display_name = ownerDisplayName.trim() || null;
       patchNeeded = true;
     }
     if (scheduleDirty) {
@@ -279,12 +279,12 @@ export function useEditProductState(product: DataProductOut) {
       }
     }
 
-    // Write steward grant(s) after the product is persisted.  Fires only when
-    // the user confirmed the StewardGrantDialog; errors are toasted but do NOT
+    // Write owner grant(s) after the product is persisted.  Fires only when
+    // the user confirmed the OwnerGrantDialog; errors are toasted but do NOT
     // roll back the product save.
-    if (stewardGrantIntent) {
-      const capturedIntent = stewardGrantIntent;
-      setStewardGrantIntent(null);
+    if (ownerGrantIntent) {
+      const capturedIntent = ownerGrantIntent;
+      setOwnerGrantIntent(null);
       try {
         await setGrantMut.mutateAsync({
           objectType: "data_product",
@@ -305,14 +305,14 @@ export function useEditProductState(product: DataProductOut) {
           });
         }
         // Refresh the grants table in the Permissions tab so the newly
-        // written ALL_PRIVILEGES grant (and any removed old-steward grant)
+        // written ALL_PRIVILEGES grant (and any removed old-owner grant)
         // appear immediately without requiring a navigate-away.
         qc.invalidateQueries({
           queryKey: getListObjectGrantsQueryKey("data_product", product.product_id),
         });
       } catch (grantErr) {
         const axErr = grantErr as { response?: { data?: { detail?: string } } };
-        toast.error(axErr?.response?.data?.detail ?? t("permissions.stewardGrantFailed"), {
+        toast.error(axErr?.response?.data?.detail ?? t("permissions.ownerGrantFailed"), {
           duration: 6000,
         });
       }
@@ -323,9 +323,9 @@ export function useEditProductState(product: DataProductOut) {
     name,
     description,
     notes,
-    steward,
-    stewardDisplayName,
-    stewardDirty,
+    owner,
+    ownerDisplayName,
+    ownerDirty,
     scheduleCron,
     scheduleTz,
     scheduleKind,
@@ -334,7 +334,7 @@ export function useEditProductState(product: DataProductOut) {
     serverMemberKeys,
     serverMemberPins,
     product,
-    stewardGrantIntent,
+    ownerGrantIntent,
     updateMut,
     addMut,
     removeMut,
@@ -402,11 +402,11 @@ export function useEditProductState(product: DataProductOut) {
     setDescription,
     setNotes,
 
-    steward,
-    setSteward,
-    stewardDisplayName,
-    setStewardDisplayName,
-    setStewardGrantIntent,
+    owner,
+    setOwner,
+    ownerDisplayName,
+    setOwnerDisplayName,
+    setOwnerGrantIntent,
 
     scheduleCron,
     scheduleTz,

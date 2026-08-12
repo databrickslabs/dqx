@@ -20,7 +20,7 @@ score views in :mod:`backend.services.score_view_service`.
   ``severity_override``.
 - *dim_dq_monitored_tables* — one row per monitored-table binding (any
   status), sourced from :meth:`MonitoredTableService.list_monitored_tables`
-  (no filter = all): the binding's FQN, steward, review status, schedule,
+  (no filter = all): the binding's FQN, owner, review status, schedule,
   and version.
 
 Write pattern (full refresh, idempotent): ``CREATE OR REPLACE TABLE`` first
@@ -64,10 +64,10 @@ DIM_MONITORED_TABLES_TABLE_NAME = "dim_dq_monitored_tables"
 _RULES_COLUMNS_DDL = (
     "rule_id STRING, name STRING, description STRING, dimension STRING, "
     "default_severity STRING, mode STRING, status STRING, is_builtin BOOLEAN, "
-    "steward STRING, version INT, created_at TIMESTAMP, updated_at TIMESTAMP"
+    "owner STRING, version INT, created_at TIMESTAMP, updated_at TIMESTAMP"
 )
 _MONITORED_TABLES_COLUMNS_DDL = (
-    "binding_id STRING, table_fqn STRING, steward STRING, status STRING, "
+    "binding_id STRING, table_fqn STRING, owner STRING, status STRING, "
     "schedule_cron STRING, version INT, created_at TIMESTAMP, updated_at TIMESTAMP"
 )
 
@@ -139,7 +139,7 @@ class MetadataDimService:
             self._str_lit(rule.mode),
             self._str_lit(rule.status),
             self._bool_lit(rule.is_builtin),
-            self._str_lit(rule.steward),
+            self._str_lit(rule.owner),
             self._int_lit(rule.version),
             self._ts_lit(rule.created_at),
             self._ts_lit(rule.updated_at),
@@ -151,7 +151,7 @@ class MetadataDimService:
         cells = [
             self._str_lit(table.binding_id),
             self._str_lit(table.table_fqn),
-            self._str_lit(table.steward),
+            self._str_lit(table.owner),
             self._str_lit(table.status),
             self._str_lit(table.schedule_cron),
             self._int_lit(table.version),
@@ -167,7 +167,7 @@ class MetadataDimService:
         ``escape_sql_string`` deliberately does not escape backslashes (see its
         docstring) — it relies on ``validate_fqn`` to reject them upstream for
         the fully-qualified-name call sites it was written for. The values
-        here are free-text rule/table metadata (name, description, steward,
+        here are free-text rule/table metadata (name, description, owner,
         ...) authored by app users and never passed through ``validate_fqn``,
         so a trailing or embedded backslash must be escaped locally first —
         otherwise it consumes the literal's closing quote on the Databricks

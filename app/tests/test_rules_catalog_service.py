@@ -372,7 +372,18 @@ class TestHistoryRowToDict:
 class TestGetHistory:
     def test_returns_mapped_rows_newest_first(self, svc):
         svc._sql.query.return_value = [
-            ["r", "a.b.c", '{"function": "is_not_null"}', "2", "ui", "submit", "draft", "pending_approval", "a@x", "t2"],
+            [
+                "r",
+                "a.b.c",
+                '{"function": "is_not_null"}',
+                "2",
+                "ui",
+                "submit",
+                "draft",
+                "pending_approval",
+                "a@x",
+                "t2",
+            ],
             ["r", "a.b.c", '{"function": "is_not_null"}', "1", "ui", "create", None, "draft", "a@x", "t1"],
         ]
         out = svc.get_history("r")

@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueries } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
 import { MultiSelectPopover } from "@/components/monitored-tables/MultiSelectPopover";
+import { parsePastedTableFqns } from "@/components/monitored-tables/parsePastedTableFqns";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   useListCatalogs,
   useListMonitoredTables,
@@ -21,6 +26,13 @@ function splitScope(scope: string): [string, string] {
   return [scope.slice(0, dotIndex), scope.slice(dotIndex + 1)];
 }
 
+export interface PasteFqnsResult {
+  added: string[];
+  invalid: string[];
+  alreadyMonitored: string[];
+  alreadySelected: string[];
+}
+
 export interface TableScopePickerState {
   selectedCatalogs: string[];
   setSelectedCatalogs: (v: string[]) => void;
@@ -36,6 +48,8 @@ export interface TableScopePickerState {
   tablesLoading: boolean;
   /** Resolved table FQNs: explicit table picks, else every table under the resolved schema scope. */
   effectiveFqns: string[];
+  /** Add one or more pasted ``catalog.schema.table`` values to the selection. */
+  addPastedFqns: (raw: string) => PasteFqnsResult;
   reset: () => void;
 }
 
@@ -156,6 +170,42 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
     setSelectedTables([]);
   }, []);
 
+  // Paste path: expand catalog/schema selections so the cascade effect that
+  // drops out-of-scope tables doesn't wipe the pasted FQN before schema/table
+  // options have finished loading.
+  const addPastedFqns = useCallback(
+    (raw: string): PasteFqnsResult => {
+      const { valid, invalid } = parsePastedTableFqns(raw);
+      const added: string[] = [];
+      const alreadyMonitored: string[] = [];
+      const alreadySelected: string[] = [];
+
+      const nextCatalogs = new Set(selectedCatalogs);
+      const nextSchemas = new Set(selectedSchemas);
+      const nextTables = new Set(selectedTables);
+
+      for (const fqn of valid) {
+        const [catalog, schema] = splitScope(fqn.slice(0, fqn.lastIndexOf(".")));
+        nextCatalogs.add(catalog);
+        nextSchemas.add(`${catalog}.${schema}`);
+        if (monitoredFqns.has(fqn)) {
+          alreadyMonitored.push(fqn);
+        } else if (nextTables.has(fqn)) {
+          alreadySelected.push(fqn);
+        } else {
+          nextTables.add(fqn);
+          added.push(fqn);
+        }
+      }
+
+      setSelectedCatalogs([...nextCatalogs]);
+      setSelectedSchemas([...nextSchemas]);
+      setSelectedTables([...nextTables]);
+      return { added, invalid, alreadyMonitored, alreadySelected };
+    },
+    [selectedCatalogs, selectedSchemas, selectedTables, monitoredFqns],
+  );
+
   // Clear child selections when their parent scope narrows so state never
   // references catalogs/schemas that are no longer selected.
   //
@@ -199,13 +249,44 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
     tableOptions,
     tablesLoading,
     effectiveFqns,
+    addPastedFqns,
     reset,
   };
 }
 
-/** Renders the three cascading multiselects + scope summary hint for a {@link useTableScopePicker} state. */
+/** Renders the three cascading multiselects + paste-FQN field + scope summary. */
 export function TableScopePickerFields({ state }: { state: TableScopePickerState }) {
   const { t } = useTranslation();
+  const [pasteText, setPasteText] = useState("");
+
+  const handlePasteAdd = useCallback(() => {
+    if (!pasteText.trim()) return;
+    const result = state.addPastedFqns(pasteText);
+    if (result.added.length > 0) {
+      toast.success(
+        t("monitoredTables.wizard.pasteAdded", { count: result.added.length }),
+      );
+      setPasteText("");
+    }
+    if (result.alreadyMonitored.length > 0) {
+      toast.message(
+        t("monitoredTables.wizard.pasteAlreadyMonitored", {
+          count: result.alreadyMonitored.length,
+        }),
+      );
+    }
+    if (result.alreadySelected.length > 0 && result.added.length === 0 && result.invalid.length === 0) {
+      toast.message(t("monitoredTables.wizard.pasteAlreadySelected"));
+    }
+    if (result.invalid.length > 0) {
+      toast.error(
+        t("monitoredTables.wizard.pasteInvalid", {
+          examples: result.invalid.slice(0, 3).join(", "),
+        }),
+      );
+    }
+  }, [pasteText, state, t]);
+
   return (
     <>
       <MultiSelectPopover
@@ -247,6 +328,47 @@ export function TableScopePickerFields({ state }: { state: TableScopePickerState
         disabledHint={t("monitoredTables.wizard.selectCatalogFirst")}
         emptyText={t("monitoredTables.wizard.emptyTables")}
       />
+
+      <div className="grid gap-1.5 pt-1">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="h-px flex-1 bg-border" />
+          <span>{t("monitoredTables.wizard.orPasteFqn")}</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+        <Label htmlFor="monitor-table-paste-fqn" className="text-xs text-muted-foreground">
+          {t("monitoredTables.wizard.pasteFqnLabel")}
+        </Label>
+        <div className="flex gap-2">
+          <Input
+            id="monitor-table-paste-fqn"
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handlePasteAdd();
+              }
+            }}
+            placeholder={t("monitoredTables.wizard.pasteFqnPlaceholder")}
+            className="font-mono text-xs"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handlePasteAdd}
+            disabled={!pasteText.trim()}
+            className="shrink-0"
+          >
+            {t("monitoredTables.wizard.pasteFqnAdd")}
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {t("monitoredTables.wizard.pasteFqnHint")}
+        </p>
+      </div>
+
       {/* The scope summary card is only worth showing once it's warning the
           user about a genuinely large bulk add — for 1-5 tables the outcome
           is already obvious from the picker's own selections, and echoing

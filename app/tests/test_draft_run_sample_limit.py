@@ -123,9 +123,7 @@ class TestDraftRunSampleLimitRoutes:
 
     def test_save_persists_and_returns_effective_state(self, settings_svc):
         settings_svc.get_draft_run_sample_limit.return_value = 2500
-        out = save_draft_run_sample_limit(
-            DraftRunSampleLimitIn(draft_run_sample_limit=2500), settings_svc, "admin@x"
-        )
+        out = save_draft_run_sample_limit(DraftRunSampleLimitIn(draft_run_sample_limit=2500), settings_svc, "admin@x")
         settings_svc.save_draft_run_sample_limit.assert_called_once_with(2500, user_email="admin@x")
         assert out.draft_run_sample_limit == 2500
         assert out.draft_run_sample_limit_set is True

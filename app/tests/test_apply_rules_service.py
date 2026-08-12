@@ -210,7 +210,7 @@ class TestApplyRule:
     def test_existing_application_explicit_none_unpins_regardless_of_setting(self, svc, sql, registry, app_settings):
         # Attach-time-only: default_auto_upgrade must NOT be consulted on an
         # UPDATE of an existing application — an explicit None here means
-        # the steward chose to unpin, not "unspecified".
+        # the owner chose to unpin, not "unspecified".
         app_settings.get_default_auto_upgrade.return_value = False
         registry.get_rule.return_value = _published_rule()
         existing_row = _applied_row(pinned_version="3")
@@ -322,7 +322,7 @@ class TestAttachAutoMapping:
         assert "tag_auto" in insert_sql
 
     def test_hand_applied_row_is_never_touched(self, svc, sql, registry):
-        # A steward hand-applied the SAME rule with the SAME mapping: pinned to
+        # An owner hand-applied the SAME rule with the SAME mapping: pinned to
         # v3, a severity override, and NO origin marker. attach_auto_mapping must
         # return it unchanged and issue NO write of any kind.
         registry.get_rule.return_value = _published_rule()
@@ -374,7 +374,7 @@ class TestAttachAutoMapping:
         sql.execute.assert_not_called()
 
     def test_skips_suppressed(self, svc, sql, registry):
-        # A steward previously removed this auto mapping (tombstone present).
+        # An owner previously removed this auto mapping (tombstone present).
         # attach_auto_mapping must return None and insert nothing.
         registry.get_rule.return_value = _published_rule()
         sql.query.side_effect = [
@@ -780,9 +780,7 @@ class TestColumnPassThresholds:
             [["b1"]],
             [],
         ]
-        applied = svc.apply_rule(
-            "b1", "r1", [{"column": "customer_id"}], "alice@x", tags={}
-        )
+        applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", tags={})
         assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in applied.user_metadata
         assert get_applied_column_pass_thresholds(applied.user_metadata) == {}
 
@@ -828,8 +826,6 @@ class TestColumnPassThresholds:
         from databricks_labs_dqx_app.backend.registry_models import AppliedRule
         from databricks_labs_dqx_app.backend.models import AppliedRuleOut
 
-        applied = AppliedRule(
-            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[], user_metadata={}
-        )
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[], user_metadata={})
         out = AppliedRuleOut.from_domain(applied)
         assert out.column_pass_thresholds == {}

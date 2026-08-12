@@ -241,7 +241,7 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
       });
     }
   }
-  // Surface `ref_table` before `ref_columns`: a steward picks the reference
+  // Surface `ref_table` before `ref_columns`: a owner picks the reference
   // TABLE first, then the columns on it (the DQX signature declares
   // `ref_columns` first, but that reads backwards in the editor — you can't
   // meaningfully choose reference columns before the table they live on).
@@ -620,6 +620,7 @@ export function parseDqxCheckJson(
       : {};
 
   const errorMessage = typeof dict.message_expr === "string" ? dict.message_expr : undefined;
+  const rowFilter = typeof dict.filter === "string" && dict.filter.trim() ? dict.filter.trim() : undefined;
   const userMetadata = reconcileSeverityFromCriticality(
     parseUserMetadata(dict.user_metadata, currentUserMetadata),
     dict.criticality,
@@ -660,6 +661,7 @@ export function parseDqxCheckJson(
           slots,
           parameters: currentDefinition.parameters ?? [],
           error_message: errorMessage,
+          filter: rowFilter,
         },
         userMetadata,
       };
@@ -672,6 +674,7 @@ export function parseDqxCheckJson(
         slots,
         parameters: currentDefinition.parameters ?? [],
         error_message: errorMessage,
+        filter: rowFilter,
       },
       userMetadata,
     };
@@ -732,6 +735,7 @@ export function parseDqxCheckJson(
       slots,
       parameters,
       error_message: errorMessage,
+      filter: rowFilter,
     },
     userMetadata,
   };

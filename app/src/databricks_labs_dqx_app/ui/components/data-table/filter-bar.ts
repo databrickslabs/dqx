@@ -7,7 +7,7 @@
  * plain `Select` triggers, the searchable-combobox triggers, and the free-text
  * tag input — so they share one width. It is deliberately a touch wider than
  * the old per-page values (RR was `w-36`, MT/TS were `w-40`) so longer option
- * labels (statuses, stewards, score buckets) don't crowd the chevron. The
+ * labels (statuses, owners, score buckets) don't crowd the chevron. The
  * search box keeps its own wider `w-56` and is intentionally not tokenized
  * here.
  */

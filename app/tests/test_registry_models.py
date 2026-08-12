@@ -16,12 +16,18 @@ from databricks_labs_dqx_app.backend.registry_models import (
     ORIGIN_TAG_AUTO,
     RESERVED_RULE_METADATA_KEYS,
     RESERVED_SLOT_TAGS_KEY,
+    canonicalize_reserved_label_values,
     get_applied_column_pass_thresholds,
     get_rule_pass_threshold,
     get_slot_tags,
     resolve_pass_threshold,
     set_slot_tags,
 )
+
+_LABEL_DEFS = [
+    {"key": "dimension", "values": ["Validity", "Completeness", "Timeliness"]},
+    {"key": "severity", "values": ["Low", "Medium", "High", "Critical"]},
+]
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +187,7 @@ class TestRegistryRule:
         with pytest.raises(ValidationError):
             self._make(module, mode="not-a-mode")
 
-    @pytest.mark.parametrize(
-        "status", ["draft", "pending_approval", "approved", "rejected", "deprecated"]
-    )
+    @pytest.mark.parametrize("status", ["draft", "pending_approval", "approved", "rejected", "deprecated"])
     def test_accepts_all_statuses(self, module, status):
         assert self._make(module, status=status).status == status
 
@@ -378,6 +382,47 @@ def test_set_slot_tags_keeps_all_governed_tags():
 
 
 # ---------------------------------------------------------------------------
+# Imported dimension / severity values -> configured label vocabulary
+# ---------------------------------------------------------------------------
+
+
+def test_canonicalize_matches_configured_values_case_insensitively():
+    # An ODCS contract spells its dimension lowercase; Studio's vocabulary is
+    # Title-cased, and only the configured spelling is filterable/colourable.
+    out = canonicalize_reserved_label_values({"dimension": "completeness", "severity": "high"}, _LABEL_DEFS)
+    assert out == {"dimension": "Completeness", "severity": "High"}
+
+
+def test_canonicalize_folds_odcs_dimension_aliases():
+    # ODCS has no ``validity`` member, so "Validity" rules arrive as conformity.
+    assert canonicalize_reserved_label_values({"dimension": "conformity"}, _LABEL_DEFS) == {"dimension": "Validity"}
+    assert canonicalize_reserved_label_values({"dimension": "coverage"}, _LABEL_DEFS) == {"dimension": "Completeness"}
+
+
+def test_canonicalize_keeps_values_outside_the_vocabulary():
+    # Preserved verbatim, not dropped — the importer can still see and fix it.
+    um = {"dimension": "Punctuality", "name": "x"}
+    assert canonicalize_reserved_label_values(um, _LABEL_DEFS) == um
+
+
+def test_canonicalize_leaves_canonical_metadata_untouched():
+    um = {"dimension": "Completeness", "severity": "High"}
+    assert canonicalize_reserved_label_values(um, _LABEL_DEFS) is um
+
+
+def test_canonicalize_is_a_noop_without_definitions():
+    um = {"dimension": "completeness"}
+    assert canonicalize_reserved_label_values(um, []) == um
+    assert canonicalize_reserved_label_values(None, _LABEL_DEFS) is None
+
+
+def test_canonicalize_never_mutates_the_input():
+    um = {"dimension": "completeness"}
+    canonicalize_reserved_label_values(um, _LABEL_DEFS)
+    assert um == {"dimension": "completeness"}
+
+
+# ---------------------------------------------------------------------------
 # Data Products domain models (Task 1 of
 # docs/superpowers/plans/2026-07-07-data-products.md)
 # ---------------------------------------------------------------------------
@@ -533,13 +578,17 @@ def test_get_rule_pass_threshold_reads_reserved_key():
 def test_get_applied_column_pass_thresholds():
     assert get_applied_column_pass_thresholds({"column_pass_thresholds": {"a": 90, "b": 50}}) == {"a": 90, "b": 50}
     assert get_applied_column_pass_thresholds({}) == {}
-    assert get_applied_column_pass_thresholds({"column_pass_thresholds": {"a": 999, "b": "bad"}}) == {"a": 100}  # clamp + drop bad
+    assert get_applied_column_pass_thresholds({"column_pass_thresholds": {"a": 999, "b": "bad"}}) == {
+        "a": 100
+    }  # clamp + drop bad
 
 
 def test_resolve_pass_threshold_precedence():
     assert resolve_pass_threshold(column_override=95, rule_override=80, registry_default=60, admin_default=70) == 95
     assert resolve_pass_threshold(column_override=None, rule_override=80, registry_default=60, admin_default=70) == 80
     assert resolve_pass_threshold(column_override=None, rule_override=None, registry_default=60, admin_default=70) == 60
-    assert resolve_pass_threshold(column_override=None, rule_override=None, registry_default=None, admin_default=70) == 70
+    assert (
+        resolve_pass_threshold(column_override=None, rule_override=None, registry_default=None, admin_default=70) == 70
+    )
     # zero is a real value, not "unset"
     assert resolve_pass_threshold(column_override=0, rule_override=80, registry_default=60, admin_default=70) == 0

@@ -8,7 +8,6 @@ lookup fails, and the absent-admins-group edge case.
 
 from unittest.mock import MagicMock, create_autospec
 
-import pytest
 from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -144,7 +143,7 @@ def test_list_privileged_principals_app_owner_falls_back_to_group_name() -> None
     entry = AppAccessControlResponse(
         user_name=None,
         group_name="data-stewards",
-        display_name="Data Stewards",
+        display_name="Data Owners",
         all_permissions=[AppPermission(permission_level=AppPermissionLevel.CAN_MANAGE)],
     )
     sp_ws = _make_sp_ws(admins_members=[], acl_entries=[entry])

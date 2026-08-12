@@ -49,7 +49,7 @@ def _rule(**overrides) -> RegistryRule:
             "dimension": "Completeness",
             "severity": "High",
         },
-        steward="alice@example.com",
+        owner="alice@example.com",
         is_builtin=False,
         created_at=_TS,
         updated_at=_TS,
@@ -62,7 +62,7 @@ def _summary(**overrides) -> MonitoredTableSummary:
     defaults = dict(
         binding_id="b1",
         table_fqn="cat.sch.orders",
-        steward="bob@example.com",
+        owner="bob@example.com",
         status="approved",
         version=3,
         schedule_cron="0 0 * * *",
@@ -129,7 +129,7 @@ class TestRefreshRules:
             "mode STRING",
             "status STRING",
             "is_builtin BOOLEAN",
-            "steward STRING",
+            "owner STRING",
             "version INT",
             "created_at TIMESTAMP",
             "updated_at TIMESTAMP",
@@ -155,13 +155,13 @@ class TestRefreshRules:
         self, service, sql_executor_mock, registry, monitored_tables
     ) -> None:
         registry.list_rules.return_value = [
-            _rule(user_metadata={}, steward=None, created_at=None, updated_at=None, version=0, is_builtin=True)
+            _rule(user_metadata={}, owner=None, created_at=None, updated_at=None, version=0, is_builtin=True)
         ]
         monitored_tables.list_monitored_tables.return_value = []
         service.refresh()
 
         insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
-        # name/description/dimension/severity/steward/timestamps -> NULL;
+        # name/description/dimension/severity/owner/timestamps -> NULL;
         # is_builtin -> TRUE; version -> 0.
         assert insert == (
             f"INSERT INTO {DIM_RULES_FQN} VALUES "
@@ -227,7 +227,7 @@ class TestRefreshMonitoredTables:
         for col in (
             "binding_id STRING",
             "table_fqn STRING",
-            "steward STRING",
+            "owner STRING",
             "status STRING",
             "schedule_cron STRING",
             "version INT",
@@ -250,12 +250,12 @@ class TestRefreshMonitoredTables:
         )
         assert insert == f"INSERT INTO {DIM_TABLES_FQN} VALUES {expected}"
 
-    def test_null_schedule_and_steward_become_null(
+    def test_null_schedule_and_owner_become_null(
         self, service, sql_executor_mock, registry, monitored_tables
     ) -> None:
         registry.list_rules.return_value = []
         monitored_tables.list_monitored_tables.return_value = [
-            _summary(steward=None, schedule_cron=None, created_at=None, updated_at=None, version=0)
+            _summary(owner=None, schedule_cron=None, created_at=None, updated_at=None, version=0)
         ]
         service.refresh()
 

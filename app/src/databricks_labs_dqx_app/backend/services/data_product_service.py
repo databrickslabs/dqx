@@ -67,7 +67,7 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
-from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
 
@@ -77,8 +77,8 @@ _UPDATABLE_FIELDS = (
     "name",
     "description",
     "notes",
-    "steward",
-    "steward_display_name",
+    "owner",
+    "owner_display_name",
     "schedule_cron",
     "schedule_tz",
 )
@@ -298,9 +298,9 @@ class DataProductService:
         self,
         name: str,
         description: str | None,
-        steward: str | None,
+        owner: str | None,
         created_by: str,
-        steward_display_name: str | None = None,
+        owner_display_name: str | None = None,
         notes: str | None = None,
     ) -> DataProduct:
         """Create a new data product in ``draft`` status (no approver gate — design spec §3.3).
@@ -313,19 +313,19 @@ class DataProductService:
             raise ValueError("Data product name must not be empty.")
         self._assert_name_available(name, exclude_product_id=None)
         now = datetime.now(timezone.utc)
-        # Default the steward to the creator when none was supplied. Resolve the
+        # Default the owner to the creator when none was supplied. Resolve the
         # display name at write time when the caller did not supply one
         # (best-effort; group/unresolvable → NULL). An explicit name wins.
-        resolved_steward = steward or created_by
-        if steward_display_name is None:
-            steward_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
+        resolved_owner = owner or created_by
+        if owner_display_name is None:
+            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
         product = DataProduct(
             product_id=uuid4().hex,
             name=name,
             description=description,
             notes=notes,
-            steward=resolved_steward,
-            steward_display_name=steward_display_name,
+            owner=resolved_owner,
+            owner_display_name=owner_display_name,
             schedule_cron=None,
             schedule_tz=None,
             status="draft",
@@ -337,12 +337,12 @@ class DataProductService:
         )
         self._sql.execute(
             f"INSERT INTO {self._products_table} "
-            "(product_id, name, description, notes, steward, steward_display_name, schedule_cron, schedule_tz, "
+            "(product_id, name, description, notes, owner, owner_display_name, schedule_cron, schedule_tz, "
             "schedule_kind, status, version, created_by, created_at, updated_by, updated_at) VALUES ("
             f"'{escape_sql_string(product.product_id)}', '{escape_sql_string_strict(product.name)}', "
             f"{self._opt_str(product.description)}, {self._opt_str(product.notes)}, "
-            f"{self._opt_str(product.steward)}, "
-            f"{self._opt_str(product.steward_display_name)}, NULL, NULL, "
+            f"{self._opt_str(product.owner)}, "
+            f"{self._opt_str(product.owner_display_name)}, NULL, NULL, "
             f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
         )
@@ -382,12 +382,12 @@ class DataProductService:
             if new_name != product.name:
                 self._assert_name_available(new_name, exclude_product_id=product_id)
 
-        # Steward changed without an explicit display name → resolve it at write
+        # Owner changed without an explicit display name → resolve it at write
         # time (best-effort). A caller-supplied name (picker path) always wins.
-        if "steward" in updates and "steward_display_name" not in updates:
+        if "owner" in updates and "owner_display_name" not in updates:
             updates = {
                 **updates,
-                "steward_display_name": resolve_steward_display_name(updates.get("steward"), self._sp_ws),
+                "owner_display_name": resolve_owner_display_name(updates.get("owner"), self._sp_ws),
             }
 
         set_clauses = ["status = 'draft'", f"updated_by = {self._opt_str(updated_by)}", "updated_at = now()"]
@@ -1077,14 +1077,14 @@ class DataProductService:
         created_at = self._sql.ts_text(f"{prefix}created_at")
         updated_at = self._sql.ts_text(f"{prefix}updated_at")
         return (
-            f"{prefix}product_id, {prefix}name, {prefix}description, {prefix}steward, "
+            f"{prefix}product_id, {prefix}name, {prefix}description, {prefix}owner, "
             f"{prefix}schedule_cron, {prefix}schedule_tz, {prefix}status, {prefix}version, "
             f"{prefix}created_by, {created_at} AS created_at, "
             f"{prefix}updated_by, {updated_at} AS updated_at, "
             # schedule_kind (B2-52) appended; score-join columns follow at +1..+4.
             f"{prefix}schedule_kind, "
-            # steward_display_name appended after schedule_kind (row[13]).
-            f"{prefix}steward_display_name, "
+            # owner_display_name appended after schedule_kind (row[13]).
+            f"{prefix}owner_display_name, "
             # notes + lifecycle rationale (row[14..16]).
             # NOTE: score-join cols are appended AFTER these in
             # ``_score_joined_select``, so the score tuple offset is row[17..20].
@@ -1162,7 +1162,7 @@ class DataProductService:
             product_id=row[0],
             name=row[1],
             description=row[2],
-            steward=row[3],
+            owner=row[3],
             schedule_cron=row[4],
             schedule_tz=row[5],
             status=row[6] if row[6] in ("pending_approval", "approved", "rejected") else "draft",
@@ -1176,7 +1176,7 @@ class DataProductService:
                 if len(row) > 12 and row[12] in get_args(ScheduleKind)
                 else SCHEDULE_KIND_DEFAULT
             ),
-            steward_display_name=row[13] if len(row) > 13 else None,
+            owner_display_name=row[13] if len(row) > 13 else None,
             notes=row[14] if len(row) > 14 else None,
             pending_rationale=row[15] if len(row) > 15 else None,
             last_decision_rationale=row[16] if len(row) > 16 else None,
@@ -1184,7 +1184,7 @@ class DataProductService:
 
     @staticmethod
     def _opt_str(value: str | None) -> str:
-        # Free-text fields (name/description/steward display) — use the
+        # Free-text fields (name/description/owner display) — use the
         # backslash-safe escape so a trailing ``\`` cannot break out of the
         # Delta string-literal path (``escape_sql_string`` only doubles quotes).
         return f"'{escape_sql_string_strict(value)}'" if value else "NULL"

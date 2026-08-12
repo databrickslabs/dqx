@@ -166,9 +166,7 @@ class TestSaveAiSettingsTriggersVectorStoreProvisioning:
         from databricks_labs_dqx_app.backend.routes.v1 import config as config_mod
 
         warnings: list[str] = []
-        monkeypatch.setattr(
-            config_mod.logger, "warning", lambda msg, *a, **k: warnings.append(msg), raising=False
-        )
+        monkeypatch.setattr(config_mod.logger, "warning", lambda msg, *a, **k: warnings.append(msg), raising=False)
 
         _wire_stateful_store(sql_executor_mock)
         done = threading.Event()

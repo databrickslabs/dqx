@@ -26,7 +26,7 @@ type Props = {
 // Structured Group-By column picker, ported from dqlake's GroupByField.
 //
 // Replaces the earlier free-text `GroupBySqlField`: a raw SQL field let a
-// steward type an expression such as `COALESCE({{country}}, 'XX')`, whose
+// owner type an expression such as `COALESCE({{country}}, 'XX')`, whose
 // embedded comma corrupted the compiled `merge_columns` AND — because a
 // grouping expression is not a real column on the monitored table — could
 // never satisfy DQX's row-level merge-back contract (`merge_columns` must

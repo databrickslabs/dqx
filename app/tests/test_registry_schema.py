@@ -20,7 +20,16 @@ class TestDqRulesHistoryPostgres:
 
     def test_has_expected_columns(self):
         baseline = next(m for m in PG_MIGRATIONS if m.version == 1)
-        for col in ("rule_id", "definition", "version", "action", "prev_status", "new_status", "changed_by", "changed_at"):
+        for col in (
+            "rule_id",
+            "definition",
+            "version",
+            "action",
+            "prev_status",
+            "new_status",
+            "changed_by",
+            "changed_at",
+        ):
             assert col in baseline.sql
 
     def test_no_new_migration_version_added(self):
@@ -35,5 +44,14 @@ class TestDqRulesHistoryDelta:
         assert "dq_rules_history" in _V2_OLTP_FALLBACK
 
     def test_has_expected_columns(self):
-        for col in ("rule_id", "definition", "version", "action", "prev_status", "new_status", "changed_by", "changed_at"):
+        for col in (
+            "rule_id",
+            "definition",
+            "version",
+            "action",
+            "prev_status",
+            "new_status",
+            "changed_by",
+            "changed_at",
+        ):
             assert col in _V2_OLTP_FALLBACK

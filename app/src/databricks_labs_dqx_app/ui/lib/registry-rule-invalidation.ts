@@ -46,7 +46,7 @@ export function invalidateAfterRegistryRuleApprovalChange(queryClient: QueryClie
 }
 
 /**
- * Invalidate after a plain edit / steward change / field save of a registry
+ * Invalidate after a plain edit / owner change / field save of a registry
  * rule (NOT an approval-state transition). A plain save only touches the rule
  * itself, so we refresh:
  * - that rule's detail query (so a still-mounted detail re-reads the new value)

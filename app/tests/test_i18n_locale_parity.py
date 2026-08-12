@@ -7,7 +7,7 @@ Asserts, with ``en.json`` as the source of truth, that every locale:
      makes i18next log ``missingInterpolation`` and renders inconsistently);
 and that no locale uses a hard-coded ``{{*Plural}}`` placeholder (English
 grammar baked into the translation layer — use native ``_one``/``_other``
-keys with ``{{count}}`` instead). See ui/CLAUDE.md "Internationalization".
+keys with ``{{count}}`` instead). See app/AGENTS.md "Internationalization".
 
 Note: strict key-set equality assumes every locale uses the same plural
 categories (``_one``/``_other``), which holds for en/es/it/pt-BR. A future

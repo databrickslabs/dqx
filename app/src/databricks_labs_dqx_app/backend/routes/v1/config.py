@@ -1157,7 +1157,7 @@ async def list_serving_endpoints(
 #     never affected by a later change to this setting — see
 #     ``AppSettingsService.resolve_pinned_version_for_new_attachment``.
 #
-# Both read at VIEWER+ (stewards should be able to see the effective
+# Both read at VIEWER+ (owners should be able to see the effective
 # governance policy) and write at ADMIN-only, matching the AI Gateway
 # settings pattern above.
 # ----------------------------------------------------------------------
@@ -1217,7 +1217,7 @@ def get_rules_registry_settings(
 ) -> RulesRegistrySettingsOut:
     """Return the current Rules Registry governance settings.
 
-    Available to any authenticated user — stewards benefit from seeing
+    Available to any authenticated user — owners benefit from seeing
     the effective governance policy even though only admins can change it.
     """
     return _rules_registry_settings_out(svc)

@@ -1,8 +1,8 @@
-"""SCIM-backed principal search for the Steward and Permissions pickers (P22-D).
+"""SCIM-backed principal search for the Owner and Permissions pickers (P22-D).
 
 Ported from dqlake's ``routers/principals.py``. Searches workspace users and
 groups via the SP ``WorkspaceClient`` (full SCIM read access), with a short
-in-process cache so a steward typing into a picker doesn't re-hit SCIM on
+in-process cache so an owner typing into a picker doesn't re-hit SCIM on
 every keystroke. Uses the index-friendly SCIM ``sw`` (starts-with) filter.
 """
 
@@ -17,12 +17,12 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import get_sp_ws, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import PrincipalSearchOut
-from databricks_labs_dqx_app.backend.services.steward_display_name_service import _quote_scim
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import _quote_scim
 
 router = APIRouter()
 
 # Any authenticated app role may search principals — the picker is used both by
-# authors setting a steward and by grant-managers on the Permissions tab.
+# authors setting an owner and by grant-managers on the Permissions tab.
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 
 _CACHE_TTL_SECS = 60.0

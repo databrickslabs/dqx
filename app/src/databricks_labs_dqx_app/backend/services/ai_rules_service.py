@@ -196,7 +196,7 @@ _DQX_NATIVE_COVERAGE_GUIDANCE = (
 _DECLINE_KEY = "decline"
 
 _FIELD_SUGGESTION_SYSTEM_TEMPLATE = """\
-You are helping a data steward fill in one field of a data quality rule definition. Given the \
+You are helping a data owner fill in one field of a data quality rule definition. Given the \
 rule's context, suggest a concise value for the field "{field}".
 
 Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
@@ -304,7 +304,7 @@ Safety rules:
 - Table-level: SELECT is required (and must aggregate to one row); still no DDL/DML."""
 
 _EXPLAIN_SQL_SYSTEM_TEMPLATE = """\
-Explain a DQX SQL boolean predicate for a data steward in plain language. Aim for one sentence; \
+Explain a DQX SQL boolean predicate for a data owner in plain language. Aim for one sentence; \
 two at the absolute most. Declarative voice, plain language, no apologies, no preamble \
 ("This rule…"), no markdown, no quotes. Describe what the predicate is checking — not how the \
 SQL is written. Treat {{slot}} placeholders as column names.

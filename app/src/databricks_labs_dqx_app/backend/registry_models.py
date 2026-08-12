@@ -157,10 +157,10 @@ class RegistryRule(BaseModel):
         description="Reserved tag keys (name/description/dimension/severity) + free-text tags",
     )
     fingerprint: str | None = Field(default=None, description="Dedup hash over canonical definition + slots")
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward email; populated from the principal picker.",
+        description="Human-readable display name for the owner email; populated from the principal picker.",
     )
     is_builtin: bool = False
     source: str | None = None
@@ -248,10 +248,10 @@ class MonitoredTable(BaseModel):
 
     binding_id: str
     table_fqn: str
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward email; populated from the principal picker.",
+        description="Human-readable display name for the owner email; populated from the principal picker.",
     )
     status: MonitoredTableStatus = "draft"
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
@@ -408,10 +408,10 @@ class DataProduct(BaseModel):
     product_id: str
     name: str
     description: str | None = None
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward email; populated from the principal picker.",
+        description="Human-readable display name for the owner email; populated from the principal picker.",
     )
     schedule_cron: str | None = None
     schedule_tz: str | None = None
@@ -760,3 +760,84 @@ def resolve_criticality(severity: str | None, app_settings_service: "AppSettings
                 return str(mapping[severity])
             break
     return SEVERITY_TO_CRITICALITY.get(severity, DEFAULT_CRITICALITY)
+
+
+# ---------------------------------------------------------------------------
+# Imported dimension / severity values -> configured label vocabulary
+# ---------------------------------------------------------------------------
+#
+# The reserved ``dimension`` and ``severity`` tags are closed vocabularies
+# (``allow_custom_values: False``), so a value that isn't spelled exactly as
+# configured is dead weight: it renders without a colour and no dimension
+# filter, chart, or Genie view ever selects it. Rules authored in the UI pick
+# from the configured list, but IMPORTED rules carry whatever spelling their
+# source used — ODCS closes ``quality.dimension`` to a lowercase vocabulary
+# (``completeness``, ``timeliness``, ...), so a contract import would otherwise
+# land "completeness" beside Studio's "Completeness" as a distinct value.
+
+_DIMENSION_LABEL_KEY = "dimension"
+
+# ODCS has no ``validity`` member (its nearest term is ``conformity``) and no
+# ``completeness``/``coverage`` distinction Studio models, so these two ODCS
+# terms are folded onto the Studio values they mean. Only consulted when the
+# configured vocabulary has no case-insensitive match for the raw value.
+_DIMENSION_VALUE_ALIASES: dict[str, str] = {"conformity": "validity", "coverage": "completeness"}
+
+
+def _configured_label_values(label_definitions: list[dict], key: str) -> list[str]:
+    """Return the configured ``values`` list for one label key, ``[]`` if unusable."""
+    for definition in label_definitions:
+        if definition.get("key") != key:
+            continue
+        values = definition.get("values")
+        if not isinstance(values, list):
+            return []
+        return [v for v in values if isinstance(v, str) and v.strip()]
+    return []
+
+
+def _canonical_label_value(value: str, allowed: list[str], aliases: dict[str, str]) -> str | None:
+    """Return the configured spelling of *value*, or ``None`` when it doesn't map.
+
+    ``None`` covers both "already canonical" and "outside the vocabulary" — in
+    either case the caller leaves the value untouched.
+    """
+    if not allowed or value in allowed:
+        return None
+    by_lower = {v.lower(): v for v in allowed}
+    lowered = value.strip().lower()
+    return by_lower.get(lowered) or by_lower.get(aliases.get(lowered, ""))
+
+
+def canonicalize_reserved_label_values(
+    user_metadata: dict[str, Any] | None,
+    label_definitions: list[dict],
+) -> dict[str, Any] | None:
+    """Fold imported ``dimension``/``severity`` tags onto the configured vocabulary.
+
+    Matching is case-insensitive, plus :data:`_DIMENSION_VALUE_ALIASES` for the
+    ODCS dimension terms Studio spells differently. A value that maps to no
+    configured entry is preserved verbatim rather than dropped — the importer
+    can still see and fix it.
+
+    Args:
+        user_metadata: The imported rule's tags (``None``/empty passes through).
+        label_definitions: The stored label definitions, as returned by
+            ``AppSettingsService.get_label_definitions``. An empty list disables
+            canonicalization (nothing to match against).
+
+    Returns:
+        The tags to persist — *user_metadata* itself when nothing changed, else
+        a new dict (never mutated in place).
+    """
+    if not user_metadata:
+        return user_metadata
+    result = user_metadata
+    for key, aliases in ((_DIMENSION_LABEL_KEY, _DIMENSION_VALUE_ALIASES), (_SEVERITY_LABEL_KEY, {})):
+        value = get_reserved_tag(result, key)
+        if value is None:
+            continue
+        canonical = _canonical_label_value(value, _configured_label_values(label_definitions, key), aliases)
+        if canonical is not None:
+            result = set_reserved_tag(result, key, canonical)
+    return result

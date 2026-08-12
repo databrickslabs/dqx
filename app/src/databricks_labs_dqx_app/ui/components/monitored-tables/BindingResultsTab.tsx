@@ -889,7 +889,7 @@ function ResultsBody({
           revert-to-default + audit history), not the old read-only badge.
           The panel gates edits for users without permission. Per-run comments
           (entityType="run") sit directly below it — the same thread shown in
-          Runs History's expanded rows — so the steward can set the review
+          Runs History's expanded rows — so the owner can set the review
           status and discuss the run without leaving the page. */}
       {effectiveRunId && (
         <div className="rounded-lg border bg-card p-4">

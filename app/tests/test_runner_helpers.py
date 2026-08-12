@@ -509,9 +509,7 @@ class TestStampRunProvenance:
 
 class TestIsPermissionDenied:
     def test_matches_permission_denied_text(self, runner_module):
-        exc = RuntimeError(
-            "PERMISSION_DENIED: User does not have MANAGE on Table 'cat.dqx_studio_tmp.tmp_view_abc'"
-        )
+        exc = RuntimeError("PERMISSION_DENIED: User does not have MANAGE on Table 'cat.dqx_studio_tmp.tmp_view_abc'")
         assert runner_module._is_permission_denied(exc) is True
 
     def test_matches_manage_phrase_case_insensitive(self, runner_module):

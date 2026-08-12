@@ -155,7 +155,7 @@ function RegistryRulesPage() {
 
   const [dimensionFilter, setDimensionFilter] = useState<string>(ALL);
   const [severityFilter, setSeverityFilter] = useState<string>(ALL);
-  const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
   const [labelFilter, setLabelFilter] = useState<LabelSelection>(new Map());
   const [nameSearch, setNameSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -171,7 +171,7 @@ function RegistryRulesPage() {
     [labelDefinitions],
   );
 
-  // Only dimension/severity are pushed to the server. Steward, free-text tags
+  // Only dimension/severity are pushed to the server. Owner, free-text tags
   // (via the key-first LabelFilter) and the name search are all derived from
   // and filtered over the server-filtered result set client-side — the same
   // one-fetch-then-filter approach the old dqx Active Rules list used. Moving
@@ -195,10 +195,10 @@ function RegistryRulesPage() {
   const { data, isPending, isError, refetch } = useListRegistryRules(serverParams);
   const serverFilteredRules = useMemo(() => data?.data ?? [], [data]);
 
-  const stewardValues = useMemo(() => {
+  const ownerValues = useMemo(() => {
     const set = new Set<string>();
     for (const r of serverFilteredRules) {
-      if (r.steward) set.add(r.steward);
+      if (r.owner) set.add(r.owner);
     }
     return Array.from(set).sort();
   }, [serverFilteredRules]);
@@ -224,20 +224,20 @@ function RegistryRulesPage() {
   const rules = useMemo(() => {
     const q = nameSearch.trim().toLowerCase();
     return serverFilteredRules.filter((r) => {
-      if (stewardFilter !== ALL && (r.steward ?? "") !== stewardFilter) return false;
+      if (ownerFilter !== ALL && (r.owner ?? "") !== ownerFilter) return false;
       if (!labelsMatchFilter(freeTags(r), labelFilter)) return false;
       if (!q) return true;
       const name = getTag(r, RESERVED_NAME_KEY).toLowerCase();
       return name.includes(q) || r.rule_id.toLowerCase().includes(q);
     });
-  }, [serverFilteredRules, stewardFilter, labelFilter, nameSearch]);
+  }, [serverFilteredRules, ownerFilter, labelFilter, nameSearch]);
 
   const [sortKey, setSortKey] = useState<RulesTableSortKey | null>("modified");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const handleHeaderClick = useCallback(
     (key: RulesTableSortKey) => {
-      // First click uses the column's steward-first default direction (B2-92);
+      // First click uses the column's owner-first default direction (B2-92);
       // repeat clicks toggle to the opposite direction, then clear.
       const { dir } = getRulesTableSortConfig(key);
       if (sortKey !== key) {
@@ -277,7 +277,7 @@ function RegistryRulesPage() {
   const hasActiveFilters =
     dimensionFilter !== ALL ||
     severityFilter !== ALL ||
-    stewardFilter !== ALL ||
+    ownerFilter !== ALL ||
     labelFilter.size > 0 ||
     nameSearch.trim() !== "";
 
@@ -887,18 +887,18 @@ function RegistryRulesPage() {
         </SelectContent>
       </Select>
       <SearchableSelect
-        value={stewardFilter}
-        onChange={applyFilter(setStewardFilter)}
-        options={stewardValues.map((v) => {
-          // Best-effort: find a rule with this steward to get its display name.
-          const match = serverFilteredRules.find((r) => r.steward === v);
-          return { value: v, label: match?.steward_display_name || v };
+        value={ownerFilter}
+        onChange={applyFilter(setOwnerFilter)}
+        options={ownerValues.map((v) => {
+          // Best-effort: find a rule with this owner to get its display name.
+          const match = serverFilteredRules.find((r) => r.owner === v);
+          return { value: v, label: match?.owner_display_name || v };
         })}
         allValue={ALL}
         allLabel={t("rulesRegistry.allOwners")}
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
-        ariaLabel={t("rulesRegistry.stewardPlaceholder")}
+        ariaLabel={t("rulesRegistry.ownerPlaceholder")}
       />
       <LabelFilter
         available={availableLabels}
@@ -917,7 +917,7 @@ function RegistryRulesPage() {
           onClick={() => {
             setDimensionFilter(ALL);
             setSeverityFilter(ALL);
-            setStewardFilter(ALL);
+            setOwnerFilter(ALL);
             setLabelFilter(new Map());
             setNameSearch("");
             setPage(1);

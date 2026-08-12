@@ -55,7 +55,7 @@ export function MonitoredTableSchedulingTab({
   // Cross-schedule visibility (item 21): a parent Table Space that includes
   // this table can carry its own schedule, which the in-app scheduler runs
   // against every member — including this table — independently of any
-  // schedule set here. Surface those so the steward isn't surprised by
+  // schedule set here. Surface those so the owner isn't surprised by
   // "extra" runs. Resolved client-side from the products list, which already
   // returns every product's members fully populated (see
   // `DataProductService.list_products`), so no dedicated reverse-lookup

@@ -11,7 +11,7 @@ export type Family = "NUMERIC" | "TEXTUAL" | "TEMPORAL" | "BOOLEAN" | "ANY";
 
 const VALIDITY_OPS = ["is a valid", "is not a valid"];
 
-// The types a steward can validate a text column against. Picked by the
+// The types a owner can validate a text column against. Picked by the
 // value cell when one of the VALIDITY_OPS is in play. Each entry's `value`
 // is what gets persisted in the AST; `sqlType` is the TRY_CAST target.
 export const VALIDITY_TYPES = [
@@ -34,7 +34,7 @@ export const VALIDITY_SQL_TYPE: Record<string, string> = Object.fromEntries(
   VALIDITY_TYPES.map((t) => [t.value, t.sqlType]),
 );
 
-// Order within each family mirrors what a Data Quality steward reaches for
+// Order within each family mirrors what a Data Quality owner reaches for
 // first. Universal operators (is null / is not null, generic equality) live
 // in ANY only and are not duplicated into every family.
 // Operators that invoke a Databricks AI (Foundation Model) SQL function —
@@ -106,7 +106,7 @@ export const OPERATORS_BY_FAMILY: Record<Family, string[]> = {
   ANY: ["is null", "is not null", "=", "!=", "in", "not in", "is not empty", "is empty"],
 };
 
-// Ordered by how often a DQ steward reaches for them.
+// Ordered by how often a DQ owner reaches for them.
 export const AGGREGATES = [
   "count",
   "count_distinct",

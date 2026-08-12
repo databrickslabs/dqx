@@ -195,9 +195,7 @@ class TestGrantServingEndpointAccess:
         sp_ws.serving_endpoints.update_permissions.assert_not_called()
 
     async def test_grants_to_configured_admin_group(self, provisioner, sp_ws, app_settings, monkeypatch):
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.services.vector_store.conf.admin_group", "dqx-admins"
-        )
+        monkeypatch.setattr("databricks_labs_dqx_app.backend.services.vector_store.conf.admin_group", "dqx-admins")
 
         await provisioner.ensure_vector_store()
 

@@ -39,7 +39,12 @@ class TestRunAdhoc:
             {"amount": "5", "__row_idx": "0", "__passed": "true"},
             {"amount": "-3", "__row_idx": "1", "__passed": "false"},
         ]
-        src = AdhocSource(columns=["amount"], rows=[["5"], ["-3"]], families={"amount": "numeric"}, column_mapping={"amount": "amount"})
+        src = AdhocSource(
+            columns=["amount"],
+            rows=[["5"], ["-3"]],
+            families={"amount": "numeric"},
+            column_mapping={"amount": "amount"},
+        )
 
         result = await service.run_adhoc(predicate="{{amount}} > 0", polarity="pass", source=src)
 
@@ -58,19 +63,29 @@ class TestRunAdhoc:
         sql_executor_mock.query_dicts.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_assembled_query_gate_rejects_injected_keyword(self, service, sql_executor_mock):
+    async def test_forbidden_keyword_in_cell_data_is_neutralised_into_a_literal(self, service, sql_executor_mock):
         # P22-E: a manual (or AI-generated) cell carrying a forbidden statement is
-        # neutralised into a quoted literal by _lit, and the fully-assembled-query
-        # is_sql_query_safe gate rejects it as belt-and-braces — nothing runs.
+        # neutralised into a quoted literal by _lit. DQX's safety gate strips quoted
+        # literals before scanning, so this runs as inert data — a keyword typed into
+        # a test cell is not an injection and must not block the whole test run.
+        sql_executor_mock.query_dicts.return_value = [{"a": "foo\\", "__row_idx": "0", "__passed": "true"}]
         src = AdhocSource(
             columns=["a", "b"],
             rows=[["foo\\", "'); DROP TABLE t; --"]],
             families={"a": "text", "b": "text"},
             column_mapping={"a": "a", "b": "b"},
         )
+        await service.run_adhoc(predicate="{{a}} IS NOT NULL", polarity="pass", source=src)
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert r"'foo\\'" in sql  # backslash doubled — literal stays closed
+        assert "'''); DROP TABLE t; --'" in sql  # payload is a quoted literal, not raw SQL
+
+    def test_assembled_query_gate_rejects_live_forbidden_statement(self, service):
+        # The defence-in-depth gate on the FULLY assembled query is still wired: a
+        # forbidden statement that lands OUTSIDE any quoted literal is rejected, so
+        # nothing that escaped _lit's escaping could ever reach the warehouse.
         with pytest.raises(UnsafeSqlQueryError):
-            await service.run_adhoc(predicate="{{a}} IS NOT NULL", polarity="pass", source=src)
-        sql_executor_mock.query_dicts.assert_not_called()
+            service._guard_assembled("SELECT * FROM src; DROP TABLE t")
 
     @pytest.mark.asyncio
     async def test_injection_data_without_keyword_runs_as_harmless_literal(self, service, sql_executor_mock):
@@ -136,7 +151,9 @@ class TestGenerateTestData:
     @pytest.mark.asyncio
     async def test_row_count_clamped_into_prompt(self, service, ai_gateway):
         ai_gateway.query.return_value = '{"rows": []}'
-        await service.generate_test_data(predicate="p", polarity="pass", columns=[("a", "text")], row_count=999, user_email="u@x")
+        await service.generate_test_data(
+            predicate="p", polarity="pass", columns=[("a", "text")], row_count=999, user_email="u@x"
+        )
         user_msg = ai_gateway.query.call_args.kwargs["messages"][1]["content"]
         assert '"row_count": 20' in user_msg
 
@@ -144,7 +161,9 @@ class TestGenerateTestData:
     async def test_malformed_response_raises(self, service, ai_gateway):
         ai_gateway.query.return_value = "not json at all"
         with pytest.raises(AIResponseParseError):
-            await service.generate_test_data(predicate="p", polarity="pass", columns=[("a", "text")], row_count=8, user_email="u@x")
+            await service.generate_test_data(
+                predicate="p", polarity="pass", columns=[("a", "text")], row_count=8, user_email="u@x"
+            )
 
 
 class TestGenerateCrossTableTestData:

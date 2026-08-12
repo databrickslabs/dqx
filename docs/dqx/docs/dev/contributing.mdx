@@ -12,6 +12,13 @@ DQX issues (tickets) are tracked on Github [here](https://github.com/databricksl
 You can view all open issues, including those actively being worked on and those available for contribution.
 Issues with an assigned username are already in progress, while unassigned ones are open for anyone to pick up.
 
+Label issues (and related PRs) so Core and Studio work stays easy to find:
+
+| Label | Use for |
+|-------|---------|
+| **`DQX Core`** | Python library, CLI, workflows, MCP server, Core docs under `docs/dqx/docs/guide/` / `reference/` |
+| **`DQX App`** | DQX Studio (code under `app/`, user docs under `docs/dqx/docs/studio/`) |
+
 If you'd like to work on an issue, please either assign it to yourself or leave a comment to indicate that you’re taking it on.
 Before starting work, it's a good idea to discuss the issue in the comments, especially if you have questions, need clarification, or want to confirm the proposed approach.
 
@@ -167,7 +174,7 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 ### DQX Studio development
 
-The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
+The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). It is a **separate track** from DQX Core: Studio code lives in `app/`, end-user docs in [`docs/dqx/docs/studio/`](/docs/studio/), and GitHub issues/PRs should carry the **`DQX App`** label. Agent-oriented architecture notes live in [`app/AGENTS.md`](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/AGENTS.md) (thin `CLAUDE.md` files under `app/` link there). See [`app/README.md`](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
 
 The Studio's frontend tooling requires **Node.js 18+** (which provides `npm`), **yarn** (classic v1), and **bun**. Install them before running any `make app-*` target:
 ```shell

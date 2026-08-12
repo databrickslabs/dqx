@@ -34,8 +34,12 @@ class TestListWarehouses:
     def test_maps_and_sorts(self, service, sp_ws):
         sp_ws.warehouses.list.return_value = iter(
             [
-                SimpleNamespace(id="w2", name="Zeta", enable_serverless_compute=True, state=SimpleNamespace(value="RUNNING")),
-                SimpleNamespace(id="w1", name="Alpha", enable_serverless_compute=False, state=SimpleNamespace(value="STOPPED")),
+                SimpleNamespace(
+                    id="w2", name="Zeta", enable_serverless_compute=True, state=SimpleNamespace(value="RUNNING")
+                ),
+                SimpleNamespace(
+                    id="w1", name="Alpha", enable_serverless_compute=False, state=SimpleNamespace(value="STOPPED")
+                ),
                 SimpleNamespace(id=None, name="skip", enable_serverless_compute=False, state=None),
             ]
         )

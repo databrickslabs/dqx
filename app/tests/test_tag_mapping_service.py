@@ -43,8 +43,8 @@ def test_family_still_enforced():
     slots = [_slot("c1", "text")]
     slot_tags = {"c1": ["class.pii"]}
     cols = [
-        ColumnInfo("email", "STRING", ["class.pii"]),   # text OK
-        ColumnInfo("pii_id", "INT", ["class.pii"]),      # tag matches but family text != numeric
+        ColumnInfo("email", "STRING", ["class.pii"]),  # text OK
+        ColumnInfo("pii_id", "INT", ["class.pii"]),  # tag matches but family text != numeric
     ]
     assert resolve(slots, slot_tags, cols) == [{"c1": "email"}]
 

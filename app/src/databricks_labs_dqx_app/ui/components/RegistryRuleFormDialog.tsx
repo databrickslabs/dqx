@@ -62,7 +62,7 @@ import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { TagPicker } from "@/components/apply-rules/TagPicker";
-import { PermissionsTab, type StewardGrantIntent } from "@/components/permissions/PermissionsTab";
+import { PermissionsTab, type OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
 import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
@@ -922,7 +922,7 @@ function SectionHeader({
   return (
     <div className={cn("flex items-center justify-between gap-3", className)}>
       <div className="flex items-center gap-1.5">
-        {/* Match the About field <Label>s and the Permissions "Steward" header
+        {/* Match the About field <Label>s and the Permissions "Owner" header
             (text-sm font-medium leading-none) so the section headers read
             consistently across all three tabs — Implementation was heavier
             (font-semibold), which stood out. */}
@@ -1595,7 +1595,7 @@ function extractApiError(err: unknown, fallback: string): string {
 /**
  * Deterministic JSON serialization (object keys sorted recursively) so two
  * snapshots built from the same logical values compare equal regardless of
- * insertion order — tags/parameters can be re-keyed as the steward edits
+ * insertion order — tags/parameters can be re-keyed as the owner edits
  * them without spuriously flipping `isDirty`.
  */
 function stableStringify(value: unknown): string {
@@ -1620,7 +1620,7 @@ interface RuleEditSnapshot {
   dimension: string;
   severity: string;
   passThreshold: number | null;
-  steward: string;
+  owner: string;
   tags: Record<string, string>;
   mode: RegistryMode;
   polarity: Polarity;
@@ -1645,8 +1645,8 @@ interface RuleEditSnapshot {
  * mutable rule row. Diffing two of these answers "is there a revision worth
  * re-approving?", as opposed to `isDirty`'s "is there anything unsaved?".
  */
-function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "steward" | "authorKind"> {
-  const { steward: _steward, authorKind: _authorKind, ...publishable } = snapshot;
+function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "owner" | "authorKind"> {
+  const { owner: _owner, authorKind: _authorKind, ...publishable } = snapshot;
   return publishable;
 }
 
@@ -1685,7 +1685,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     dimension: asString(RESERVED_DIMENSION_KEY),
     severity: asString(RESERVED_SEVERITY_KEY),
     passThreshold: asIntOrNull(RESERVED_PASS_THRESHOLD_KEY),
-    steward: rule.steward ?? "",
+    owner: rule.owner ?? "",
     tags,
     mode: rule.mode,
     polarity: rule.polarity ?? "pass",
@@ -1730,7 +1730,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   dimension: "",
   severity: "",
   passThreshold: null,
-  steward: "",
+  owner: "",
   tags: {},
   mode: "lowcode",
   polarity: "pass",
@@ -1900,13 +1900,13 @@ export function RegistryRuleFormDialog({
   const [severity, setSeverity] = useState<string>("");
   const [passThreshold, setPassThreshold] = useState<number | null>(null);
   const [tags, setTags] = useState<Record<string, string>>({});
-  const [steward, setSteward] = useState("");
-  const [stewardDisplayName, setStewardDisplayName] = useState("");
-  // Stashed by PermissionsTab's StewardGrantDialog when the user picks a new
-  // steward and confirms the popup.  Consumed (and cleared) in handleSave
+  const [owner, setOwner] = useState("");
+  const [ownerDisplayName, setOwnerDisplayName] = useState("");
+  // Stashed by PermissionsTab's OwnerGrantDialog when the user picks a new
+  // owner and confirms the popup.  Consumed (and cleared) in handleSave
   // right after the rule is persisted.  null = no pending grant.
-  const [stewardGrantIntent, setStewardGrantIntent] = useState<StewardGrantIntent | null>(null);
-  // Stashed when create returns HTTP 409 duplicate_rule — steward must confirm
+  const [ownerGrantIntent, setOwnerGrantIntent] = useState<OwnerGrantIntent | null>(null);
+  // Stashed when create returns HTTP 409 duplicate_rule — owner must confirm
   // before we re-submit with allow_duplicate=true.
   const [pendingDuplicateConfirm, setPendingDuplicateConfirm] = useState<{
     message: string;
@@ -1990,9 +1990,9 @@ export function RegistryRuleFormDialog({
     setDimension(asString(RESERVED_DIMENSION_KEY));
     setSeverity(asString(RESERVED_SEVERITY_KEY));
     setPassThreshold(asIntOrNull(RESERVED_PASS_THRESHOLD_KEY));
-    setSteward(sourceRule?.steward ?? "");
-    setStewardDisplayName(sourceRule?.steward_display_name ?? "");
-    setStewardGrantIntent(null);
+    setOwner(sourceRule?.owner ?? "");
+    setOwnerDisplayName(sourceRule?.owner_display_name ?? "");
+    setOwnerGrantIntent(null);
     setNameError(null);
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
     setFilter(sourceRule?.definition?.filter ?? "");
@@ -2149,7 +2149,7 @@ export function RegistryRuleFormDialog({
       // The AI named a function that isn't in the frontend catalog (e.g. an
       // optional module not installed on this deployment). Don't silently drop
       // everything: still surface the AI's raw scalar arguments (best-effort)
-      // and any typed slots it carried, then warn the steward that the function
+      // and any typed slots it carried, then warn the owner that the function
       // couldn't be matched so they can pick a real one. Column-slot arguments
       // are placeholders, so only the non-`{{…}}` scalar args are shown.
       const raw: Record<string, string> = {};
@@ -2210,7 +2210,7 @@ export function RegistryRuleFormDialog({
   // Rule-level DQ score, fetched here (non-suspending) only to decide the
   // Results tab trigger's enabled state: a rule with zero current
   // applications has no results, so the trigger is disabled with a tooltip
-  // telling the steward to apply the rule to a monitored table first. The
+  // telling the owner to apply the rule to a monitored table first. The
   // tab CONTENT re-reads the same query via its own suspense boundary
   // (RuleResultsTab), so the two never disagree. Never refetches on its own
   // (RESULTS_QUERY_OPTIONS) — run-completion invalidation is the only
@@ -2243,7 +2243,7 @@ export function RegistryRuleFormDialog({
     dimension,
     severity,
     passThreshold,
-    steward,
+    owner,
     tags,
     mode,
     polarity,
@@ -2263,7 +2263,7 @@ export function RegistryRuleFormDialog({
   const isDirty = stableStringify(currentSnapshot) !== stableStringify(persistedSnapshot);
   // Whether anything the APPROVAL GATE cares about changed, which is a strictly
   // narrower question than `isDirty`. A publish freezes mode / definition /
-  // polarity / user_metadata into `dq_rule_versions`; steward and author_kind
+  // polarity / user_metadata into `dq_rule_versions`; owner and author_kind
   // live only on the rule row, so the backend's "modified since publish" check
   // (`RegistryRuleService._compute_modified`) never looks at them. Reassigning
   // ownership therefore takes effect on save with nothing left to review — and
@@ -2375,7 +2375,7 @@ export function RegistryRuleFormDialog({
   // rules persisted before dimension/severity/required-parameter gating
   // existed (imported YAML, AI proposals, pre-gate builds). Requiring FULL
   // completeness just to persist e.g. a description edit dead-ends those
-  // rules: Save sits greyed out until the steward hunts down unrelated
+  // rules: Save sits greyed out until the owner hunts down unrelated
   // fields across tabs — and a draft cloned from a pre-gate approved rule
   // via "Edit as new draft" hits the same wall, so every edit path on such
   // a registry reads as "rules cannot be updated".
@@ -2479,7 +2479,7 @@ export function RegistryRuleFormDialog({
   //
   // Two things count as a revision, and gating on `isDirty` alone got both
   // wrong: unsaved edits to publishable fields (`publishableDirty` — a
-  // steward-only edit is dirty but NOT a revision), and edits already SAVED
+  // owner-only edit is dirty but NOT a revision), and edits already SAVED
   // against the published vN (`modified_since_publish` — those leave the form
   // clean, yet the revision is still waiting to be submitted).
   const hasRevisionToSubmit = publishableDirty || (sourceRule?.modified_since_publish ?? false);
@@ -2670,7 +2670,7 @@ export function RegistryRuleFormDialog({
     // values), so a JSON round-trip that omits `slot_tags` clears the map —
     // consistent with how the JSON surface treats any non-string metadata.
     setSlotTags(slotTagsFromUserMetadata(parsed.userMetadata));
-    // JSON is mostly the implementation body — land the steward there to review.
+    // JSON is mostly the implementation body — land the owner there to review.
     setPageTab("implementation");
     toast.success(t("rulesRegistry.jsonAppliedToForm"));
   };
@@ -2698,14 +2698,14 @@ export function RegistryRuleFormDialog({
     // real registered DQX functions). Either shape should land the form
     // directly on the SQL authoring mode with the predicate filled in —
     // never on DQX Native with that function selected, which would force
-    // the steward to redirect out manually via the same special-case the
+    // the owner to redirect out manually via the same special-case the
     // Function combobox applies below.
     const isLowcodeProposal = proposal.mode === "lowcode";
     const isSqlProposal =
       !isLowcodeProposal && (proposal.mode === "sql" || nativeFn === "sql_query" || nativeFn === "sql_expression");
     const appliedMode: RegistryMode = isLowcodeProposal ? "lowcode" : isSqlProposal ? "sql" : "dqx_native";
     // Switch the mode segmented control onto the real authoring mode so the
-    // steward immediately sees (and can tweak) what the proposal filled in.
+    // owner immediately sees (and can tweak) what the proposal filled in.
     setMode(appliedMode);
     // An AI proposal commits the rule type — mark the decision point chosen so
     // the chosen mode's body renders. Without this, using Build-with-AI on a
@@ -2783,9 +2783,9 @@ export function RegistryRuleFormDialog({
       setPendingNativeSlots(proposal.slots ?? null);
     }
     // NOTE: intentionally do NOT clear `aiDescription` here (item B2-32 Part B) —
-    // the steward's typed prompt survives after a generation so they can tweak
+    // the owner's typed prompt survives after a generation so they can tweak
     // and regenerate without retyping.
-    // Jump to Implementation so the steward immediately sees what the
+    // Jump to Implementation so the owner immediately sees what the
     // proposal filled in, regardless of which page tab they were on when
     // they used the (now always-visible) Build-with-AI banner.
     setPageTab("implementation");
@@ -2958,8 +2958,8 @@ export function RegistryRuleFormDialog({
           definition,
           polarity: polarityIsMeaningful ? polarity : null,
           user_metadata: userMetadata,
-          steward: steward.trim() || null,
-          steward_display_name: stewardDisplayName.trim() || null,
+          owner: owner.trim() || null,
+          owner_display_name: ownerDisplayName.trim() || null,
           // Persist AI provenance stamped during this edit-in-place session
           // (e.g. accepting an AI-suggested field on an otherwise
           // human-authored draft) rather than silently dropping it.
@@ -2978,8 +2978,8 @@ export function RegistryRuleFormDialog({
           definition,
           polarity: polarityIsMeaningful ? polarity : null,
           user_metadata: userMetadata,
-          steward: steward.trim() || null,
-          steward_display_name: stewardDisplayName.trim() || null,
+          owner: owner.trim() || null,
+          owner_display_name: ownerDisplayName.trim() || null,
           author_kind: authorKind ?? "human",
           allow_duplicate: allowDuplicate || undefined,
         };
@@ -3009,13 +3009,13 @@ export function RegistryRuleFormDialog({
         }
       }
 
-      // Write steward grant(s) after the rule is persisted (so `ruleId` is
+      // Write owner grant(s) after the rule is persisted (so `ruleId` is
       // known for a freshly created rule).  Fires only when the user confirmed
-      // the StewardGrantDialog; errors are toasted but do NOT roll back the
+      // the OwnerGrantDialog; errors are toasted but do NOT roll back the
       // rule save (the grant is a best-effort UX convenience).
-      if (stewardGrantIntent) {
-        const capturedIntent = stewardGrantIntent;
-        setStewardGrantIntent(null);
+      if (ownerGrantIntent) {
+        const capturedIntent = ownerGrantIntent;
+        setOwnerGrantIntent(null);
         try {
           await setGrantMut.mutateAsync({
             objectType: "registry_rule",
@@ -3038,14 +3038,14 @@ export function RegistryRuleFormDialog({
             });
           }
           // Refresh the grants table in the Permissions tab so the newly
-          // written grant (and any removed old-steward grant) appear immediately
+          // written grant (and any removed old-owner grant) appear immediately
           // without requiring a navigate-away. Mirrors the collection path in
           // useEditProductState.ts.
           queryClient.invalidateQueries({
             queryKey: getListObjectGrantsQueryKey("registry_rule", ruleId),
           });
         } catch (grantErr) {
-          toast.error(extractApiError(grantErr, t("permissions.stewardGrantFailed")), {
+          toast.error(extractApiError(grantErr, t("permissions.ownerGrantFailed")), {
             duration: 6000,
           });
         }
@@ -3136,7 +3136,7 @@ export function RegistryRuleFormDialog({
   // then Default Severity before Dimension — each picker shows the same
   // colored dot dqlake renders next to the selected value (sourced from the
   // label definition's configured value_colors, same data DQX already uses
-  // for badges elsewhere). Steward is also editable here (and on Permissions).
+  // for badges elsewhere). Owner is also editable here (and on Permissions).
   const aboutTabContent = (
     // Two columns on a SAVED rule: editable fields on the left, the read-only
     // Details provenance panel on the right. On create (no sourceRule) the
@@ -3346,7 +3346,7 @@ export function RegistryRuleFormDialog({
           rule — not the in-progress edit state, so an unsaved rename never
           makes the panel claim an update that hasn't happened. Absent entirely
           while creating, since a rule that doesn't exist yet has no provenance
-          to show. Renders as the RIGHT column on a saved rule; steward is NOT
+          to show. Renders as the RIGHT column on a saved rule; owner is NOT
           shown here — it's edited on the Permissions tab. */}
       {sourceRule && (
         <section className="space-y-3 lg:w-96 lg:shrink-0">
@@ -3419,9 +3419,9 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
-  // Permissions tab — a UC-style permissions surface (steward + per-principal
+  // Permissions tab — a UC-style permissions surface (owner + per-principal
   // grants). The grants table needs a saved object id, so for a not-yet-created
-  // rule (create mode) `PermissionsTab` still renders the steward picker but
+  // rule (create mode) `PermissionsTab` still renders the owner picker but
   // replaces the grants table with an empty shell ("save first" message),
   // guarded on `objectId`.
   const permissionsTabContent = (
@@ -3433,13 +3433,13 @@ export function RegistryRuleFormDialog({
       <PermissionsTab
         objectType="registry_rule"
         objectId={sourceRule?.rule_id ?? ""}
-        showSteward
-        canEditSteward={!readOnly}
-        steward={steward}
-        stewardDisplayName={stewardDisplayName}
-        onStewardChange={setSteward}
-        onStewardDisplayNameChange={setStewardDisplayName}
-        onStewardGrantIntent={setStewardGrantIntent}
+        showOwner
+        canEditOwner={!readOnly}
+        owner={owner}
+        ownerDisplayName={ownerDisplayName}
+        onOwnerChange={setOwner}
+        onOwnerDisplayNameChange={setOwnerDisplayName}
+        onOwnerGrantIntent={setOwnerGrantIntent}
       />
     </div>
   );
@@ -3939,6 +3939,46 @@ export function RegistryRuleFormDialog({
     </div>
   ) : null;
 
+  // A stored `filter` with no companion `filter_ast` was not authored in the
+  // visual builder — it is raw SQL (a contract / YAML import, or a filter typed
+  // in SQL mode before the rule type changed). The builder cannot represent an
+  // arbitrary predicate, and rendering it empty would read as "no row filter"
+  // while the rule quietly filters rows, so show the predicate in the same SQL
+  // editor SQL mode uses. Clearing the text hands the field back to the builder.
+  const rowFilterIsRawSql = filter.trim().length > 0 && filterAst.rows.length === 0;
+
+  // Row filter — a SQL WHERE predicate applied before the rule condition,
+  // scoping the rows the check considers. Shared verbatim by the low-code and
+  // native Advanced sections (the SQL mode's own editor lives inline in its
+  // block): the AST persists as `body.filter_ast` and the compiled predicate
+  // materializes into DQRule.filter.
+  const rowFilterField = (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
+      {rowFilterIsRawSql ? (
+        <>
+          <PredicateEditor
+            value={filter}
+            onChange={setFilter}
+            declaredColumns={currentSlots}
+            placeholder={t("rulesRegistry.filterPlaceholder")}
+            disabled={readOnly}
+            autoHeight
+          />
+          <p className="text-[11px] text-muted-foreground">{t("rulesRegistry.filterRawSqlHint")}</p>
+        </>
+      ) : (
+        <FilterBuilder
+          ast={filterAst}
+          onChange={handleFilterAstChange}
+          declaredColumns={filterColumns}
+          readOnly={readOnly}
+          renderOperator={renderFilterOperator}
+        />
+      )}
+    </div>
+  );
+
   const implementationTabContent = (
     // `w-full` pins this tab's content to the tab strip's stable width
     // regardless of which mode's fields it's currently rendering (DQX
@@ -4269,21 +4309,7 @@ export function RegistryRuleFormDialog({
               declaredColumns={lowcodeColumns.filter((c) => !c.name.includes("."))}
               disabled={readOnly}
             />
-            {/* Row filter — a SQL WHERE predicate applied before the rule
-                condition, scoped to rows the check should consider. Built
-                visually via the same low-code row controls as the main
-                condition; the AST persists (`body.filter_ast`) and the
-                compiled predicate materializes into DQRule.filter. */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
-              <FilterBuilder
-                ast={filterAst}
-                onChange={handleFilterAstChange}
-                declaredColumns={filterColumns}
-                readOnly={readOnly}
-                renderOperator={renderFilterOperator}
-              />
-            </div>
+            {rowFilterField}
             {thresholdField}
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
@@ -4421,16 +4447,7 @@ export function RegistryRuleFormDialog({
             label={t("rulesRegistry.advancedSectionLabel")}
             defaultOpen={!!filter || passThreshold !== null}
           >
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
-              <FilterBuilder
-                ast={filterAst}
-                onChange={handleFilterAstChange}
-                declaredColumns={filterColumns}
-                readOnly={readOnly}
-                renderOperator={renderFilterOperator}
-              />
-            </div>
+            {rowFilterField}
             {thresholdField}
           </AdvancedDisclosure>
         </div>
@@ -4964,7 +4981,7 @@ export function RegistryRuleFormDialog({
         {/* Grey out once there's nothing to save — either a blank,
             untouched create form or an already-persisted draft with no
             pending edits (re-saving it would just churn the audit log
-            with no real change), matching dqlake's steward editor.
+            with no real change), matching dqlake's owner editor.
             Draft saves only need structural validity (`canSaveDraft`);
             the completeness bar applies to the submit buttons below. */}
         {withMissingFieldsTooltip(

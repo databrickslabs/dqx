@@ -75,7 +75,7 @@ interface AiSuggestionDialogProps {
    *  compatibility; the dialog no longer surfaces a Refresh affordance
    *  (prefetch-on-tab-entry keeps the result fresh). */
   onRefresh: () => void;
-  /** The tab's staged applied-rule rows — used to hide suggestions the steward
+  /** The tab's staged applied-rule rows — used to hide suggestions the owner
    *  has ALREADY applied this session (unsaved), which the backend can't know
    *  about (it only excludes persisted mappings). */
   appliedRules: AppliedRuleMappingLike[];

@@ -215,6 +215,31 @@ class TestStewardDisplayNameMigration:
         assert idx26 == idx25 + 1, "v26 must immediately follow v25 in MIGRATIONS"
 
 
+class TestOwnerRenameMigration:
+    """v28: add owner/owner_display_name (copy from steward) on OLTP fallback tables."""
+
+    def test_v28_adds_owner_columns_and_copies(self) -> None:
+        v28 = next(m for m in MIGRATIONS if m.version == 28)
+        sql = v28.sql_template
+        assert "dq_rules" in sql
+        assert "dq_monitored_tables" in sql
+        assert "dq_data_products" in sql
+        assert "ADD COLUMN owner" in sql
+        assert "ADD COLUMN owner_display_name" in sql
+        assert "SET owner = steward" in sql
+        assert "SET owner_display_name = steward_display_name" in sql
+
+    def test_v28_is_oltp_fallback(self) -> None:
+        v28 = next(m for m in MIGRATIONS if m.version == 28)
+        assert v28.oltp_fallback is True
+
+    def test_v28_version_follows_v27(self) -> None:
+        versions = [m.version for m in MIGRATIONS]
+        idx27 = versions.index(27)
+        idx28 = versions.index(28)
+        assert idx28 == idx27 + 1, "v28 must immediately follow v27 in MIGRATIONS"
+
+
 class TestNotesAndRationaleMigration:
     """v27: notes + change-rationale columns (OLTP fallback)."""
 
@@ -375,9 +400,9 @@ class TestQuarantineClustering:
         v1 = next(m for m in MIGRATIONS if m.version == 1)
         sql = v1.sql_template
         assert "dq_quarantine_records" in sql
-        assert "CLUSTER BY (run_id, source_table_fqn)" in sql, (
-            "quarantine table must be liquid-clustered by (run_id, source_table_fqn)"
-        )
+        assert (
+            "CLUSTER BY (run_id, source_table_fqn)" in sql
+        ), "quarantine table must be liquid-clustered by (run_id, source_table_fqn)"
         # Guard against a stray leftover single-key clause.
         assert "dq_quarantine_records" not in sql or "CLUSTER BY (run_id)" not in sql.replace(
             "CLUSTER BY (run_id, source_table_fqn)", ""

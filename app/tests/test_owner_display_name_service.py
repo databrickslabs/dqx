@@ -1,14 +1,14 @@
-"""Unit tests for steward_display_name_service — SCIM resolver (batch + single)."""
+"""Unit tests for owner_display_name_service — SCIM resolver (batch + single)."""
 
 from unittest.mock import create_autospec
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.iam import User
 
-from databricks_labs_dqx_app.backend.services import steward_display_name_service
-from databricks_labs_dqx_app.backend.services.steward_display_name_service import (
+from databricks_labs_dqx_app.backend.services import owner_display_name_service
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     resolve_emails_to_display_names,
-    resolve_steward_display_name,
+    resolve_owner_display_name,
 )
 
 
@@ -70,40 +70,40 @@ class TestResolveEmailsToDisplayNames:
 
 
 # ---------------------------------------------------------------------------
-# resolve_steward_display_name (single, cached, best-effort)
+# resolve_owner_display_name (single, cached, best-effort)
 # ---------------------------------------------------------------------------
 
 
-class TestResolveStewardDisplayName:
+class TestResolveOwnerDisplayName:
     def setup_method(self) -> None:
         # Isolate the module-level TTL cache between tests.
-        steward_display_name_service._resolve_cache.clear()
+        owner_display_name_service._resolve_cache.clear()
 
     def test_resolves_single_email(self) -> None:
         sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
-        assert resolve_steward_display_name("alice@example.com", sp_ws) == "Alice Smith"
+        assert resolve_owner_display_name("alice@example.com", sp_ws) == "Alice Smith"
 
     def test_none_when_no_client(self) -> None:
-        assert resolve_steward_display_name("alice@example.com", None) is None
+        assert resolve_owner_display_name("alice@example.com", None) is None
 
-    def test_none_for_empty_steward(self) -> None:
+    def test_none_for_empty_owner(self) -> None:
         sp_ws = _make_sp_ws([])
-        assert resolve_steward_display_name("", sp_ws) is None
-        assert resolve_steward_display_name(None, sp_ws) is None
+        assert resolve_owner_display_name("", sp_ws) is None
+        assert resolve_owner_display_name(None, sp_ws) is None
 
     def test_group_or_unresolvable_returns_none(self) -> None:
         # A group name has no SCIM user match → None (frontend shows the name).
         sp_ws = _make_sp_ws([])
-        assert resolve_steward_display_name("data-stewards", sp_ws) is None
+        assert resolve_owner_display_name("data-stewards", sp_ws) is None
 
     def test_scim_failure_returns_none(self) -> None:
         sp_ws = create_autospec(WorkspaceClient, instance=True)
         sp_ws.users.list.side_effect = RuntimeError("SCIM down")
-        assert resolve_steward_display_name("alice@example.com", sp_ws) is None
+        assert resolve_owner_display_name("alice@example.com", sp_ws) is None
 
     def test_result_is_cached(self) -> None:
         sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
-        assert resolve_steward_display_name("alice@example.com", sp_ws) == "Alice Smith"
+        assert resolve_owner_display_name("alice@example.com", sp_ws) == "Alice Smith"
         # Second call must hit the cache, not SCIM again (the iterator is spent).
-        assert resolve_steward_display_name("alice@example.com", sp_ws) == "Alice Smith"
+        assert resolve_owner_display_name("alice@example.com", sp_ws) == "Alice Smith"
         assert sp_ws.users.list.call_count == 1

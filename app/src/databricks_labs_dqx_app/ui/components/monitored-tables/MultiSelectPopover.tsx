@@ -75,7 +75,7 @@ export function MultiSelectPopover({
   // option, e.g. stale selection).
   const singleSelectedLabel = useMemo(() => {
     if (selected.length !== 1) return null;
-    return options.find((o) => o.value === selected[0])?.label ?? null;
+    return options.find((o) => o.value === selected[0])?.label ?? selected[0] ?? null;
   }, [selected, options]);
 
   // Selected options float to the top of the list (in their existing

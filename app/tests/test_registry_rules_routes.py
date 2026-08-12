@@ -71,7 +71,7 @@ class TestListAndGet:
         result = list_registry_rules(svc=svc, status="draft")
         assert len(result) == 1
         assert result[0].rule_id == "r1"
-        svc.list_rules.assert_called_once_with(status="draft", dimension=None, severity=None, steward=None, tag=None)
+        svc.list_rules.assert_called_once_with(status="draft", dimension=None, severity=None, owner=None, tag=None)
 
     def test_get_returns_detail_with_no_version_when_unpublished(self):
         svc = MagicMock()
@@ -210,6 +210,16 @@ class TestCreateAndUpdate:
         assert excinfo.value.status_code == 400
 
 
+def _label_vocab() -> MagicMock:
+    """App-settings mock exposing the reserved dimension/severity vocabularies."""
+    app_settings = MagicMock()
+    app_settings.get_label_definitions.return_value = [
+        {"key": "dimension", "values": ["Validity", "Completeness", "Timeliness"]},
+        {"key": "severity", "values": ["Low", "Medium", "High", "Critical"]},
+    ]
+    return app_settings
+
+
 class TestBatchImport:
     def test_batch_import_creates_all_rules(self):
         svc = MagicMock()
@@ -220,7 +230,14 @@ class TestBatchImport:
                 CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
             ],
         )
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert result.saved == 2
         assert len(result.created) == 2
         assert svc.create_rule.call_count == 2
@@ -233,7 +250,14 @@ class TestBatchImport:
             rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
             also_submit=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert result.submitted == 1
         svc.submit.assert_called_once_with("r1", "alice@x")
 
@@ -248,7 +272,12 @@ class TestBatchImport:
             auto_approve=True,
         )
         result = batch_import_registry_rules(
-            body=body, svc=svc, embeddings=embeddings, user_email="carol@x", role=UserRole.RULE_APPROVER
+            body=body,
+            svc=svc,
+            embeddings=embeddings,
+            app_settings=MagicMock(),
+            user_email="carol@x",
+            role=UserRole.RULE_APPROVER,
         )
         assert result.submitted == 1
         # Publishing is submit THEN approve, both against the created rule.
@@ -264,7 +293,14 @@ class TestBatchImport:
             auto_approve=True,
         )
         with pytest.raises(HTTPException) as exc:
-            batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+            batch_import_registry_rules(
+                body=body,
+                svc=svc,
+                embeddings=MagicMock(),
+                app_settings=MagicMock(),
+                user_email="alice@x",
+                role=UserRole.RULE_AUTHOR,
+            )
         assert exc.value.status_code == 403
         svc.create_rule.assert_not_called()
 
@@ -277,7 +313,14 @@ class TestBatchImport:
                 CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
             ],
         )
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert result.saved == 1
         assert len(result.failed) == 1
         assert result.failed[0].index == 0
@@ -290,7 +333,14 @@ class TestBatchImport:
         leaky = RuntimeError('psycopg: relation "dq_rules" does not exist; host=db.internal port=5432')
         svc.create_rule.side_effect = leaky
         body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert result.saved == 0
         assert len(result.failed) == 1
         assert "dq_rules" not in result.failed[0].error
@@ -303,7 +353,14 @@ class TestBatchImport:
         svc = MagicMock()
         svc.create_rule.side_effect = ValueError("definition is missing required slot 'column'")
         body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert result.failed[0].error == "definition is missing required slot 'column'"
 
     def test_batch_import_rejects_empty_payload(self):
@@ -329,7 +386,14 @@ class TestBatchImport:
             rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
             skip_duplicates=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert result.saved == 0
         assert result.created == []
         assert len(result.reused) == 1
@@ -350,7 +414,14 @@ class TestBatchImport:
             ],
             skip_duplicates=True,
         )
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert len(result.created) == 1
         assert len(result.reused) == 1
         assert result.reused[0].rule.rule_id == "r1"
@@ -366,11 +437,92 @@ class TestBatchImport:
                 CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
             ],
         )
-        result = batch_import_registry_rules(body=body, svc=svc, embeddings=MagicMock(), user_email="alice@x", role=UserRole.RULE_AUTHOR)
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
         assert len(result.created) == 2
         assert result.reused == []
         svc.compute_definition_fingerprint.assert_not_called()
         svc.get_active_rule_by_fingerprint.assert_not_called()
+
+    def test_imported_dimension_is_folded_onto_the_configured_vocabulary(self):
+        # ODCS closes ``quality.dimension`` to a lowercase vocabulary, so a
+        # contract import must not land "completeness" beside "Completeness" as
+        # a separate (unfilterable, uncoloured) value.
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native",
+                    definition=_definition(),
+                    user_metadata={"dimension": "completeness", "severity": "high", "name": "keep"},
+                )
+            ],
+        )
+        batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=_label_vocab(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {
+            "dimension": "Completeness",
+            "severity": "High",
+            "name": "keep",
+        }
+
+    def test_imported_dimension_outside_the_vocabulary_is_kept_verbatim(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native", definition=_definition(), user_metadata={"dimension": "Punctuality"}
+                )
+            ],
+        )
+        batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=_label_vocab(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "Punctuality"}
+
+    def test_unreadable_label_definitions_do_not_fail_the_import(self):
+        # Canonicalization is a nicety: a settings read failure imports the
+        # values verbatim rather than dropping the rule.
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        app_settings = MagicMock()
+        app_settings.get_label_definitions.side_effect = RuntimeError("settings unavailable")
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native", definition=_definition(), user_metadata={"dimension": "completeness"}
+                )
+            ],
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=app_settings,
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.saved == 1
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "completeness"}
 
 
 class TestCreateAndUpdateContinued:

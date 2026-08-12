@@ -113,7 +113,7 @@ class ContractRulesService:
 
         # Report skipped ``type: text`` expectations rather than dropping them
         # silently: the contract author declared an intent we can't honour, so
-        # the steward needs to know it didn't become a rule.
+        # the owner needs to know it didn't become a rule.
         skipped_text = _count_text_expectations(contract_text)
         if skipped_text:
             warnings.append(

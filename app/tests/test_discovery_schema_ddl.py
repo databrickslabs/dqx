@@ -86,7 +86,7 @@ class TestGetTableOwner:
 
     def test_swallows_lookup_error_and_returns_none(self):
         # Permission denied / missing table -> graceful fallback (None), so the
-        # route can default the steward to the creator.
+        # route can default the owner to the creator.
         ws = MagicMock()
         ws.tables.get.side_effect = PermissionError("denied")
         svc = DiscoveryService(ws=ws, user_id="tester")

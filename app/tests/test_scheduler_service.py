@@ -1905,9 +1905,7 @@ class TestCollectCompletedScoreRunFqnsBuffersViewFqns:
     def test_buffers_view_fqn_of_completed_run(self, make_scheduler):
         svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [
-            ("r1", "main.sales.orders", "dqx.dqx_studio_tmp.tmp_view_abc123")
-        ]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "dqx.dqx_studio_tmp.tmp_view_abc123")]
 
         result = svc._collect_completed_score_run_fqns(self.NOW)
 

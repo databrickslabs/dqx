@@ -163,13 +163,13 @@ function DataProductDetailPage() {
                 <PermissionsTab
                   objectType="data_product"
                   objectId={productId}
-                  showSteward
-                  canEditSteward={canEdit}
-                  steward={editState.steward}
-                  stewardDisplayName={editState.stewardDisplayName}
-                  onStewardChange={editState.setSteward}
-                  onStewardDisplayNameChange={editState.setStewardDisplayName}
-                  onStewardGrantIntent={editState.setStewardGrantIntent}
+                  showOwner
+                  canEditOwner={canEdit}
+                  owner={editState.owner}
+                  ownerDisplayName={editState.ownerDisplayName}
+                  onOwnerChange={editState.setOwner}
+                  onOwnerDisplayNameChange={editState.setOwnerDisplayName}
+                  onOwnerGrantIntent={editState.setOwnerGrantIntent}
                 />
               </TabBoundary>
             ),

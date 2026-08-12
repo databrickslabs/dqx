@@ -474,7 +474,7 @@ function RegistryRuleDetailPage() {
           onSaved={(savedRuleId) => {
             justSavedRef.current = true;
             // Invalidate this rule's detail AND the registry-rules list so
-            // returning to the overview reflects the edit/steward change
+            // returning to the overview reflects the edit/owner change
             // instead of serving the pre-edit 5-minute cache (L3).
             invalidateAfterRegistryRuleEdit(queryClient, savedRuleId ?? ruleId);
           }}

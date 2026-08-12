@@ -178,9 +178,7 @@ class TestHomeStats:
         assert body["score_delta"] is None  # a single point has no previous run
 
     def test_single_point_trend_has_no_delta(self, client, score_cache_mock):
-        score_cache_mock.get_history.return_value = [
-            CachedScore(score=0.9, computed_at="2026-07-10 09:00:00")
-        ]
+        score_cache_mock.get_history.return_value = [CachedScore(score=0.9, computed_at="2026-07-10 09:00:00")]
 
         body = client.get("/api/v1/home/stats").json()
 

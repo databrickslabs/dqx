@@ -6,7 +6,7 @@ returns a state whose ``error`` field is set so the UI degrades cleanly.
 Identity (P4.2): chat calls run OBO — with the CALLER's WorkspaceClient —
 so questions execute with the asking user's own credentials and the
 entitlement-gated ``v_dq_failing_rows`` view resolves ``current_user()``
-to the steward, not the app. The app's OBO token needs the
+to the owner, not the app. The app's OBO token needs the
 ``dashboards.genie`` OAuth scope for this; when the workspace rejects the
 OBO call (missing scope, or no access to the SP-owned space), the call
 falls back to the app SERVICE PRINCIPAL's client — the pre-P4 behaviour,

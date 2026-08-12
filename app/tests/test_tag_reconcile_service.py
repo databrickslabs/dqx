@@ -268,7 +268,7 @@ class _SuppressingApplyRules:
 
 
 def test_sweep_does_not_reattach_suppressed_mapping() -> None:
-    # After a steward removes an auto-applied row (suppression recorded), a
+    # After an owner removes an auto-applied row (suppression recorded), a
     # later sweep must NOT re-attach that mapping.
     columns = {"cat.sch.t1": [ColumnInfo("email", "STRING", ["class.pii"])]}
     fake_apply = _SuppressingApplyRules()

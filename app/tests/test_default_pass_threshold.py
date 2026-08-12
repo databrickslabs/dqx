@@ -72,9 +72,7 @@ class TestDefaultPassThresholdRoutes:
 
     def test_save_calls_service_and_returns_effective_state(self, settings_svc):
         settings_svc.get_default_pass_threshold.return_value = 90
-        out = save_default_pass_threshold(
-            DefaultPassThresholdIn(default_pass_threshold=90), settings_svc, "admin@x"
-        )
+        out = save_default_pass_threshold(DefaultPassThresholdIn(default_pass_threshold=90), settings_svc, "admin@x")
         settings_svc.save_default_pass_threshold.assert_called_once_with(90, user_email="admin@x")
         assert out.default_pass_threshold == 90
 

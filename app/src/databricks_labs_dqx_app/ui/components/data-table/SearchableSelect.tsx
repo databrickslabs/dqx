@@ -22,7 +22,7 @@ interface SearchableSelectProps {
   onChange: (value: string) => void;
   options: SearchableSelectOption[];
   /** Label for the sentinel "all / no filter" option, always shown first and
-   *  never filtered out (e.g. "All stewards"). */
+   *  never filtered out (e.g. "All owners"). */
   allLabel: string;
   /** Sentinel value representing "no filter". Defaults to `"all"`. */
   allValue?: string;
@@ -38,7 +38,7 @@ interface SearchableSelectProps {
 
 /**
  * Single-select filter control with a type-to-search box, for overview
- * filter bars whose option lists (catalogs, schemas, stewards) can grow long
+ * filter bars whose option lists (catalogs, schemas, owners) can grow long
  * enough that a plain scrolling `Select` is awkward (P25 item 57). Built on
  * the shared Popover + cmdk `Command` primitives — the same building blocks as
  * `MultiSelectPopover` / `Labels.tsx`'s `SearchPickerPopover` — and styled to

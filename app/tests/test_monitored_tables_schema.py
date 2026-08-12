@@ -405,9 +405,7 @@ class TestMonitoredTableScheduleConvergeDelta:
 
     def _converge(self):
         candidates = [
-            m
-            for m in MIGRATIONS
-            if m.version > 2 and "dq_monitored_tables ADD COLUMN schedule_cron" in m.sql_template
+            m for m in MIGRATIONS if m.version > 2 and "dq_monitored_tables ADD COLUMN schedule_cron" in m.sql_template
         ]
         assert len(candidates) == 1, "exactly one appended Delta schedule-column migration expected"
         return candidates[0]

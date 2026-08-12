@@ -46,7 +46,7 @@ def _row_for(
     *,
     status: str | None = None,
     version: int | None = None,
-    steward_display_name: str | None = None,
+    owner_display_name: str | None = None,
     pending_rationale: str | None = None,
     last_decision_rationale: str | None = None,
 ) -> list[str]:
@@ -61,17 +61,29 @@ def _row_for(
         json.dumps(rule.definition.model_dump(mode="json")),
         json.dumps(rule.user_metadata),
         rule.fingerprint,
-        rule.steward,
+        rule.owner,
         "true" if rule.is_builtin else "false",
         rule.source,
         rule.created_by,
         "2026-07-02T00:00:00+00:00",
         rule.updated_by,
         "2026-07-02T00:00:00+00:00",
-        steward_display_name if steward_display_name is not None else rule.steward_display_name,
+        owner_display_name if owner_display_name is not None else rule.owner_display_name,
         pending_rationale if pending_rationale is not None else rule.pending_rationale,
         last_decision_rationale if last_decision_rationale is not None else rule.last_decision_rationale,
     ]
+
+
+def _cas_confirm_row(rule, *, approver: str) -> list[str]:
+    """The row ``approve()``'s optimistic-lock re-read must observe.
+
+    ``_update_approve_cas`` issues a conditional UPDATE and — since executors
+    expose no portable rowcount — confirms it landed by re-reading the rule.
+    A mock that replays the pre-update row therefore reads as a lost race, so
+    every approve test has to queue this committed row as the follow-up SELECT.
+    """
+    published = rule.model_copy(update={"status": "approved", "version": rule.version + 1, "updated_by": approver})
+    return _row_for(published)
 
 
 # ---------------------------------------------------------------------------
@@ -102,10 +114,7 @@ class TestCreateRule:
             {
                 "body": {
                     "sql_query": (
-                        "SELECT f.city\n"
-                        "FROM samples.bakehouse.sales_franchises f\n"
-                        "GROUP BY f.city\n"
-                        "HAVING COUNT(*) = 0"
+                        "SELECT f.city\nFROM samples.bakehouse.sales_franchises f\nGROUP BY f.city\nHAVING COUNT(*) = 0"
                     )
                 },
                 "slots": [],
@@ -118,27 +127,27 @@ class TestCreateRule:
         assert "\\\\n" in inserted_sql
         assert "\nFROM samples" not in inserted_sql.split("parse_json(", 1)[1]
 
-    def test_defaults_steward_to_creator_when_unset(self, svc):
-        # No steward supplied -> the creator becomes the accountable steward.
+    def test_defaults_owner_to_creator_when_unset(self, svc):
+        # No owner supplied -> the creator becomes the accountable owner.
         rule, _ = svc.create_rule(mode="dqx_native", definition=_native_definition(), user_email="alice@x")
-        assert rule.steward == "alice@x"
+        assert rule.owner == "alice@x"
 
-    def test_explicit_steward_wins_over_creator(self, svc):
+    def test_explicit_owner_wins_over_creator(self, svc):
         rule, _ = svc.create_rule(
-            mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="bob@x"
+            mode="dqx_native", definition=_native_definition(), user_email="alice@x", owner="bob@x"
         )
-        assert rule.steward == "bob@x"
+        assert rule.owner == "bob@x"
 
-    def test_resolves_steward_display_name_at_write_time(self, sql):
+    def test_resolves_owner_display_name_at_write_time(self, sql):
         # A stub SP client whose users.list returns a display name → the
-        # persisted row carries the resolved steward_display_name.
+        # persisted row carries the resolved owner_display_name.
         from unittest.mock import create_autospec
 
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.iam import User
-        from databricks_labs_dqx_app.backend.services import steward_display_name_service
+        from databricks_labs_dqx_app.backend.services import owner_display_name_service
 
-        steward_display_name_service._resolve_cache.clear()
+        owner_display_name_service._resolve_cache.clear()
         u = User()
         u.user_name = "bob@x"
         u.display_name = "Bob Jones"
@@ -147,19 +156,19 @@ class TestCreateRule:
         svc = RegistryService(sql=sql, sp_ws=sp_ws)
 
         rule, _ = svc.create_rule(
-            mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="bob@x"
+            mode="dqx_native", definition=_native_definition(), user_email="alice@x", owner="bob@x"
         )
-        assert rule.steward_display_name == "Bob Jones"
+        assert rule.owner_display_name == "Bob Jones"
 
     def test_supplied_display_name_not_clobbered_by_resolution(self, sql):
-        # The picker path supplies both steward + steward_display_name; the
+        # The picker path supplies both owner + owner_display_name; the
         # service must NOT re-resolve and overwrite it (SCIM is never called).
         from unittest.mock import create_autospec
 
         from databricks.sdk import WorkspaceClient
-        from databricks_labs_dqx_app.backend.services import steward_display_name_service
+        from databricks_labs_dqx_app.backend.services import owner_display_name_service
 
-        steward_display_name_service._resolve_cache.clear()
+        owner_display_name_service._resolve_cache.clear()
         sp_ws = create_autospec(WorkspaceClient, instance=True)
         svc = RegistryService(sql=sql, sp_ws=sp_ws)
 
@@ -167,29 +176,29 @@ class TestCreateRule:
             mode="dqx_native",
             definition=_native_definition(),
             user_email="alice@x",
-            steward="bob@x",
-            steward_display_name="Robert Jones",
+            owner="bob@x",
+            owner_display_name="Robert Jones",
         )
-        assert rule.steward_display_name == "Robert Jones"
+        assert rule.owner_display_name == "Robert Jones"
         sp_ws.users.list.assert_not_called()
 
-    def test_group_steward_stores_null_display_name(self, sql):
-        # A group steward has no SCIM user match → display name stays NULL and
+    def test_group_owner_stores_null_display_name(self, sql):
+        # A group owner has no SCIM user match → display name stays NULL and
         # the write never raises.
         from unittest.mock import create_autospec
 
         from databricks.sdk import WorkspaceClient
-        from databricks_labs_dqx_app.backend.services import steward_display_name_service
+        from databricks_labs_dqx_app.backend.services import owner_display_name_service
 
-        steward_display_name_service._resolve_cache.clear()
+        owner_display_name_service._resolve_cache.clear()
         sp_ws = create_autospec(WorkspaceClient, instance=True)
         sp_ws.users.list.return_value = iter([])
         svc = RegistryService(sql=sql, sp_ws=sp_ws)
 
         rule, _ = svc.create_rule(
-            mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="data-stewards"
+            mode="dqx_native", definition=_native_definition(), user_email="alice@x", owner="data-stewards"
         )
-        assert rule.steward_display_name is None
+        assert rule.owner_display_name is None
 
     def test_error_message_persists_through_create(self, svc, sql):
         """Phase 7C-a: optional custom failure message threads through create
@@ -286,7 +295,7 @@ class TestCreateRule:
         in-place via ``update_draft`` (see
         ``TestUpdateDraft.test_rejects_editing_non_draft_rule``), so the
         Studio UI's "Edit as new draft" action instead clones the rule's
-        mode/definition/user_metadata/steward/author_kind through
+        mode/definition/user_metadata/owner/author_kind through
         ``create_rule`` — exactly like authoring a brand-new rule. This
         must always succeed (dedup warning aside) and produce an
         independent, freshly-editable draft rather than mutating the
@@ -301,7 +310,7 @@ class TestCreateRule:
             polarity=None,
             author_kind="human",
             user_metadata=approved_metadata,
-            steward="system",
+            owner="system",
         )
 
         # Creation always succeeds — a dedup warning may fire (the clone
@@ -311,7 +320,7 @@ class TestCreateRule:
         assert clone.version == 0
         assert clone.definition == approved_definition
         assert clone.user_metadata == approved_metadata
-        assert clone.steward == "system"
+        assert clone.owner == "system"
 
     def test_rejects_unsafe_sql_predicate(self, svc, sql):
         """The 'save as new draft' clone path for editing a non-draft rule
@@ -393,9 +402,7 @@ class TestUpdateDraft:
             rule_id="r1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
         )
         sql.query.return_value = [_row_for(draft)]
-        updated = svc.update_draft(
-            "r1", user_email="alice@x", user_metadata={"name": "Renamed"}
-        )
+        updated = svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "Renamed"})
         assert updated.user_metadata["name"] == "Renamed"
 
     def test_updates_draft_missing_dimension_and_severity_tags(self, svc, sql):
@@ -490,9 +497,7 @@ class TestUpdateDraft:
     def test_rejects_editing_non_editable_status(self, svc, sql, status):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        rule = RegistryRule(
-            rule_id="r1", mode="dqx_native", status=status, version=1, definition=_native_definition()
-        )
+        rule = RegistryRule(rule_id="r1", mode="dqx_native", status=status, version=1, definition=_native_definition())
         sql.query.return_value = [_row_for(rule)]
         with pytest.raises(ValueError, match="can be"):
             svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "x"})
@@ -546,9 +551,7 @@ class TestUpdateDraft:
         not persisted."""
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        draft = RegistryRule(
-            rule_id="r1", mode="sql", status="draft", version=0, definition=_native_definition()
-        )
+        draft = RegistryRule(rule_id="r1", mode="sql", status="draft", version=0, definition=_native_definition())
         sql.query.return_value = [_row_for(draft)]
         unsafe_definition = RuleDefinition.model_validate(
             {"body": {"predicate": "1=1; DROP TABLE users"}, "slots": [], "parameters": []}
@@ -582,9 +585,7 @@ class TestUpdateDraft:
     def test_accepts_safe_sql_predicate(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        draft = RegistryRule(
-            rule_id="r1", mode="sql", status="draft", version=0, definition=_native_definition()
-        )
+        draft = RegistryRule(rule_id="r1", mode="sql", status="draft", version=0, definition=_native_definition())
         sql.query.return_value = [_row_for(draft)]
         safe_definition = RuleDefinition.model_validate(
             {"body": {"predicate": "{{column}} IS NOT NULL"}, "slots": [], "parameters": []}
@@ -602,7 +603,9 @@ class TestLifecycle:
     def _rule(self, status: str, version: int = 0):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        return RegistryRule(rule_id="r1", mode="dqx_native", status=status, version=version, definition=_native_definition())
+        return RegistryRule(
+            rule_id="r1", mode="dqx_native", status=status, version=version, definition=_native_definition()
+        )
 
     def test_submit_draft_to_pending(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("draft"))]
@@ -656,7 +659,8 @@ class TestLifecycle:
         assert updated.version == 1
 
     def test_approve_bumps_version_and_writes_snapshot(self, svc, sql):
-        sql.query.return_value = [_row_for(self._rule("pending_approval"))]
+        pending = self._rule("pending_approval")
+        sql.query.side_effect = [[_row_for(pending)], [_cas_confirm_row(pending, approver="approver@x")]]
         updated = svc.approve("r1", "approver@x")
         assert updated.status == "approved"
         assert updated.version == 1
@@ -669,7 +673,7 @@ class TestLifecycle:
         the served vN's rendering."""
         rule = self._rule("pending_approval")
         rule.mode = "sql"
-        sql.query.return_value = [_row_for(rule)]
+        sql.query.side_effect = [[_row_for(rule)], [_cas_confirm_row(rule, approver="approver@x")]]
         svc.approve("r1", "approver@x")
         snapshot_insert = next(
             c.args[0]
@@ -680,7 +684,8 @@ class TestLifecycle:
         assert "'sql'" in snapshot_insert
 
     def test_reapprove_after_second_submit_bumps_to_v2(self, svc, sql):
-        sql.query.return_value = [_row_for(self._rule("pending_approval", version=1))]
+        pending = self._rule("pending_approval", version=1)
+        sql.query.side_effect = [[_row_for(pending)], [_cas_confirm_row(pending, approver="approver@x")]]
         updated = svc.approve("r1", "approver@x")
         assert updated.version == 2
 
@@ -756,7 +761,9 @@ class TestDeleteBuiltinRules:
         calls = [c.args[0] for c in sql.execute.call_args_list]
         versions_delete = next(c for c in calls if c.startswith("DELETE FROM") and "dq_rule_versions" in c)
         assert "'b1'" in versions_delete and "'b2'" in versions_delete
-        rules_delete = next(c for c in calls if c.startswith("DELETE FROM") and "dq_rules " in c and "dq_rule_versions" not in c)
+        rules_delete = next(
+            c for c in calls if c.startswith("DELETE FROM") and "dq_rules " in c and "dq_rule_versions" not in c
+        )
         assert "is_builtin = TRUE" in rules_delete
 
     def test_no_builtins_is_noop(self, svc, sql):
@@ -782,12 +789,20 @@ class TestListAndGet:
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
         a = RegistryRule(
-            rule_id="a", mode="dqx_native", status="approved", version=1,
-            definition=_native_definition(), user_metadata={"dimension": "Validity"},
+            rule_id="a",
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            definition=_native_definition(),
+            user_metadata={"dimension": "Validity"},
         )
         b = RegistryRule(
-            rule_id="b", mode="dqx_native", status="approved", version=1,
-            definition=_native_definition(), user_metadata={"dimension": "Completeness"},
+            rule_id="b",
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            definition=_native_definition(),
+            user_metadata={"dimension": "Completeness"},
         )
         # First query: the list itself; second: the modified-snapshot batch
         # for the filtered (published) rules — empty here (no modified state
@@ -814,7 +829,9 @@ class TestListAndGet:
     def test_get_rule_with_version_none_for_unpublished(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        draft = RegistryRule(rule_id="r1", mode="dqx_native", status="draft", version=0, definition=_native_definition())
+        draft = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
         sql.query.return_value = [_row_for(draft)]
         result = svc.get_rule_with_version("r1")
         assert result is not None
@@ -825,7 +842,9 @@ class TestListAndGet:
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
         from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
 
-        rule = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        rule = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition()
+        )
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
         sql.query.return_value = [_row_for(rule)]
         found = svc.get_rule_by_fingerprint(rule.fingerprint)
@@ -841,7 +860,9 @@ class TestListAndGet:
     def test_get_active_rule_by_fingerprint_scopes_to_active_and_prefers_approved(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        rule = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        rule = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition()
+        )
         sql.query.return_value = [_row_for(rule)]
         found = svc.get_active_rule_by_fingerprint("fp1")
         assert found is not None and found.rule_id == "r1"
@@ -874,7 +895,9 @@ class TestGetRulesMany:
     def test_resolves_many_rules_in_one_query(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        r1 = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        r1 = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition()
+        )
         r2 = RegistryRule(rule_id="r2", mode="dqx_native", status="draft", version=0, definition=_native_definition())
         sql.query.return_value = [_row_for(r1), _row_for(r2)]
         result = svc.get_rules_many(["r1", "r2", "r1"])  # duplicate collapses
@@ -892,7 +915,9 @@ class TestGetRulesMany:
     def test_missing_ids_absent_from_result(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        r1 = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        r1 = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition()
+        )
         sql.query.return_value = [_row_for(r1)]
         result = svc.get_rules_many(["r1", "gone"])
         assert set(result) == {"r1"}
@@ -900,7 +925,9 @@ class TestGetRulesMany:
     def test_parity_with_get_rule(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        r1 = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        r1 = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition()
+        )
         sql.query.return_value = [_row_for(r1)]
         single = svc.get_rule("r1")
         sql.query.return_value = [_row_for(r1)]
@@ -961,15 +988,15 @@ class TestSeedBuiltinRule:
         assert any("dq_rule_versions" in c for c in calls)
         assert any("dq_rules_history" in c for c in calls)
 
-    def test_uses_provided_steward_and_user_email(self, svc, sql):
+    def test_uses_provided_owner_and_user_email(self, svc, sql):
         rule = svc.seed_builtin_rule(
             definition=_native_definition(),
             user_metadata={},
             user_email="system",
-            steward="system",
+            owner="system",
         )
         assert rule.created_by == "system"
-        assert rule.steward == "system"
+        assert rule.owner == "system"
 
 
 # ---------------------------------------------------------------------------
@@ -996,8 +1023,12 @@ class TestModifiedSincePublish:
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
         return RegistryRule(
-            rule_id="r1", mode="dqx_native", status="approved", version=1,
-            definition=definition, user_metadata=metadata,
+            rule_id="r1",
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            definition=definition,
+            user_metadata=metadata,
         )
 
     def test_not_modified_when_live_matches_snapshot(self, svc, sql):
@@ -1043,8 +1074,14 @@ class TestModifiedSincePublish:
         rule = self._approved(definition, {"name": "live"})
         # ``_attach_modified`` selects a 6-column batch row
         # (rule_id, version, definition, polarity, user_metadata, mode).
-        attach_row = ["r1", "1", json.dumps(definition.model_dump(mode="json")), None,
-                      json.dumps({"name": "published"}), "dqx_native"]
+        attach_row = [
+            "r1",
+            "1",
+            json.dumps(definition.model_dump(mode="json")),
+            None,
+            json.dumps({"name": "published"}),
+            "dqx_native",
+        ]
         sql.query.side_effect = [
             [_row_for(rule)],  # list query
             [attach_row],  # _attach_modified batch
@@ -1069,7 +1106,9 @@ class TestModifiedSincePublish:
     def test_list_no_snapshot_query_when_all_unpublished(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
-        draft = RegistryRule(rule_id="d1", mode="dqx_native", status="draft", version=0, definition=_native_definition())
+        draft = RegistryRule(
+            rule_id="d1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
         sql.query.return_value = [_row_for(draft)]
         rules = svc.list_rules()
         assert rules[0].modified_since_publish is False
@@ -1156,20 +1195,26 @@ class TestMatchOrCreateApprovedRule:
 
         # Query order: get_approved([]), get_rule_by_fingerprint([]),
         # create_rule._dedup_warning([]), submit._get(draft), _transition._get(draft),
-        # approve._get(pending).
+        # approve._get(pending), approve's CAS re-read(approved).
         def draft_row():
             r = RegistryRule(
                 rule_id="new1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
             )
             return _row_for(r)
 
-        def pending_row():
-            r = RegistryRule(
-                rule_id="new1", mode="dqx_native", status="pending_approval", version=0, definition=_native_definition()
-            )
-            return _row_for(r)
+        pending = RegistryRule(
+            rule_id="new1", mode="dqx_native", status="pending_approval", version=0, definition=_native_definition()
+        )
 
-        sql.query.side_effect = [[], [], [], [draft_row()], [draft_row()], [pending_row()]]
+        sql.query.side_effect = [
+            [],
+            [],
+            [],
+            [draft_row()],
+            [draft_row()],
+            [_row_for(pending)],
+            [_cas_confirm_row(pending, approver="alice@x")],
+        ]
 
         rule, created = svc.match_or_create_approved_rule(
             _native_definition(), {"name": "Is not null", "dimension": "Completeness"}, "alice@x"
@@ -1194,13 +1239,19 @@ class TestMatchOrCreateApprovedRule:
             )
             return _row_for(r)
 
-        def pending_row():
-            r = RegistryRule(
-                rule_id="new1", mode="dqx_native", status="pending_approval", version=0, definition=_native_definition()
-            )
-            return _row_for(r)
+        pending = RegistryRule(
+            rule_id="new1", mode="dqx_native", status="pending_approval", version=0, definition=_native_definition()
+        )
 
-        sql.query.side_effect = [[], [], [], [draft_row()], [draft_row()], [pending_row()]]
+        sql.query.side_effect = [
+            [],
+            [],
+            [],
+            [draft_row()],
+            [draft_row()],
+            [_row_for(pending)],
+            [_cas_confirm_row(pending, approver="alice@x")],
+        ]
 
         svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
 
@@ -1233,28 +1284,41 @@ class TestMatchOrCreateApprovedRule:
 
         def _draft_row() -> list:
             r = RegistryRule(
-                rule_id="new-profiling-rule", mode="dqx_native", status="draft", version=0,
+                rule_id="new-profiling-rule",
+                mode="dqx_native",
+                status="draft",
+                version=0,
                 definition=defn,
             )
             r.fingerprint = compute_registry_rule_fingerprint(r)
             return _row_for(r, status="draft", version=0)
 
-        def _pending_row() -> list:
-            r = RegistryRule(
-                rule_id="new-profiling-rule", mode="dqx_native", status="pending_approval", version=0,
-                definition=defn,
-            )
-            r.fingerprint = compute_registry_rule_fingerprint(r)
-            return _row_for(r, status="pending_approval", version=0)
+        pending = RegistryRule(
+            rule_id="new-profiling-rule",
+            mode="dqx_native",
+            status="pending_approval",
+            version=0,
+            definition=defn,
+        )
+        pending.fingerprint = compute_registry_rule_fingerprint(pending)
 
-        # 6 query calls matching the existing test_new_rule_attributed_to_profiling pattern:
+        # 7 query calls matching the existing test_new_rule_attributed_to_profiling pattern:
         # 1: find_approved_rule_for_definition → empty
         # 2: get_rule_by_fingerprint (any-status check) → empty
         # 3: _dedup_warning in create_rule → empty
         # 4: submit→_get → draft row
         # 5: submit→_transition→_get → draft row
         # 6: approve→_get → pending row
-        sql.query.side_effect = [[], [], [], [_draft_row()], [_draft_row()], [_pending_row()]]
+        # 7: approve→_update_approve_cas re-read → committed approved row
+        sql.query.side_effect = [
+            [],
+            [],
+            [],
+            [_draft_row()],
+            [_draft_row()],
+            [_row_for(pending)],
+            [_cas_confirm_row(pending, approver="alice@x")],
+        ]
         rule, created = svc.match_or_create_approved_rule(defn, {"name": "x"}, "alice@x")
         assert created is True
         # seeding fires exactly once (from create_rule); the seeded rule_id is the
@@ -1277,9 +1341,7 @@ class TestMatchOrCreateApprovedRule:
         svc = RegistryService(sql=sql, permissions=perms)
 
         defn = _native_definition()
-        existing = RegistryRule(
-            rule_id="existing-r1", mode="dqx_native", status="approved", version=1, definition=defn
-        )
+        existing = RegistryRule(rule_id="existing-r1", mode="dqx_native", status="approved", version=1, definition=defn)
         existing.fingerprint = compute_registry_rule_fingerprint(existing)
         sql.query.return_value = [_row_for(existing, status="approved", version=1)]
         rule, created = svc.match_or_create_approved_rule(defn, {}, "alice@x")
@@ -1316,7 +1378,10 @@ class TestFilterFieldOnCreateRule:
             version=0,
             definition=rule.definition,
         )
-        sql.query.return_value = [_row_for(pending, status="pending_approval")]
+        sql.query.side_effect = [
+            [_row_for(pending, status="pending_approval")],
+            [_cas_confirm_row(pending, approver="approver@x")],
+        ]
         sql.execute.reset_mock()
         svc.approve(rule.rule_id, "approver@x")
         # The approve call should have written a version snapshot — check the SQL

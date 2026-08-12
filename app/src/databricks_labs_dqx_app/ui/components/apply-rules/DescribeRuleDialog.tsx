@@ -2,10 +2,10 @@
  * DescribeRuleDialog — NL "describe a rule" flow on a monitored table's
  * Apply Rules tab.
  *
- * 1. Steward describes the check in plain language.
+ * 1. Owner describes the check in plain language.
  * 2. POST …/match-rules → if published registry rules match, confirm → stage
  *    (same local staging as Suggest rules; user still hits Save).
- * 3. If nothing matches (or steward picks "Create new instead") →
+ * 3. If nothing matches (or owner picks "Create new instead") →
  *    POST /ai/generate-rule → confirm proposal → sessionStorage + navigate
  *    to /registry-rules/new with returnTo back to this binding's Apply Rules.
  */

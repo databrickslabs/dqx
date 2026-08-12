@@ -230,18 +230,14 @@ def test_auto_apply_on_apply_matches_attaches_each_match_and_returns_count() -> 
     """With auto_apply ON, apply_matches calls attach_auto_mapping per match and returns count."""
     columns = {"cat.sch.t1": [ColumnInfo("email", "STRING", ["class.pii"])]}
     svc, deps = _make_service(columns_by_fqn=columns, auto_apply=True)
-    deps["registry"].list_rules.return_value = [
-        _rule(rule_id="r1", slot_tags={"c1": ["class.pii"]})
-    ]
+    deps["registry"].list_rules.return_value = [_rule(rule_id="r1", slot_tags={"c1": ["class.pii"]})]
     # attach returns a truthy object → should count
     deps["apply_rules"].attach_auto_mapping.return_value = MagicMock()
 
     count = svc.apply_matches("b1", "user@x")
 
     assert count == 1
-    deps["apply_rules"].attach_auto_mapping.assert_called_once_with(
-        "b1", "r1", [{"c1": "email"}], "user@x"
-    )
+    deps["apply_rules"].attach_auto_mapping.assert_called_once_with("b1", "r1", [{"c1": "email"}], "user@x")
 
 
 def test_auto_apply_on_attach_returns_none_not_counted() -> None:

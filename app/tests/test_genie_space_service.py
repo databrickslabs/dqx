@@ -166,21 +166,21 @@ def test_metadata_dim_sources_present_and_grounded() -> None:
     assert DIM_RULES_FQN in by_id
     assert DIM_TABLES_FQN in by_id
     rules_desc = "".join(by_id[DIM_RULES_FQN]["description"])
-    for col in ("rule_id", "name", "description", "dimension", "default_severity", "mode", "status", "steward"):
+    for col in ("rule_id", "name", "description", "dimension", "default_severity", "mode", "status", "owner"):
         assert col in rules_desc, col
     tables_desc = "".join(by_id[DIM_TABLES_FQN]["description"])
-    for col in ("binding_id", "table_fqn", "steward", "status", "schedule_cron", "version"):
+    for col in ("binding_id", "table_fqn", "owner", "status", "schedule_cron", "version"):
         assert col in tables_desc, col
 
 
 def test_dim_rules_default_severity_column_config_disambiguates_from_applied() -> None:
-    # The default_severity column comment must steer stewards to the APPLIED
+    # The default_severity column comment must steer owners to the APPLIED
     # severity on the score objects for run-time severity questions, and be
     # explicit that this column is only the rule's own authored default.
     space = build()
     by_id = {t["identifier"]: t for t in space["data_sources"]["tables"]}
     configs = {c["column_name"]: c for c in by_id[DIM_RULES_FQN]["column_configs"]}
-    assert set(configs) == {"default_severity", "dimension", "mode", "name", "status", "steward"}
+    assert set(configs) == {"default_severity", "dimension", "mode", "name", "status", "owner"}
     desc = "".join(configs["default_severity"]["description"])
     assert "DEFAULT" in desc
     assert "NOT what actually ran" in desc
@@ -205,11 +205,11 @@ def test_metadata_dim_curated_questions_read_the_dim() -> None:
     # The authoring/ownership sample questions have curated SQL over
     # dim_dq_rules (no run_mode, no score-object join).
     by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
-    for question in ("Which rules does a steward own?", "What is the description of a rule?"):
+    for question in ("Which rules does an owner manage?", "What is the description of a rule?"):
         sql = "".join(by_q[question]["sql"])
         assert f"`{CATALOG}`.`{SCHEMA}`.dim_dq_rules" in sql
         assert "run_mode" not in sql
-    assert ":steward" in "".join(by_q["Which rules does a steward own?"]["sql"])
+    assert ":owner" in "".join(by_q["Which rules does an owner manage?"]["sql"])
     assert ":rule_name" in "".join(by_q["What is the description of a rule?"]["sql"])
 
 
@@ -260,7 +260,7 @@ def test_text_instructions_row_source_and_draft_scoping() -> None:
 
 def test_text_instructions_failing_records_are_per_run() -> None:
     # P5.5: failing records never stack across runs — the row source scopes
-    # to the SINGLE latest published run, and the steward is told records
+    # to the SINGLE latest published run, and the owner is told records
     # are per-run (name a specific run to see another).
     joined = "".join(gs.TEXT_INSTRUCTIONS)
     assert "Failing records are per-run" in joined
@@ -338,7 +338,7 @@ def test_every_sample_question_has_a_curated_sql() -> None:
 # run-facing score objects — the run_mode/score-object discipline below
 # applies only to the results-facing questions.
 _METADATA_DIM_QUESTIONS = {
-    "Which rules does a steward own?",
+    "Which rules does an owner manage?",
     "What is the description of a rule?",
     "How many rules have been added recently?",
     "How many rules are running?",

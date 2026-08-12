@@ -68,9 +68,7 @@ def test_deploy_requires_admin(demo_seed_service_mock, demo_status_store_mock):
     demo_seed_service_mock.run.assert_not_called()
 
 
-def test_deploy_launches_and_returns_running(
-    monkeypatch, demo_seed_service_mock, demo_status_store_mock
-):
+def test_deploy_launches_and_returns_running(monkeypatch, demo_seed_service_mock, demo_status_store_mock):
     demo_status_store_mock.is_running.return_value = False
     # Run the launched target inline so the assertion is deterministic — no
     # real thread, no sleep.
@@ -95,9 +93,7 @@ def test_deploy_launches_and_returns_running(
     demo_seed_service_mock.run.assert_called_once_with(user_email=_ADMIN, wipe_first=True)
 
 
-def test_deploy_conflict_when_already_running(
-    demo_seed_service_mock, demo_status_store_mock
-):
+def test_deploy_conflict_when_already_running(demo_seed_service_mock, demo_status_store_mock):
     demo_status_store_mock.is_running.return_value = True
     client = _build_client(
         role=UserRole.ADMIN,

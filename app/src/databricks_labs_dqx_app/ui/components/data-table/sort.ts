@@ -1,19 +1,19 @@
 /**
  * Shared, null-aware client-sort primitives for the overview tables (Rules
  * Registry, Monitored Tables, Table Spaces). Ported alongside dqlake's list
- * tables and extended for B2-92 "steward-minded sort defaults".
+ * tables and extended for B2-92 "owner-minded sort defaults".
  *
  * Two ideas the plain `a < b` comparator couldn't express:
  *
- *  1. **Per-column first-click direction.** A data-quality steward clicks a
+ *  1. **Per-column first-click direction.** A data-quality owner clicks a
  *     header to surface the rows that most need attention — lowest DQ score,
  *     stalest run, thinnest coverage. That target sits at ASC for some
  *     columns and DESC for others, so each column declares its own
  *     `defaultSortDir` (see each table's `COLUMNS` config). Repeat clicks
  *     still toggle to the opposite direction, then clear.
  *
- *  2. **Fixed null placement.** "Never scored" / "never run" / "no steward"
- *     rows are pinned to one end of the list and stay there when the steward
+ *  2. **Fixed null placement.** "Never scored" / "never run" / "no owner"
+ *     rows are pinned to one end of the list and stay there when the owner
  *     reverses direction — they are not data points on the scale, so they
  *     shouldn't flip from bottom to top on the second click. Present values
  *     compare normally and flip with direction; missing values do not.
@@ -22,7 +22,7 @@
 export type SortDirection = "asc" | "desc";
 
 /** A column's comparable value for a single row. `null` marks a missing /
- *  "never" value (unscored, never run, no steward, unversioned, …) — the
+ *  "never" value (unscored, never run, no owner, unversioned, …) — the
  *  comparator pins these per the column's `nullsFirst` flag. */
 export type SortValue = string | number | null;
 

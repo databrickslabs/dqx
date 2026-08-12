@@ -14,7 +14,7 @@ module runs automatically as a side effect of authoring actions on
 ``dq_applied_rules`` (apply a rule, pin/unpin a version, set a severity
 override). A binding's applied rules only get (re-)materialized when:
 
-* a steward submits the monitored table for review
+* an owner submits the monitored table for review
   (``POST /monitored-tables/{binding_id}/submit``, ``submitMonitoredTable``
   -> :meth:`Materializer.materialize_binding`), or
 * a registry rule is approved/published and that propagates to its

@@ -51,7 +51,7 @@ export type RulesTableSortKey =
   | "severity"
   | "status"
   | "version"
-  | "steward"
+  | "owner"
   | "createdBy"
   | "source"
   | "modified"
@@ -262,15 +262,15 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
         </Badge>
       ),
   },
-  steward: {
-    labelKey: "rulesRegistry.colSteward",
+  owner: {
+    labelKey: "rulesRegistry.colOwner",
     toggleable: true,
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
-    // A→Z through the named stewards (B2-92); un-stewarded rules sort last.
+    // A→Z through the named owners (B2-92); unowned rules sort last.
     renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={r.steward_display_name || r.steward || "—"} className="text-muted-foreground" />,
+    renderCell: (r) => <TruncatedCell text={r.owner_display_name || r.owner || "—"} className="text-muted-foreground" />,
   },
   source: {
     labelKey: "rulesRegistry.colSource",
@@ -292,7 +292,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   },
   modified: {
     labelKey: "rulesRegistry.colModified",
-    // Always visible — stewards need the modified timestamp at a glance.
+    // Always visible — owners need the modified timestamp at a glance.
     toggleable: false,
     defaultVisible: true,
     defaultWidth: 140,
@@ -359,7 +359,7 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "description",
   "status",
   "version",
-  "steward",
+  "owner",
   "source",
   "modified",
   "createdBy",
@@ -416,8 +416,8 @@ export function getRulesTableSortValue(key: RulesTableSortKey, r: RegistryRuleOu
       return STATUS_RANK[r.status] ?? Object.keys(STATUS_RANK).length;
     case "version":
       return r.version > 0 ? r.version : null;
-    case "steward":
-      return (r.steward ?? "").toLowerCase() || null;
+    case "owner":
+      return (r.owner ?? "").toLowerCase() || null;
     case "source":
       return normalizeRuleSource(r.source);
     case "createdBy":

@@ -41,7 +41,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
-from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -52,7 +52,7 @@ class DuplicateRegistryRuleError(Exception):
     """Raised when creating a rule whose fingerprint matches a published rule
     and the caller did not set ``allow_duplicate=True``.
 
-    The interactive create UI catches this (HTTP 409) and asks the steward to
+    The interactive create UI catches this (HTTP 409) and asks the owner to
     confirm before re-submitting with ``allow_duplicate=True``.
     """
 
@@ -135,8 +135,8 @@ class RegistryService:
         return (
             "rule_id, mode, status, version, polarity, author_kind, "
             f"{definition} AS definition_json, {user_metadata} AS user_metadata_json, "
-            f"fingerprint, steward, is_builtin, source, created_by, {created_at}, "
-            f"updated_by, {updated_at}, steward_display_name, "
+            f"fingerprint, owner, is_builtin, source, created_by, {created_at}, "
+            f"updated_by, {updated_at}, owner_display_name, "
             f"pending_rationale, last_decision_rationale"
         )
 
@@ -154,13 +154,13 @@ class RegistryService:
         status: str | None = None,
         dimension: str | None = None,
         severity: str | None = None,
-        steward: str | None = None,
+        owner: str | None = None,
         tag: str | None = None,
         rule_ids: list[str] | None = None,
     ) -> list[RegistryRule]:
         """List registry rules, optionally filtered.
 
-        ``status`` and ``steward`` are pushed down into SQL; ``dimension``,
+        ``status`` and ``owner`` are pushed down into SQL; ``dimension``,
         ``severity``, ``tag``, and ``rule_ids`` filter in Python (``dimension`` /
         ``severity`` / ``tag`` live in the ``user_metadata`` JSON blob rather
         than columns, matching how :class:`RulesCatalogService` handles
@@ -170,8 +170,8 @@ class RegistryService:
         clauses: list[str] = []
         if status:
             clauses.append(f"status = '{escape_sql_string(status)}'")
-        if steward:
-            clauses.append(f"steward = '{escape_sql_string(steward)}'")
+        if owner:
+            clauses.append(f"owner = '{escape_sql_string(owner)}'")
         sql = f"SELECT {self._select_cols} FROM {self._table}"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
@@ -476,7 +476,7 @@ class RegistryService:
         """List every frozen ``dq_rule_versions`` snapshot for *rule_id*, newest first.
 
         Powers the rule's version-history view — the published lineage a
-        steward can inspect (each row is an immutable publish snapshot with
+        owner can inspect (each row is an immutable publish snapshot with
         its own definition/tags/author/date).
         """
         definition = self._sql.select_json_text("definition")
@@ -550,8 +550,8 @@ class RegistryService:
         polarity: Polarity | None = None,
         author_kind: AuthorKind = "human",
         user_metadata: dict[str, Any] | None = None,
-        steward: str | None = None,
-        steward_display_name: str | None = None,
+        owner: str | None = None,
+        owner_display_name: str | None = None,
         source: str = "ui",
         allow_duplicate: bool = False,
     ) -> tuple[RegistryRule, str | None]:
@@ -562,7 +562,7 @@ class RegistryService:
 
         * ``allow_duplicate=False`` (default, interactive create) → raises
           :class:`DuplicateRegistryRuleError` **before** insert so the UI can
-          ask the steward to confirm.
+          ask the owner to confirm.
         * ``allow_duplicate=True`` (batch import, seeds, profiling after an
           explicit confirm) → creates anyway and returns a non-blocking
           ``dedup_warning`` string.
@@ -582,16 +582,16 @@ class RegistryService:
         """
         self._validate_definition_sql_safety(mode, definition)
         now = datetime.now(timezone.utc)
-        # Default the steward to the creator when none was supplied, so a
+        # Default the owner to the creator when none was supplied, so a
         # freshly authored rule always has an accountable owner (mirrors how
-        # table spaces default steward -> creator). An explicit steward from
+        # table spaces default owner -> creator). An explicit owner from
         # the caller always wins.
-        resolved_steward = steward or user_email
-        # Resolve the steward's display name at write time when the caller did
+        resolved_owner = owner or user_email
+        # Resolve the owner's display name at write time when the caller did
         # not already supply one (the principal picker does). Best-effort — a
-        # group / unresolvable steward or SCIM failure stores NULL.
-        if steward_display_name is None:
-            steward_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
+        # group / unresolvable owner or SCIM failure stores NULL.
+        if owner_display_name is None:
+            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
         rule = RegistryRule(
             rule_id=uuid4().hex[:16],
             mode=mode,
@@ -601,8 +601,8 @@ class RegistryService:
             author_kind=author_kind,
             definition=definition,
             user_metadata=dict(user_metadata or {}),
-            steward=resolved_steward,
-            steward_display_name=steward_display_name,
+            owner=resolved_owner,
+            owner_display_name=owner_display_name,
             is_builtin=False,
             source=source,
             created_by=user_email,
@@ -644,7 +644,7 @@ class RegistryService:
         definition: RuleDefinition,
         user_metadata: dict[str, Any] | None = None,
         user_email: str = "system",
-        steward: str | None = "system",
+        owner: str | None = "system",
     ) -> RegistryRule:
         """Create a pre-published, ``is_builtin`` registry rule (Phase 2C seeding).
 
@@ -671,7 +671,7 @@ class RegistryService:
             author_kind="human",
             definition=definition,
             user_metadata=dict(user_metadata or {}),
-            steward=steward,
+            owner=owner,
             is_builtin=True,
             source="builtin",
             created_by=user_email,
@@ -694,8 +694,8 @@ class RegistryService:
         definition: RuleDefinition | None = None,
         polarity: Polarity | None = None,
         user_metadata: dict[str, Any] | None = None,
-        steward: str | None = None,
-        steward_display_name: str | None = None,
+        owner: str | None = None,
+        owner_display_name: str | None = None,
         author_kind: AuthorKind | None = None,
     ) -> RegistryRule:
         """Update a registry rule's LIVE ``dq_rules`` row in place.
@@ -735,14 +735,14 @@ class RegistryService:
             rule.polarity = polarity
         if user_metadata is not None:
             rule.user_metadata = dict(user_metadata)
-        if steward is not None:
-            rule.steward = steward
-            # Steward changed without an explicit display name → resolve it at
+        if owner is not None:
+            rule.owner = owner
+            # Owner changed without an explicit display name → resolve it at
             # write time (best-effort). An explicitly-supplied name below wins.
-            if steward_display_name is None:
-                rule.steward_display_name = resolve_steward_display_name(steward, self._sp_ws)
-        if steward_display_name is not None:
-            rule.steward_display_name = steward_display_name
+            if owner_display_name is None:
+                rule.owner_display_name = resolve_owner_display_name(owner, self._sp_ws)
+        if owner_display_name is not None:
+            rule.owner_display_name = owner_display_name
         if author_kind is not None:
             rule.author_kind = author_kind
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
@@ -1055,13 +1055,13 @@ class RegistryService:
         sql = (
             f"INSERT INTO {self._table} "
             "(rule_id, mode, status, version, polarity, author_kind, definition, user_metadata, "
-            "fingerprint, steward, steward_display_name, is_builtin, source, created_by, created_at, "
+            "fingerprint, owner, owner_display_name, is_builtin, source, created_by, created_at, "
             "updated_by, updated_at) VALUES "
             f"('{escape_sql_string(rule.rule_id)}', '{escape_sql_string(rule.mode)}', "
             f"'{escape_sql_string(rule.status)}', {rule.version}, {self._opt_str(rule.polarity)}, "
             f"{self._opt_str(rule.author_kind)}, {definition_expr}, {metadata_expr}, "
-            f"{self._opt_str(rule.fingerprint)}, {self._opt_str(rule.steward)}, "
-            f"{self._opt_str(rule.steward_display_name)}, "
+            f"{self._opt_str(rule.fingerprint)}, {self._opt_str(rule.owner)}, "
+            f"{self._opt_str(rule.owner_display_name)}, "
             f"{'TRUE' if rule.is_builtin else 'FALSE'}, {self._opt_str(rule.source)}, "
             f"{self._opt_str(rule.created_by)}, now(), {self._opt_str(rule.updated_by)}, now())"
         )
@@ -1081,8 +1081,8 @@ class RegistryService:
             f"  definition = {definition_expr}, "
             f"  user_metadata = {metadata_expr}, "
             f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
-            f"  steward = {self._opt_str(rule.steward)}, "
-            f"  steward_display_name = {self._opt_str(rule.steward_display_name)}, "
+            f"  owner = {self._opt_str(rule.owner)}, "
+            f"  owner_display_name = {self._opt_str(rule.owner_display_name)}, "
             f"  pending_rationale = {self._opt_str(rule.pending_rationale)}, "
             f"  last_decision_rationale = {self._opt_str(rule.last_decision_rationale)}, "
             f"  updated_by = {self._opt_str(rule.updated_by)}, "
@@ -1107,8 +1107,8 @@ class RegistryService:
             f"  definition = {definition_expr}, "
             f"  user_metadata = {metadata_expr}, "
             f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
-            f"  steward = {self._opt_str(rule.steward)}, "
-            f"  steward_display_name = {self._opt_str(rule.steward_display_name)}, "
+            f"  owner = {self._opt_str(rule.owner)}, "
+            f"  owner_display_name = {self._opt_str(rule.owner_display_name)}, "
             f"  pending_rationale = {self._opt_str(rule.pending_rationale)}, "
             f"  last_decision_rationale = {self._opt_str(rule.last_decision_rationale)}, "
             f"  updated_by = {self._opt_str(rule.updated_by)}, "
@@ -1199,14 +1199,14 @@ class RegistryService:
             definition=definition,
             user_metadata=user_metadata,
             fingerprint=row[8],
-            steward=row[9],
+            owner=row[9],
             is_builtin=str(row[10]).lower() == "true" if row[10] is not None else False,
             source=row[11],
             created_by=row[12],
             created_at=self._parse_timestamp(row[13], rule_id=rule_id, field="created_at"),
             updated_by=row[14],
             updated_at=self._parse_timestamp(row[15], rule_id=rule_id, field="updated_at"),
-            steward_display_name=row[16] if len(row) > 16 else None,
+            owner_display_name=row[16] if len(row) > 16 else None,
             pending_rationale=row[17] if len(row) > 17 else None,
             last_decision_rationale=row[18] if len(row) > 18 else None,
         )

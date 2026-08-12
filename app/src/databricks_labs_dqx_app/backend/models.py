@@ -432,17 +432,17 @@ class CreateRegistryRuleIn(BaseModel):
         default_factory=dict,
         description="Reserved tag keys (name/description/dimension/severity) + free-text tags",
     )
-    steward: str | None = Field(default=None, description="Owning steward's email/username")
-    steward_display_name: str | None = Field(
+    owner: str | None = Field(default=None, description="Owner's email/username")
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; sourced from the principal picker.",
+        description="Human-readable display name for the owner; sourced from the principal picker.",
     )
     allow_duplicate: bool = Field(
         default=False,
         description=(
             "When false (default), creating a rule whose definition matches a published "
-            "rule returns HTTP 409 so the UI can ask the steward to confirm. Set true after "
-            "the steward confirms (or for batch/seed paths that intentionally allow copies)."
+            "rule returns HTTP 409 so the UI can ask the owner to confirm. Set true after "
+            "the owner confirms (or for batch/seed paths that intentionally allow copies)."
         ),
     )
 
@@ -454,10 +454,10 @@ class UpdateRegistryRuleIn(BaseModel):
     definition: RegistryRuleDefinition | None = None
     polarity: RegistryPolarity | None = None
     user_metadata: dict[str, Any] | None = None
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; sourced from the principal picker.",
+        description="Human-readable display name for the owner; sourced from the principal picker.",
     )
     author_kind: RegistryAuthorKind | None = Field(
         default=None,
@@ -480,10 +480,10 @@ class RegistryRuleOut(BaseModel):
     definition: RegistryRuleDefinition
     user_metadata: dict[str, Any] = Field(default_factory=dict)
     fingerprint: str | None = None
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; falls back to the steward email when null.",
+        description="Human-readable display name for the owner; falls back to the owner email when null.",
     )
     is_builtin: bool = False
     source: str | None = None
@@ -523,8 +523,8 @@ class RegistryRuleOut(BaseModel):
             definition=rule.definition,
             user_metadata=rule.user_metadata,
             fingerprint=rule.fingerprint,
-            steward=rule.steward,
-            steward_display_name=rule.steward_display_name,
+            owner=rule.owner,
+            owner_display_name=rule.owner_display_name,
             is_builtin=rule.is_builtin,
             source=rule.source,
             pending_rationale=rule.pending_rationale,
@@ -725,10 +725,10 @@ class RegisterMonitoredTableIn(BaseModel):
     """Request body for registering a table under Rules Registry governance."""
 
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
-    steward: str | None = Field(default=None, description="Owning steward's email/username")
-    steward_display_name: str | None = Field(
+    owner: str | None = Field(default=None, description="Owner's email/username")
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; sourced from the principal picker.",
+        description="Human-readable display name for the owner; sourced from the principal picker.",
     )
 
 
@@ -748,7 +748,7 @@ class UpdateMonitoredTableScheduleIn(BaseModel):
 
 
 class UpdateMonitoredTableOwnerIn(BaseModel):
-    """Request body for updating a monitored table's owner (persisted as ``steward``)."""
+    """Request body for updating a monitored table's owner."""
 
     owner: str = Field(min_length=1, description="Owner's email/username")
 
@@ -772,7 +772,7 @@ class BulkRegisterMonitoredTablesIn(BaseModel):
     """Request body for bulk-registering many tables under Rules Registry governance."""
 
     table_fqns: list[str] = Field(description="Fully qualified table names (catalog.schema.table) to register")
-    steward: str | None = Field(default=None, description="Owning steward's email/username applied to all")
+    owner: str | None = Field(default=None, description="Owner's email/username applied to all")
 
 
 class BulkRegisterMonitoredTablesOut(BaseModel):
@@ -986,10 +986,10 @@ class MonitoredTableOut(BaseModel):
 
     binding_id: str
     table_fqn: str
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; falls back to the steward email when null.",
+        description="Human-readable display name for the owner; falls back to the owner email when null.",
     )
     status: MonitoredTableStatusDomain
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
@@ -1022,8 +1022,8 @@ class MonitoredTableOut(BaseModel):
         return cls(
             binding_id=table.binding_id,
             table_fqn=table.table_fqn,
-            steward=table.steward,
-            steward_display_name=table.steward_display_name,
+            owner=table.owner,
+            owner_display_name=table.owner_display_name,
             status=table.status,
             version=table.version,
             schedule_cron=table.schedule_cron,
@@ -1254,7 +1254,7 @@ class MatchRulesIn(BaseModel):
         ...,
         min_length=1,
         max_length=4000,
-        description="Natural-language description of the rule the steward wants.",
+        description="Natural-language description of the rule the owner wants.",
     )
     top_k: int = Field(default=5, ge=1, le=20, description="Max retrieval hits to consider.")
 
@@ -1736,10 +1736,10 @@ class CreateDataProductIn(BaseModel):
     name: str
     description: str | None = None
     notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
-    steward: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
-    steward_display_name: str | None = Field(
+    owner: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; sourced from the principal picker.",
+        description="Human-readable display name for the owner; sourced from the principal picker.",
     )
 
 
@@ -1755,10 +1755,10 @@ class UpdateDataProductIn(BaseModel):
     name: str | None = None
     description: str | None = None
     notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; sourced from the principal picker.",
+        description="Human-readable display name for the owner; sourced from the principal picker.",
     )
     schedule_cron: str | None = None
     schedule_tz: str | None = None
@@ -1842,10 +1842,10 @@ class DataProductOut(BaseModel):
     name: str
     description: str | None = None
     notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
-    steward: str | None = None
-    steward_display_name: str | None = Field(
+    owner: str | None = None
+    owner_display_name: str | None = Field(
         default=None,
-        description="Human-readable display name for the steward; falls back to the steward email when null.",
+        description="Human-readable display name for the owner; falls back to the owner email when null.",
     )
     schedule_cron: str | None = None
     schedule_tz: str | None = None
@@ -1885,8 +1885,8 @@ class DataProductOut(BaseModel):
             name=product.name,
             description=product.description,
             notes=product.notes,
-            steward=product.steward,
-            steward_display_name=product.steward_display_name,
+            owner=product.owner,
+            owner_display_name=product.owner_display_name,
             schedule_cron=product.schedule_cron,
             schedule_tz=product.schedule_tz,
             schedule_kind=product.schedule_kind,

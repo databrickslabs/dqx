@@ -45,7 +45,7 @@ export interface AddMonitoredTableModalProps {
  * Dialog-based "monitor table(s)" picker — dqlake-style modal (see
  * `components/rules/TablePickerModal.tsx` in dqlake) instead of a dedicated
  * page. A single "Add {count} table(s)" button submits directly — no
- * separate confirm step; the steward field is intentionally omitted here
+ * separate confirm step; the owner field is intentionally omitted here
  * (it's set later, from the table detail page) per the current design.
  */
 export function AddMonitoredTableModal({ open, onOpenChange }: AddMonitoredTableModalProps) {

@@ -119,15 +119,15 @@ class _FakeOltp:
         if len(tokens) < 11:
             return
         row: list[object] = [
-            _unquote(tokens[1]),   # object_type
-            _unquote(tokens[2]),   # object_id
-            _unquote(tokens[3]),   # principal_id
-            _unquote(tokens[4]),   # principal_type
-            _unquote(tokens[5]),   # principal_name (may be NULL)
-            _unquote(tokens[6]),   # privileges
-            tokens[7].strip(),     # inherit (TRUE/FALSE string)
-            _unquote(tokens[8]),   # grantor (may be NULL)
-            None,                  # updated_at (not needed in tests)
+            _unquote(tokens[1]),  # object_type
+            _unquote(tokens[2]),  # object_id
+            _unquote(tokens[3]),  # principal_id
+            _unquote(tokens[4]),  # principal_type
+            _unquote(tokens[5]),  # principal_name (may be NULL)
+            _unquote(tokens[6]),  # privileges
+            tokens[7].strip(),  # inherit (TRUE/FALSE string)
+            _unquote(tokens[8]),  # grantor (may be NULL)
+            None,  # updated_at (not needed in tests)
         ]
         key = (str(row[0]), str(row[1]))
         # Normalise the inherit token to "true"/"false" lowercase.
@@ -266,6 +266,7 @@ def test_list_effective_grants_shows_stored_owner_row(svc, fake):
     # Owner on a registry_rule gets SELECT,MODIFY,APPLY — EXECUTE is stripped by
     # the set_grant guard (rules are not run directly, so EXECUTE is meaningless).
     from databricks_labs_dqx_app.backend.common.permissions import expand_privileges
+
     assert expand_privileges(owner.privileges) == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
 
 
@@ -953,18 +954,14 @@ def test_seed_rule_always_writes_users_group_even_when_share_off(svc, app_settin
 
 def test_owner_access_comes_from_stored_row(svc):
     svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
-    eff = svc.effective_privileges(
-        "monitored_table", "obj1", set(), owner_email="a@b.com", principal_email="a@b.com"
-    )
+    eff = svc.effective_privileges("monitored_table", "obj1", set(), owner_email="a@b.com", principal_email="a@b.com")
     assert Privilege.MODIFY in eff
 
 
 def test_deleting_owner_row_removes_owner_access(svc):
     svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
     svc.remove_grant("monitored_table", "obj1", "a@b.com")
-    eff = svc.effective_privileges(
-        "monitored_table", "obj1", set(), owner_email="a@b.com", principal_email="a@b.com"
-    )
+    eff = svc.effective_privileges("monitored_table", "obj1", set(), owner_email="a@b.com", principal_email="a@b.com")
     assert Privilege.MODIFY not in eff
 
 
@@ -1032,7 +1029,8 @@ def test_owner_asymmetry_can_manage_grants_true_without_stored_row(svc):
     from databricks_labs_dqx_app.backend.common.authorization import UserRole
 
     result = svc.can_manage_grants(
-        "monitored_table", "obj1",
+        "monitored_table",
+        "obj1",
         role=UserRole.RULE_AUTHOR,
         principal_ids=set(),
         owner_email="owner@x.com",
@@ -1055,8 +1053,11 @@ def test_owner_asymmetry_effective_privileges_empty_without_stored_row(svc):
     assert eff == set()
 
     from databricks_labs_dqx_app.backend.common.authorization import UserRole
+
     result = svc.has_privilege(
-        "monitored_table", "obj1", Privilege.MODIFY,
+        "monitored_table",
+        "obj1",
+        Privilege.MODIFY,
         role=UserRole.RULE_AUTHOR,
         principal_ids=set(),
         owner_email="owner@x.com",

@@ -46,6 +46,35 @@ describe("normalizeImportedCheck", () => {
     expect(out.user_metadata).toEqual({ name: "not_null_id" });
   });
 
+  it("preserves a generated row filter", () => {
+    const out = normalizeImportedCheck({
+      filter: " region = 'EU' ",
+      check: { function: "is_not_null", arguments: { column: "id" } },
+    });
+    expect(out.filter).toBe("region = 'EU'");
+  });
+
+  it("lifts owner out of user_metadata onto the check", () => {
+    const out = normalizeImportedCheck({
+      owner: " owner@example.com ",
+      check: { function: "is_not_null", arguments: { column: "id" } },
+      user_metadata: { owner: "tag-should-lose", name: "x" },
+    });
+    expect(out.owner).toBe("owner@example.com");
+    expect(out.user_metadata).toEqual({ name: "x" });
+  });
+
+  it("accepts legacy YAML steward and writes owner", () => {
+    const out = normalizeImportedCheck({
+      steward: " legacy@example.com ",
+      check: { function: "is_not_null", arguments: { column: "id" } },
+      user_metadata: { steward: "tag-should-lose", name: "x" },
+    });
+    expect(out.owner).toBe("legacy@example.com");
+    expect(out).not.toHaveProperty("steward");
+    expect(out.user_metadata).toEqual({ name: "x" });
+  });
+
   it("converts __sql_check__ prefix to sql_query", () => {
     const out = normalizeImportedCheck({
       check: {
@@ -132,5 +161,24 @@ describe("parseChecksForImport", () => {
     expect(rules[0]?.mode).toBe("sql");
     expect((rules[0]?.definition.body as { sql_query: string }).sql_query).toContain("media_customer_reviews");
     expect(rules[0]?.user_metadata?.name).toBe("cities_with_zero_reviews");
+  });
+
+  it("maps a generated owner onto CreateRegistryRuleIn.owner", () => {
+    const { rules, errors } = parseChecksForImport(
+      [
+        normalizeImportedCheck({
+          owner: "owner@example.com",
+          name: "id_not_null",
+          check: { function: "is_not_null", arguments: { column: "id" } },
+        }),
+      ],
+      [{ name: "is_not_null", params: [{ name: "column", type: "column" }] } as never],
+      identity,
+      "human",
+    );
+    expect(errors).toEqual([]);
+    expect(rules).toHaveLength(1);
+    expect(rules[0]?.owner).toBe("owner@example.com");
+    expect(rules[0]?.user_metadata?.owner).toBeUndefined();
   });
 });

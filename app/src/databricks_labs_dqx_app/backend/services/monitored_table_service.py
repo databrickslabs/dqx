@@ -46,7 +46,7 @@ from databricks.sdk import WorkspaceClient
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
-from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -217,7 +217,7 @@ class MonitoredTableService:
         last_profiled_at = self._sql.ts_text(f"{prefix}last_profiled_at")
         last_run_at = self._sql.ts_text(f"{prefix}last_run_at")
         return (
-            f"{prefix}binding_id, {prefix}table_fqn, {prefix}steward, {prefix}status, "
+            f"{prefix}binding_id, {prefix}table_fqn, {prefix}owner, {prefix}status, "
             f"{prefix}version, {prefix}schedule_cron, {prefix}schedule_tz, "
             f"{last_profiled_at} AS last_profiled_at, "
             f"{last_run_at} AS last_run_at, "
@@ -226,8 +226,8 @@ class MonitoredTableService:
             # schedule_kind (B2-52) appended last so existing positional indices
             # in ``_row_to_table`` stay stable (schedule_kind=row[13]).
             f"{prefix}schedule_kind, "
-            # steward_display_name appended after schedule_kind (row[14]).
-            f"{prefix}steward_display_name, "
+            # owner_display_name appended after schedule_kind (row[14]).
+            f"{prefix}owner_display_name, "
             # notes + lifecycle rationale (row[15..17]).
             f"{prefix}notes, {prefix}pending_rationale, {prefix}last_decision_rationale"
         )
@@ -253,8 +253,8 @@ class MonitoredTableService:
         self,
         table_fqn: str,
         user_email: str,
-        steward: str | None = None,
-        steward_display_name: str | None = None,
+        owner: str | None = None,
+        owner_display_name: str | None = None,
     ) -> MonitoredTable:
         """Register *table_fqn* under Rules Registry governance (status ``draft``).
 
@@ -268,21 +268,21 @@ class MonitoredTableService:
                 f"Table '{table_fqn}' is already monitored (binding_id={existing.binding_id})."
             )
         now = datetime.now(timezone.utc)
-        # Default the steward to the creator when none was resolved, so a
+        # Default the owner to the creator when none was resolved, so a
         # freshly registered table always has an accountable owner (mirrors
         # table spaces). The route prefers the UC table owner and passes it
-        # here as ``steward``; this fallback covers the owner-unavailable case.
-        # An explicit steward always wins.
-        resolved_steward = steward or user_email
-        # Resolve the steward's display name at write time when the caller did
+        # here as ``owner``; this fallback covers the owner-unavailable case.
+        # An explicit owner always wins.
+        resolved_owner = owner or user_email
+        # Resolve the owner's display name at write time when the caller did
         # not supply one (best-effort; group/unresolvable → NULL).
-        if steward_display_name is None:
-            steward_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
+        if owner_display_name is None:
+            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
         binding = MonitoredTable(
             binding_id=uuid4().hex[:16],
             table_fqn=table_fqn,
-            steward=resolved_steward,
-            steward_display_name=steward_display_name,
+            owner=resolved_owner,
+            owner_display_name=owner_display_name,
             status="draft",
             last_profiled_at=None,
             created_by=user_email,
@@ -301,7 +301,7 @@ class MonitoredTableService:
         logger.info("Registered monitored table %s (binding_id=%s)", table_fqn, binding.binding_id)
         return binding
 
-    def bulk_register(self, table_fqns: list[str], user_email: str, steward: str | None = None) -> BulkRegisterResult:
+    def bulk_register(self, table_fqns: list[str], user_email: str, owner: str | None = None) -> BulkRegisterResult:
         """Register many *table_fqns* under Rules Registry governance in one pass.
 
         Unlike :meth:`register`, already-monitored tables are skipped
@@ -328,20 +328,20 @@ class MonitoredTableService:
         skipped_existing = [fqn for fqn in valid if fqn in existing]
         to_register = [fqn for fqn in valid if fqn not in existing]
 
-        # Bulk register defaults every binding's steward to the creator (no
+        # Bulk register defaults every binding's owner to the creator (no
         # per-table UC owner lookup — see route docstring for the cost
-        # trade-off). An explicit shared steward always wins. Resolve the
-        # shared steward's display name once (best-effort) rather than per row.
-        resolved_steward = steward or user_email
-        resolved_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
+        # trade-off). An explicit shared owner always wins. Resolve the
+        # shared owner's display name once (best-effort) rather than per row.
+        resolved_owner = owner or user_email
+        resolved_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
         registered: list[str] = []
         for fqn in to_register:
             now = datetime.now(timezone.utc)
             binding = MonitoredTable(
                 binding_id=uuid4().hex[:16],
                 table_fqn=fqn,
-                steward=resolved_steward,
-                steward_display_name=resolved_display_name,
+                owner=resolved_owner,
+                owner_display_name=resolved_display_name,
                 status="draft",
                 last_profiled_at=None,
                 created_by=user_email,
@@ -381,11 +381,11 @@ class MonitoredTableService:
         # always carries a concrete enum (SCHEDULE_KIND_DEFAULT on the model).
         sql = (
             f"INSERT INTO {self._table} "
-            "(binding_id, table_fqn, steward, steward_display_name, status, version, created_by, "
+            "(binding_id, table_fqn, owner, owner_display_name, status, version, created_by, "
             "created_at, updated_by, updated_at, schedule_kind) "
             "VALUES "
             f"('{escape_sql_string(binding.binding_id)}', '{escape_sql_string(binding.table_fqn)}', "
-            f"{self._opt_str(binding.steward)}, {self._opt_str(binding.steward_display_name)}, "
+            f"{self._opt_str(binding.owner)}, {self._opt_str(binding.owner_display_name)}, "
             f"'{escape_sql_string(binding.status)}', 0, "
             f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now(), "
             f"'{escape_sql_string(binding.schedule_kind)}')"
@@ -405,14 +405,14 @@ class MonitoredTableService:
         self,
         *,
         status: str | None = None,
-        steward: str | None = None,
+        owner: str | None = None,
         catalog: str | None = None,
         schema: str | None = None,
         name: str | None = None,
     ) -> list[MonitoredTableSummary]:
         """List monitored tables, optionally filtered.
 
-        ``status`` and ``steward`` are pushed down into SQL; ``catalog``,
+        ``status`` and ``owner`` are pushed down into SQL; ``catalog``,
         ``schema``, and ``name`` filter over ``table_fqn`` in Python
         (matching how :class:`RegistryService.list_rules` handles
         JSON-blob metadata filters).
@@ -431,8 +431,8 @@ class MonitoredTableService:
         clauses: list[str] = []
         if status:
             clauses.append(f"mt.status = '{escape_sql_string(status)}'")
-        if steward:
-            clauses.append(f"mt.steward = '{escape_sql_string(steward)}'")
+        if owner:
+            clauses.append(f"mt.owner = '{escape_sql_string(owner)}'")
         score_computed_at = self._sql.ts_text("sc.computed_at")
         state_json_text = self._sql.select_json_text("v.state_json")
         sql = (
@@ -1019,10 +1019,10 @@ class MonitoredTableService:
         return table
 
     def update_owner(self, binding_id: str, owner: str, user_email: str) -> MonitoredTable:
-        """Set the binding's owner (stored in the ``steward`` column).
+        """Set the binding's owner (stored in the ``owner`` column).
 
         Owner is operational metadata orthogonal to the rule-review lifecycle, so
-        this does NOT flip the binding's ``status``. Only ``steward`` and the
+        this does NOT flip the binding's ``status``. Only ``owner`` and the
         ``updated_*`` audit fields move.
 
         Raises:
@@ -1037,11 +1037,11 @@ class MonitoredTableService:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
         e = escape_sql_string(binding_id)
         self._sql.execute(
-            f"UPDATE {self._table} SET steward = {self._opt_str(owner)}, "
+            f"UPDATE {self._table} SET owner = {self._opt_str(owner)}, "
             f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
             f"WHERE binding_id = '{e}'"
         )
-        table.steward = owner
+        table.owner = owner
         table.updated_by = user_email
         logger.info(
             "Set monitored table %s (binding_id=%s) owner to %s (by %s)",
@@ -1276,7 +1276,7 @@ class MonitoredTableService:
         return MonitoredTable(
             binding_id=binding_id,
             table_fqn=row[1],
-            steward=row[2],
+            owner=row[2],
             status=self._parse_status(row[3], binding_id=binding_id),
             version=int(row[4]) if row[4] not in (None, "") else 0,
             schedule_cron=row[5] or None,
@@ -1288,7 +1288,7 @@ class MonitoredTableService:
             updated_by=row[11],
             updated_at=self._parse_timestamp(row[12]),
             schedule_kind=self._parse_schedule_kind(row[13] if len(row) > 13 else None),
-            steward_display_name=row[14] if len(row) > 14 else None,
+            owner_display_name=row[14] if len(row) > 14 else None,
             notes=row[15] if len(row) > 15 else None,
             pending_rationale=row[16] if len(row) > 16 else None,
             last_decision_rationale=row[17] if len(row) > 17 else None,

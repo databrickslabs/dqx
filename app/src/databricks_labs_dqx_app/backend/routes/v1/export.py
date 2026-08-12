@@ -54,7 +54,7 @@ def export_registry_rules(
     status: Annotated[str | None, Query(description="Filter by status")] = None,
     dimension: Annotated[str | None, Query(description="Filter by the 'dimension' tag")] = None,
     severity: Annotated[str | None, Query(description="Filter by the 'severity' tag")] = None,
-    steward: Annotated[str | None, Query(description="Filter by steward")] = None,
+    owner: Annotated[str | None, Query(description="Filter by owner")] = None,
     tag: Annotated[str | None, Query(description="Filter by presence of a free-text tag key")] = None,
     rule_id: Annotated[
         list[str] | None,
@@ -68,7 +68,7 @@ def export_registry_rules(
                 status=status,
                 dimension=dimension,
                 severity=severity,
-                steward=steward,
+                owner=owner,
                 tag=tag,
                 rule_ids=rule_id,
             )
@@ -115,7 +115,7 @@ def export_monitored_tables(
     svc: Annotated[ExportService, Depends(get_export_service)],
     format: _FormatQuery = "dqx",
     status: Annotated[str | None, Query(description="Filter by status")] = None,
-    steward: Annotated[str | None, Query(description="Filter by steward")] = None,
+    owner: Annotated[str | None, Query(description="Filter by owner")] = None,
     catalog: Annotated[str | None, Query(description="Filter by catalog")] = None,
     schema: Annotated[str | None, Query(description="Filter by schema")] = None,
     name: Annotated[str | None, Query(description="Filter by table name")] = None,
@@ -130,7 +130,7 @@ def export_monitored_tables(
             svc.export_monitored_tables(
                 format,
                 status=status,
-                steward=steward,
+                owner=owner,
                 catalog=catalog,
                 schema=schema,
                 name=name,

@@ -814,7 +814,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
 }
 
 /** A titled group of generation options. The flat single grid grew past the
- *  point where a steward could tell which toggles affect rule generation vs.
+ *  point where a owner could tell which toggles affect rule generation vs.
  *  how the results get labelled/released, so the options are split into
  *  labelled sections instead. */
 function OptionGroup({

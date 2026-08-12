@@ -1324,6 +1324,37 @@ _V27_NOTES_AND_RATIONALE = (
 )
 
 
+# Rename ownership columns steward → owner (and steward_display_name →
+# owner_display_name) on the three OLTP tables. Delta has no reliable
+# ``RENAME COLUMN`` recovery story under this runner's idempotent-error
+# fragments, so we ADD the new columns and copy values from the legacy
+# steward columns when present. On a re-run, ADD COLUMN raises
+# ``COLUMN_ALREADY_EXISTS`` (swallowed) and the UPDATEs match zero rows
+# once owner is already populated. Legacy steward columns are left in
+# place (including for liquid clustering on dq_rules).
+#
+# Marked ``oltp_fallback=True``: all three tables live in Lakebase when
+# enabled (Postgres mirror is v24), so this only runs against Delta when
+# Lakebase is disabled.
+_V28_OWNER_RENAME = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN owner STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN owner_display_name STRING;"
+    f"UPDATE {_PLACEHOLDER}.dq_rules SET owner = steward WHERE owner IS NULL;"
+    f"UPDATE {_PLACEHOLDER}.dq_rules SET owner_display_name = steward_display_name "
+    f"WHERE owner_display_name IS NULL;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN owner STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN owner_display_name STRING;"
+    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET owner = steward WHERE owner IS NULL;"
+    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET owner_display_name = steward_display_name "
+    f"WHERE owner_display_name IS NULL;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN owner STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN owner_display_name STRING;"
+    f"UPDATE {_PLACEHOLDER}.dq_data_products SET owner = steward WHERE owner IS NULL;"
+    f"UPDATE {_PLACEHOLDER}.dq_data_products SET owner_display_name = steward_display_name "
+    f"WHERE owner_display_name IS NULL"
+)
+
+
 _V19_TAG_AUTO_SUPPRESSIONS = (
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_tag_auto_suppressions ("
     "  binding_id STRING NOT NULL,"
@@ -1523,6 +1554,13 @@ MIGRATIONS: list[Migration] = [
         version=27,
         description="Add notes + change-rationale columns " "— used only when Lakebase is disabled",
         sql_template=_V27_NOTES_AND_RATIONALE,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=28,
+        description="Add owner/owner_display_name (copy from steward columns) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V28_OWNER_RENAME,
         oltp_fallback=True,
     ),
 ]

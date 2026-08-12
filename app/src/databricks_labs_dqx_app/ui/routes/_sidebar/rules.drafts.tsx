@@ -229,7 +229,7 @@ function RegistryApprovalsSection({
             <ApprovalTh>{t("rulesDrafts.headerName")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerDimension")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerSeverity")}</ApprovalTh>
-            <ApprovalTh>{t("rulesDrafts.headerSteward")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerOwner")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
             <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
@@ -240,7 +240,7 @@ function RegistryApprovalsSection({
           const name = md.name || rule.rule_id;
           const dimension = md.dimension;
           const severity = md.severity;
-          const author = rule.updated_by ?? rule.created_by ?? rule.steward ?? "";
+          const author = rule.updated_by ?? rule.created_by ?? rule.owner ?? "";
           const busy = pendingRuleId === rule.rule_id;
           const showRevoke = canRevokeRule(rule);
           return (
@@ -437,7 +437,7 @@ function MonitoredTablesApprovalsSection({
         head={
           <>
             <ApprovalTh>{t("rulesDrafts.headerTable")}</ApprovalTh>
-            <ApprovalTh>{t("rulesDrafts.headerSteward")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerOwner")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.mtHeaderChecks")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
@@ -447,7 +447,7 @@ function MonitoredTablesApprovalsSection({
         rows={tables.map((row) => {
           const tbl = row.table;
           const busy = pendingId === tbl.binding_id;
-          const author = tbl.steward ?? "";
+          const author = tbl.owner ?? "";
           return (
             <tr key={tbl.binding_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
               <td className="p-3 font-mono text-xs">{tbl.table_fqn}</td>
@@ -616,7 +616,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
         head={
           <>
             <ApprovalTh>{t("rulesDrafts.headerName")}</ApprovalTh>
-            <ApprovalTh>{t("rulesDrafts.headerSteward")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerOwner")}</ApprovalTh>
             <ApprovalTh>{t("dataProducts.colTables")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
@@ -638,8 +638,8 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
                   {p.name}
                 </button>
               </td>
-              <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={p.steward ?? ""}>
-                {p.steward || "—"}
+              <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={p.owner ?? ""}>
+                {p.owner || "—"}
               </td>
               <td className="p-3 text-xs text-muted-foreground tabular-nums">{p.member_count ?? 0}</td>
               <td className="p-3 text-xs text-muted-foreground font-mono">v{p.version ?? 0}</td>

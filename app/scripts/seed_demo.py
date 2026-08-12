@@ -263,6 +263,7 @@ def main() -> int:
         sql=oltp,
         monitored_tables=monitored_tables,
         rules_catalog=rules_catalog,
+        materializer=materializer,
     )
     run_set_service = RunSetService(oltp_sql=oltp, validation_sql=sp_sql)
 

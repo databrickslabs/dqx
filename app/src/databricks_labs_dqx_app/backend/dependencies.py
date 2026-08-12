@@ -379,7 +379,7 @@ async def get_registry_service(
 ) -> RegistryService:
     """Create a RegistryService routed at the OLTP executor.
 
-    The SP client resolves ``steward_display_name`` at write time via SCIM.
+    The SP client resolves ``owner_display_name`` at write time via SCIM.
     """
     return RegistryService(sql=sql, permissions=perms, sp_ws=sp_ws)
 

@@ -308,9 +308,7 @@ class TestSubmitRunWarehouseThreading:
     def test_configured_warehouse_is_forwarded(
         self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
     ) -> None:
-        svc = JobService(
-            ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, warehouse_id="cfg-wh-override"
-        )
+        svc = JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, warehouse_id="cfg-wh-override")
         svc.submit_run(
             task_type="profile",
             view_fqn="cat.sch.v",

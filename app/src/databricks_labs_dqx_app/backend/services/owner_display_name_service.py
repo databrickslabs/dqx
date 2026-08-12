@@ -1,21 +1,21 @@
-"""Best-effort SCIM resolver for ``steward_display_name``.
+"""Best-effort SCIM resolver for ``owner_display_name``.
 
 Objects (registry rules, monitored tables, data products) each persist two
-steward fields: ``steward`` (the identity — an email/username, or a group
-name) and ``steward_display_name`` (a human-readable "Firstname Lastname").
-The list pages and Permissions tab render ``steward_display_name || steward``,
+owner fields: ``owner`` (the identity — an email/username, or a group
+name) and ``owner_display_name`` (a human-readable "Firstname Lastname").
+The list pages and Permissions tab render ``owner_display_name || owner``,
 so a friendly name shows whenever the column is populated.
 
-This module resolves a steward identity to its SCIM display name at
-**write time**: whenever a service sets ``steward`` and the caller did not
-already supply a ``steward_display_name`` (the principal picker does), the
-service calls :func:`resolve_steward_display_name` and persists the result
+This module resolves an owner identity to its SCIM display name at
+**write time**: whenever a service sets ``owner`` and the caller did not
+already supply a ``owner_display_name`` (the principal picker does), the
+service calls :func:`resolve_owner_display_name` and persists the result
 into the column. Resolution is strictly best-effort — a group name has no
 SCIM user match, and any SCIM error is swallowed; both cases return ``None``
 so the column is stored NULL (the frontend then shows the raw identity, which
 for a group is its name). Resolution NEVER raises and NEVER blocks the write.
 
-A short in-process TTL cache keeps repeated writes for the same steward
+A short in-process TTL cache keeps repeated writes for the same owner
 (e.g. bulk register, demo seed) from re-hitting SCIM.
 """
 
@@ -37,7 +37,7 @@ def _quote_scim(s: str) -> str:
 # Maximum emails resolved per SCIM call batch (avoids very long filter strings).
 _BATCH_SIZE = 50
 
-# Per-identity resolution cache. Maps a steward identity to
+# Per-identity resolution cache. Maps an owner identity to
 # ``(expires_at, display_name_or_none)``. A ``None`` value is cached too, so a
 # group name / unresolvable email is not re-queried on every subsequent write.
 _RESOLVE_CACHE_TTL_SECS = 300.0
@@ -62,25 +62,25 @@ def resolve_emails_to_display_names(
                 if user.user_name and user.display_name:
                     result[user.user_name] = user.display_name
         except Exception:
-            logger.warning("SCIM batch lookup failed during steward-name resolution (non-fatal)", exc_info=True)
+            logger.warning("SCIM batch lookup failed during owner-name resolution (non-fatal)", exc_info=True)
     return result
 
 
-def resolve_steward_display_name(steward: str | None, sp_ws: WorkspaceClient | None) -> str | None:
-    """Resolve a single *steward* identity to its SCIM display name.
+def resolve_owner_display_name(owner: str | None, sp_ws: WorkspaceClient | None) -> str | None:
+    """Resolve a single *owner* identity to its SCIM display name.
 
-    Best-effort and cached: returns ``None`` (→ store NULL) when *steward* is
-    empty, when no service-principal client is available, when *steward* is a
+    Best-effort and cached: returns ``None`` (→ store NULL) when *owner* is
+    empty, when no service-principal client is available, when *owner* is a
     group name / unresolvable email, or on any SCIM error. Never raises.
     """
-    if not steward or sp_ws is None:
+    if not owner or sp_ws is None:
         return None
     now = time.time()
-    hit = _resolve_cache.get(steward)
+    hit = _resolve_cache.get(owner)
     if hit is not None and hit[0] > now:
         return hit[1]
-    resolved = resolve_emails_to_display_names([steward], sp_ws).get(steward)
-    _resolve_cache[steward] = (now + _RESOLVE_CACHE_TTL_SECS, resolved)
+    resolved = resolve_emails_to_display_names([owner], sp_ws).get(owner)
+    _resolve_cache[owner] = (now + _RESOLVE_CACHE_TTL_SECS, resolved)
     return resolved
 
 

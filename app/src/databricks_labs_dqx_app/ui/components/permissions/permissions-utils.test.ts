@@ -14,9 +14,9 @@ import {
   isAllPrivileges,
   isOwnerDefaultGrant,
   isUsersGroupGrant,
-  overlayStewardPreview,
+  overlayOwnerPreview,
   privilegeTagLabel,
-  stewardPreviewPrivileges,
+  ownerPreviewPrivileges,
 } from "./permissions-utils";
 
 describe("privilegeTagLabel", () => {
@@ -208,13 +208,13 @@ describe("findAllPrivilegesGrantByName", () => {
     privileges: [PRIV_ALL],
   };
 
-  test("returns the grant when the named steward holds ALL_PRIVILEGES", () => {
+  test("returns the grant when the named owner holds ALL_PRIVILEGES", () => {
     expect(
       findAllPrivilegesGrantByName([allPrivsGrant, selectOnlyGrant], "alice@example.com", "data_product"),
     ).toBe(allPrivsGrant);
   });
 
-  test("returns null when the named steward holds only partial privileges", () => {
+  test("returns null when the named owner holds only partial privileges", () => {
     expect(
       findAllPrivilegesGrantByName([allPrivsGrant, selectOnlyGrant], "bob@example.com", "data_product"),
     ).toBeNull();
@@ -250,9 +250,9 @@ describe("findAllPrivilegesGrantByName", () => {
     );
   });
 
-  test("matches on the steward's display name when the grant is keyed by display name", () => {
-    // Regression: a steward set via the principal picker stores its grant with
-    // the DISPLAY NAME as principal_name (keyed by SCIM id), while `steward`
+  test("matches on the owner's display name when the grant is keyed by display name", () => {
+    // Regression: a owner set via the principal picker stores its grant with
+    // the DISPLAY NAME as principal_name (keyed by SCIM id), while `owner`
     // holds the email identity. Matching on the email alone missed it, so the
     // remove-old tickbox never appeared on collections/tables. Passing the
     // display name lets it match.
@@ -284,7 +284,7 @@ describe("findAllPrivilegesGrantByName", () => {
   });
 
   test("registry_rule: matches a SELECT+MODIFY+APPLY owner grant (EXECUTE never grantable on a rule)", () => {
-    // Regression: rules store the owner/steward grant without EXECUTE, so the
+    // Regression: rules store the owner grant without EXECUTE, so the
     // remove-old tickbox was never offered. holdsFullAccess treats that set as
     // full access for registry_rule.
     const ruleOwnerGrant = {
@@ -323,50 +323,50 @@ describe("holdsFullAccess", () => {
   });
 });
 
-describe("stewardPreviewPrivileges", () => {
+describe("ownerPreviewPrivileges", () => {
   test("registry rules get the EXECUTE-stripped full set the save writes", () => {
-    expect(stewardPreviewPrivileges("registry_rule")).toEqual([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY]);
+    expect(ownerPreviewPrivileges("registry_rule")).toEqual([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY]);
   });
 
   test("tables and collections get ALL_PRIVILEGES", () => {
-    expect(stewardPreviewPrivileges("monitored_table")).toEqual([PRIV_ALL]);
-    expect(stewardPreviewPrivileges("data_product")).toEqual([PRIV_ALL]);
+    expect(ownerPreviewPrivileges("monitored_table")).toEqual([PRIV_ALL]);
+    expect(ownerPreviewPrivileges("data_product")).toEqual([PRIV_ALL]);
   });
 });
 
-describe("overlayStewardPreview", () => {
+describe("overlayOwnerPreview", () => {
   const g = (id: string, extra: Record<string, unknown> = {}) => ({ principal_id: id, ...extra });
 
   test("returns the grants unchanged when there is no preview", () => {
-    const rows = overlayStewardPreview([g("a"), g("b")], null, null);
+    const rows = overlayOwnerPreview([g("a"), g("b")], null, null);
     expect(rows.map((r) => r.principal_id)).toEqual(["a", "b"]);
   });
 
-  test("appends the new steward as an ordinary row (brand-new principal)", () => {
+  test("appends the new owner as an ordinary row (brand-new principal)", () => {
     const preview = g("new");
-    const rows = overlayStewardPreview([g("a")], preview, null);
+    const rows = overlayOwnerPreview([g("a")], preview, null);
     expect(rows).toHaveLength(2);
     expect(rows[1]).toBe(preview);
   });
 
-  test("replaces (not duplicates) when the new steward already has a grant", () => {
+  test("replaces (not duplicates) when the new owner already has a grant", () => {
     const preview = g("owner", { privileges: [PRIV_ALL] });
-    const rows = overlayStewardPreview([g("owner", { privileges: [PRIV_SELECT] }), g("b")], preview, null);
+    const rows = overlayOwnerPreview([g("owner", { privileges: [PRIV_SELECT] }), g("b")], preview, null);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toBe(preview);
     expect(rows[1].principal_id).toBe("b");
   });
 
-  test("drops the old steward row when removal was requested (as if deleted)", () => {
+  test("drops the old owner row when removal was requested (as if deleted)", () => {
     const preview = g("new");
-    const rows = overlayStewardPreview([g("old"), g("b")], preview, "old");
+    const rows = overlayOwnerPreview([g("old"), g("b")], preview, "old");
     expect(rows.some((r) => r.principal_id === "old")).toBe(false);
     expect(rows.some((r) => r.principal_id === "b")).toBe(true);
     expect(rows.some((r) => r.principal_id === "new")).toBe(true);
   });
 
   test("preserves the original row order", () => {
-    const rows = overlayStewardPreview([g("a"), g("b"), g("c")], null, null);
+    const rows = overlayOwnerPreview([g("a"), g("b"), g("c")], null, null);
     expect(rows.map((r) => r.principal_id)).toEqual(["a", "b", "c"]);
   });
 });

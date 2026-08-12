@@ -60,7 +60,7 @@ export interface AppliedRuleMappingLike {
  * Drop any suggestion whose (rule, slot->column set) is ALREADY applied in the
  * current editor state — including UNSAVED applies from this session. The
  * backend only excludes PERSISTED mappings against the applied set at fetch
- * time, so without this a steward who applies a few suggestions and re-opens
+ * time, so without this a owner who applies a few suggestions and re-opens
  * the (prefetched, cached) Suggest dialog would see the same (rule, column)
  * again.
  *

@@ -473,9 +473,38 @@ class TestGenerateRuleLowcode:
         assert gateway.query.call_count == 3
 
     async def test_unsafe_compiled_lowcode_is_rejected_and_falls_through(self):
-        # A text value carrying a forbidden keyword compiles to unsafe SQL, so
-        # the low-code candidate is dropped and generation falls through.
+        # A column-reference operand carrying a forbidden keyword lands OUTSIDE
+        # any quoted literal in the compiled predicate, so the safety gate
+        # rejects it and the low-code candidate is dropped.
         unsafe_lowcode = _lowcode_proposal(
+            columns=[{"name": "note", "family": "text"}],
+            lowcode_ast={
+                "rows": [
+                    {
+                        "kind": "row",
+                        "combinator": None,
+                        "column_ref": "note",
+                        "operator": "<",
+                        "value": {"$col": "other; DROP TABLE users"},
+                    }
+                ],
+                "joins": [],
+            },
+        )
+        gateway = _gateway_returning(_NATIVE_DECLINE, unsafe_lowcode, _sql_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="d", user_email="a@x")
+
+        assert result["mode"] == "sql"
+        assert gateway.query.call_count == 3
+
+    async def test_forbidden_keyword_inside_a_text_literal_is_kept(self):
+        # The safety scanner strips quoted literals before scanning, and the
+        # compiler escapes the value's quotes, so a keyword that is merely DATA
+        # ("does this note mention DROP TABLE?") stays a usable low-code rule
+        # instead of being misread as an injection and falling through to sql.
+        lowcode = _lowcode_proposal(
             columns=[{"name": "note", "family": "text"}],
             lowcode_ast={
                 "rows": [
@@ -490,13 +519,14 @@ class TestGenerateRuleLowcode:
                 "joins": [],
             },
         )
-        gateway = _gateway_returning(_NATIVE_DECLINE, unsafe_lowcode, _sql_proposal())
+        gateway = _gateway_returning(_NATIVE_DECLINE, lowcode, _sql_proposal())
         service = _service(gateway)
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
-        assert result["mode"] == "sql"
-        assert gateway.query.call_count == 3
+        assert result["mode"] == "lowcode"
+        assert result["definition"]["predicate"] == "contains({{note}}, 'DROP TABLE users')"
+        assert gateway.query.call_count == 2
 
     async def test_unparsable_lowcode_falls_through(self):
         gateway = _gateway_returning(_NATIVE_DECLINE, "not json", _sql_proposal())
@@ -1310,9 +1340,7 @@ class TestVocabDrivenPrompt:
                 {"key": "severity", "values": ["Blocker"]},
             ]
         )
-        gateway = _gateway_returning(
-            _NATIVE_DECLINE, _lowcode_proposal(dimension="Relevance", severity="Blocker")
-        )
+        gateway = _gateway_returning(_NATIVE_DECLINE, _lowcode_proposal(dimension="Relevance", severity="Blocker"))
         service = _service(gateway, app_settings=app_settings)
 
         await service.generate_rule(description="amount must be positive", user_email="a@x")

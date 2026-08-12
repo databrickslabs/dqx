@@ -61,7 +61,7 @@ describe("deriveSlotsAndParameters — item 10 family seeding + item 11 negate s
     expect(parameters.map((p) => p.name)).toEqual(["regex"]);
   });
 
-  test("orders ref_table before ref_columns (a steward picks the table first)", () => {
+  test("orders ref_table before ref_columns (a owner picks the table first)", () => {
     // foreign_key's signature declares ref_columns before ref_table, which
     // reads backwards in the editor — you can't choose reference columns
     // before the table they live on.
@@ -279,6 +279,17 @@ describe("parseDqxCheckJson — reusable slot names survive the round-trip (item
   test("falls back to the canonical column_N name when the column arg is missing", () => {
     const result = parse({ check: { function: "is_not_null", arguments: {} } }, [isNotNull]);
     expect(result.definition.slots?.map((s) => s.name)).toEqual(["column_1"]);
+  });
+
+  test("maps a top-level imported filter into the rule definition", () => {
+    const result = parse(
+      {
+        filter: " region = 'EU' ",
+        check: { function: "is_not_null", arguments: { column: "customer_id" } },
+      },
+      [isNotNull],
+    );
+    expect(result.definition.filter).toBe("region = 'EU'");
   });
 });
 

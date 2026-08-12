@@ -158,7 +158,9 @@ def test_set_object_grant_requires_manage():
 
 def test_set_object_grant_calls_service_when_allowed():
     perms = _perms_mock()
-    body = SetObjectGrantIn(principal_id="u1", principal_type="user", principal_name="Alice", privileges=["MODIFY"], inherit=True)
+    body = SetObjectGrantIn(
+        principal_id="u1", principal_type="user", principal_name="Alice", privileges=["MODIFY"], inherit=True
+    )
     set_object_grant("registry_rule", "r1", body, "me@x.com", UserRole.ADMIN, frozenset(), perms)
     perms.set_grant.assert_called_once()
     _, kwargs = perms.set_grant.call_args

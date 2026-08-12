@@ -96,6 +96,29 @@ export function normalizeImportedCheck(raw: Record<string, unknown>): Record<str
     user_metadata: userMetadata,
   };
   if (messageExpr) result.message_expr = messageExpr;
+  if (typeof item.filter === "string" && item.filter.trim()) {
+    result.filter = item.filter.trim();
+  }
+  // Prefer `owner`; still accept legacy YAML `steward` when reading.
+  const ownerFromTop =
+    typeof item.owner === "string" && item.owner.trim()
+      ? item.owner.trim()
+      : typeof item.steward === "string" && item.steward.trim()
+        ? item.steward.trim()
+        : undefined;
+  const ownerFromMeta =
+    typeof userMetadata.owner === "string" && userMetadata.owner.trim()
+      ? userMetadata.owner.trim()
+      : typeof userMetadata.steward === "string" && userMetadata.steward.trim()
+        ? userMetadata.steward.trim()
+        : undefined;
+  const owner = ownerFromTop ?? ownerFromMeta;
+  if (owner) {
+    result.owner = owner;
+    // Owner is a first-class Rules Registry field, not a free-text tag.
+    delete userMetadata.owner;
+    delete userMetadata.steward;
+  }
   return result;
 }
 
@@ -208,12 +231,29 @@ export function parseChecksForImport(
       // LLM contract-import leg. Nothing emits the tag now, but rules saved
       // or exported earlier still carry it and must keep AI provenance.
       const isLlmDerived = parsed.userMetadata?.["rule_type"] === "text_llm";
+      // Prefer `owner`; still accept legacy YAML `steward` when reading.
+      const owner =
+        typeof normalized.owner === "string" && normalized.owner.trim()
+          ? normalized.owner.trim()
+          : typeof normalized.steward === "string" && normalized.steward.trim()
+            ? normalized.steward.trim()
+            : typeof parsed.userMetadata?.["owner"] === "string" && parsed.userMetadata["owner"].trim()
+              ? parsed.userMetadata["owner"].trim()
+              : typeof parsed.userMetadata?.["steward"] === "string" &&
+                  parsed.userMetadata["steward"].trim()
+                ? parsed.userMetadata["steward"].trim()
+                : undefined;
+      if (owner && parsed.userMetadata) {
+        delete parsed.userMetadata["owner"];
+        delete parsed.userMetadata["steward"];
+      }
       rules.push({
         mode: parsed.mode,
         definition: parsed.definition,
         polarity: parsed.polarity,
         user_metadata: parsed.userMetadata,
         author_kind: isLlmDerived ? "ai_assisted" : authorKind,
+        ...(owner ? { owner } : {}),
       });
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
@@ -235,7 +275,7 @@ export async function importChecksAsRegistryDrafts({
   checks,
   checkFunctions,
   t,
-  steward = null,
+  owner = null,
   authorKind = "human",
   alsoSubmit = false,
   autoApprove = false,
@@ -244,7 +284,7 @@ export async function importChecksAsRegistryDrafts({
   checks: Record<string, unknown>[];
   checkFunctions: CheckFunctionDef[];
   t: (key: string, opts?: Record<string, unknown>) => string;
-  steward?: string | null;
+  owner?: string | null;
   authorKind?: CreateRegistryRuleInAuthorKind;
   alsoSubmit?: boolean;
   /** Publish imported rules outright (submit + approve) — requires an approver
@@ -267,14 +307,15 @@ export async function importChecksAsRegistryDrafts({
     };
   }
 
-  const rulesWithSteward = steward
-    ? rules.map((rule) => ({ ...rule, steward }))
-    : rules;
+  const rulesWithOwner = rules.map((rule) => {
+    if (rule.owner) return rule;
+    return owner ? { ...rule, owner } : rule;
+  });
 
   // skip_duplicates makes re-imports idempotent: a structurally-identical
   // active rule (draft/pending/approved) is reused instead of minting a copy.
   const resp = await batchImportRegistryRulesWithDedup({
-    rules: rulesWithSteward,
+    rules: rulesWithOwner,
     also_submit: alsoSubmit,
     auto_approve: autoApprove,
     skip_duplicates: true,

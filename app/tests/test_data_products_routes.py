@@ -4,7 +4,7 @@ Follows ``test_run_sets_routes.py``'s / ``test_monitored_tables_routes.py``'s
 convention: call the route functions directly with a mocked
 ``DataProductService`` rather than spinning up a FastAPI ``TestClient``, and
 assert the RBAC gate structurally (VIEWER+ for reads, RULE_AUTHOR+ for
-writes, the orthogonal RUNNER gate for run) without going through
+writes, `run_rules` / Admin+Author gate for run) without going through
 middleware.
 """
 
@@ -169,15 +169,13 @@ class TestCreate:
         svc.create.return_value = _product(product_id="p1")
         svc.get.return_value = _detail(product_id="p1")
         result = create_data_product(
-            body=CreateDataProductIn(name="Orders", description=None, steward=None),
+            body=CreateDataProductIn(name="Orders", description=None, owner=None),
             svc=svc,
             obo_ws=_mock_obo_ws(),
             perms=MagicMock(),
         )
         assert result.product_id == "p1"
-        svc.create.assert_called_once_with(
-            "Orders", None, None, "alice@x", steward_display_name=None, notes=None
-        )
+        svc.create.assert_called_once_with("Orders", None, None, "alice@x", owner_display_name=None, notes=None)
 
     def test_create_seeds_default_grants_via_service(self):
         """Seeding is now the service's responsibility (not the route's).
@@ -189,24 +187,7 @@ class TestCreate:
         svc.create.return_value = _product(product_id="new-p1")
         svc.get.return_value = _detail(product_id="new-p1")
         create_data_product(
-            body=CreateDataProductIn(name="Orders", description=None, steward=None),
-            svc=svc,
-            obo_ws=_mock_obo_ws(),
-            perms=MagicMock(),
-        )
-        svc.create.assert_called_once()
-
-    def test_create_seeds_default_grants_via_service(self):
-        """Seeding is now the service's responsibility (not the route's).
-
-        The route no longer calls perms.seed_default_grants directly. Seeding
-        is verified exhaustively in test_data_products.py::TestCreate::test_create_seeds_default_grants.
-        """
-        svc = MagicMock()
-        svc.create.return_value = _product(product_id="new-p1")
-        svc.get.return_value = _detail(product_id="new-p1")
-        create_data_product(
-            body=CreateDataProductIn(name="Orders", description=None, steward=None),
+            body=CreateDataProductIn(name="Orders", description=None, owner=None),
             svc=svc,
             obo_ws=_mock_obo_ws(),
             perms=MagicMock(),
@@ -218,7 +199,7 @@ class TestCreate:
         svc.create.side_effect = DuplicateDataProductNameError("A data product named 'Orders' already exists.")
         with pytest.raises(HTTPException) as excinfo:
             create_data_product(
-                body=CreateDataProductIn(name="Orders", description=None, steward=None),
+                body=CreateDataProductIn(name="Orders", description=None, owner=None),
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
                 perms=MagicMock(),
@@ -230,7 +211,7 @@ class TestCreate:
         svc.create.side_effect = ValueError("Data product name must not be empty.")
         with pytest.raises(HTTPException) as excinfo:
             create_data_product(
-                body=CreateDataProductIn(name="", description=None, steward=None),
+                body=CreateDataProductIn(name="", description=None, owner=None),
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
                 perms=MagicMock(),
@@ -242,28 +223,54 @@ class TestUpdate:
     def test_update_only_passes_explicitly_set_fields(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")
-        update_data_product("p1", body=UpdateDataProductIn(description="new desc"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+        update_data_product(
+            "p1",
+            body=UpdateDataProductIn(description="new desc"),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
         svc.update.assert_called_once_with("p1", {"description": "new desc"}, "alice@x")
 
     def test_update_missing_raises_404(self):
         svc = MagicMock()
         svc.update.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            update_data_product("p1", body=UpdateDataProductIn(), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            update_data_product(
+                "p1",
+                body=UpdateDataProductIn(),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 404
 
     def test_update_duplicate_name_raises_409(self):
         svc = MagicMock()
         svc.update.side_effect = DuplicateDataProductNameError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            update_data_product("p1", body=UpdateDataProductIn(name="Taken"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            update_data_product(
+                "p1",
+                body=UpdateDataProductIn(name="Taken"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 409
 
 
 class TestDelete:
     def test_delete_success(self):
         svc = MagicMock()
-        result = delete_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+        result = delete_data_product(
+            "p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
+        )
         assert result["status"] == "deleted"
         svc.delete.assert_called_once_with("p1")
 
@@ -271,7 +278,9 @@ class TestDelete:
         svc = MagicMock()
         svc.delete.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            delete_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            delete_data_product(
+                "p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
+            )
         assert excinfo.value.status_code == 404
 
 
@@ -281,8 +290,14 @@ class TestMembers:
         svc.add_member.return_value = DataProductMember(id="m1", product_id="p1", binding_id="b1", pinned_version=2)
         svc.get.return_value = _detail(product_id="p1")
         result = add_data_product_member(
-            "p1", body=AddDataProductMemberIn(binding_id="b1", pinned_version=2), svc=svc, obo_ws=_mock_obo_ws()
-        , role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            "p1",
+            body=AddDataProductMemberIn(binding_id="b1", pinned_version=2),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
         assert result.product_id == "p1"
         svc.add_member.assert_called_once_with("p1", "b1", 2, "alice@x")
 
@@ -290,14 +305,30 @@ class TestMembers:
         svc = MagicMock()
         svc.add_member.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            add_data_product_member(
+                "p1",
+                body=AddDataProductMemberIn(binding_id="b1"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 404
 
     def test_add_member_invalid_binding_id_raises_404(self):
         svc = MagicMock()
         svc.add_member.side_effect = RuntimeError("Monitored table not found: invalid_binding")
         with pytest.raises(HTTPException) as excinfo:
-            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="invalid_binding"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            add_data_product_member(
+                "p1",
+                body=AddDataProductMemberIn(binding_id="invalid_binding"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 404
 
     def test_add_member_non_approved_binding_raises_400(self):
@@ -309,7 +340,15 @@ class TestMembers:
             "Only approved tables can join a table space."
         )
         with pytest.raises(HTTPException) as excinfo:
-            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            add_data_product_member(
+                "p1",
+                body=AddDataProductMemberIn(binding_id="b1"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 400
         assert "cat.schema.tbl" in excinfo.value.detail
         assert "'draft'" in excinfo.value.detail
@@ -317,7 +356,15 @@ class TestMembers:
     def test_remove_member_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")
-        result = remove_data_product_member("p1", "m1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+        result = remove_data_product_member(
+            "p1",
+            "m1",
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
         assert result.product_id == "p1"
         svc.remove_member.assert_called_once_with("p1", "m1", "alice@x")
 
@@ -325,7 +372,15 @@ class TestMembers:
         svc = MagicMock()
         svc.remove_member.side_effect = LookupError("Data product member not found: m1")
         with pytest.raises(HTTPException) as excinfo:
-            remove_data_product_member("p1", "m1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+            remove_data_product_member(
+                "p1",
+                "m1",
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 404
 
 
@@ -333,7 +388,16 @@ class TestSubmit:
     def test_submit_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
-        result = submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
+        result = submit_data_product(
+            "p1",
+            svc=svc,
+            app_settings=_enabled_settings(),
+            draft_run_gate=MagicMock(),
+            perms=MagicMock(),
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=frozenset(),
+            obo_ws=_mock_obo_ws(),
+        )
         assert result.status == "pending_approval"
         svc.submit.assert_called_once_with("p1", "alice@x", rationale=None)
 
@@ -342,7 +406,16 @@ class TestSubmit:
         svc.get.return_value = _detail(product_id="p1", status="draft", version=0)
         svc.submit.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
+            submit_data_product(
+                "p1",
+                svc=svc,
+                app_settings=_enabled_settings(),
+                draft_run_gate=MagicMock(),
+                perms=MagicMock(),
+                role=UserRole.RULE_AUTHOR,
+                principal_ids=frozenset(),
+                obo_ws=_mock_obo_ws(),
+            )
         assert excinfo.value.status_code == 404
 
     def test_submit_approved_unchanged_raises_409(self):
@@ -355,7 +428,16 @@ class TestSubmit:
         svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
         svc.submit.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
+            submit_data_product(
+                "p1",
+                svc=svc,
+                app_settings=_enabled_settings(),
+                draft_run_gate=MagicMock(),
+                perms=MagicMock(),
+                role=UserRole.RULE_AUTHOR,
+                principal_ids=frozenset(),
+                obo_ws=_mock_obo_ws(),
+            )
         assert excinfo.value.status_code == 409
 
 
@@ -403,11 +485,18 @@ class TestRun:
         svc = MagicMock()
         svc.run.return_value = DataProductRunResult(run_set_id="rs-1")
         result = run_data_product(
-            "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
-            role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+            "p1",
+            body=RunDataProductIn(source="approved"),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
         )
         assert result.run_set_id == "rs-1"
-        svc.run.assert_called_once_with("p1", source="approved", user_email="alice@x", trigger="manual")
+        svc.run.assert_called_once_with(
+            "p1", source="approved", user_email="alice@x", trigger="manual", sample_size=None
+        )
 
     def test_execute_check_called_before_run(self):
         """require_object(EXECUTE) is invoked on the data product before delegating to svc.run."""
@@ -419,8 +508,13 @@ class TestRun:
         svc.run.return_value = DataProductRunResult(run_set_id="rs-1")
         perms = create_autospec(PermissionsService, instance=True)
         run_data_product(
-            "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
-            role=UserRole.RULE_AUTHOR, principal_ids=frozenset({"u1"}), perms=perms,
+            "p1",
+            body=RunDataProductIn(source="approved"),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=frozenset({"u1"}),
+            perms=perms,
         )
         perms.require_object.assert_called_once()
         call_kwargs = perms.require_object.call_args
@@ -439,8 +533,13 @@ class TestRun:
         perms.require_object.side_effect = FastHTTPException(status_code=403, detail="Denied")
         with pytest.raises(FastHTTPException) as excinfo:
             run_data_product(
-                "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
-                role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), perms=perms,
+                "p1",
+                body=RunDataProductIn(source="approved"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.RULE_AUTHOR,
+                principal_ids=frozenset(),
+                perms=perms,
             )
         assert excinfo.value.status_code == 403
         svc.run.assert_not_called()
@@ -450,8 +549,13 @@ class TestRun:
         svc.run.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
             run_data_product(
-                "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
-                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+                "p1",
+                body=RunDataProductIn(source="approved"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -460,8 +564,13 @@ class TestRun:
         svc.run.side_effect = NoRunnableMembersError("boom")
         with pytest.raises(HTTPException) as excinfo:
             run_data_product(
-                "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
-                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+                "p1",
+                body=RunDataProductIn(source="approved"),
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -485,9 +594,7 @@ class TestReviewChanges:
         assert exc.value.status_code == 404
 
     def test_resolves_frozen_checks_per_member(self):
-        member = SimpleNamespace(
-            binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=2
-        )
+        member = SimpleNamespace(binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=2)
         detail = DataProductDetail(product=_product(product_id="p1", name="Orders", version=3))
         detail.members = [member]  # type: ignore[attr-defined]
         svc = MagicMock()
@@ -503,9 +610,7 @@ class TestReviewChanges:
         version_svc.get_checks.assert_called_once_with("b1", 2)
 
     def test_no_prior_snapshot_when_binding_never_approved(self):
-        member = SimpleNamespace(
-            binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=0
-        )
+        member = SimpleNamespace(binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=0)
         detail = DataProductDetail(product=_product(product_id="p1"))
         detail.members = [member]  # type: ignore[attr-defined]
         svc = MagicMock()

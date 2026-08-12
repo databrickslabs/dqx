@@ -3,8 +3,8 @@
  * three detail pages (registry rule, monitored table, table space).
  *
  * Renders:
- *  - an optional Steward section (a `PrincipalPicker` that stores the picked
- *    principal's display name), when `showSteward` is set;
+ *  - an optional Owner section (a `PrincipalPicker` that stores the picked
+ *    principal's display name), when `showOwner` is set;
  *  - the workspace users-group default grant (SELECT + APPLY), rendered like
  *    any grant, muted, and editable by grant-managers (narrow or revoke it);
  *  - the owner/creator default grant (ALL PRIVILEGES), rendered muted but
@@ -54,7 +54,7 @@ import {
 } from "@/components/ui/dialog";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { StewardGrantDialog } from "@/components/permissions/StewardGrantDialog";
+import { OwnerGrantDialog } from "@/components/permissions/OwnerGrantDialog";
 import { findAllPrivilegesGrantByName } from "@/components/permissions/permissions-utils";
 import {
   Loader2,
@@ -93,8 +93,8 @@ import {
   grantsEmptyColSpan,
   hasSavedObject,
   forceSelectWhenOthers,
-  stewardPreviewPrivileges,
-  overlayStewardPreview,
+  ownerPreviewPrivileges,
+  overlayOwnerPreview,
 } from "@/components/permissions/permissions-utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -103,53 +103,53 @@ function extractApiError(err: unknown, fallback: string): string {
 }
 
 /**
- * The pending grant intent produced when a new steward is picked and
- * confirmed in the `StewardGrantDialog`.  The actual grant writes happen
+ * The pending grant intent produced when a new owner is picked and
+ * confirmed in the `OwnerGrantDialog`.  The actual grant writes happen
  * at object-save time in the caller's save handler.
  */
-export interface StewardGrantIntent {
+export interface OwnerGrantIntent {
   newPrincipalId: string;
   newPrincipalType: string;
   newPrincipalName: string;
-  /** Non-null when the user ticked "remove old steward's grant". */
+  /** Non-null when the user ticked "remove old owner's grant". */
   removeOldPrincipalId: string | null;
 }
 
 interface Props {
   objectType: "registry_rule" | "monitored_table" | "data_product";
   objectId: string;
-  showSteward?: boolean;
-  steward?: string;
+  showOwner?: boolean;
+  owner?: string;
   /**
-   * Human-readable display name for the current steward.  When provided the
-   * picker shows this instead of the raw `steward` email.  Sourced from the
-   * `steward_display_name` column.
+   * Human-readable display name for the current owner.  When provided the
+   * picker shows this instead of the raw `owner` email.  Sourced from the
+   * `owner_display_name` column.
    */
-  stewardDisplayName?: string;
+  ownerDisplayName?: string;
   /**
-   * Called with the steward's identity (email / username — the `secondary`
+   * Called with the owner's identity (email / username — the `secondary`
    * field from the SCIM principal search result).  Callers store this as the
-   * `steward` column value (the identity used for filtering and grants).
+   * `owner` column value (the identity used for filtering and grants).
    */
-  onStewardChange?: (email: string) => void;
+  onOwnerChange?: (email: string) => void;
   /**
-   * Called alongside `onStewardChange` with the steward's human-readable
+   * Called alongside `onOwnerChange` with the owner's human-readable
    * display name (`display_name` from the SCIM principal search result).
-   * Callers store this as `steward_display_name` for rendering in list views.
+   * Callers store this as `owner_display_name` for rendering in list views.
    */
-  onStewardDisplayNameChange?: (displayName: string) => void;
-  canEditSteward?: boolean;
-  stewardSuggestion?: { displayName: string; onPick: () => void } | null;
+  onOwnerDisplayNameChange?: (displayName: string) => void;
+  canEditOwner?: boolean;
+  ownerSuggestion?: { displayName: string; onPick: () => void } | null;
   /**
-   * Called (with a non-null intent) after the user picks a new steward AND
-   * confirms the StewardGrantDialog.  Called with null when the steward is
+   * Called (with a non-null intent) after the user picks a new owner AND
+   * confirms the OwnerGrantDialog.  Called with null when the owner is
    * cleared — callers should discard any previously stashed intent.
    *
-   * Only wired for editable stewards (`canEditSteward === true`) on objects
-   * that support steward-grant wiring (registry rules + collections).
-   * Not called for monitored tables (read-only steward).
+   * Only wired for editable owners (`canEditOwner === true`) on objects
+   * that support owner-grant wiring (registry rules + collections).
+   * Not called for monitored tables (read-only owner).
    */
-  onStewardGrantIntent?: (intent: StewardGrantIntent | null) => void;
+  onOwnerGrantIntent?: (intent: OwnerGrantIntent | null) => void;
 }
 
 // Privilege tags render as the canonical Unity-Catalog-style grant
@@ -440,75 +440,75 @@ function GrantDialog({
 export function PermissionsTab({
   objectType,
   objectId,
-  showSteward = false,
-  steward = "",
-  stewardDisplayName,
-  onStewardChange,
-  onStewardDisplayNameChange,
-  canEditSteward = false,
-  stewardSuggestion = null,
-  onStewardGrantIntent,
+  showOwner = false,
+  owner = "",
+  ownerDisplayName,
+  onOwnerChange,
+  onOwnerDisplayNameChange,
+  canEditOwner = false,
+  ownerSuggestion = null,
+  onOwnerGrantIntent,
 }: Props) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const hasObject = hasSavedObject(objectId);
 
-  // ---------- Steward-pick confirmation dialog ----------
+  // ---------- Owner-pick confirmation dialog ----------
   // Holds the full principal the user just picked, pending dialog confirmation.
   const [pendingPick, setPendingPick] = useState<PrincipalSearchOut | null>(null);
   const [grantDialogOpen, setGrantDialogOpen] = useState(false);
 
   // ---------- Staged / optimistic grant preview (L2) ----------
   // The grant WRITE is deferred to object-save time (in the caller's save
-  // handler), so between confirming the StewardGrantDialog and hitting Save the
-  // new steward's full-access grant — and the old steward's pending removal —
+  // handler), so between confirming the OwnerGrantDialog and hitting Save the
+  // new owner's full-access grant — and the old owner's pending removal —
   // would otherwise be invisible in the grants table. `previewIntent` holds the
   // confirmed-but-unsaved change so the table can overlay it as an "Unsaved"
   // row. `stagedAt` is the grants query's `dataUpdatedAt` when the preview was
-  // staged, used to detect the post-save refetch. It clears when: the steward
+  // staged, used to detect the post-save refetch. It clears when: the owner
   // is cleared / dialog cancelled, or the real grant lands after save.
   const [previewIntent, setPreviewIntent] =
-    useState<(StewardGrantIntent & { stagedAt: number }) | null>(null);
+    useState<(OwnerGrantIntent & { stagedAt: number }) | null>(null);
   // Mirrors the grants query's `dataUpdatedAt` so `handleGrantConfirm` can read
   // the current value when staging a preview (the query hook is declared lower).
   const latestUpdatedAtRef = useRef(0);
 
-  const handleStewardSelect = (p: PrincipalSearchOut) => {
-    // The steward IDENTITY is the email/username (secondary field); the display
-    // name is surfaced via steward_display_name.  Use secondary as the identity
+  const handleOwnerSelect = (p: PrincipalSearchOut) => {
+    // The owner IDENTITY is the email/username (secondary field); the display
+    // name is surfaced via owner_display_name.  Use secondary as the identity
     // with a fallback to display_name so groups (which have no secondary) still
     // work.
     const identity = p.secondary ?? p.display_name;
-    // Only show the dialog when the steward actually changes (not when the
+    // Only show the dialog when the owner actually changes (not when the
     // same principal is re-picked). Compare by identity, not display name.
-    if (onStewardGrantIntent && identity !== steward) {
+    if (onOwnerGrantIntent && identity !== owner) {
       setPendingPick(p);
       setGrantDialogOpen(true);
     } else {
-      // No grant dialog for monitored tables (onStewardGrantIntent absent).
-      onStewardChange?.(identity);
-      onStewardDisplayNameChange?.(p.display_name);
+      // No grant dialog for monitored tables (onOwnerGrantIntent absent).
+      onOwnerChange?.(identity);
+      onOwnerDisplayNameChange?.(p.display_name);
     }
   };
 
   const handleGrantConfirm = (removeOld: boolean) => {
     if (!pendingPick) return;
     const identity = pendingPick.secondary ?? pendingPick.display_name;
-    onStewardChange?.(identity);
-    onStewardDisplayNameChange?.(pendingPick.display_name);
-    // Find the old steward's grant principal_id for the remove call, if any.
+    onOwnerChange?.(identity);
+    onOwnerDisplayNameChange?.(pendingPick.display_name);
+    // Find the old owner's grant principal_id for the remove call, if any.
     let removeOldPrincipalId: string | null = null;
-    if (removeOld && steward) {
-      const oldGrant = findAllPrivilegesGrantByName(grants, steward, objectType, stewardDisplayName);
+    if (removeOld && owner) {
+      const oldGrant = findAllPrivilegesGrantByName(grants, owner, objectType, ownerDisplayName);
       removeOldPrincipalId = oldGrant?.principal_id ?? null;
     }
-    const intent: StewardGrantIntent = {
+    const intent: OwnerGrantIntent = {
       newPrincipalId: pendingPick.workspace_principal_id,
       newPrincipalType: pendingPick.kind,
       newPrincipalName: pendingPick.display_name,
       removeOldPrincipalId,
     };
-    onStewardGrantIntent?.(intent);
+    onOwnerGrantIntent?.(intent);
     // Show the pending change in the grants table immediately (L2) — nothing
     // is written to the backend until the caller saves.
     setPreviewIntent({ ...intent, stagedAt: latestUpdatedAtRef.current });
@@ -553,7 +553,7 @@ export function PermissionsTab({
     }
   }, [dataUpdatedAt, previewIntent]);
 
-  // Current user — used as the grantor on the staged new-steward row so the
+  // Current user — used as the grantor on the staged new-owner row so the
   // optimistic preview matches what the real grant will record on save. Warm
   // cache (AuthGuard already fetched it), so this resolves synchronously.
   const { data: currentUserData } = useCurrentUser(selector<UserType>());
@@ -570,12 +570,12 @@ export function PermissionsTab({
   const canManage = data?.can_manage ?? false;
   const defaultInherit = data?.default_inherit ?? true;
 
-  // Project the staged steward change (L2) onto the real grants so the table
+  // Project the staged owner change (L2) onto the real grants so the table
   // shows the RESULT immediately — as if the change had already been made
-  // (optimistic UI), not as a flagged "unsaved" state. The new steward becomes
+  // (optimistic UI), not as a flagged "unsaved" state. The new owner becomes
   // an ordinary row with the exact privileges the save handler will persist and
-  // the current user as grantor; the old steward's row (if the user ticked
-  // "remove") simply disappears. Dedupe by principal so a new steward who
+  // the current user as grantor; the old owner's row (if the user ticked
+  // "remove") simply disappears. Dedupe by principal so a new owner who
   // already appears (e.g. the owner) shows one row, not two. The write is still
   // deferred to object-save; the preview clears once the real grant lands.
   const previewGrant: ObjectGrantOut | null = previewIntent
@@ -583,12 +583,12 @@ export function PermissionsTab({
         principal_id: previewIntent.newPrincipalId,
         principal_type: previewIntent.newPrincipalType,
         principal_name: previewIntent.newPrincipalName,
-        privileges: stewardPreviewPrivileges(objectType),
+        privileges: ownerPreviewPrivileges(objectType),
         inherit: false,
         grantor: currentUserEmail || undefined,
       }
     : null;
-  const displayGrants = overlayStewardPreview(
+  const displayGrants = overlayOwnerPreview(
     grants,
     previewGrant,
     previewIntent?.removeOldPrincipalId ?? null,
@@ -646,49 +646,49 @@ export function PermissionsTab({
   };
 
   // Show the human-readable display name in the picker when available; fall
-  // back to the raw identity (email) for objects whose steward_display_name
+  // back to the raw identity (email) for objects whose owner_display_name
   // has not yet been resolved.
-  const stewardValue: PickedPrincipal | null = steward
+  const ownerValue: PickedPrincipal | null = owner
     ? {
         principal_id: "",
         principal_type: "user",
-        principal_name: stewardDisplayName || steward,
+        principal_name: ownerDisplayName || owner,
       }
     : null;
 
-  // For monitored tables (canEditSteward === false AND onStewardGrantIntent
-  // absent) we show a "?" help tooltip explaining stewardship is managed in
-  // Unity Catalog, rather than the general stewardHelp copy.
-  const isReadOnlyTable = objectType === "monitored_table" && !canEditSteward;
+  // For monitored tables (canEditOwner === false AND onOwnerGrantIntent
+  // absent) we show a "?" help tooltip explaining ownership is managed in
+  // Unity Catalog, rather than the general ownerHelp copy.
+  const isReadOnlyTable = objectType === "monitored_table" && !canEditOwner;
 
   return (
     <div className="space-y-6 max-w-3xl">
-      {showSteward && (
+      {showOwner && (
         <section className="flex flex-col gap-3">
           <div className="flex items-center gap-1.5">
-            <p className="text-sm font-medium leading-none">{t("permissions.stewardLabel")}</p>
+            <p className="text-sm font-medium leading-none">{t("permissions.ownerLabel")}</p>
             {isReadOnlyTable ? (
-              <HelpTooltip text={t("permissions.stewardTableReadOnlyHelp")} />
+              <HelpTooltip text={t("permissions.ownerTableReadOnlyHelp")} />
             ) : (
-              <HelpTooltip text={t("permissions.stewardHelp")} />
+              <HelpTooltip text={t("permissions.ownerHelp")} />
             )}
           </div>
-          {canEditSteward && onStewardChange ? (
+          {canEditOwner && onOwnerChange ? (
             <PrincipalPicker
-              value={stewardValue}
-              suggestion={stewardSuggestion}
-              onSelect={handleStewardSelect}
+              value={ownerValue}
+              suggestion={ownerSuggestion}
+              onSelect={handleOwnerSelect}
               onClear={() => {
-                onStewardChange("");
-                onStewardDisplayNameChange?.("");
-                onStewardGrantIntent?.(null);
+                onOwnerChange("");
+                onOwnerDisplayNameChange?.("");
+                onOwnerGrantIntent?.(null);
                 setPreviewIntent(null);
               }}
             />
-          ) : steward ? (
-            <p className="text-sm">{stewardDisplayName || steward}</p>
+          ) : owner ? (
+            <p className="text-sm">{ownerDisplayName || owner}</p>
           ) : (
-            <p className="text-sm text-muted-foreground italic">{t("permissions.stewardNone")}</p>
+            <p className="text-sm text-muted-foreground italic">{t("permissions.ownerNone")}</p>
           )}
         </section>
       )}
@@ -748,22 +748,22 @@ export function PermissionsTab({
                       const ownerDefault = isOwnerDefaultGrant(grant);
                       const isDefault = grant.is_default ?? false;
                       const muted = inherited || usersGroup || ownerDefault;
-                      // Prefer the steward's resolved display name for the row
-                      // whose principal IS the steward. Auto-seeded owner/default
+                      // Prefer the owner's resolved display name for the row
+                      // whose principal IS the owner. Auto-seeded owner/default
                       // grants store the raw email as principal_name (no display
                       // name), so that row would otherwise show the email while
-                      // the steward picker above shows "Firstname Lastname" — an
+                      // the owner picker above shows "Firstname Lastname" — an
                       // inconsistency. When the grant principal matches the
-                      // steward identity, show stewardDisplayName instead.
+                      // owner identity, show ownerDisplayName instead.
                       const rawName = grant.principal_name ?? grant.principal_id;
-                      const isStewardPrincipal =
+                      const isOwnerPrincipal =
                         !usersGroup &&
-                        !!steward &&
-                        (rawName === steward || grant.principal_id === steward);
+                        !!owner &&
+                        (rawName === owner || grant.principal_id === owner);
                       const name = usersGroup
                         ? t("permissions.allUsers")
-                        : isStewardPrincipal && stewardDisplayName
-                          ? stewardDisplayName
+                        : isOwnerPrincipal && ownerDisplayName
+                          ? ownerDisplayName
                           : rawName;
                       return (
                         <TableRow
@@ -873,20 +873,20 @@ export function PermissionsTab({
         onSave={handleSave}
       />
 
-      {/* Steward-change grant confirmation — only mounted when a new steward
-          has been picked on a rule or collection (onStewardGrantIntent wired). */}
-      {onStewardGrantIntent && (
-        <StewardGrantDialog
+      {/* Owner-change grant confirmation — only mounted when a new owner
+          has been picked on a rule or collection (onOwnerGrantIntent wired). */}
+      {onOwnerGrantIntent && (
+        <OwnerGrantDialog
           open={grantDialogOpen}
           onOpenChange={(next) => {
             if (!next) handleGrantCancel();
           }}
-          newStewardName={pendingPick?.display_name ?? ""}
-          oldStewardName={steward}
+          newOwnerName={pendingPick?.display_name ?? ""}
+          oldOwnerName={owner}
           objectKind={objectType === "registry_rule" ? "rule" : "collection"}
           showRemoveOld={
-            !!steward &&
-            findAllPrivilegesGrantByName(grants, steward, objectType, stewardDisplayName) !== null
+            !!owner &&
+            findAllPrivilegesGrantByName(grants, owner, objectType, ownerDisplayName) !== null
           }
           onConfirm={handleGrantConfirm}
         />

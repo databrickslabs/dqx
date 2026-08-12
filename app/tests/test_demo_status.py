@@ -26,9 +26,12 @@ def test_set_then_get_round_trips():
     settings.save_setting.side_effect = lambda k, v, **kw: stored.__setitem__(k, v)
     settings.get_setting.side_effect = lambda k: stored.get(k)
     store = DemoStatusStore(settings)
-    store.set(DemoStatus(state="running", phase="datagen", message="building tables",
-                         started_at=_now_iso(), updated_at=_now_iso()),
-              user_email="admin@example.com")
+    store.set(
+        DemoStatus(
+            state="running", phase="datagen", message="building tables", started_at=_now_iso(), updated_at=_now_iso()
+        ),
+        user_email="admin@example.com",
+    )
     got = store.get()
     assert got.state == "running" and got.phase == "datagen"
     assert store.is_running() is True

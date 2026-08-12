@@ -610,8 +610,8 @@ async def lifespan(app: FastAPI):
 
     # Best-effort below — the app can recover from these failing.
 
-    # steward_display_name is populated at WRITE time by the entity services
-    # (see steward_display_name_service.resolve_steward_display_name), so there
+    # owner_display_name is populated at WRITE time by the entity services
+    # (see owner_display_name_service.resolve_owner_display_name), so there
     # is no startup backfill — every object created going forward carries its
     # resolved name, and list pages fall back to the raw identity otherwise.
 

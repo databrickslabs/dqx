@@ -40,4 +40,5 @@ def test_build_column_comment_sql_quotes_column_identifier():
     assert quote_ident("card_last4") in sql
     # bare unquoted form must NOT appear between ALTER COLUMN and COMMENT
     import re
+
     assert not re.search(r"ALTER COLUMN\s+card_last4\s+COMMENT", sql)

@@ -139,9 +139,9 @@ def test_serialize_order_places_execute_last():
 
 
 def test_normalize_collapses_full_set_to_all():
-    assert normalize_privileges(
-        {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE}
-    ) == {Privilege.ALL_PRIVILEGES}
+    assert normalize_privileges({Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE}) == {
+        Privilege.ALL_PRIVILEGES
+    }
 
 
 def test_parse_roundtrips_execute():

@@ -7,7 +7,7 @@
  * NOTHING). A single "Add checks" action applies the whole selected set in one
  * request via `applyProfilingSuggestions`, which resolves-or-creates + approves
  * each registry rule and binds it — the ONLY path that mints rules (B2-91).
- * Collapsed by default so stewards read the column stats first, then expand
+ * Collapsed by default so owners read the column stats first, then expand
  * when ready to add rules.
  */
 import { useMemo, useState } from "react";

@@ -1219,6 +1219,25 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  ADD COLUMN IF NOT EXISTS rationale TEXT;"
         ),
     ),
+    PgMigration(
+        version=24,
+        description="Rename steward/steward_display_name → owner/owner_display_name",
+        sql=(
+            # ------------------------------------------------------------------
+            # Rename ownership columns to ``owner`` / ``owner_display_name`` on
+            # the three OLTP tables that carry them. Index ``idx_dq_rules_steward``
+            # is renamed to ``idx_dq_rules_owner`` (Postgres keeps the old index
+            # name after a column rename). Mirrors Delta v28.
+            # ------------------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_rules RENAME COLUMN steward TO owner;"
+            f"ALTER TABLE {_S}.dq_rules RENAME COLUMN steward_display_name TO owner_display_name;"
+            f"ALTER TABLE {_S}.dq_monitored_tables RENAME COLUMN steward TO owner;"
+            f"ALTER TABLE {_S}.dq_monitored_tables RENAME COLUMN steward_display_name TO owner_display_name;"
+            f"ALTER TABLE {_S}.dq_data_products RENAME COLUMN steward TO owner;"
+            f"ALTER TABLE {_S}.dq_data_products RENAME COLUMN steward_display_name TO owner_display_name;"
+            f"ALTER INDEX IF EXISTS {_S}.idx_dq_rules_steward RENAME TO idx_dq_rules_owner;"
+        ),
+    ),
 ]
 
 

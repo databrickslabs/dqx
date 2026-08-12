@@ -60,8 +60,8 @@ def _product_row(
     product_id: str = "p1",
     name: str = "Orders",
     description: str | None = None,
-    steward: str | None = "alice@x",
-    steward_display_name: str | None = None,
+    owner: str | None = "alice@x",
+    owner_display_name: str | None = None,
     schedule_cron: str | None = None,
     schedule_tz: str | None = None,
     status: str = "draft",
@@ -76,33 +76,33 @@ def _product_row(
     score_computed_at: str | None = None,
 ) -> list[str | None]:
     # ``schedule_kind`` (B2-52) at index 12;
-    # ``steward_display_name`` at index 13;
+    # ``owner_display_name`` at index 13;
     # notes / pending_rationale / last_decision_rationale at 14..16;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN
     # columns the list/get read paths select (P3.4) — all None when the
     # product has never been scored. The non-score read paths select only
     # the first 17 columns; the extra cells are ignored by _row_to_product.
     return [
-        product_id,       # 0
-        name,             # 1
-        description,      # 2
-        steward,          # 3
-        schedule_cron,    # 4
-        schedule_tz,      # 5
-        status,           # 6
-        version,          # 7
-        "alice@x",        # 8 created_by
+        product_id,  # 0
+        name,  # 1
+        description,  # 2
+        owner,  # 3
+        schedule_cron,  # 4
+        schedule_tz,  # 5
+        status,  # 6
+        version,  # 7
+        "alice@x",  # 8 created_by
         "2026-07-07T00:00:00",  # 9 created_at
-        "alice@x",        # 10 updated_by
+        "alice@x",  # 10 updated_by
         "2026-07-07T00:00:00",  # 11 updated_at
-        schedule_kind,    # 12
-        steward_display_name,   # 13
-        notes,            # 14
+        schedule_kind,  # 12
+        owner_display_name,  # 13
+        notes,  # 14
         pending_rationale,  # 15
         last_decision_rationale,  # 16
-        score,            # 17
-        failed_tests,     # 18
-        total_tests,      # 19
+        score,  # 17
+        failed_tests,  # 18
+        total_tests,  # 19
         score_computed_at,  # 20
     ]
 
@@ -147,9 +147,7 @@ def _table_summary(
     )
 
 
-def _monitored_table_detail(
-    binding_id: str = "b1", version: int = 2, status: str = "approved"
-) -> MonitoredTableDetail:
+def _monitored_table_detail(binding_id: str = "b1", version: int = 2, status: str = "approved") -> MonitoredTableDetail:
     return MonitoredTableDetail(
         table=MonitoredTable(binding_id=binding_id, table_fqn="cat.schema.tbl", status=status, version=version)
     )
@@ -200,8 +198,8 @@ def app_settings():
     # Default matches production default: new members follow latest unless
     # the caller explicitly pins.
     mock.get_default_auto_upgrade.return_value = True
-    mock.resolve_pinned_version_for_new_attachment.side_effect = (
-        lambda explicit, current: explicit if explicit is not None else (None if mock.get_default_auto_upgrade() else current)
+    mock.resolve_pinned_version_for_new_attachment.side_effect = lambda explicit, current: (
+        explicit if explicit is not None else (None if mock.get_default_auto_upgrade() else current)
     )
     return mock
 
@@ -315,9 +313,7 @@ class TestListAndGet:
         assert by_id["p3"].members[0].rules_count == 7
         assert all(d.member_count == 1 for d in result)
 
-    def test_product_last_run_is_max_over_members_either_surface(
-        self, service, sql, monitored_tables, run_set_service
-    ):
+    def test_product_last_run_is_max_over_members_either_surface(self, service, sql, monitored_tables, run_set_service):
         """B2-15: a table space's last-run is MAX over its members' last_run_at.
 
         Each member's ``last_run_at`` is denormalized on completion regardless
@@ -350,8 +346,15 @@ class TestListAndGet:
         """P3.4: the cached score columns ride along the products query —
         no extra round trip and NEVER a warehouse recompute on page load."""
         sql.query.side_effect = [
-            [_product_row(product_id="p1", score="0.9876", failed_tests="12", total_tests="1000",
-                          score_computed_at="2026-07-10T00:00:00")],
+            [
+                _product_row(
+                    product_id="p1",
+                    score="0.9876",
+                    failed_tests="12",
+                    total_tests="1000",
+                    score_computed_at="2026-07-10T00:00:00",
+                )
+            ],
             [],  # members
         ]
         monitored_tables.list_monitored_tables.return_value = []
@@ -378,9 +381,7 @@ class TestListAndGet:
         assert detail.total_tests is None
         assert detail.score_computed_at is None
 
-    def test_members_carry_the_binding_cached_score_from_the_same_round_trip(
-        self, service, sql, monitored_tables
-    ):
+    def test_members_carry_the_binding_cached_score_from_the_same_round_trip(self, service, sql, monitored_tables):
         """P5.3: the Tables tab's per-member DQ score column rides the
         monitored-table summaries already fetched for the counters — the
         summary list LEFT JOINs dq_score_cache, so no extra query."""
@@ -405,9 +406,7 @@ class TestListAndGet:
         assert member.total_tests == 1000
         assert member.score_computed_at == "2026-07-10T00:00:00"
 
-    def test_member_score_fields_none_when_the_binding_was_never_scored(
-        self, service, sql, monitored_tables
-    ):
+    def test_member_score_fields_none_when_the_binding_was_never_scored(self, service, sql, monitored_tables):
         sql.query.side_effect = [
             [_product_row(product_id="p1")],
             [_member_row("m1", "b1")],
@@ -423,8 +422,15 @@ class TestListAndGet:
 
     def test_get_carries_cached_score(self, service, sql, monitored_tables):
         sql.query.side_effect = [
-            [_product_row(product_id="p1", score="0.5", failed_tests="1", total_tests="2",
-                          score_computed_at="2026-07-10T00:00:00")],
+            [
+                _product_row(
+                    product_id="p1",
+                    score="0.5",
+                    failed_tests="1",
+                    total_tests="2",
+                    score_computed_at="2026-07-10T00:00:00",
+                )
+            ],
             [],  # members
         ]
         monitored_tables.list_monitored_tables.return_value = []
@@ -630,7 +636,7 @@ class TestCreate:
         assert product.name == "Orders"
         assert product.status == "draft"
         assert product.version == 0
-        assert product.steward == "alice@x"  # defaults to creator
+        assert product.owner == "alice@x"  # defaults to creator
         insert_sql = sql.execute.call_args[0][0]
         assert f"INSERT INTO {_PRODUCTS}" in insert_sql
         assert "'Orders'" in insert_sql
@@ -649,8 +655,7 @@ class TestCreate:
             service.create("   ", None, None, "alice@x")
 
     def test_create_seeds_default_grants(
-        self, sql, monitored_tables, run_set_service, binding_run_service,
-        version_service, app_settings, materializer
+        self, sql, monitored_tables, run_set_service, binding_run_service, version_service, app_settings, materializer
     ):
         """DataProductService.create seeds default grants via the injected PermissionsService."""
         from unittest.mock import create_autospec
@@ -847,7 +852,7 @@ class TestMembers:
     ):
         # Attach-time-only: default_auto_upgrade must NOT be consulted when
         # updating an EXISTING member — an explicit None here means the
-        # steward chose to unpin, not "unspecified".
+        # owner chose to unpin, not "unspecified".
         app_settings.get_default_auto_upgrade.return_value = False
         sql.query.side_effect = [
             [_product_row(product_id="p1")],
@@ -1084,13 +1089,19 @@ class TestRun:
         assert result.run_set_id == "rs-new"
         assert len(result.submitted) == 1
         assert result.skipped == []
-        # assert_called_once_with is an exact-match: the fan-out passes NO
-        # sampling knob (run_binding has none). Sampling resolves per
-        # resolved source inside run_binding — approved members always
+        # assert_called_once_with is an exact-match: the fan-out forwards the
+        # caller's sampling knob unchanged (``None`` here). Sampling otherwise
+        # resolves per resolved source inside run_binding — approved members
         # scan the whole table; draft members are capped by the admin
         # ``draft_run_sample_limit`` setting.
         binding_run_service.run_binding.assert_called_once_with(
-            "b1", source="draft", version=None, user_email="bob@x", trigger="manual", run_set_id="rs-new"
+            "b1",
+            source="draft",
+            version=None,
+            user_email="bob@x",
+            trigger="manual",
+            run_set_id="rs-new",
+            sample_size=None,
         )
 
     def test_approved_source_skips_never_approved_unpinned_member(
@@ -1113,7 +1124,13 @@ class TestRun:
         assert len(result.skipped) == 1
         assert "never approved" in result.skipped[0]
         binding_run_service.run_binding.assert_called_once_with(
-            "b2", source="approved", version=None, user_email="bob@x", trigger="manual", run_set_id="rs-new"
+            "b2",
+            source="approved",
+            version=None,
+            user_email="bob@x",
+            trigger="manual",
+            run_set_id="rs-new",
+            sample_size=None,
         )
 
     def test_pinned_member_attempted_even_when_never_approved(
@@ -1132,7 +1149,13 @@ class TestRun:
         result = service.run("p1", "approved", "bob@x")
         assert len(result.submitted) == 1
         binding_run_service.run_binding.assert_called_once_with(
-            "b1", source="approved", version=2, user_email="bob@x", trigger="manual", run_set_id="rs-new"
+            "b1",
+            source="approved",
+            version=2,
+            user_email="bob@x",
+            trigger="manual",
+            run_set_id="rs-new",
+            sample_size=None,
         )
 
     def test_zero_runnable_raises(self, service, sql, monitored_tables):

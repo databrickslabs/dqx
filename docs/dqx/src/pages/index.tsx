@@ -1,6 +1,5 @@
 import Layout from '@theme/Layout';
 import { JSX, useState } from 'react';
-import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Link from '@docusaurus/Link';
 import Button from '../components/Button';
@@ -99,33 +98,8 @@ const studioFeatures = [
   { title: 'Governed by design', description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog.', icon: ShieldCheck, link: '/docs/studio/governance/approval-workflow' },
 ];
 
-// Screenshot thumbnails for the Studio feature cards (properly-framed crops).
-const studioFeatureImages: Record<string, string> = {
-  'Reusable rules repository': 'feat_authoring',
-  'Monitor tables & thresholds': 'feat_thresholds',
-  'Suggest rules with AI': 'feat_suggest',
-  'Data products with Collections': 'feat_collections',
-  'Results & drill-down': 'feat_results',
-  'Governed by design': 'feat_governed',
-};
-
-// Resolve base URLs at module scope via a small hook wrapper so we never call
-// useBaseUrl conditionally or inside a loop (React requires a stable hook count).
-const useStudioThumbs = () => {
-  const base = useBaseUrl('/img/studio/');
-  const thumbs: Record<string, { light: string; dark: string }> = {};
-  for (const image of new Set(Object.values(studioFeatureImages))) {
-    thumbs[image] = {
-      light: `${base}${image}_light.png`,
-      dark: `${base}${image}_dark.png`,
-    };
-  }
-  return thumbs;
-};
-
 const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'core' | 'studio') => void }): JSX.Element => {
   const isCore = tab === 'core';
-  const thumbs = useStudioThumbs();
 
   return (
     <div className="px-4 md:px-10 py-12 w-full">
@@ -192,28 +166,15 @@ const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'cor
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {studioFeatures.map((f, i) => {
                 const Icon = f.icon;
-                const image = studioFeatureImages[f.title];
-                const thumb = image ? thumbs[image] : undefined;
                 return (
                   <Link
                     key={i}
                     to={f.link}
-                    className="group flex flex-col rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-red-400 transition-all no-underline bg-white dark:bg-gray-900"
+                    className="group flex flex-col rounded-xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-lg hover:border-red-400 transition-all no-underline bg-white dark:bg-gray-900"
                   >
-                    {thumb && (
-                      <div className="overflow-hidden border-b border-gray-100 dark:border-gray-800 bg-gray-100 dark:bg-gray-950/60 aspect-[16/10] flex items-center justify-center p-2">
-                        <ThemedImage
-                          className="max-w-full max-h-full object-contain rounded group-hover:scale-[1.02] transition-transform"
-                          alt={f.title}
-                          sources={{ light: thumb.light, dark: thumb.dark }}
-                        />
-                      </div>
-                    )}
-                    <div className="p-5">
-                      <Icon className="w-6 h-6 text-red-500 mb-2" />
-                      <h3 className="text-lg font-semibold mb-1 text-gray-900 dark:text-white">{f.title}</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{f.description}</p>
-                    </div>
+                    <Icon className="w-6 h-6 text-red-500 mb-2" />
+                    <h3 className="text-lg font-semibold mb-1 text-gray-900 dark:text-white">{f.title}</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{f.description}</p>
                   </Link>
                 );
               })}

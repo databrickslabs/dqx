@@ -59,9 +59,7 @@ class TestCreateAndAddMember:
         assert "NULL" in sql  # product_id / product_version
 
     def test_create_with_product_writes_product_columns(self, service, oltp_sql):
-        service.create(
-            product_id="prod-1", product_version=3, source="draft", trigger="scheduled", created_by="bot"
-        )
+        service.create(product_id="prod-1", product_version=3, source="draft", trigger="scheduled", created_by="bot")
         sql = oltp_sql.execute.call_args[0][0]
         assert "'prod-1'" in sql
         assert "3" in sql

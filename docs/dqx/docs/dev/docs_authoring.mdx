@@ -27,6 +27,15 @@ API docs are generated using [pydoc-markdown](https://github.com/pypa/pydoc-mark
 Most of the documentation is written in markdown files with the `.mdx` extension. 
 The markdown files are located in the `docs` directory of the DQX project.
 
+DQX docs are split into two product tracks — keep them separate:
+
+| Track | User-facing docs | Code |
+|-------|------------------|------|
+| **DQX Core** (Python library / CLI / workflows) | `docs/dqx/docs/guide/`, `reference/`, `installation.mdx` (library install), etc. | `src/databricks/labs/dqx/` |
+| **DQX Studio** (no-code Databricks App) | [`docs/dqx/docs/studio/`](https://github.com/databrickslabs/dqx/tree/main/docs/dqx/docs/studio) (published at [`/docs/studio/`](/docs/studio/)) | `app/` |
+
+When Core guide pages mention Studio, link to [`/docs/studio/`](/docs/studio/) rather than duplicating Studio how-tos. Studio install steps belong under [DQX Studio installation](/docs/installation#dqx-studio-installation) and the Studio docs, not under Core workflow guides.
+
 ## Prerequisites
 
 Before you start writing documentation, make sure you have the following tools installed on your machine:
@@ -229,6 +238,7 @@ When writing documentation, make sure to align the content with the existing doc
 The rule of thumb is:
 * Do not put any technical details in the main documentation.
 * All technical details should be kept in the `/docs/dev/` section.
+* Studio end-user content belongs under `/docs/studio/`; contributor/dev setup for the app belongs under `/docs/dev/contributing` (and `app/*.md` in the repo).
 
 No need for:
 - Source code links 

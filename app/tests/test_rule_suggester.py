@@ -209,9 +209,7 @@ class TestUnavailablePaths:
 
         assert result.available is False
 
-    async def test_judge_permission_denied_returns_actionable_reason(
-        self, monitored_tables, registry, apply_rules
-    ):
+    async def test_judge_permission_denied_returns_actionable_reason(self, monitored_tables, registry, apply_rules):
         """PermissionDenied from the serving endpoint → available=False with a
         human-readable reason that names the endpoint and instructs the user to
         request EXECUTE access."""
@@ -235,9 +233,7 @@ class TestUnavailablePaths:
         for leak in ("token", "client_secret", "client_id"):
             assert leak not in result.reason.lower(), f"reason must not contain '{leak}'"
 
-    async def test_judge_permission_denied_reason_differs_from_generic(
-        self, monitored_tables, registry, apply_rules
-    ):
+    async def test_judge_permission_denied_reason_differs_from_generic(self, monitored_tables, registry, apply_rules):
         """PermissionDenied reason must be distinct from the generic 'AI judge failed' message."""
         from databricks.sdk.errors.platform import PermissionDenied
 
@@ -254,12 +250,16 @@ class TestUnavailablePaths:
             monitored_tables, registry, apply_rules, retriever, gateway_permission
         ).suggest("b1", "user@x")
         result_generic = await _suggester(
-            monitored_tables, registry, apply_rules, FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)]), gateway_generic
+            monitored_tables,
+            registry,
+            apply_rules,
+            FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)]),
+            gateway_generic,
         ).suggest("b1", "user@x")
 
-        assert result_permission.reason != result_generic.reason, (
-            "PermissionDenied should produce a distinct reason from the generic error path"
-        )
+        assert (
+            result_permission.reason != result_generic.reason
+        ), "PermissionDenied should produce a distinct reason from the generic error path"
 
     async def test_judge_unparsable_response_degrades_gracefully(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()

@@ -76,7 +76,9 @@ class TestQuery:
     @pytest.mark.asyncio
     async def test_returns_generated_sql(self, svc):
         async def _query(fqn, question, email):
-            return PreviewResult(columns=["id"], rows=[{"id": "6"}], generated_sql="SELECT id FROM c.s.t", truncated=False)
+            return PreviewResult(
+                columns=["id"], rows=[{"id": "6"}], generated_sql="SELECT id FROM c.s.t", truncated=False
+            )
 
         svc.query.side_effect = _query
         result = await query_table_data(TableQueryIn(table_fqn="c.s.t", question="q"), svc, "user@x")

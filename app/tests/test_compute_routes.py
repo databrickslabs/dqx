@@ -1,12 +1,10 @@
 """Tests for the compute routes (P22-B) — settings, listings, warehouse access/grant."""
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from fastapi import HTTPException
 
-from databricks_labs_dqx_app.backend.routes.v1 import compute as compute_mod
 from databricks_labs_dqx_app.backend.routes.v1.compute import (
     ComputeSettingsIn,
     GrantWarehouseAccessIn,

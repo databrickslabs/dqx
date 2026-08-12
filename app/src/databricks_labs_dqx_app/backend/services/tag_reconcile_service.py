@@ -222,7 +222,7 @@ class TagReconcileService:
                 # idempotent (an identical group finds its existing row and is
                 # left untouched rather than orphaned when the table's columns
                 # later change). ``attach_auto_mapping`` is add-only: it never
-                # mutates an existing row, so a steward's hand-applied row with
+                # mutates an existing row, so an owner's hand-applied row with
                 # the same mapping is preserved (pin/severity/metadata intact).
                 self._apply_rules.attach_auto_mapping(binding_id, rule.rule_id, [group], user_email)
                 attached += 1

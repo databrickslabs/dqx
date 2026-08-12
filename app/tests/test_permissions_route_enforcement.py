@@ -28,7 +28,6 @@ from databricks_labs_dqx_app.backend import dependencies as deps
 from databricks_labs_dqx_app.backend.routes.v1.data_products import router as data_products_router
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import router as monitored_tables_router
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import router as registry_rules_router
-from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 
 _OWNER = "owner@x.com"
 _AUTHOR = "author@x.com"
@@ -120,7 +119,12 @@ _MODIFY_ROUTES = [
 ]
 
 _APPLY_ROUTES = [
-    ("post", "/monitored-tables/b1/applied-rules", {"rule_id": "x", "column_mapping": []}, ("monitored_table", "b1")),  # applyRuleToTable
+    (
+        "post",
+        "/monitored-tables/b1/applied-rules",
+        {"rule_id": "x", "column_mapping": []},
+        ("monitored_table", "b1"),
+    ),  # applyRuleToTable
     ("post", "/data-products/p1/members", {"binding_id": "b1"}, ("data_product", "p1")),  # addDataProductMember
     ("delete", "/data-products/p1/members/m1", None, ("data_product", "p1")),  # removeDataProductMember
 ]

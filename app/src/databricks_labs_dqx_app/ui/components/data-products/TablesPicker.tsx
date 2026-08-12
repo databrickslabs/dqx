@@ -7,7 +7,7 @@
  * schema / an extra facet / search) above one card per group, each card
  * holding a mini table of checkbox | table | count | status rows. Ported to this
  * dialog's actual data source — monitored tables, not approved rule sets —
- * so the extra facets are Steward and custom tags (free-text key=value pairs
+ * so the extra facets are Owner and custom tags (free-text key=value pairs
  * inherited from applied registry rules — there is no native label concept on
  * a monitored table itself) and the "Rules" column shows `applied_rule_count`
  * instead of a checks-array length. Grouping is client-side over the single
@@ -153,7 +153,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   const [search, setSearch] = useState("");
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
-  const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
   const [tagFilter, setTagFilter] = useState<LabelSelection>(new Map());
 
   const catalogOptions = useMemo(
@@ -165,8 +165,8 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
       catalogFilter === ALL ? rows : rows.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
     return Array.from(new Set(scoped.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
   }, [rows, catalogFilter]);
-  const stewardOptions = useMemo(
-    () => Array.from(new Set(rows.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
+  const ownerOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.table.owner).filter((s): s is string => !!s))).sort(),
     [rows],
   );
   // Distinct free-text custom tags across the loaded set, feeding the
@@ -198,12 +198,12 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
       const { catalog, schema } = splitFqn(r.table.table_fqn);
       if (catalogFilter !== ALL && catalog !== catalogFilter) return false;
       if (schemaFilter !== ALL && schema !== schemaFilter) return false;
-      if (stewardFilter !== ALL && (r.table.steward ?? "") !== stewardFilter) return false;
+      if (ownerFilter !== ALL && (r.table.owner ?? "") !== ownerFilter) return false;
       if (!tagPairsMatchFilter(r.custom_tags ?? [], tagFilter)) return false;
       if (q && !r.table.table_fqn.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, search, catalogFilter, schemaFilter, stewardFilter, tagFilter]);
+  }, [rows, search, catalogFilter, schemaFilter, ownerFilter, tagFilter]);
 
   const grouped = useMemo((): Map<string, MonitoredTableSummaryOut[]> => {
     if (groupBy === "none") {
@@ -351,15 +351,15 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             ))}
           </SelectContent>
         </Select>
-        <Select value={stewardFilter} onValueChange={setStewardFilter}>
-          <SelectTrigger className="w-44 h-8 text-xs" aria-label={t("dataProducts.colSteward")}>
-            <SelectValue placeholder={t("dataProducts.colSteward")} />
+        <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+          <SelectTrigger className="w-44 h-8 text-xs" aria-label={t("dataProducts.colOwner")}>
+            <SelectValue placeholder={t("dataProducts.colOwner")} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL} className="text-xs">
-              {t("dataProducts.allStewards")}
+              {t("dataProducts.allOwners")}
             </SelectItem>
-            {stewardOptions.map((s) => (
+            {ownerOptions.map((s) => (
               <SelectItem key={s} value={s} className="text-xs">
                 {s}
               </SelectItem>

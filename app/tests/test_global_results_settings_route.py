@@ -55,9 +55,7 @@ class TestSaveGlobalResultsSettings:
     def test_enable_round_trips(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
 
-        result = save_global_results_settings(
-            GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x"
-        )
+        result = save_global_results_settings(GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x")
 
         assert result.global_results_enabled is True
         assert get_global_results_settings(svc).global_results_enabled is True
@@ -66,9 +64,7 @@ class TestSaveGlobalResultsSettings:
         _wire_stateful_store(sql_executor_mock)
 
         save_global_results_settings(GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x")
-        result = save_global_results_settings(
-            GlobalResultsSettingsIn(global_results_enabled=False), svc, "admin@x"
-        )
+        result = save_global_results_settings(GlobalResultsSettingsIn(global_results_enabled=False), svc, "admin@x")
 
         assert result.global_results_enabled is False
         assert get_global_results_settings(svc).global_results_enabled is False
@@ -76,9 +72,7 @@ class TestSaveGlobalResultsSettings:
     def test_rules_results_tab_round_trips(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
 
-        result = save_global_results_settings(
-            GlobalResultsSettingsIn(rules_results_tab_enabled=True), svc, "admin@x"
-        )
+        result = save_global_results_settings(GlobalResultsSettingsIn(rules_results_tab_enabled=True), svc, "admin@x")
 
         assert result.rules_results_tab_enabled is True
         assert get_global_results_settings(svc).rules_results_tab_enabled is True

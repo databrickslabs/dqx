@@ -216,7 +216,7 @@ class ExportService:
         status: str | None = None,
         dimension: str | None = None,
         severity: str | None = None,
-        steward: str | None = None,
+        owner: str | None = None,
         tag: str | None = None,
         rule_ids: list[str] | None = None,
     ) -> ExportResult:
@@ -230,7 +230,7 @@ class ExportService:
             status=status,
             dimension=dimension,
             severity=severity,
-            steward=steward,
+            owner=owner,
             tag=tag,
             rule_ids=rule_ids,
         )
@@ -290,7 +290,7 @@ class ExportService:
         fmt: ExportFormat,
         *,
         status: str | None = None,
-        steward: str | None = None,
+        owner: str | None = None,
         catalog: str | None = None,
         schema: str | None = None,
         name: str | None = None,
@@ -303,7 +303,7 @@ class ExportService:
         ``export_registry_rules(rule_ids=...)``.
         """
         summaries = self._monitored_tables.list_monitored_tables(
-            status=status, steward=steward, catalog=catalog, schema=schema, name=name
+            status=status, owner=owner, catalog=catalog, schema=schema, name=name
         )
         if binding_ids is not None:
             wanted = set(binding_ids)

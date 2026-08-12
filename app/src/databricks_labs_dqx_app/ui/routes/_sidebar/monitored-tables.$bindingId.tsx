@@ -952,9 +952,9 @@ function MonitoredTableDetailPage() {
             <PermissionsTab
               objectType="monitored_table"
               objectId={bindingId}
-              showSteward
-              canEditSteward={false}
-              steward={table.steward ?? ""}
+              showOwner
+              canEditOwner={false}
+              owner={table.owner ?? ""}
             />
           </TabsContent>
 
@@ -1512,7 +1512,7 @@ function AboutTab({
               <StatusBadge status={table.status} />
             </dd>
 
-            {/* Steward/Owner is edited on the Permissions tab, not here. */}
+            {/* Owner is edited on the Permissions tab, not here. */}
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutLastProfiled")}</dt>
             <dd>{table.last_profiled_at ? formatDateShort(table.last_profiled_at) : t("monitoredTables.neverProfiled")}</dd>
 
@@ -2627,7 +2627,7 @@ function ApplyRulesTab({
   // `version` is `null` (follow latest) or a specific published version
   // number to pin to — `VersionPinDropdown` now offers the rule's FULL
   // version history (not just "latest" vs. "current version"), so this
-  // stages whatever version the steward picked directly instead of
+  // stages whatever version the owner picked directly instead of
   // re-deriving it from the registry rule's live `version` (P24 fix).
   const handlePinChange = (rule: AppliedRuleOut, version: number | null) => {
     setStagedRows((prev) =>
@@ -2670,7 +2670,7 @@ function ApplyRulesTab({
     <div className="space-y-4 pt-4">
       {/* Table unreachable via Unity Catalog — mirrors dqlake's AppliedRulesList
           banner: explain up front why the Suggest button's prefetch was
-          skipped, rather than letting the steward discover it only after
+          skipped, rather than letting the owner discover it only after
           clicking. */}
       {columnsQuery.isError && (
         <div className="rounded border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-700 dark:text-yellow-400">

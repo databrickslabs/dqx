@@ -51,7 +51,9 @@ class TestPrepareConfigJson:
 
     def test_stages_when_over_limit(self) -> None:
         ws = MagicMock()
-        big_checks = [{"name": f"rule_{i}", "check": {"function": "is_not_null", "arguments": {"col": "x"}}} for i in range(200)]
+        big_checks = [
+            {"name": f"rule_{i}", "check": {"function": "is_not_null", "arguments": {"col": "x"}}} for i in range(200)
+        ]
         config = {"checks": big_checks, "sample_size": 1000}
         base = _base_params()
         inline = json.dumps(config, separators=(",", ":"))

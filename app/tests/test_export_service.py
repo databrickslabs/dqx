@@ -10,7 +10,7 @@ Two layers:
   ``ExportError``.
 """
 
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import create_autospec
 
 import pytest
 import yaml
@@ -70,9 +70,7 @@ def _sql_rule() -> RegistryRule:
         status="approved",
         version=1,
         polarity="fail",
-        definition=RuleDefinition.model_validate(
-            {"body": {"predicate": "amount < 0"}, "slots": [], "parameters": []}
-        ),
+        definition=RuleDefinition.model_validate({"body": {"predicate": "amount < 0"}, "slots": [], "parameters": []}),
         user_metadata={"name": "amount_non_negative", "severity": "Low"},
     )
 

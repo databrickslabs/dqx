@@ -97,7 +97,7 @@ STATUS_ERROR = "error"
 # get a grounded answer from a space dataset. The wording is polarity-neutral
 # ("changed", not "decreased"). dqlake's row-level questions are RESTORED in
 # P4.2 — they answer from the entitlement-gated ``v_dq_failing_rows`` view,
-# so the asking steward sees rows only for tables they verified access to.
+# so the asking owner sees rows only for tables they verified access to.
 SAMPLE_QUESTIONS = [
     "What is the current data quality score?",
     "How many tests failed in the latest run?",
@@ -119,7 +119,7 @@ SAMPLE_QUESTIONS = [
     # Authoring / ownership questions answered from the metadata dims
     # (dim_dq_rules / dim_dq_monitored_tables) — NOT the score views. These
     # carry the rule's own DEFAULT tags and the monitored-table register.
-    "Which rules does a steward own?",
+    "Which rules does an owner manage?",
     "What is the description of a rule?",
     # Rule-context questions (B2-21) — every metric scoped to ONE registry
     # rule (:rule_name) across all the tables/columns it runs on.
@@ -139,18 +139,18 @@ SAMPLE_QUESTIONS = [
     "How many rules are running?",
 ]
 
-# The steward brief. The API concatenates content[] WITHOUT separators, so
+# The owner brief. The API concatenates content[] WITHOUT separators, so
 # every element ends with "\n". Max one text_instruction per space. The SQL
 # snippets + example SQL do the heavy lifting; the prose covers the rules
 # those structures can't encode: grain, friendly names, run_mode defaults,
 # context routing, diagnosis, and honesty about what the data can't show.
 TEXT_INSTRUCTIONS = [
     (
-        "You answer a data steward about their tables' data quality. Open with a headline — one "
+        "You answer a data owner about their tables' data quality. Open with a headline — one "
         "sentence stating the key finding and its number — then a blank line, then the breakdown. "
         "Never give a bare number: drill from rules to dimensions/severities to columns, name the "
         "specific contributors, and surface the correlations you find (score against applied rules, "
-        "severities, dimensions, versions, stewards, sub-scores, thresholds and active warnings, "
+        "severities, dimensions, versions, owners, sub-scores, thresholds and active warnings, "
         "and number of tests).\n"
     ),
     (
@@ -228,12 +228,12 @@ TEXT_INSTRUCTIONS = [
         "(run_id from v_dq_check_results, ORDER BY run_time DESC LIMIT 1) and return one row per "
         "failing record as to_json(row_data) — never the wrapper columns (quarantine_id, errors, "
         "warnings); read errors/warnings only for the prose. Failing records are per-run: show a "
-        "different run only when the steward names a specific one. An empty result may mean the "
-        "steward has not opened that table in DQX Studio, where access is verified.\n"
+        "different run only when the owner names a specific one. An empty result may mean the "
+        "owner has not opened that table in DQX Studio, where access is verified.\n"
     ),
     (
         "Keep answers to short paragraphs (bullets only for genuine multi-item breakdowns, never "
-        "narrative), define a term briefly if the steward may not know it, make every sentence add "
+        "narrative), define a term briefly if the owner may not know it, make every sentence add "
         "something new, and stop when there is nothing more to add.\n"
     ),
 ]
@@ -649,15 +649,15 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # dim_dq_rules carries the rule's OWN default tags (default_severity is
     # the authored default, NOT the applied severity on the score views), so
     # these have no run_mode and never join the run-facing objects.
-    rules_by_steward = (
+    rules_by_owner = (
         "SELECT `name`, `dimension`, `default_severity`, `mode`, `status`, `version`\n"
         f"FROM {dim_rules}\n"
-        "WHERE `steward` = :steward\n"
+        "WHERE `owner` = :owner\n"
         "ORDER BY `name`"
     )
 
     rule_description = (
-        "SELECT `name`, `description`, `dimension`, `default_severity`, `mode`, `status`, `steward`\n"
+        "SELECT `name`, `description`, `dimension`, `default_severity`, `mode`, `status`, `owner`\n"
         f"FROM {dim_rules}\n"
         "WHERE `name` = :rule_name"
     )
@@ -820,10 +820,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         }
     ]
 
-    steward_param = [
+    owner_param = [
         {
-            "name": "steward",
-            "description": ["Steward (owner) whose rules to list."],
+            "name": "owner",
+            "description": ["Owner whose rules to list."],
             "type_hint": "STRING",
         }
     ]
@@ -886,7 +886,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "'show me the rows that failed' — never explode row_data per-field and never "
                 "select quarantine_id, errors, or warnings (read those only for the prose). "
                 "Latest published run via the run_id subselect. The view is entitlement-gated: "
-                "an empty result may mean the steward has not opened this table in DQX Studio, "
+                "an empty result may mean the owner has not opened this table in DQX Studio, "
                 "where access is verified."
             ],
         },
@@ -1020,11 +1020,11 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             ],
         },
         {
-            "question": ["Which rules does a steward own?"],
-            "sql": _lines(rules_by_steward),
-            "parameters": steward_param,
+            "question": ["Which rules does an owner manage?"],
+            "sql": _lines(rules_by_owner),
+            "parameters": owner_param,
             "usage_guidance": [
-                "Registry rules owned by a steward, from the dim_dq_rules metadata table "
+                "Registry rules owned by an owner, from the dim_dq_rules metadata table "
                 "(the registry, NOT run results). One row per rule with its name, dimension, "
                 "default_severity (the rule's OWN authored default — not the applied severity "
                 "on the score views), authoring mode, review status, and published version."
@@ -1037,7 +1037,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "usage_guidance": [
                 "A single registry rule's authored metadata from dim_dq_rules: description, "
                 "dimension, default_severity (the rule's own authored default, not what ran on "
-                "any table), mode, status, and steward. Use for rule-authoring questions — this "
+                "any table), mode, status, and owner. Use for rule-authoring questions — this "
                 "table carries no run results, so never read pass rates or failures from it."
             ],
         },
@@ -1296,14 +1296,14 @@ def _column_configs(catalog: str, schema: str) -> dict[str, list[dict]]:
                 cc("mode", "Authoring mode of the rule: 'dqx_native', 'lowcode', or 'sql'."),
                 cc("name", "Human display name of the registry rule."),
                 cc("status", "Registry review status: draft, pending_approval, approved, rejected, or deprecated."),
-                cc("steward", "Owner (steward) responsible for the rule."),
+                cc("owner", "Owner responsible for the rule."),
             ],
             key=lambda c: c["column_name"],
         ),
         dim_tables: sorted(
             [
                 cc("status", "Monitored-table review status: draft, pending_approval, approved, or rejected."),
-                cc("steward", "Owner (steward) responsible for the monitored table."),
+                cc("owner", "Owner responsible for the monitored table."),
                 cc("table_fqn", "Fully-qualified name (catalog.schema.table) of the monitored table."),
             ],
             key=lambda c: c["column_name"],
@@ -1396,7 +1396,7 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
                 "Apply by DEFAULT when reading v_dq_failing_rows — failing records are "
                 "per-run and the view carries no run_mode of its own, so each table scopes "
                 "to its single latest published run via this correlated run_id subselect. "
-                "Pin a specific run_id instead only when the steward asks for a particular "
+                "Pin a specific run_id instead only when the owner asks for a particular "
                 "run (drafts only when explicitly asked)."
             ],
         },
@@ -1525,7 +1525,7 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "default_severity (the rule's OWN authored DEFAULT severity — NOT what ran; "
                     "for the severity a check actually ran with use v_dq_check_attribution / "
                     "v_dq_check_results.severity), mode (dqx_native/lowcode/sql), status (draft/"
-                    "pending_approval/approved/rejected/deprecated), is_builtin, steward (owner), "
+                    "pending_approval/approved/rejected/deprecated), is_builtin, owner (owner), "
                     "version (published version, 0 until first publish), created_at, updated_at. "
                     "Use for rule-authoring and ownership questions (who owns a rule, what a rule "
                     "is, which rules are in draft); it carries no pass/fail counts."
@@ -1537,7 +1537,7 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                 "description": [
                     "Monitored-table register (metadata, NOT run results) — one row per "
                     "monitored-table binding, full-refreshed from the Rules Registry. Columns: "
-                    "binding_id, table_fqn (the monitored table's fully-qualified name), steward "
+                    "binding_id, table_fqn (the monitored table's fully-qualified name), owner "
                     "(owner), status (draft/pending_approval/approved/rejected), schedule_cron "
                     "(POSIX cron, NULL when unscheduled), version (approved version, 0 until first "
                     "approval), created_at, updated_at. Use for governance/ownership questions "

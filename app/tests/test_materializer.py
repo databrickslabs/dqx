@@ -1102,22 +1102,15 @@ class TestRenderCheckLowcodeMode:
 def test_dqx_rejects_columns_arg_on_sql_query():
     # Documents the reason Task 2 removed arguments.columns from sql_query: DQX's
     # ChecksValidator rejects any argument absent from the function signature.
-    import inspect
-
-    from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.checks_validator import ChecksValidator
 
     check = {
         "criticality": "error",
         "check": {"function": "sql_query", "arguments": {"query": "SELECT 1 AS condition", "columns": ["city"]}},
     }
-    errors = ChecksValidator._validate_func_args(
-        check["check"]["arguments"],
-        check_funcs.sql_query,
-        check,
-        inspect.signature(check_funcs.sql_query).parameters,
-    )
-    assert any("Unexpected argument 'columns'" in e for e in errors)
+    status = ChecksValidator.validate_checks([check])
+    assert status.has_errors
+    assert any("Unexpected argument 'columns'" in e for e in status.errors)
 
 
 # ---------------------------------------------------------------------------

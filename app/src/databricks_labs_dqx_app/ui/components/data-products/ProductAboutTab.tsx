@@ -45,7 +45,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 /** Read-only provenance panel — mirrors the rule About tab's Details column.
- *  Steward is deliberately absent: it's edited on the Permissions tab. */
+ *  Owner is deliberately absent: it's edited on the Permissions tab. */
 function DetailsPanel({ product }: { product: DataProductOut }) {
   const { t } = useTranslation();
   return (
@@ -90,7 +90,7 @@ export function ProductAboutTab({ product, editState, canEdit }: Props) {
   const { name, description, notes, setName, setDescription, setNotes } = editState;
 
   // Two columns: editable/read fields on the left, the read-only Details
-  // provenance panel on the right — mirroring the rule About tab. Steward is
+  // provenance panel on the right — mirroring the rule About tab. Owner is
   // NOT shown here; it's edited on the Permissions tab.
   return (
     <div className="flex flex-col gap-6 pt-4 lg:flex-row lg:items-start">

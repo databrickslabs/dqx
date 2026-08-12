@@ -144,14 +144,14 @@ def list_monitored_tables(
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
     status: Annotated[str | None, Query(description="Filter by status")] = None,
-    steward: Annotated[str | None, Query(description="Filter by steward")] = None,
+    owner: Annotated[str | None, Query(description="Filter by owner")] = None,
     catalog: Annotated[str | None, Query(description="Filter by catalog part of table_fqn")] = None,
     schema: Annotated[str | None, Query(description="Filter by schema part of table_fqn")] = None,
     name: Annotated[str | None, Query(description="Substring search over table_fqn")] = None,
 ) -> list[MonitoredTableSummaryOut]:
     """List monitored tables, optionally filtered, with per-table applied-rule counts."""
     try:
-        summaries = svc.list_monitored_tables(status=status, steward=steward, catalog=catalog, schema=schema, name=name)
+        summaries = svc.list_monitored_tables(status=status, owner=owner, catalog=catalog, schema=schema, name=name)
         _apply_snapshot_check_counts(summaries, version_svc, materializer)
         return [MonitoredTableSummaryOut.from_domain(s) for s in summaries]
     except Exception as e:
@@ -276,19 +276,19 @@ def register_monitored_table(
 ) -> MonitoredTableSummaryOut:
     """Register a table under Rules Registry governance (status ``draft``).
 
-    When the caller does not pin a steward, default it to the table's Unity
+    When the caller does not pin an owner, default it to the table's Unity
     Catalog owner (resolved on-behalf-of the caller, so UC permissions are
     honoured), falling back to the creator when the owner can't be read. The
     owner may be a user, group, or service principal — it is stored verbatim.
     """
     try:
         user_email = _current_user_email(obo_ws)
-        steward = body.steward or discovery.get_table_owner(body.table_fqn)
+        owner = body.owner or discovery.get_table_owner(body.table_fqn)
         table = svc.register(
             body.table_fqn,
             user_email,
-            steward=steward,
-            steward_display_name=body.steward_display_name,
+            owner=owner,
+            owner_display_name=body.owner_display_name,
         )
         # Apply-on-tag: after a successful register, auto-attach every published
         # tag-mapped rule this table now matches — via TagSuggestionService, which
@@ -331,13 +331,13 @@ def bulk_register_monitored_tables(
     Unlike single register, bulk register does **not** resolve each table's
     Unity Catalog owner: that would be one ``tables.get`` round-trip per table
     (N calls, plus rate-limit exposure) on a path meant for onboarding many
-    tables quickly. When no steward is pinned, every binding defaults to the
+    tables quickly. When no owner is pinned, every binding defaults to the
     creator; a per-table owner can be assigned afterwards from the table's
     Permissions tab.
     """
     try:
         user_email = _current_user_email(obo_ws)
-        result = svc.bulk_register(body.table_fqns, user_email, steward=body.steward)
+        result = svc.bulk_register(body.table_fqns, user_email, owner=body.owner)
         # Apply-on-tag: auto-attach matches for only the NEWLY-registered tables
         # (never skipped_existing/invalid). ``BulkRegisterResult.registered`` is a
         # list of table FQNs (no binding_id), so resolve each binding via
@@ -415,7 +415,7 @@ def update_monitored_table_owner(
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> MonitoredTableOut:
-    """Set a monitored table's owner (stored as ``steward``).
+    """Set a monitored table's owner.
 
     Requires ``MODIFY`` on the monitored table unless the caller is an
     admin/approver. Does not change the binding's review status.
@@ -1548,7 +1548,7 @@ async def match_rules_for_table(
 ) -> MatchRulesOut:
     """Match a natural-language rule description against published registry rules.
 
-    Embeds the steward's query, retrieves similar published rules, and runs the
+    Embeds the owner's query, retrieves similar published rules, and runs the
     mapping judge so hits can be staged onto this table. Always returns HTTP 200
     with ``available=False`` + a ``reason`` for every degraded path — same
     contract as ``suggest-rules``. An empty ``matches`` list with

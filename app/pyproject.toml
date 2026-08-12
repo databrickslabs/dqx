@@ -59,9 +59,10 @@ exclude-newer-package = { "databricks-sdk" = false }
 # Rules Registry co-develops the DQX library with this app: local symbols
 # (e.g. llm helpers) are not yet in the published 0.15.0 wheel. Non-editable
 # path dep avoids namespace-package shadowing with databricks-sdk (see prior
-# Studio notes). Deploy still follows the #1300 uv-run source model — publish
-# a dqx release carrying these additions before relying on them in a deployed
-# app, or vendor via a future build step.
+# Studio notes). Deploys under the #1300 uv-run source model cannot follow this
+# path out of the app directory, so build_app.py vendors the library into
+# .build/_vendor/dqx and retargets the copied pyproject/lock. Drop this source
+# (and the vendoring becomes a no-op) once a dqx release carries the additions.
 [tool.uv.sources]
 databricks-labs-dqx = { path = "../" }
 

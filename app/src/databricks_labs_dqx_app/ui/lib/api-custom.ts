@@ -1488,7 +1488,7 @@ export interface RegistryRuleExportParams {
   status?: string | null;
   dimension?: string | null;
   severity?: string | null;
-  steward?: string | null;
+  owner?: string | null;
   tag?: string | null;
   /** Restrict export to this explicit set of rule ids (serialized as repeated
    * `rule_id` query params) — used by the overview's selection action bar. */
@@ -1498,7 +1498,7 @@ export interface RegistryRuleExportParams {
 export interface MonitoredTableExportParams {
   format?: ExportFormat;
   status?: string | null;
-  steward?: string | null;
+  owner?: string | null;
   catalog?: string | null;
   schema?: string | null;
   name?: string | null;

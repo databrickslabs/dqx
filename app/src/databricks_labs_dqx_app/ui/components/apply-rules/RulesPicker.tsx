@@ -12,8 +12,8 @@
 // parallel ones takes precedence over copying dqlake's plumbing verbatim.
 //
 // One deliberate deviation from dqlake's picker, forced by DQX's data model:
-//   - No steward filter dropdown: DQX has no rule-stewards listing endpoint
-//     analogous to dqlake's `useList_rule_stewardsSuspense`.
+//   - No owner filter dropdown: DQX has no rule-owners listing endpoint
+//     analogous to dqlake's `useList_rule_ownersSuspense`.
 //
 // Multi-select via a leading checkbox column, mirroring dqlake's picker —
 // AddRulesDialog no longer maps columns inline (that moved to the by-rule
@@ -55,7 +55,7 @@ type ColumnKey =
   | "version"
   | "dimension"
   | "severity"
-  | "steward"
+  | "owner"
   | "createdBy"
   | "updated"
   | "mode";
@@ -86,7 +86,7 @@ function FamilyBadge({ family }: { family: string }) {
 }
 
 // Picker-specific defaults, mirroring dqlake's PICKER_DEFAULT_VISIBLE: a
-// leaner set than the full Rules Registry table since the steward picks
+// leaner set than the full Rules Registry table since the owner picks
 // rules to apply, not by who owns them. Status has no column at all here —
 // the caller already filtered the rows to published/approved rules, so
 // every row would show the same badge (dqlake hides it for the same reason).
@@ -194,15 +194,15 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     },
     sortValue: (r) => getTag(r, RESERVED_SEVERITY_KEY).toLowerCase(),
   },
-  steward: {
-    labelKey: "rulesRegistry.colSteward",
+  owner: {
+    labelKey: "rulesRegistry.colOwner",
     toggleable: true,
     defaultVisible: false,
     defaultWidth: 180,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={r.steward || "—"} className="text-muted-foreground" />,
-    sortValue: (r) => (r.steward ?? "").toLowerCase(),
+    renderCell: (r) => <TruncatedCell text={r.owner || "—"} className="text-muted-foreground" />,
+    sortValue: (r) => (r.owner ?? "").toLowerCase(),
   },
   createdBy: {
     labelKey: "rulesRegistry.colCreatedBy",
@@ -248,7 +248,7 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "version",
   "dimension",
   "severity",
-  "steward",
+  "owner",
   "createdBy",
   "updated",
   "mode",

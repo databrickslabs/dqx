@@ -294,7 +294,7 @@ class ApplyRulesService:
         # INSERT branch (no existing row for this natural key), i.e. a
         # genuinely new application. An update (see _update_mutable_fields
         # above) never goes through this resolution — an explicit
-        # pinned_version=None there already means "steward chose to follow
+        # pinned_version=None there already means "owner chose to follow
         # latest", not "caller left it unspecified".
         resolved_pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(
             pinned_version, rule.version
@@ -334,14 +334,14 @@ class ApplyRulesService:
 
         Suppression skip: if the natural key carries a suppression tombstone in
         ``dq_tag_auto_suppressions`` — recorded by :meth:`remove_applied` when a
-        steward DELIBERATELY removed a tag-auto row — this returns ``None`` and
+        owner DELIBERATELY removed a tag-auto row — this returns ``None`` and
         inserts nothing. The sweep must not resurrect an auto mapping the user
         removed on purpose.
 
         This is deliberately NOT :meth:`apply_rule`: the reconcile loop must
         never mutate an existing row. ``apply_rule`` treats an identical
         ``mapping_hash`` as an UPDATE of the mutable fields (pin / severity /
-        tags), which would silently destroy a steward's hand-applied pin or
+        tags), which would silently destroy an owner's hand-applied pin or
         severity override and re-stamp their row as ``tag_auto`` — breaking the
         spec's "hand-applied rows are never touched" invariant (§2/§3.3). It
         would also make reconcile non-idempotent for its own rows (a pin set at
@@ -371,7 +371,7 @@ class ApplyRulesService:
 
         mapping_hash = compute_mapping_hash(column_mapping)
         if self._is_suppressed(binding_id, rule_id, mapping_hash):
-            # A steward deliberately removed this auto mapping; the sweep must
+            # An owner deliberately removed this auto mapping; the sweep must
             # not re-add it. See remove_applied's tombstone write.
             logger.info("Skipped auto-attach of rule %s to binding %s: mapping is suppressed", rule_id, binding_id)
             return None

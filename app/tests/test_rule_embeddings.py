@@ -204,9 +204,7 @@ class TestEmbedText:
 
     def test_calls_serving_endpoint_and_extracts_embedding(self, svc, app_settings, sp_ws):
         app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(
-            data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])]
-        )
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])])
 
         result = svc.embed_text("hello")
 

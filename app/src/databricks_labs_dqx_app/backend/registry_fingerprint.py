@@ -8,7 +8,7 @@ registry rule is *table-agnostic*, so the fingerprint is computed over
 ``(mode, definition body, slots, parameters, polarity)`` only.
 
 Descriptive tags (name/description/dimension/severity/free-text), lifecycle
-fields (status, version, steward, is_builtin, audit timestamps) are
+fields (status, version, owner, is_builtin, audit timestamps) are
 deliberately excluded: two rules that do the exact same thing but carry
 different tags or are at different lifecycle stages must fingerprint
 identically, so ``RegistryService`` (a later phase) can warn on true

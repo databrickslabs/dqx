@@ -295,13 +295,13 @@ class RuleSuggester:
         """Match a natural-language rule description against published registry rules.
 
         Unlike :meth:`suggest` (which builds retrieval queries from the table's
-        columns), this embeds the steward's *query* text directly, ranks published
+        columns), this embeds the owner's *query* text directly, ranks published
         rules by cosine similarity, then runs the mapping judge so hits can be
         staged onto the table the same way Suggest does.
 
         Args:
             binding_id: Monitored table binding to map slots against.
-            query: Steward's natural-language description of the desired rule.
+            query: Owner's natural-language description of the desired rule.
             user_email: Caller identity for AIGateway rate limiting / audit.
             top_k: Max retrieval hits to consider (default :data:`DEFAULT_MATCH_TOP_K`).
             min_score: Cosine floor; hits below this are discarded
@@ -405,7 +405,7 @@ class RuleSuggester:
                 )
             else:
                 # Retrieval hit without a clean mapping — still surface so the
-                # steward can see the related published rule, but column_mapping
+                # owner can see the related published rule, but column_mapping
                 # stays None (not stageable one-click).
                 matches.append(
                     MatchedRule(

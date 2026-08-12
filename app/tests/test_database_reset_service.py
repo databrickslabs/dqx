@@ -283,9 +283,9 @@ class TestGenieReprovision:
 
 class TestAudit:
     def test_result_records_actor_and_timestamp(self):
-        result = DatabaseResetService(
-            delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor()
-        ).reset_all_data(performed_by="admin@x.com")
+        result = DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor()).reset_all_data(
+            performed_by="admin@x.com"
+        )
 
         assert result.performed_by == "admin@x.com"
         assert result.performed_at  # ISO-8601 timestamp string

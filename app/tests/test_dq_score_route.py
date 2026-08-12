@@ -173,9 +173,7 @@ class TestRuleScore:
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert "run_mode = 'published'" in stmt
 
-    def test_include_drafts_drops_the_run_mode_filter(
-        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
-    ):
+    def test_include_drafts_drops_the_run_mode_filter(self, client, sql_mock, apply_rules_mock, monitored_tables_mock):
         apply_rules_mock.list_bindings_for_rule.return_value = [make_applied_rule("ar1", "b1")]
         monitored_tables_mock.get.return_value = make_binding_detail("b1", "main.sales.orders")
         sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]

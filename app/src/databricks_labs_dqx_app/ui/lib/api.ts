@@ -664,9 +664,9 @@ export interface BatchSaveRulesOut {
 }
 
 /**
- * Owning steward's email/username applied to all
+ * Owner's email/username applied to all
  */
-export type BulkRegisterMonitoredTablesInSteward = string | null;
+export type BulkRegisterMonitoredTablesInOwner = string | null;
 
 /**
  * Request body for bulk-registering many tables under Rules Registry governance.
@@ -674,8 +674,8 @@ export type BulkRegisterMonitoredTablesInSteward = string | null;
 export interface BulkRegisterMonitoredTablesIn {
   /** Fully qualified table names (catalog.schema.table) to register */
   table_fqns: string[];
-  /** Owning steward's email/username applied to all */
-  steward?: BulkRegisterMonitoredTablesInSteward;
+  /** Owner's email/username applied to all */
+  owner?: BulkRegisterMonitoredTablesInOwner;
 }
 
 /**
@@ -926,12 +926,12 @@ export type CreateDataProductInNotes = string | null;
 /**
  * Defaults to the creator's email when omitted
  */
-export type CreateDataProductInSteward = string | null;
+export type CreateDataProductInOwner = string | null;
 
 /**
- * Human-readable display name for the steward; sourced from the principal picker.
+ * Human-readable display name for the owner; sourced from the principal picker.
  */
-export type CreateDataProductInStewardDisplayName = string | null;
+export type CreateDataProductInOwnerDisplayName = string | null;
 
 /**
  * Body of ``POST /data-products`` (``createDataProduct``).
@@ -942,9 +942,9 @@ export interface CreateDataProductIn {
   /** Sticky operational notes (separate from description) */
   notes?: CreateDataProductInNotes;
   /** Defaults to the creator's email when omitted */
-  steward?: CreateDataProductInSteward;
-  /** Human-readable display name for the steward; sourced from the principal picker. */
-  steward_display_name?: CreateDataProductInStewardDisplayName;
+  owner?: CreateDataProductInOwner;
+  /** Human-readable display name for the owner; sourced from the principal picker. */
+  owner_display_name?: CreateDataProductInOwnerDisplayName;
 }
 
 /**
@@ -984,14 +984,14 @@ export const CreateRegistryRuleInAuthorKind = {
 export type CreateRegistryRuleInUserMetadata = { [key: string]: unknown };
 
 /**
- * Owning steward's email/username
+ * Owner's email/username
  */
-export type CreateRegistryRuleInSteward = string | null;
+export type CreateRegistryRuleInOwner = string | null;
 
 /**
- * Human-readable display name for the steward; sourced from the principal picker.
+ * Human-readable display name for the owner; sourced from the principal picker.
  */
-export type CreateRegistryRuleInStewardDisplayName = string | null;
+export type CreateRegistryRuleInOwnerDisplayName = string | null;
 
 /**
  * Request body for creating a new draft Rules Registry rule.
@@ -1007,11 +1007,11 @@ export interface CreateRegistryRuleIn {
   author_kind?: CreateRegistryRuleInAuthorKind;
   /** Reserved tag keys (name/description/dimension/severity) + free-text tags */
   user_metadata?: CreateRegistryRuleInUserMetadata;
-  /** Owning steward's email/username */
-  steward?: CreateRegistryRuleInSteward;
-  /** Human-readable display name for the steward; sourced from the principal picker. */
-  steward_display_name?: CreateRegistryRuleInStewardDisplayName;
-  /** When false (default), creating a rule whose definition matches a published rule returns HTTP 409 so the UI can ask the steward to confirm. Set true after the steward confirms (or for batch/seed paths that intentionally allow copies). */
+  /** Owner's email/username */
+  owner?: CreateRegistryRuleInOwner;
+  /** Human-readable display name for the owner; sourced from the principal picker. */
+  owner_display_name?: CreateRegistryRuleInOwnerDisplayName;
+  /** When false (default), creating a rule whose definition matches a published rule returns HTTP 409 so the UI can ask the owner to confirm. Set true after the owner confirms (or for batch/seed paths that intentionally allow copies). */
   allow_duplicate?: boolean;
 }
 
@@ -1098,12 +1098,12 @@ export type DataProductOutDescription = string | null;
  */
 export type DataProductOutNotes = string | null;
 
-export type DataProductOutSteward = string | null;
+export type DataProductOutOwner = string | null;
 
 /**
- * Human-readable display name for the steward; falls back to the steward email when null.
+ * Human-readable display name for the owner; falls back to the owner email when null.
  */
-export type DataProductOutStewardDisplayName = string | null;
+export type DataProductOutOwnerDisplayName = string | null;
 
 export type DataProductOutScheduleCron = string | null;
 
@@ -1173,9 +1173,9 @@ export interface DataProductOut {
   description?: DataProductOutDescription;
   /** Sticky operational notes (separate from description) */
   notes?: DataProductOutNotes;
-  steward?: DataProductOutSteward;
-  /** Human-readable display name for the steward; falls back to the steward email when null. */
-  steward_display_name?: DataProductOutStewardDisplayName;
+  owner?: DataProductOutOwner;
+  /** Human-readable display name for the owner; falls back to the owner email when null. */
+  owner_display_name?: DataProductOutOwnerDisplayName;
   schedule_cron?: DataProductOutScheduleCron;
   schedule_tz?: DataProductOutScheduleTz;
   schedule_kind?: DataProductOutScheduleKind;
@@ -2146,7 +2146,7 @@ export interface MarketplaceRuleOut {
  */
 export interface MatchRulesIn {
   /**
-   * Natural-language description of the rule the steward wants.
+   * Natural-language description of the rule the owner wants.
    * @minLength 1
    * @maxLength 4000
    */
@@ -2276,12 +2276,12 @@ export interface MonitoredTableDetailOut {
   applied_rules?: AppliedRuleOut[];
 }
 
-export type MonitoredTableOutSteward = string | null;
+export type MonitoredTableOutOwner = string | null;
 
 /**
- * Human-readable display name for the steward; falls back to the steward email when null.
+ * Human-readable display name for the owner; falls back to the owner email when null.
  */
-export type MonitoredTableOutStewardDisplayName = string | null;
+export type MonitoredTableOutOwnerDisplayName = string | null;
 
 export type MonitoredTableOutStatus = typeof MonitoredTableOutStatus[keyof typeof MonitoredTableOutStatus];
 
@@ -2353,9 +2353,9 @@ export type MonitoredTableOutUpdatedAt = string | null;
 export interface MonitoredTableOut {
   binding_id: string;
   table_fqn: string;
-  steward?: MonitoredTableOutSteward;
-  /** Human-readable display name for the steward; falls back to the steward email when null. */
-  steward_display_name?: MonitoredTableOutStewardDisplayName;
+  owner?: MonitoredTableOutOwner;
+  /** Human-readable display name for the owner; falls back to the owner email when null. */
+  owner_display_name?: MonitoredTableOutOwnerDisplayName;
   status: MonitoredTableOutStatus;
   /** 0 = never approved; bumped on each table approval */
   version?: number;
@@ -2919,14 +2919,14 @@ export interface RefreshScoresOut {
 }
 
 /**
- * Owning steward's email/username
+ * Owner's email/username
  */
-export type RegisterMonitoredTableInSteward = string | null;
+export type RegisterMonitoredTableInOwner = string | null;
 
 /**
- * Human-readable display name for the steward; sourced from the principal picker.
+ * Human-readable display name for the owner; sourced from the principal picker.
  */
-export type RegisterMonitoredTableInStewardDisplayName = string | null;
+export type RegisterMonitoredTableInOwnerDisplayName = string | null;
 
 /**
  * Request body for registering a table under Rules Registry governance.
@@ -2934,10 +2934,10 @@ export type RegisterMonitoredTableInStewardDisplayName = string | null;
 export interface RegisterMonitoredTableIn {
   /** Fully qualified table name (catalog.schema.table) */
   table_fqn: string;
-  /** Owning steward's email/username */
-  steward?: RegisterMonitoredTableInSteward;
-  /** Human-readable display name for the steward; sourced from the principal picker. */
-  steward_display_name?: RegisterMonitoredTableInStewardDisplayName;
+  /** Owner's email/username */
+  owner?: RegisterMonitoredTableInOwner;
+  /** Human-readable display name for the owner; sourced from the principal picker. */
+  owner_display_name?: RegisterMonitoredTableInOwnerDisplayName;
 }
 
 export type RegistryRuleDetailOutCurrentVersion = RegistryRuleVersionOut | null;
@@ -2980,12 +2980,12 @@ export type RegistryRuleOutUserMetadata = { [key: string]: unknown };
 
 export type RegistryRuleOutFingerprint = string | null;
 
-export type RegistryRuleOutSteward = string | null;
+export type RegistryRuleOutOwner = string | null;
 
 /**
- * Human-readable display name for the steward; falls back to the steward email when null.
+ * Human-readable display name for the owner; falls back to the owner email when null.
  */
-export type RegistryRuleOutStewardDisplayName = string | null;
+export type RegistryRuleOutOwnerDisplayName = string | null;
 
 export type RegistryRuleOutSource = string | null;
 
@@ -3036,9 +3036,9 @@ export interface RegistryRuleOut {
   definition: RuleDefinition;
   user_metadata?: RegistryRuleOutUserMetadata;
   fingerprint?: RegistryRuleOutFingerprint;
-  steward?: RegistryRuleOutSteward;
-  /** Human-readable display name for the steward; falls back to the steward email when null. */
-  steward_display_name?: RegistryRuleOutStewardDisplayName;
+  owner?: RegistryRuleOutOwner;
+  /** Human-readable display name for the owner; falls back to the owner email when null. */
+  owner_display_name?: RegistryRuleOutOwnerDisplayName;
   is_builtin?: boolean;
   source?: RegistryRuleOutSource;
   /** Author's change rationale while status is pending_approval. */
@@ -4443,12 +4443,12 @@ export type UpdateDataProductInDescription = string | null;
  */
 export type UpdateDataProductInNotes = string | null;
 
-export type UpdateDataProductInSteward = string | null;
+export type UpdateDataProductInOwner = string | null;
 
 /**
- * Human-readable display name for the steward; sourced from the principal picker.
+ * Human-readable display name for the owner; sourced from the principal picker.
  */
-export type UpdateDataProductInStewardDisplayName = string | null;
+export type UpdateDataProductInOwnerDisplayName = string | null;
 
 export type UpdateDataProductInScheduleCron = string | null;
 
@@ -4469,9 +4469,9 @@ export interface UpdateDataProductIn {
   description?: UpdateDataProductInDescription;
   /** Sticky operational notes (separate from description) */
   notes?: UpdateDataProductInNotes;
-  steward?: UpdateDataProductInSteward;
-  /** Human-readable display name for the steward; sourced from the principal picker. */
-  steward_display_name?: UpdateDataProductInStewardDisplayName;
+  owner?: UpdateDataProductInOwner;
+  /** Human-readable display name for the owner; sourced from the principal picker. */
+  owner_display_name?: UpdateDataProductInOwnerDisplayName;
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
   schedule_kind?: UpdateDataProductInScheduleKind;
@@ -4491,7 +4491,7 @@ export interface UpdateMonitoredTableNotesIn {
 }
 
 /**
- * Request body for updating a monitored table's owner (persisted as ``steward``).
+ * Request body for updating a monitored table's owner.
  */
 export interface UpdateMonitoredTableOwnerIn {
   /**
@@ -4549,12 +4549,12 @@ export type UpdateRegistryRuleInUserMetadataAnyOf = { [key: string]: unknown };
 
 export type UpdateRegistryRuleInUserMetadata = UpdateRegistryRuleInUserMetadataAnyOf | null;
 
-export type UpdateRegistryRuleInSteward = string | null;
+export type UpdateRegistryRuleInOwner = string | null;
 
 /**
- * Human-readable display name for the steward; sourced from the principal picker.
+ * Human-readable display name for the owner; sourced from the principal picker.
  */
-export type UpdateRegistryRuleInStewardDisplayName = string | null;
+export type UpdateRegistryRuleInOwnerDisplayName = string | null;
 
 /**
  * Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged.
@@ -4569,9 +4569,9 @@ export interface UpdateRegistryRuleIn {
   definition?: UpdateRegistryRuleInDefinition;
   polarity?: UpdateRegistryRuleInPolarity;
   user_metadata?: UpdateRegistryRuleInUserMetadata;
-  steward?: UpdateRegistryRuleInSteward;
-  /** Human-readable display name for the steward; sourced from the principal picker. */
-  steward_display_name?: UpdateRegistryRuleInStewardDisplayName;
+  owner?: UpdateRegistryRuleInOwner;
+  /** Human-readable display name for the owner; sourced from the principal picker. */
+  owner_display_name?: UpdateRegistryRuleInOwnerDisplayName;
   /** Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged. */
   author_kind?: UpdateRegistryRuleInAuthorKind;
 }
@@ -4893,9 +4893,9 @@ dimension?: string | null;
  */
 severity?: string | null;
 /**
- * Filter by steward
+ * Filter by owner
  */
-steward?: string | null;
+owner?: string | null;
 /**
  * Filter by presence of a free-text tag key
  */
@@ -4916,9 +4916,9 @@ export type ListMonitoredTablesParams = {
  */
 status?: string | null;
 /**
- * Filter by steward
+ * Filter by owner
  */
-steward?: string | null;
+owner?: string | null;
 /**
  * Filter by catalog part of table_fqn
  */
@@ -5144,9 +5144,9 @@ dimension?: string | null;
  */
 severity?: string | null;
 /**
- * Filter by steward
+ * Filter by owner
  */
-steward?: string | null;
+owner?: string | null;
 /**
  * Filter by presence of a free-text tag key
  */
@@ -5167,9 +5167,9 @@ format?: ExportMonitoredTablesFormat;
  */
 status?: string | null;
 /**
- * Filter by steward
+ * Filter by owner
  */
-steward?: string | null;
+owner?: string | null;
 /**
  * Filter by catalog
  */
@@ -8224,7 +8224,7 @@ export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeo
 /**
  * Return the current Rules Registry governance settings.
 
-Available to any authenticated user — stewards benefit from seeing
+Available to any authenticated user — owners benefit from seeing
 the effective governance policy even though only admins can change it.
  * @summary Get Rules Registry Settings
  */
@@ -13799,7 +13799,7 @@ export function useListRegistryRulesSuspense<TData = Awaited<ReturnType<typeof l
  * Create a new draft registry rule.
 
 By default, a published rule that shares this rule's structural fingerprint
-blocks creation (HTTP 409) so the UI can ask the steward to confirm. Pass
+blocks creation (HTTP 409) so the UI can ask the owner to confirm. Pass
 ``allow_duplicate=true`` after confirmation (or for non-interactive callers).
 When a duplicate is allowed, ``dedup_warning`` still carries the advisory text.
  * @summary Create Registry Rule
@@ -14310,6 +14310,10 @@ worker thread + connection, so the payload is bounded to
 work) to keep a single request from monopolising a worker / connection.
 Per-rule failures are collected (partial success) rather than aborting
 the batch.
+
+Imported ``dimension``/``severity`` tags are folded onto the configured
+label vocabulary first (an ODCS contract spells them lowercase), so they
+match the values the rest of the app filters and colours by.
  * @summary Batch Import Registry Rules
  */
 export const batchImportRegistryRules = (
@@ -15002,7 +15006,7 @@ export function useListMonitoredTablesSuspense<TData = Awaited<ReturnType<typeof
 /**
  * Register a table under Rules Registry governance (status ``draft``).
 
-When the caller does not pin a steward, default it to the table's Unity
+When the caller does not pin an owner, default it to the table's Unity
 Catalog owner (resolved on-behalf-of the caller, so UC permissions are
 honoured), falling back to the creator when the owner can't be read. The
 owner may be a user, group, or service principal — it is stored verbatim.
@@ -15299,7 +15303,7 @@ back in the summary rather than failing the whole batch — see
 Unlike single register, bulk register does **not** resolve each table's
 Unity Catalog owner: that would be one ``tables.get`` round-trip per table
 (N calls, plus rate-limit exposure) on a path meant for onboarding many
-tables quickly. When no steward is pinned, every binding defaults to the
+tables quickly. When no owner is pinned, every binding defaults to the
 creator; a per-table owner can be assigned afterwards from the table's
 Permissions tab.
  * @summary Bulk Register Monitored Tables
@@ -15364,7 +15368,7 @@ export const useBulkRegisterMonitoredTables = <TError = AxiosError<HTTPValidatio
     }
     
 /**
- * Set a monitored table's owner (stored as ``steward``).
+ * Set a monitored table's owner.
 
 Requires ``MODIFY`` on the monitored table unless the caller is an
 admin/approver. Does not change the binding's review status.
@@ -17053,7 +17057,7 @@ export const useSuggestRulesForTable = <TError = AxiosError<HTTPValidationError>
 /**
  * Match a natural-language rule description against published registry rules.
 
-Embeds the steward's query, retrieves similar published rules, and runs the
+Embeds the owner's query, retrieves similar published rules, and runs the
 mapping judge so hits can be staged onto this table. Always returns HTTP 200
 with ``available=False`` + a ``reason`` for every degraded path — same
 contract as ``suggest-rules``. An empty ``matches`` list with

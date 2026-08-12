@@ -189,9 +189,9 @@ def create_data_product(
         product = svc.create(
             body.name,
             body.description,
-            body.steward,
+            body.owner,
             user_email,
-            steward_display_name=body.steward_display_name,
+            owner_display_name=body.owner_display_name,
             notes=body.notes,
         )
         detail = svc.get(product.product_id)

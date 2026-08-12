@@ -1,13 +1,13 @@
 /**
- * StewardGrantDialog — confirmation popup shown when the user picks a new
- * steward on a registry rule or collection.
+ * OwnerGrantDialog — confirmation popup shown when the user picks a new
+ * owner on a registry rule or collection.
  *
  * Behaviour:
- *  - Explains that saving will grant the new steward ALL_PRIVILEGES.
- *  - Optionally shows a tickbox to also remove the OLD steward's grant —
- *    only when the old steward currently holds an ALL_PRIVILEGES grant on
+ *  - Explains that saving will grant the new owner ALL_PRIVILEGES.
+ *  - Optionally shows a tickbox to also remove the OLD owner's grant —
+ *    only when the old owner currently holds an ALL_PRIVILEGES grant on
  *    this object (detected by the caller and passed via `showRemoveOld`).
- *  - Clicking Confirm closes the dialog; clicking Cancel leaves the steward
+ *  - Clicking Confirm closes the dialog; clicking Cancel leaves the owner
  *    picker in its original state.
  *
  * The actual grant writes happen at save time (in the caller's save handler),
@@ -26,39 +26,39 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 
-export interface StewardGrantDialogProps {
+export interface OwnerGrantDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Display name of the newly picked steward. */
-  newStewardName: string;
-  /** Display name of the old steward (empty string when there was none). */
-  oldStewardName: string;
+  /** Display name of the newly picked owner. */
+  newOwnerName: string;
+  /** Display name of the old owner (empty string when there was none). */
+  oldOwnerName: string;
   /** "rule" | "collection" — drives the copy of the body sentence. */
   objectKind: "rule" | "collection";
   /**
-   * Whether to offer the "remove old steward's grant" tickbox.  Pass `true`
-   * only when the old steward currently holds an ALL_PRIVILEGES grant on this
+   * Whether to offer the "remove old owner's grant" tickbox.  Pass `true`
+   * only when the old owner currently holds an ALL_PRIVILEGES grant on this
    * object so the offer is meaningful.
    */
   showRemoveOld: boolean;
   /**
    * Called when the user confirms.
-   * `removeOld`: whether the old steward's ALL_PRIVILEGES grant should also
+   * `removeOld`: whether the old owner's ALL_PRIVILEGES grant should also
    * be revoked (only ever `true` when `showRemoveOld` is true and the user
    * checked the box).
    */
   onConfirm: (removeOld: boolean) => void;
 }
 
-export function StewardGrantDialog({
+export function OwnerGrantDialog({
   open,
   onOpenChange,
-  newStewardName,
-  oldStewardName,
+  newOwnerName,
+  oldOwnerName,
   objectKind,
   showRemoveOld,
   onConfirm,
-}: StewardGrantDialogProps) {
+}: OwnerGrantDialogProps) {
   const { t } = useTranslation();
   const [removeOld, setRemoveOld] = useState(false);
 
@@ -79,29 +79,29 @@ export function StewardGrantDialog({
 
   const bodyKey =
     objectKind === "rule"
-      ? "permissions.stewardGrantDialogBodyRule"
-      : "permissions.stewardGrantDialogBodyCollection";
+      ? "permissions.ownerGrantDialogBodyRule"
+      : "permissions.ownerGrantDialogBodyCollection";
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t("permissions.stewardGrantDialogTitle")}</DialogTitle>
+          <DialogTitle>{t("permissions.ownerGrantDialogTitle")}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 text-sm">
-          <p>{t(bodyKey, { name: newStewardName })}</p>
+          <p>{t(bodyKey, { name: newOwnerName })}</p>
 
-          {showRemoveOld && oldStewardName && (
+          {showRemoveOld && oldOwnerName && (
             <label className="flex items-start gap-2 cursor-pointer">
               <Checkbox
-                id="remove-old-steward-grant"
+                id="remove-old-owner-grant"
                 checked={removeOld}
                 onCheckedChange={(c) => setRemoveOld(c === true)}
                 className="mt-0.5 shrink-0"
               />
-              <Label htmlFor="remove-old-steward-grant" className="font-normal leading-snug cursor-pointer">
-                {t("permissions.stewardGrantDialogRemoveOld", { name: oldStewardName })}
+              <Label htmlFor="remove-old-owner-grant" className="font-normal leading-snug cursor-pointer">
+                {t("permissions.ownerGrantDialogRemoveOld", { name: oldOwnerName })}
               </Label>
             </label>
           )}
@@ -112,7 +112,7 @@ export function StewardGrantDialog({
             {t("common.cancel")}
           </Button>
           <Button onClick={handleConfirm}>
-            {t("permissions.stewardGrantDialogConfirm")}
+            {t("permissions.ownerGrantDialogConfirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

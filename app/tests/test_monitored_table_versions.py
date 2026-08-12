@@ -442,9 +442,7 @@ class TestSnapshotCountsMany:
             [
                 "b2",
                 "3",
-                json.dumps(
-                    {"rule_refs": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}], "check_count": 1}
-                ),
+                json.dumps({"rule_refs": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}], "check_count": 1}),
             ],
         ]
         result = service.snapshot_counts_many([("b1", 1), ("b2", 3)])

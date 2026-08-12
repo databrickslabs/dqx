@@ -253,8 +253,13 @@ class TestRulesSubmitWiring:
             table_fqn="c.s.t", checks=[], created_by="alice@x", rule_id="r1"
         )
         svc.set_status.return_value = RuleCatalogEntry(
-            table_fqn="c.s.t", checks=[], version=1, status="approved", source="ui",
-            created_by="alice@x", rule_id="r1",
+            table_fqn="c.s.t",
+            checks=[],
+            version=1,
+            status="approved",
+            source="ui",
+            created_by="alice@x",
+            rule_id="r1",
         )
         version_svc = MagicMock()
         submit_for_approval(
@@ -369,9 +374,7 @@ class TestMonitoredTableSubmitWiring:
         # both _transition_binding_checks and _rollup_binding_status, so vary
         # the return over successive calls.
         mt_svc.list_materialized_rule_statuses.side_effect = _statuses_sequence()
-        mt_svc.set_status.return_value = MonitoredTable(
-            binding_id="b1", table_fqn="cat.schema.tbl", status="approved"
-        )
+        mt_svc.set_status.return_value = MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="approved")
         rules_catalog = MagicMock()
         version_svc = MagicMock()
         version_svc.freeze_new_version.return_value = 2

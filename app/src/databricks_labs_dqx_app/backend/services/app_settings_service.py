@@ -318,13 +318,13 @@ class AppSettingsService:
     #         (``pinned_version = None``), matching today's behaviour.
     #       - ``False``: the new attachment is pinned to the rule's (or
     #         binding's) CURRENT version at attach time, so it only moves
-    #         forward when a steward explicitly re-pins/unpins it.
+    #         forward when an owner explicitly re-pins/unpins it.
     #     This mirrors dqlake's ``default_auto_upgrade`` app-setting
     #     (``backend/routers/bindings.py:_resolve_pinned_version``).
     #     It is applied ONLY when a NEW row is inserted — never on an
     #     update of an existing application/member, where an explicit
     #     ``pinned_version=None`` from the caller already means "the
-    #     steward explicitly chose to follow latest / clear the pin" and
+    #     owner explicitly chose to follow latest / clear the pin" and
     #     must be honoured as-is. See
     #     :meth:`resolve_pinned_version_for_new_attachment` and its call
     #     sites in ``ApplyRulesService.apply_rule`` / ``DataProductService.add_member``.
@@ -993,7 +993,7 @@ class AppSettingsService:
     # ------------------------------------------------------------------
     # Tag auto-apply (apply-on-tag feature) — when ON, tag-mapped rules
     # are eagerly auto-attached to tables that receive a matching UC tag,
-    # rather than only feeding them as suggestions for a steward to review.
+    # rather than only feeding them as suggestions for an owner to review.
     # Defaults to ``False`` (suggestion-only) so a fresh deploy or an unset
     # row never silently auto-applies rules; an admin must explicitly opt in.
     # Only an explicit ``"true"`` reads as on; any other value reads as off.

@@ -39,9 +39,7 @@ def _detail(
     table_fqn: str = "cat.schema.tbl",
     version: int = 2,
 ) -> MonitoredTableDetail:
-    return MonitoredTableDetail(
-        table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, version=version)
-    )
+    return MonitoredTableDetail(table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, version=version))
 
 
 @pytest.fixture
@@ -90,7 +88,9 @@ def settings_service():
 
 
 @pytest.fixture
-def service(monitored_tables, version_service, materializer, view_service, job_service, run_set_service, settings_service):
+def service(
+    monitored_tables, version_service, materializer, view_service, job_service, run_set_service, settings_service
+):
     return BindingRunService(
         monitored_tables=monitored_tables,
         version_service=version_service,
@@ -200,9 +200,7 @@ class TestSubmission:
         monitored_tables.get.return_value = _detail(version=2)
         version_service.get_checks.return_value = _CHECKS
 
-        result = service.run_binding(
-            "b1", source="approved", version=2, user_email="alice@x", run_set_id="rs-existing"
-        )
+        result = service.run_binding("b1", source="approved", version=2, user_email="alice@x", run_set_id="rs-existing")
 
         run_set_service.create.assert_not_called()
         assert result.run_set_id == "rs-existing"
@@ -281,7 +279,9 @@ class TestSubmission:
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["run_type"] == "scheduled"
 
-    def test_submit_failure_drops_the_temp_view(self, service, monitored_tables, version_service, job_service, view_service):
+    def test_submit_failure_drops_the_temp_view(
+        self, service, monitored_tables, version_service, job_service, view_service
+    ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
         job_service.submit_run.side_effect = RuntimeError("boom")
@@ -308,9 +308,7 @@ class TestSubmission:
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["sample_size"] == 0
 
-    def test_draft_uses_caller_sample_size(
-        self, service, monitored_tables, materializer, job_service
-    ):
+    def test_draft_uses_caller_sample_size(self, service, monitored_tables, materializer, job_service):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
         materializer.render_binding_checks.return_value = _CHECKS
 
@@ -321,9 +319,7 @@ class TestSubmission:
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["sample_size"] == 250
 
-    def test_draft_sample_size_zero_means_unlimited(
-        self, service, monitored_tables, materializer, job_service
-    ):
+    def test_draft_sample_size_zero_means_unlimited(self, service, monitored_tables, materializer, job_service):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
         materializer.render_binding_checks.return_value = _CHECKS
 
@@ -343,9 +339,7 @@ class TestSubmission:
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 1000
 
-    def test_approved_ignores_caller_sample_size(
-        self, service, monitored_tables, version_service, settings_service
-    ):
+    def test_approved_ignores_caller_sample_size(self, service, monitored_tables, version_service, settings_service):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
 
@@ -394,9 +388,7 @@ class TestRunProvenanceStamping:
             assert check["user_metadata"]["run_mode"] == "published"
             assert check["user_metadata"]["binding_version"] == "3"
 
-    def test_latest_approved_stamps_the_binding_version(
-        self, service, monitored_tables, version_service, job_service
-    ):
+    def test_latest_approved_stamps_the_binding_version(self, service, monitored_tables, version_service, job_service):
         monitored_tables.get.return_value = _detail(version=4)
         version_service.get_checks.return_value = _CHECKS
 
@@ -559,9 +551,7 @@ class TestFailClosedOrdering:
         run_set_service.add_member.side_effect = RuntimeError("member insert failed")
 
         with pytest.raises(RuntimeError, match="member insert failed"):
-            service.run_binding(
-                "b1", source="approved", version=2, user_email="alice@x", run_set_id="rs-existing"
-            )
+            service.run_binding("b1", source="approved", version=2, user_email="alice@x", run_set_id="rs-existing")
 
         # A caller-supplied run set (product fan-out) may already have
         # other members — it must never be deleted just because one
@@ -574,7 +564,9 @@ class TestFailClosedOrdering:
 
 
 class TestSyntheticCrossTableDispatch:
-    def test_synthetic_binding_builds_view_from_sql_query(self, service, monitored_tables, version_service, view_service):
+    def test_synthetic_binding_builds_view_from_sql_query(
+        self, service, monitored_tables, version_service, view_service
+    ):
         monitored_tables.get.return_value = _detail(table_fqn="__sql_check__/my_rule", version=2)
         checks = [
             {"check": {"function": "sql_query", "arguments": {"query": "SELECT 1"}}},
@@ -596,7 +588,9 @@ class TestSyntheticCrossTableDispatch:
 
 
 class TestCustomMetrics:
-    def test_custom_metrics_included_when_configured(self, service, monitored_tables, version_service, job_service, settings_service):
+    def test_custom_metrics_included_when_configured(
+        self, service, monitored_tables, version_service, job_service, settings_service
+    ):
         monitored_tables.get.return_value = _detail(version=2)
         version_service.get_checks.return_value = _CHECKS
         settings_service.get_custom_metrics.return_value = ["metric_a"]
@@ -606,7 +600,9 @@ class TestCustomMetrics:
         _, kwargs = job_service.submit_run.call_args
         assert kwargs["config"]["custom_metrics"] == ["metric_a"]
 
-    def test_custom_metrics_omitted_when_empty(self, service, monitored_tables, version_service, job_service, settings_service):
+    def test_custom_metrics_omitted_when_empty(
+        self, service, monitored_tables, version_service, job_service, settings_service
+    ):
         monitored_tables.get.return_value = _detail(version=2)
         version_service.get_checks.return_value = _CHECKS
         settings_service.get_custom_metrics.return_value = []

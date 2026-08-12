@@ -34,7 +34,7 @@ export type DataProductsSortKey =
   | "description"
   | "status"
   | "version"
-  | "steward"
+  | "owner"
   | "tables"
   | "rules"
   | "checks"
@@ -214,17 +214,17 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (p) => <VersionCell version={p.version ?? 0} />,
   },
-  steward: {
-    labelKey: "dataProducts.colSteward",
+  owner: {
+    labelKey: "dataProducts.colOwner",
     toggleable: true,
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
-    // A→Z through the named stewards (B2-92); un-stewarded products sort last.
+    // A→Z through the named owners (B2-92); unowned products sort last.
     renderHeader: (label) => label,
     renderCell: (p) =>
-      (p.steward_display_name || p.steward) ? (
-        <TruncatedCell text={p.steward_display_name || p.steward || ""} />
+      (p.owner_display_name || p.owner) ? (
+        <TruncatedCell text={p.owner_display_name || p.owner || ""} />
       ) : (
         <span className="text-muted-foreground">—</span>
       ),
@@ -329,8 +329,8 @@ export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProduc
       return STATUS_RANK[p.display_status] ?? Object.keys(STATUS_RANK).length;
     case "version":
       return p.version && p.version > 0 ? p.version : null;
-    case "steward":
-      return (p.steward ?? "").toLowerCase() || null;
+    case "owner":
+      return (p.owner ?? "").toLowerCase() || null;
     case "tables":
       return p.member_count ?? 0;
     case "rules":
@@ -355,7 +355,7 @@ export function getDataProductsSortConfig(key: DataProductsSortKey): SortColumnC
 
 // Column order mirrors MonitoredTablesTable's DEFAULT_ORDER convention:
 // identity → description (hidden) → count metrics → dqScore → version →
-// lastRun → steward → status → Spaces-only trailing columns (schedule).
+// lastRun → owner → status → Spaces-only trailing columns (schedule).
 // `tables` (member-table count) has no Tables analog and leads the count
 // group as the most Spaces-specific metric. `owner` has no Spaces analog
 // and is omitted. `schedule` (Spaces-only, hidden) trails at the end.
@@ -368,7 +368,7 @@ const DEFAULT_ORDER: DataProductsSortKey[] = [
   "dqScore",
   "version",
   "lastRun",
-  "steward",
+  "owner",
   "status",
   "schedule",
 ];

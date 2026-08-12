@@ -36,6 +36,7 @@ def test_core_version_fallback() -> None:
     _cached_core_version.cache_clear()
     try:
         import importlib.metadata as _im
+
         with patch.object(_im, "version", side_effect=Exception("not found")):
             result = VersionOut.from_metadata()
         assert result.core_version == "unknown"

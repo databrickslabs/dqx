@@ -160,7 +160,10 @@ app-check: ## Type-check app: tsc -b (TypeScript) + basedpyright (Python) + bun 
 	@echo "🔍 Checking TypeScript..."
 	cd app && bun run tsc -b --incremental
 	@echo "🔍 Checking Python..."
-	cd app && $(UV_RUN) basedpyright --level error
+	# basedpyright lives in the app ``dev`` dependency group — do not use
+	# root ``UV_RUN`` (``--all-extras``) here; the app has no extras and that
+	# sync would strip the dev tools from app/.venv.
+	cd app && uv run --exact --group dev basedpyright --level error
 	@$(MAKE) app-test-ui
 
 # Front-end unit tests (bun's built-in test runner — runs *.test.ts natively,

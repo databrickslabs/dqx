@@ -293,9 +293,7 @@ class TestVerifyAndRecord:
         obo_ws_mock.tables.get.assert_not_called()
         sql_executor_mock.upsert.assert_not_called()
 
-    async def test_row_filter_suppresses_and_writes_nothing(
-        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
-    ):
+    async def test_row_filter_suppresses_and_writes_nothing(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         # SELECT passes, but the table carries a row filter: the in-app
         # failed-rows path suppresses such tables, so NO entitlement — the
         # Genie view must never serve rows the app refuses to show.
@@ -306,9 +304,7 @@ class TestVerifyAndRecord:
         assert outcomes == {FQN: OUTCOME_SUPPRESSED}
         sql_executor_mock.upsert.assert_not_called()
 
-    async def test_column_mask_suppresses_and_writes_nothing(
-        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
-    ):
+    async def test_column_mask_suppresses_and_writes_nothing(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         obo_ws_mock.tables.get.return_value = TableInfo(
             row_filter=None,
             columns=[ColumnInfo(name="ssn", mask=ColumnMask(function_name="main.sales.m"))],
@@ -325,18 +321,14 @@ class TestVerifyAndRecord:
         assert outcomes == {FQN: OUTCOME_SUPPRESSED}
         sql_executor_mock.upsert.assert_not_called()
 
-    async def test_upsert_failure_reports_error_not_verified(
-        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
-    ):
+    async def test_upsert_failure_reports_error_not_verified(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         # The view stays closed when the row was not written — claiming
         # "verified" would lie to the caller.
         sql_executor_mock.upsert.side_effect = RuntimeError("merge failed")
         outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_ERROR}
 
-    async def test_invalid_fqn_is_error_and_never_probed(
-        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
-    ):
+    async def test_invalid_fqn_is_error_and_never_probed(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, ["bad name", FQN])
         assert outcomes["bad name"] == OUTCOME_ERROR
         assert outcomes[FQN] == OUTCOME_VERIFIED
@@ -351,17 +343,13 @@ class TestVerifyAndRecord:
         assert outcomes == {FQN: OUTCOME_VERIFIED}
         assert obo_sql_mock.query.call_count == 1
 
-    async def test_freshness_read_failure_degrades_to_probing(
-        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
-    ):
+    async def test_freshness_read_failure_degrades_to_probing(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         sql_executor_mock.query.side_effect = RuntimeError("warehouse down")
         outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_VERIFIED}
         obo_sql_mock.query.assert_called_once()
 
-    async def test_every_input_gets_exactly_one_outcome(
-        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
-    ):
+    async def test_every_input_gets_exactly_one_outcome(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         fqns = [f"main.sales.t{i}" for i in range(12)] + ["oops"]
         outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, fqns)
         assert set(outcomes) == set(fqns)

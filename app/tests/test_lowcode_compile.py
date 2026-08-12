@@ -42,8 +42,16 @@ class TestCompileAstToSql:
         ]
         assert compile_ast_to_sql(_ast(rows)) == "{{a}} IS NOT NULL AND {{b}} IS NULL OR {{c}} IS NOT NULL"
 
-    def test_qualified_ref_passes_through_raw(self):
-        assert compile_ast_to_sql(_ast([_row(column_ref="orders.total", operator=">", value=5)])) == "orders.total > 5"
+    def test_qualified_ref_is_backtick_quoted(self):
+        assert (
+            compile_ast_to_sql(_ast([_row(column_ref="orders.total", operator=">", value=5)])) == "`orders`.`total` > 5"
+        )
+
+    def test_injection_in_dotted_ref_is_quoted_inert(self):
+        # Spaces / SQL keywords stay inside backticks — not free SQL text.
+        sql = compile_ast_to_sql(_ast([_row(column_ref="t.x WHERE 1=1 UNION SELECT 1", operator="is not null")]))
+        assert sql == "`t`.`x WHERE 1=1 UNION SELECT 1` IS NOT NULL"
+        assert "UNION SELECT" not in sql.replace("`t`.`x WHERE 1=1 UNION SELECT 1`", "")
 
     def test_in_operator_quotes_each_literal(self):
         sql = compile_ast_to_sql(_ast([_row(column_ref="status", operator="in", value=["a", "b"])]))
@@ -57,7 +65,14 @@ class TestCompileAstToSql:
         assert compile_ast_to_sql(_ast([_row(operator="frobnicate")])) == ""
 
     def test_aggregated_row_compiles_count(self):
-        row = {"kind": "aggregated", "combinator": None, "aggregate": "count", "column_ref": "id", "operator": "<=", "value": 5}
+        row = {
+            "kind": "aggregated",
+            "combinator": None,
+            "aggregate": "count",
+            "column_ref": "id",
+            "operator": "<=",
+            "value": 5,
+        }
         assert compile_ast_to_sql(_ast([row])) == "COUNT({{id}}) <= 5"
 
 
@@ -70,9 +85,9 @@ class TestColumnRefValue:
         sql = compile_ast_to_sql(_ast([_row(column_ref="a", operator="<", value={"$col": "b"})]))
         assert sql == "{{a}} < {{b}}"
 
-    def test_qualified_rhs_column_passes_through_raw(self):
+    def test_qualified_rhs_column_is_backtick_quoted(self):
         sql = compile_ast_to_sql(_ast([_row(column_ref="a", operator="=", value={"$col": "orders.total"})]))
-        assert sql == "{{a}} = orders.total"
+        assert sql == "{{a}} = `orders`.`total`"
 
     def test_between_bounds_may_be_column_refs(self):
         sql = compile_ast_to_sql(
@@ -91,7 +106,7 @@ class TestColumnRefValue:
 
 
 class TestExpandedOperatorCatalog:
-    """The DQ-steward operator additions must compile identically to the
+    """The DQ-owner operator additions must compile identically to the
     frontend (``ui/lib/lowcodeCompile.ts``) so an AI-proposed rule using one
     round-trips through the visual builder unchanged."""
 
@@ -127,6 +142,17 @@ class TestExpandedOperatorCatalog:
     )
     def test_operator_compiles_to_expected_sql(self, operator, value, expected):
         assert compile_ast_to_sql(_ast([_row(column_ref="c", operator=operator, value=value)])) == expected
+
+    def test_contains_percent_is_literal_not_like_wildcard(self):
+        """``%`` / ``_`` must not become LIKE wildcards (PR review)."""
+        assert (
+            compile_ast_to_sql(_ast([_row(column_ref="c", operator="contains", value="100%")]))
+            == "contains({{c}}, '100%')"
+        )
+        assert (
+            compile_ast_to_sql(_ast([_row(column_ref="c", operator="starts with", value="a_b")]))
+            == "startswith({{c}}, 'a_b')"
+        )
 
     def test_uuid_and_ipv4_regexes(self):
         assert compile_ast_to_sql(_ast([_row(column_ref="c", operator="is a valid uuid")])) == (
@@ -167,7 +193,14 @@ class TestCompileLowcodeBody:
         assert body.merge_columns is None
 
     def test_group_by_folds_into_sql_query(self):
-        row = {"kind": "aggregated", "combinator": None, "aggregate": "count", "column_ref": "order_id", "operator": "<=", "value": 100}
+        row = {
+            "kind": "aggregated",
+            "combinator": None,
+            "aggregate": "count",
+            "column_ref": "order_id",
+            "operator": "<=",
+            "value": 100,
+        }
         body = compile_lowcode_body(_ast([row]), "{{customer_id}}")
         assert body.predicate is None
         assert body.merge_columns == ["{{customer_id}}"]
@@ -191,7 +224,7 @@ class TestCompileLowcodeBody:
         assert body.merge_columns == ["{{dim_id}}"]
         assert body.sql_query is not None
         # ON own-side qualified to the input view (query text; unambiguous under join).
-        assert "LEFT JOIN cat.sch.dim ON cat.sch.dim.id = {{input_view}}.{{dim_id}}" in body.sql_query
+        assert "LEFT JOIN `cat`.`sch`.`dim` ON `cat`.`sch`.`dim`.`id` = {{input_view}}.{{dim_id}}" in body.sql_query
         # SELECT projects the qualified source aliased back to the bare merge name.
         assert "SELECT {{input_view}}.{{dim_id}} AS {{dim_id}}," in body.sql_query
 
@@ -224,24 +257,41 @@ class TestJoinColumnQualification:
         assert body.sql_query is not None
         # predicate own column qualified to the input view
         assert "NOT ({{input_view}}.{{customer_id}} > 0)" in body.sql_query
-        # ON own-side qualified; joined side raw
-        assert (
-            "ON dqx.dqx_studio_demo.customers.customer_id = {{input_view}}.{{customer_id}}" in body.sql_query
-        )
+        # ON own-side qualified; joined side identifier-quoted
+        assert "ON `dqx`.`dqx_studio_demo`.`customers`.`customer_id` = {{input_view}}.{{customer_id}}" in body.sql_query
         # SELECT projects qualified source aliased back to bare merge name
         assert "SELECT {{input_view}}.{{customer_id}} AS {{customer_id}}," in body.sql_query
         # merge_columns BARE
         assert body.merge_columns == ["{{customer_id}}"]
 
-    def test_join_joined_table_column_stays_raw(self):
+    def test_join_joined_table_column_is_backtick_quoted(self):
         body = compile_lowcode_body(
             _ast([_row(column_ref="dqx.dqx_studio_demo.customers.tier", operator="=", value="gold")], self._JOIN),
             "",
         )
         assert body.sql_query is not None
-        assert "dqx.dqx_studio_demo.customers.tier" in body.sql_query
+        assert "`dqx`.`dqx_studio_demo`.`customers`.`tier`" in body.sql_query
         # never double-qualify a dotted column
         assert "{{input_view}}.dqx.dqx_studio_demo.customers.tier" not in body.sql_query
+        assert "{{input_view}}.`dqx`" not in body.sql_query
+
+    def test_join_target_injection_is_quoted_inert(self):
+        joins = [
+            {
+                "join_type": "LEFT",
+                "target_table": "evil WHERE 1=1 UNION SELECT secret FROM other",
+                "keys": [{"joined_column": "id", "column_ref": "dim_id"}],
+            }
+        ]
+        body = compile_lowcode_body(_ast([_row(column_ref="dim_id", operator="is not null")], joins), "")
+        assert body.sql_query is not None
+        assert (
+            "LEFT JOIN `evil WHERE 1=1 UNION SELECT secret FROM other` ON "
+            "`evil WHERE 1=1 UNION SELECT secret FROM other`.`id` = {{input_view}}.{{dim_id}}" in body.sql_query
+        )
+        # The smuggled SQL must not appear outside the backtick-quoted identifier.
+        bare = body.sql_query.replace("`evil WHERE 1=1 UNION SELECT secret FROM other`", "")
+        assert "UNION SELECT" not in bare
 
     def test_col_ref_value_qualified_under_join(self):
         # item 42: a $col value on the RHS is an own column too -> qualified under a join.

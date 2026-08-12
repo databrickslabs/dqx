@@ -57,9 +57,7 @@ class TestSaveRulesRegistrySettings:
     def test_saves_default_auto_upgrade_independently(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
 
-        result = save_rules_registry_settings(
-            RulesRegistrySettingsIn(default_auto_upgrade=False), svc, "admin@x"
-        )
+        result = save_rules_registry_settings(RulesRegistrySettingsIn(default_auto_upgrade=False), svc, "admin@x")
 
         assert result.default_auto_upgrade is False
         assert result.auto_upgrade_without_approval is False
@@ -91,9 +89,7 @@ class TestSaveRulesRegistrySettings:
 
     def test_saves_tag_auto_apply_independently(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
-        result = save_rules_registry_settings(
-            RulesRegistrySettingsIn(tag_auto_apply=True), svc, "admin@x"
-        )
+        result = save_rules_registry_settings(RulesRegistrySettingsIn(tag_auto_apply=True), svc, "admin@x")
         assert result.tag_auto_apply is True
         assert result.auto_upgrade_without_approval is False
         assert result.default_auto_upgrade is True
@@ -113,27 +109,19 @@ class TestRulesRegistrySettingsThresholdFields:
 
     def test_put_pass_threshold_enabled_false_persists(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
-        result = save_rules_registry_settings(
-            RulesRegistrySettingsIn(pass_threshold_enabled=False), svc, "admin@x"
-        )
+        result = save_rules_registry_settings(RulesRegistrySettingsIn(pass_threshold_enabled=False), svc, "admin@x")
         assert result.pass_threshold_enabled is False
 
     def test_put_default_pass_threshold_persists_via_rules_registry(self, svc, sql_executor_mock):
         _wire_stateful_store(sql_executor_mock)
-        result = save_rules_registry_settings(
-            RulesRegistrySettingsIn(default_pass_threshold=85), svc, "admin@x"
-        )
+        result = save_rules_registry_settings(RulesRegistrySettingsIn(default_pass_threshold=85), svc, "admin@x")
         assert result.default_pass_threshold == 85
 
-    def test_put_default_pass_threshold_also_readable_via_standalone_endpoint(
-        self, svc, sql_executor_mock
-    ):
+    def test_put_default_pass_threshold_also_readable_via_standalone_endpoint(self, svc, sql_executor_mock):
         from databricks_labs_dqx_app.backend.routes.v1.config import get_default_pass_threshold
 
         _wire_stateful_store(sql_executor_mock)
-        save_rules_registry_settings(
-            RulesRegistrySettingsIn(default_pass_threshold=85), svc, "admin@x"
-        )
+        save_rules_registry_settings(RulesRegistrySettingsIn(default_pass_threshold=85), svc, "admin@x")
         out = get_default_pass_threshold(svc)
         assert out.default_pass_threshold == 85
 

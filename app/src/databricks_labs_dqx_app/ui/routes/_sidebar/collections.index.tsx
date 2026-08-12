@@ -131,33 +131,33 @@ function DataProductsPage() {
   const { data, isLoading, isError, refetch } = useListDataProducts();
   const products = useMemo(() => data?.data ?? [], [data]);
 
-  const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
   const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
 
-  const stewardOptions = useMemo(
-    () => Array.from(new Set(products.map((p) => p.steward).filter((s): s is string => !!s))).sort(),
+  const ownerOptions = useMemo(
+    () => Array.from(new Set(products.map((p) => p.owner).filter((s): s is string => !!s))).sort(),
     [products],
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return products.filter((p) => {
-      if (stewardFilter !== ALL && (p.steward ?? "") !== stewardFilter) return false;
+      if (ownerFilter !== ALL && (p.owner ?? "") !== ownerFilter) return false;
       if (!matchesDqScoreBucket(p.score, scoreFilter)) return false;
       if (!q) return true;
-      const hay = `${p.name} ${p.description ?? ""} ${p.steward ?? ""}`.toLowerCase();
+      const hay = `${p.name} ${p.description ?? ""} ${p.owner ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [products, stewardFilter, scoreFilter, search]);
+  }, [products, ownerFilter, scoreFilter, search]);
 
   const [sortKey, setSortKey] = useState<DataProductsSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const handleHeaderClick = useCallback(
     (key: DataProductsSortKey) => {
-      // First click uses the column's steward-first default direction (B2-92);
+      // First click uses the column's owner-first default direction (B2-92);
       // repeat clicks toggle to the opposite direction, then clear.
       const { dir } = getDataProductsSortConfig(key);
       if (sortKey !== key) {
@@ -194,7 +194,7 @@ function DataProductsPage() {
     return sorted.slice(start, start + PAGE_SIZE);
   }, [sorted, page]);
 
-  const hasActiveFilters = stewardFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || search.trim() !== "";
+  const hasActiveFilters = ownerFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || search.trim() !== "";
 
   const applyFilter = useCallback(
     <T,>(setter: (v: T) => void) =>
@@ -676,14 +676,14 @@ function DataProductsPage() {
                 />
               </div>
               <SearchableSelect
-                value={stewardFilter}
-                onChange={applyFilter(setStewardFilter)}
-                options={stewardOptions.map((s) => ({ value: s, label: s }))}
+                value={ownerFilter}
+                onChange={applyFilter(setOwnerFilter)}
+                options={ownerOptions.map((s) => ({ value: s, label: s }))}
                 allValue={ALL}
                 allLabel={t("dataProducts.allOwners")}
                 searchPlaceholder={t("common.search")}
                 emptyText={t("common.noMatches")}
-                ariaLabel={t("dataProducts.colSteward")}
+                ariaLabel={t("dataProducts.colOwner")}
               />
               <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
                 <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>

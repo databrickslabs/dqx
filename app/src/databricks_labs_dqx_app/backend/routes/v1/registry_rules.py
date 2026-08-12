@@ -45,7 +45,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
-from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
@@ -66,6 +66,21 @@ _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTH
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 
+def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
+    """Read the configured label vocabulary, degrading to ``[]`` on any failure.
+
+    Best-effort by design: canonicalizing imported tag values is a nicety, so a
+    settings read that fails (or a mocked service returning a non-list) must
+    never fail an import — the values are then persisted verbatim.
+    """
+    try:
+        definitions = app_settings.get_label_definitions()
+    except Exception as e:
+        logger.warning("Could not read label_definitions; importing tag values verbatim: %s", e)
+        return []
+    return definitions if isinstance(definitions, list) else []
+
+
 # ------------------------------------------------------------------
 # List / Get
 # ------------------------------------------------------------------
@@ -82,12 +97,12 @@ def list_registry_rules(
     status: Annotated[str | None, Query(description="Filter by status")] = None,
     dimension: Annotated[str | None, Query(description="Filter by the 'dimension' tag")] = None,
     severity: Annotated[str | None, Query(description="Filter by the 'severity' tag")] = None,
-    steward: Annotated[str | None, Query(description="Filter by steward")] = None,
+    owner: Annotated[str | None, Query(description="Filter by owner")] = None,
     tag: Annotated[str | None, Query(description="Filter by presence of a free-text tag key")] = None,
 ) -> list[RegistryRuleOut]:
     """List Rules Registry entries, optionally filtered."""
     try:
-        rules = svc.list_rules(status=status, dimension=dimension, severity=severity, steward=steward, tag=tag)
+        rules = svc.list_rules(status=status, dimension=dimension, severity=severity, owner=owner, tag=tag)
         return [RegistryRuleOut.from_domain(r) for r in rules]
     except Exception as e:
         logger.error(f"Failed to list registry rules: {e}", exc_info=True)
@@ -159,7 +174,7 @@ def create_registry_rule(
     """Create a new draft registry rule.
 
     By default, a published rule that shares this rule's structural fingerprint
-    blocks creation (HTTP 409) so the UI can ask the steward to confirm. Pass
+    blocks creation (HTTP 409) so the UI can ask the owner to confirm. Pass
     ``allow_duplicate=true`` after confirmation (or for non-interactive callers).
     When a duplicate is allowed, ``dedup_warning`` still carries the advisory text.
     """
@@ -171,8 +186,8 @@ def create_registry_rule(
             polarity=body.polarity,
             author_kind=body.author_kind,
             user_metadata=body.user_metadata,
-            steward=body.steward,
-            steward_display_name=body.steward_display_name,
+            owner=body.owner,
+            owner_display_name=body.owner_display_name,
             allow_duplicate=body.allow_duplicate,
         )
         return CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
@@ -203,6 +218,7 @@ def batch_import_registry_rules(
     body: BatchImportRegistryRulesIn,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     user_email: CurrentUser,
     role: CurrentUserRole,
 ) -> BatchImportRegistryRulesOut:
@@ -217,6 +233,10 @@ def batch_import_registry_rules(
     work) to keep a single request from monopolising a worker / connection.
     Per-rule failures are collected (partial success) rather than aborting
     the batch.
+
+    Imported ``dimension``/``severity`` tags are folded onto the configured
+    label vocabulary first (an ODCS contract spells them lowercase), so they
+    match the values the rest of the app filters and colours by.
     """
     # auto_approve publishes each imported rule outright; only approver-level
     # roles may bypass the queue. A non-approver asking for it is a client bug
@@ -224,6 +244,10 @@ def batch_import_registry_rules(
     # than silently downgrading to a draft.
     if body.auto_approve and role not in _APPROVERS_ONLY:
         raise HTTPException(status_code=403, detail="auto_approve requires an approver role")
+
+    # Resolved once per batch: every rule is canonicalized against the same
+    # vocabulary, and the settings read is a DB round-trip.
+    label_definitions = _read_label_definitions(app_settings)
 
     created: list[CreateRegistryRuleOut] = []
     reused: list[CreateRegistryRuleOut] = []
@@ -260,9 +284,9 @@ def batch_import_registry_rules(
                 user_email=user_email,
                 polarity=rule_in.polarity,
                 author_kind=rule_in.author_kind,
-                user_metadata=rule_in.user_metadata,
-                steward=rule_in.steward,
-                steward_display_name=rule_in.steward_display_name,
+                user_metadata=canonicalize_reserved_label_values(rule_in.user_metadata, label_definitions),
+                owner=rule_in.owner,
+                owner_display_name=rule_in.owner_display_name,
                 source=body.source,
                 # Batch import already has skip_duplicates for reuse; when that
                 # is off, keep the historical soft-warn create behaviour rather
@@ -372,8 +396,8 @@ def update_registry_rule(
             definition=body.definition,
             polarity=body.polarity,
             user_metadata=body.user_metadata,
-            steward=body.steward,
-            steward_display_name=body.steward_display_name,
+            owner=body.owner,
+            owner_display_name=body.owner_display_name,
             author_kind=body.author_kind,
         )
         return RegistryRuleOut.from_domain(rule)

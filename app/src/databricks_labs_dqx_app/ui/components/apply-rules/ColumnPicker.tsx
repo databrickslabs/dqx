@@ -163,7 +163,7 @@ interface SingleColumnPickerProps {
   excludeColumns?: string[];
   /** Auto-open the popover on mount — mirrors dqlake's auto-open of a
    *  freshly added mapping-group placeholder chip right after
-   *  "+ Apply to another column" is clicked, so the steward doesn't need an
+   *  "+ Apply to another column" is clicked, so the owner doesn't need an
    *  extra click on the newly revealed slot. */
   autoOpen?: boolean;
 }
