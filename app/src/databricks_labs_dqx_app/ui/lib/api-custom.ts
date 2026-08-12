@@ -1537,10 +1537,13 @@ export const exportMonitoredTable = (
   format: ExportFormat,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
+  // Cast: axios ≥1.19 types `AxiosRequestConfig<D, P>` and rejects spreading
+  // an untyped `options` with a narrower `params` object (paramsSerializer
+  // variance). The cast keeps this compatible with both 1.18 and 1.19.
   axios.default.get(`/api/v1/export/monitored-tables/${encodeURIComponent(bindingId)}`, {
     ...options,
     params: { format },
-  });
+  } as AxiosRequestConfig);
 
 export const exportDataProducts = (
   params?: DataProductExportParams,
@@ -1556,7 +1559,7 @@ export const exportDataProduct = (
   axios.default.get(`/api/v1/export/data-products/${encodeURIComponent(productId)}`, {
     ...options,
     params: { format },
-  });
+  } as AxiosRequestConfig);
 
 /** Trigger a browser download of an ExportOut's YAML content. */
 export const downloadExportFile = (out: ExportOut): void => {

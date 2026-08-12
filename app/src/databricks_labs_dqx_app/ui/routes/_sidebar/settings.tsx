@@ -81,6 +81,7 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectLabel,
   SelectTrigger,
@@ -1577,7 +1578,7 @@ function WarehouseSelect({
           {t("config.computeWarehouseDefault")}
         </SelectItem>
         {serverless.length > 0 && (
-          <>
+          <SelectGroup>
             <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pt-1">
               {t("config.computeWarehouseServerlessGroup")}
             </SelectLabel>
@@ -1592,10 +1593,10 @@ function WarehouseSelect({
                 </span>
               </SelectItem>
             ))}
-          </>
+          </SelectGroup>
         )}
         {classic.length > 0 && (
-          <>
+          <SelectGroup>
             <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pt-1">
               {t("config.computeWarehouseClassicGroup")}
             </SelectLabel>
@@ -1610,10 +1611,12 @@ function WarehouseSelect({
                 </span>
               </SelectItem>
             ))}
-          </>
+          </SelectGroup>
         )}
         {serverless.length === 0 && classic.length === 0 && warehouses.length === 0 && (
-          <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
+          <SelectGroup>
+            <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
+          </SelectGroup>
         )}
       </SelectContent>
     </Select>
@@ -1661,9 +1664,11 @@ function ClusterSelect({
           {t("config.computeClusterNone")}
         </SelectItem>
         {options.length === 0 && (
-          <SelectLabel className="font-normal">
-            {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
-          </SelectLabel>
+          <SelectGroup>
+            <SelectLabel className="font-normal">
+              {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
+            </SelectLabel>
+          </SelectGroup>
         )}
         {options.map((c) => (
           <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs">
@@ -1719,7 +1724,9 @@ function ServingEndpointSelect({
       </SelectTrigger>
       <SelectContent>
         {options.length === 0 && (
-          <SelectLabel className="font-normal">{t("config.aiSettingsNoEndpointsFound")}</SelectLabel>
+          <SelectGroup>
+            <SelectLabel className="font-normal">{t("config.aiSettingsNoEndpointsFound")}</SelectLabel>
+          </SelectGroup>
         )}
         {options.map((name) => {
           const isCustom = !endpoints.includes(name);
