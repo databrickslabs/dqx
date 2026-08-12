@@ -170,7 +170,7 @@ def test_apply_checks_and_split_has_no_sequence_gaps(ws, spark):
                 [
                     build_quality_violation(
                         "invoice_no_has_no_sequence_gaps",
-                        "Gap in sequence: no data between the value at 1001.0 " "and the next present value at 1003.0",
+                        "Gap in sequence: no data between the value at 1001.0 and the next present value at 1003.0",
                         ["invoice_no"],
                         function="has_no_sequence_gaps",
                     ),
