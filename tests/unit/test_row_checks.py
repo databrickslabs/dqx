@@ -1,7 +1,10 @@
+import re
 from typing import cast
 import pytest
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
+    DQPattern,
+    _pattern_for_python_re,
     is_equal_to,
     is_not_equal_to,
     is_in_range,
@@ -195,6 +198,37 @@ def test_is_valid_national_id_explicit_us_auto_name():
 def test_is_valid_national_id_country_is_case_insensitive():
     result = is_valid_national_id("a", country="us")
     assert get_column_name_or_alias(result) == "a_does_not_match_pattern_ssn_us"
+
+
+def test_is_valid_national_id_supports_uk_nino():
+    result = is_valid_national_id("a", country="GB")
+    assert get_column_name_or_alias(result) == "a_does_not_match_pattern_nino_gb"
+
+
+def test_is_valid_national_id_supports_indian_pan():
+    result = is_valid_national_id("a", country="IN")
+    assert get_column_name_or_alias(result) == "a_does_not_match_pattern_pan_in"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["AB123456A", "AB 12 34 56 A", "BX586745C"],
+)
+def test_nino_pattern_accepts_valid_formats(value):
+    assert re.fullmatch(_pattern_for_python_re(DQPattern.NINO_GB), value)
+
+
+@pytest.mark.parametrize("value", ["DF123456A", "BG123456A", "AB123456E"])
+def test_nino_pattern_rejects_invalid_prefixes_and_suffixes(value):
+    assert not re.fullmatch(_pattern_for_python_re(DQPattern.NINO_GB), value)
+
+
+def test_pan_pattern_accepts_ten_character_format():
+    assert re.fullmatch(_pattern_for_python_re(DQPattern.PAN_IN), "ABCDE1234F")
+
+
+def test_pan_pattern_rejects_wrong_character_positions():
+    assert not re.fullmatch(_pattern_for_python_re(DQPattern.PAN_IN), "AB12E1234F")
 
 
 def test_is_valid_national_id_missing_country():
