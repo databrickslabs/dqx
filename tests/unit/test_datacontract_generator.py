@@ -576,7 +576,7 @@ class DataContractGeneratorTestBase:
                     'function': 'is_in_list',
                     'arguments': {
                         'column': 'sensor_status',
-                        'allowed': ['active', 'inactive', 'maintenance', 'faulty'],
+                        'allowed': ["'active'", "'inactive'", "'maintenance'", "'faulty'"],
                     },
                 },
                 'name': 'sensor_status_valid_values',

@@ -17,8 +17,6 @@ Files API (no SQL warehouse needed). On failure the entry point raises, so the j
 becomes FAILED and the app surfaces the error from the run output.
 """
 
-from __future__ import annotations
-
 import argparse
 import datetime
 import io

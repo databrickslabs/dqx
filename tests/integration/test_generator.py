@@ -62,7 +62,7 @@ def test_generate_dq_rules(ws, spark):
         {
             "check": {
                 "function": "is_in_list",
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},
+                "arguments": {"column": "vendor_id", "allowed": ["'1'", "'4'", "'2'"]},
             },
             "name": "vendor_id_other_value",
             "criticality": "error",
@@ -139,7 +139,7 @@ def test_generate_dq_rules_warn(ws, spark):
         {
             "check": {
                 "function": "is_in_list",
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},
+                "arguments": {"column": "vendor_id", "allowed": ["'1'", "'4'", "'2'"]},
             },
             "name": "vendor_id_other_value",
             "criticality": "warn",
@@ -283,7 +283,7 @@ def test_generate_dq_rules_dataframe_filter(ws, spark):
             "criticality": "error",
         },
         {
-            "check": {"function": "is_in_list", "arguments": {"allowed": ["1", "4", "2"], "column": "vendor_id"}},
+            "check": {"function": "is_in_list", "arguments": {"allowed": ["'1'", "'4'", "'2'"], "column": "vendor_id"}},
             "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             "criticality": "error",
             "name": "vendor_id_other_value",
@@ -356,7 +356,7 @@ def test_generate_dq_rules_dataframe_filter_none(ws, spark):
             "criticality": "error",
         },
         {
-            "check": {"function": "is_in_list", "arguments": {"allowed": ["1", "4", "2"], "column": "vendor_id"}},
+            "check": {"function": "is_in_list", "arguments": {"allowed": ["'1'", "'4'", "'2'"], "column": "vendor_id"}},
             "criticality": "error",
             "name": "vendor_id_other_value",
         },

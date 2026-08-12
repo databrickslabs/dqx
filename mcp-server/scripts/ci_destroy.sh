@@ -3,7 +3,13 @@
 set -uo pipefail
 
 NAME_PREFIX="${NAME_PREFIX:-mcp-dqx-ci}"
-BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
+# Must mirror ci_deploy.sh's target selection: each bundle target has its own state root, so a
+# deploy made under dev-coverage (DQX_MCP_COVERAGE_DIR set) must be destroyed under it too.
+if [ -n "${DQX_MCP_COVERAGE_DIR:-}" ]; then
+  BUNDLE_TARGET="${BUNDLE_TARGET:-dev-coverage}"
+else
+  BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
+fi
 PROFILE_ARG=()
 [ -n "${DATABRICKS_PROFILE:-}" ] && PROFILE_ARG=(--profile "$DATABRICKS_PROFILE")
 

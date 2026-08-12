@@ -7,6 +7,7 @@ import {
   AppWindow, Code, Sparkles, BarChart2, ShieldCheck, LineChart, ScrollText,
   Boxes, Store, ArrowRight, Library,
   Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar, Calculator,
+  Bell, BotMessageSquare,
 } from 'lucide-react';
 
 const Hero = (): JSX.Element => {
@@ -87,6 +88,8 @@ const coreFeatures = [
   { title: 'Validation summary & dashboard', description: 'Track and pinpoint data quality issues over time.', icon: PieChart },
   { title: 'Row anomaly detection', description: 'Detect unusual rows with trained ML models and explanations.', icon: Radar },
   { title: 'Data contracts', description: 'Generate quality rules from ODCS contracts, including schema validation.', icon: ScrollText },
+  { title: 'MCP for AI coding agents', description: 'Expose DQX tools to Genie Code, Cursor, and Claude Code over MCP.', icon: BotMessageSquare },
+  { title: 'Actions and alerting', description: 'Send Slack, Teams, or webhook alerts, or fail the pipeline, when summary metrics cross a threshold.', icon: Bell },
 ];
 
 const studioFeatures = [

@@ -1,11 +1,11 @@
 ---
-sidebar_position: 315
+sidebar_position: 316
 title: DQX MCP Server
-sidebar_label: DQX MCP Server
 ---
 
 import Admonition from '@theme/Admonition';
 import { AvailableSinceVersion, FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
+import walkthroughVideo from '@site/src/media/mcp-genie-setup-walkthrough.mp4';
 
 # DQX MCP Server {#dqx-mcp-server}
 
@@ -43,9 +43,9 @@ Once it's deployed, the rest of this guide covers configuration, connecting a cl
 ## Quickstart Usage
 
 1. **[Connect an MCP client](#connect-an-mcp-client)** 
-  - **Genie Code:** once the DQX MCP Server is shared with you (you're in its `users_group`), enable it from **Settings → MCP Servers** — no URL needed. 
+  - **Genie Code:** once the DQX MCP Server is shared with you (you're in its `users_group`), add it from **Customizations → MCP servers → Add Server** — no URL needed. 
   - **Cursor / Claude Code:** add a remote MCP server with the URL `https://<app-url>/mcp`.
-2. **Enable the DQX tools** in your client, and re-run **Refresh tools list** after each server upgrade.
+2. **Enable the DQX tools** in your client, and refresh its tools list after each server upgrade.
 3. **Ask in plain English**, e.g. *"Profile `<catalog>.<schema>.<table>` and tell me which rows fail data quality checks."* (see [Example prompts](#example-prompts))
 
 ## Connect an MCP client
@@ -58,31 +58,60 @@ The Databricks Apps front-door authenticates the caller with **OAuth** and forwa
 
 ### Genie Code (recommended)
 
-Genie Code runs inside your Databricks workspace and authenticates to the app automatically. Because the DQX server is a Databricks App, you don't need its URL — once the app is **shared with you** (your account is in its `users_group`; the deploy grants `CAN_USE` to that group, default `account users`), you discover and enable it from **Settings → MCP Servers** in Genie Code. See the Databricks guide [Add MCP servers to Genie Code](https://docs.databricks.com/aws/en/genie-code/mcp) for the exact steps.
+Genie Code runs inside your Databricks workspace and authenticates to the app automatically. Because the DQX server is a Databricks App, you don't need its URL — once the app is **shared with you** (your account is in its `users_group`; the deploy grants `CAN_USE` to that group, default `account users`), you add it from **Customizations → MCP servers** in Genie Code. See the Databricks guide [Add MCP servers to Genie Code](https://docs.databricks.com/aws/en/genie-code/mcp) for the exact steps.
 
-Once the MCP server is installed, you can enable DQX tools. Select the DQX server in **Settings → MCP Servers**.
+To add it:
 
-![Genie Code Settings showing the deployed DQX MCP server with its tools enabled](/img/mcp-genie-settings.png)
+1. Open **Customizations** in Genie Code and select **MCP servers**.
+2. Click **Add Server**. The **Add MCP Servers** panel lists several server types — the DQX server is a Databricks App, so use the **Databricks App** section's **Select an MCP server...** picker (not *UC MCP Service*, *Unity Catalog Function*, or *UC Connection*, which are for other server kinds).
+3. Search for your deployment by name (the default is `mcp-dqx`; a custom `name_prefix` changes it). The picker shows each server's creator and description, so you can confirm you have the right one.
+4. **Save**. The server then appears under **MCP servers** with a toggle and a tool count, e.g. *12 / 12 tools enabled*.
 
-You can enable or disable individual tools. After the server is upgraded to a new version, use **Refresh tools list** so the client picks up any added or changed tools.
+#### Video walkthrough
 
-![The DQX MCP server's available tools in Genie Code, with per-tool toggles and the Refresh tools list button](/img/mcp-genie-tools.png)
+The full setup, from enabling the server in Genie Code to running checks on a table. The video is
+narrated, so turn sound on:
 
-#### Approving tool actions
+{/* Not `muted`: the walkthrough has narration, and a muted video would silently drop it. Playback is
+    user-initiated (no autoplay), so browser autoplay policies do not require muting here. */}
+<video controls playsInline preload="metadata" width="100%" style={{borderRadius: '8px', border: '1px solid var(--ifm-color-emphasis-300)'}}>
+  <source src={walkthroughVideo} type="video/mp4" />
+  Your browser does not support embedded video — <a href={walkthroughVideo}>download the walkthrough</a> instead.
+</video>
 
-The **Actions** setting sets the approval mode for new conversations (you can also override it per conversation). With **Ask first**, you approve each tool before it runs; with **Auto-approve**, tools run automatically (Databricks blocks potentially risky actions). The DQX workflow polls `get_run_result` repeatedly while jobs run, so **Auto-approve** avoids repeated approval prompts for those status checks. See the Databricks guide [Approve tool actions](https://docs.databricks.com/aws/en/genie-code/use-genie-code#approve-tool-actions).
+The video covers the same ground as the screenshots below, so you only need one or the other.
+
+<details>
+<summary>Prefer screenshots? Step-by-step with images</summary>
+
+Open **Customizations → MCP servers** and click **Add Server**.
+
+![Genie Code Customizations showing the MCP servers list with the deployed DQX server enabled and an Add Server button](/img/mcp-genie-settings.png)
+
+In the **Add MCP Servers** panel, use the **Databricks App** picker and search for your deployment by name — the list shows each server's creator and description. Then **Save**.
+
+![The Add MCP Servers panel with the Databricks App picker open, showing the DQX MCP server in the searchable list](/img/mcp-genie-tools.png)
+
+The server now appears under **MCP servers** with a toggle and its tool count. You can enable or disable individual tools from its **⋮** menu; after the server is upgraded to a new version, refresh the tools list so the client picks up any added or changed tools.
+
+**Approving tool actions.** The **Actions** setting sets the approval mode for new conversations (you can also override it per conversation). With **Ask first**, you approve each tool before it runs; with **Auto-approve**, tools run automatically (Databricks blocks potentially risky actions). The DQX workflow polls `get_run_result` repeatedly while jobs run, so **Auto-approve** avoids repeated approval prompts for those status checks. See the Databricks guide [Approve tool actions](https://docs.databricks.com/aws/en/genie-code/use-genie-code#approve-tool-actions).
 
 ![A Genie Code conversation calling a DQX tool, showing the per-conversation approval control](/img/mcp-genie-auto-approve.png)
 
-#### Repeated `get_run_result` calls are expected
-
-Most DQX tools run asynchronously: a tool returns a `run_id`, and the client calls `get_run_result` until the run is complete. It is normal to see several `get_run_result` calls for a single operation while the job runs.
+**Repeated `get_run_result` calls are expected.** Most DQX tools run asynchronously: a tool returns a `run_id`, and the client calls `get_run_result` until the run is complete. It is normal to see several `get_run_result` calls for a single operation while the job runs.
 
 ![A Genie Code conversation showing repeated get_run_result calls while a job completes](/img/mcp-genie-polling.png)
 
 Once the run completes, these steps collapse into a single summary badge with the result:
 
 ![The completed conversation with the tool-call steps collapsed into a summary badge](/img/mcp-genie-steps-collapsed.png)
+
+</details>
+
+Two things worth knowing whichever you follow:
+
+- **Approval mode.** The **Actions** setting controls whether each tool call needs approval. DQX polls `get_run_result` repeatedly while a job runs, so **Auto-approve** avoids a prompt per status check.
+- **Repeated `get_run_result` calls are normal.** Tools return a `run_id` and the client polls until the run finishes; several calls for one operation is expected, not a fault.
 
 ### Cursor
 

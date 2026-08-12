@@ -15,6 +15,8 @@ from databricks.labs.dqx.config import (
     LLMModelConfig,
     LLMConfig,
     ExtraParams,
+    TABLE_PATTERN,
+    UC_TABLE_PATTERN,
 )
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
@@ -646,3 +648,47 @@ def test_storage_config_rejects_unknown_kwarg():
     """
     with pytest.raises(InvalidConfigError):
         FileChecksStorageConfig(location="/x/checks.yml", typo_field="oops")  # type: ignore[call-arg]
+
+
+# (location, matches_table_pattern, matches_uc_table_pattern) — one row per case so the two
+# patterns are pinned against the same inputs and their difference (the optional vs required
+# catalog part) stays visible.
+_TABLE_IDENTIFIER_CASES = [
+    # Three-level names: both patterns match.
+    ("catalog.schema.table", True, True),
+    ("cat_1.sch_2.tbl_3", True, True),
+    ("`my-catalog`.schema.table", True, True),  # backtick-quoted catalog with special chars
+    ("catalog.`my-schema`.`my-table`", True, True),
+    ("`my-catalog`.`my-schema`.`my-table`", True, True),
+    ("`weird.name`.schema.table", True, True),  # dot inside a backtick-quoted identifier
+    ("1abc.2def.3ghi", True, True),  # leading digits allowed in unquoted identifiers
+    # Two-level names: TABLE_PATTERN matches (catalog optional), UC_TABLE_PATTERN rejects (catalog required).
+    ("schema.table", True, False),
+    ("`my-schema`.table", True, False),
+    ("default.users", True, False),
+    # Non-table locations: neither matches.
+    ("users", False, False),  # bare name / temporary view
+    ("temp_from_dataframe_1_abcdef", False, False),
+    ("catalog.schema.table.extra", False, False),  # four-level name
+    ("`bad`catalog.schema.table", False, False),  # backticks not spanning the whole segment
+    ("/Volumes/main/default/data", False, False),  # storage path
+    ("s3://bucket/path", False, False),  # storage path
+    ("", False, False),
+]
+
+
+@pytest.mark.parametrize("location, matches_table, _matches_uc", _TABLE_IDENTIFIER_CASES)
+def test_table_pattern(location: str, matches_table: bool, _matches_uc: bool):
+    assert bool(TABLE_PATTERN.match(location)) == matches_table
+
+
+@pytest.mark.parametrize("location, _matches_table, matches_uc", _TABLE_IDENTIFIER_CASES)
+def test_uc_table_pattern(location: str, _matches_table: bool, matches_uc: bool):
+    assert bool(UC_TABLE_PATTERN.match(location)) == matches_uc
+
+
+def test_uc_table_pattern_is_stricter_than_table_pattern():
+    """UC_TABLE_PATTERN requires the catalog part, so it only ever accepts a subset of TABLE_PATTERN."""
+    for location, matches_table, matches_uc in _TABLE_IDENTIFIER_CASES:
+        if matches_uc:
+            assert matches_table, f"{location!r} matches UC_TABLE_PATTERN but not TABLE_PATTERN"

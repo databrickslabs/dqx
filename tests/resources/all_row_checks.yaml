@@ -484,6 +484,13 @@
     arguments:
       column: col_email
 
+# is_valid_uuid check
+- criticality: error
+  check:
+    function: is_valid_uuid
+    arguments:
+      column: col_uuid
+
 # has_valid_string_case check
 - criticality: error
   check:

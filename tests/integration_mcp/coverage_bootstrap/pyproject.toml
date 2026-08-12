@@ -1,0 +1,25 @@
+[project]
+name = "dqx-mcp-coverage-bootstrap"
+version = "0.1.0"
+description = "TEST-ONLY: starts coverage.py at interpreter start in the deployed DQX MCP app + runner job"
+requires-python = ">=3.11"
+# `coverage` is a real dependency here (rather than being injected separately) so the
+# coverage-enabled deploy needs exactly ONE extra entry in each place, and there is no
+# "bootstrap installed but coverage missing" state. This wheel is NEVER installed by a
+# production deploy — see README.md.
+dependencies = [
+    "coverage>=7.6",
+    "databricks-sdk>=0.60.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dqx_mcp_coverage_bootstrap"]
+# The .pth MUST land at the site-packages ROOT, not inside the package: site.py only
+# execs *.pth files found directly in a site directory. Mirrors how pytest-cov ships
+# pytest-cov.pth. Verify after building with:
+#   unzip -l dist/*.whl | grep dqx_mcp_coverage.pth   # must show a top-level path
+force-include = { "src/dqx_mcp_coverage.pth" = "dqx_mcp_coverage.pth" }

@@ -224,6 +224,17 @@ def _get_sp_client():
     return _sp_client
 
 
+def get_sp_client_for_telemetry():
+    """The app SP client, for telemetry's User-Agent signal only.
+
+    A named public accessor so ``server.telemetry`` does not reach into a private helper. Uses the
+    app's own identity rather than the caller's OBO client deliberately: the signal records which
+    tools this *deployment* exposes and uses, so it needs no user context, and it keeps telemetry off
+    the caller's credentials entirely.
+    """
+    return _get_sp_client()
+
+
 # ── SQL helpers (OBO) ────────────────────────────────────────────────
 
 
@@ -272,13 +283,18 @@ def _statement_state(result: Any) -> str:
     return str(getattr(state, "value", state))
 
 
-def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
+def execute_sql(ws: Any, query: str, warehouse_id: str, parameters: list[Any] | None = None) -> list[dict[str, Any]]:
     """Execute a SQL query using the Databricks SQL Statement API.
 
     Args:
         ws: WorkspaceClient (OBO or SP).
         query: SQL query string.
         warehouse_id: SQL warehouse ID to execute against.
+        parameters: Optional bound parameters for *:name* markers in *query*. Prefer these over
+            interpolating a value into the statement — the server binds them, so no quoting or
+            escaping is needed and a value can never alter the statement's structure. Identifiers
+            (catalog/schema/table names) still have to be interpolated, since markers may only
+            stand in for values; validate those with *_validate_sql_identifier*.
 
     Returns:
         List of row dicts.
@@ -290,6 +306,9 @@ def execute_sql(ws: Any, query: str, warehouse_id: str) -> list[dict[str, Any]]:
         statement=query,
         warehouse_id=warehouse_id,
         wait_timeout="30s",
+        # `is not None`, not truthiness: an explicit empty list means "the caller supplied bindings",
+        # and silently dropping the kwarg would hide that rather than honour it.
+        **({"parameters": parameters} if parameters is not None else {}),
     )
 
     # on_wait_timeout defaults to CONTINUE, so a slow statement can still be PENDING/RUNNING when the
@@ -582,11 +601,47 @@ def stage_bytes_to_results_volume(content: bytes, suffix: str = "") -> str:
 
 # View names are v_<epoch>_<uuid>. The runner job drops its own view in a finally,
 # so this sweeper only catches orphans: views whose job never started or was killed
-# before cleanup. It runs as the SP, which owns the temp schema (see setup.py).
+# before cleanup. It runs as the SP, which owns the temp schema.
 _VIEW_NAME_RE = re.compile(r"^v_(\d+)_[0-9a-f]+$")
-_VIEW_TTL_SECONDS = 3600  # drop views older than 1 hour
-_SWEEP_INTERVAL_SECONDS = 600  # sweep at most once per 10 minutes per replica
+# Overridable so the integration test can exercise the sweepers within a single run: the defaults
+# are deliberately long (an orphan is harmless for an hour), which no test can wait out. Only the
+# thresholds are configurable — the sweep logic itself is identical in every environment.
+_VIEW_TTL_SECONDS = int(os.environ.get("DQX_SWEEP_TTL_SECONDS", "3600"))  # drop views older than 1 hour
+_SWEEP_INTERVAL_SECONDS = int(
+    os.environ.get("DQX_SWEEP_INTERVAL_SECONDS", "600")
+)  # sweep at most once per 10 minutes per replica
+
+# Floor on the view TTL, regardless of configuration. A view is created moments before its job is
+# submitted, and the job may sit QUEUED for minutes on a busy workspace before it reads the view —
+# so a TTL shorter than the worst-case queue wait would delete a live run's input and fail it with
+# TABLE_OR_VIEW_NOT_FOUND. The configured TTL can only ever be raised above this floor, never below:
+# an operator (or a test) tuning the threshold must not be able to introduce data loss.
+_MIN_VIEW_TTL_SECONDS = 900
+
+# TTL for `staged_*` job inputs on the results volume. Deliberately far longer than any plausible
+# queue wait: a queued job has not read its staged input yet, and deleting it fails that run with
+# "Contract file not found". 24h means an input is only reclaimed once its job could not possibly
+# still be pending, while the volume no longer grows without bound.
+_STAGED_TTL_SECONDS = int(os.environ.get("DQX_STAGED_TTL_SECONDS", str(24 * 60 * 60)))
+
+# TTL for `<run_id>.json` result files. Its own knob, deliberately: this used to default to
+# _VIEW_TTL_SECONDS, so DQX_SWEEP_TTL_SECONDS — documented as tuning the *view* sweep — silently drove
+# result-file deletion too, and the view TTL's 900s safety floor leaked across to files it was never
+# reasoned about. Same 3600s default, so behaviour is unchanged; the two thresholds are now
+# independent and the constant name no longer misleads.
+_RESULT_TTL_SECONDS = int(os.environ.get("DQX_RESULT_TTL_SECONDS", "3600"))
 _last_sweep_at = 0.0
+
+
+def _effective_view_ttl(ttl_seconds: int) -> int:
+    """Clamp a requested view TTL to the safe floor, warning when the request is overridden."""
+    if ttl_seconds < _MIN_VIEW_TTL_SECONDS:
+        logger.warning(
+            f"View sweep: requested TTL of {ttl_seconds}s is below the {_MIN_VIEW_TTL_SECONDS}s floor "
+            f"(a queued job could still be waiting to read its view); using the floor instead"
+        )
+        return _MIN_VIEW_TTL_SECONDS
+    return ttl_seconds
 
 
 def sweep_stale_views(
@@ -596,21 +651,48 @@ def sweep_stale_views(
 
     Identifies age from the v_<epoch>_<uuid> name. Returns the number of views dropped.
     Never raises — logs and moves on so cleanup can't break request handling.
+
+    *ttl_seconds* is clamped up to a safe floor: this sweep runs on the job-submission path, so a
+    view belonging to a job that is still QUEUED must never be treated as an orphan.
     """
     import time
 
+    # The catalog is a NAME, so it must be interpolated (a parameter marker cannot stand in for an
+    # identifier) — hence the charset validation. The schema is compared as a VALUE and is bound as a
+    # parameter below, so it never becomes part of the statement's structure.
     safe_catalog = _validate_sql_identifier(catalog, "catalog")
-    safe_schema = _validate_sql_identifier(schema, "schema")
+    ttl_seconds = _effective_view_ttl(ttl_seconds)
     now = int(time.time())
     dropped = 0
     try:
-        rows = execute_sql(ws, f"SHOW VIEWS IN {safe_catalog}.{safe_schema}", warehouse_id=warehouse_id)
+        # Query information_schema rather than SHOW VIEWS: `SHOW VIEWS IN <catalog>.<schema>` is
+        # rejected outright with CROSS_CATALOG_SCHEMA_REFERENCE_NOT_SUPPORTED ("Run 'USE CATALOG'
+        # first"), because SHOW resolves the schema against the session's current catalog only. This
+        # runs statelessly against a shared warehouse, so there is no session to set a catalog on —
+        # information_schema takes the catalog as the first level of the name and needs no USE.
+        # Imported here, not at module scope: this module is imported by the app at startup and
+        # keeps SDK types out of its import graph (see the other local `from databricks.sdk`
+        # imports).
+        from databricks.sdk.service.sql import StatementParameterListItem
+
+        # Compare case-insensitively: Unity Catalog folds identifiers to lower case in
+        # information_schema, so an equality against a mixed-case schema name matches nothing and the
+        # sweep silently returns 0 — indistinguishable from "no stale views", which is exactly how the
+        # previous SHOW VIEWS bug stayed hidden. SHOW resolved the identifier case-insensitively; this
+        # preserves that rather than relying on every caller pre-normalising.
+        rows = execute_sql(
+            ws,
+            f"SELECT table_name FROM {safe_catalog}.information_schema.views "
+            "WHERE lower(table_schema) = :schema_name",
+            warehouse_id=warehouse_id,
+            parameters=[StatementParameterListItem(name="schema_name", value=schema.lower(), type="STRING")],
+        )
     except Exception:
         logger.warning(f"View sweep: failed to list views in {sanitize_for_log(f'{catalog}.{schema}')}", exc_info=True)
         return 0
 
     for row in rows:
-        view_name = row.get("viewName") or row.get("tableName") or ""
+        view_name = row.get("table_name") or ""
         match = _VIEW_NAME_RE.match(view_name)
         if not match:
             continue
@@ -623,12 +705,23 @@ def sweep_stale_views(
     return dropped
 
 
-def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> int:
-    """Delete result files older than *ttl_seconds* from the results volume. Best-effort.
+def sweep_stale_result_files(ws: Any, ttl_seconds: int = _RESULT_TTL_SECONDS) -> int:
+    """Delete stale files from the results volume. Best-effort.
 
     Backstop for result files whose caller never polled get_run_result. Uses each file's
     last-modified time (the runner names files <run_id>.json, which carries no timestamp).
     Never raises — logs and moves on so cleanup can't break request handling.
+
+    Two kinds of file live here and they get different TTLs:
+
+    * ``<run_id>.json`` results — swept at *ttl_seconds*. Once a run is finished its result is only
+      waiting to be polled, so the normal TTL applies.
+    * ``staged_*`` job inputs written by stage_bytes_to_results_volume (e.g. an inline data contract)
+      — swept only after :data:`_STAGED_TTL_SECONDS`, which is far longer than any plausible queue
+      wait. A *pending* job has not read its input yet, so deleting one by the normal TTL failed that
+      job with "Contract file not found". Excluding them from cleanup entirely was the previous fix
+      and it leaked: nothing else reclaims them, so every inline-contract call left a file on the
+      volume forever.
     """
     import time
 
@@ -644,14 +737,23 @@ def sweep_stale_result_files(ws: Any, ttl_seconds: int = _VIEW_TTL_SECONDS) -> i
     for entry in entries:
         if getattr(entry, "is_directory", False):
             continue
+        path = entry.path or ""
+        name = path.rsplit("/", 1)[-1]
+        if name.startswith("staged_"):
+            # A queued job may still be waiting to read this; only reclaim long-abandoned inputs.
+            threshold = max(ttl_seconds, _STAGED_TTL_SECONDS)
+        elif name.endswith(".json"):
+            threshold = ttl_seconds
+        else:
+            continue  # unknown file: not ours to delete
         last_modified = getattr(entry, "last_modified", None)  # epoch millis
         age = now - (last_modified / 1000) if last_modified else 0
-        if age > ttl_seconds:
+        if age > threshold:
             try:
-                ws.files.delete(entry.path)
+                ws.files.delete(path)
                 dropped += 1
             except Exception:
-                logger.warning(f"Result-file sweep: failed to delete {sanitize_for_log(entry.path)}", exc_info=True)
+                logger.warning(f"Result-file sweep: failed to delete {sanitize_for_log(path)}", exc_info=True)
     if dropped:
         logger.info(f"Result-file sweep: deleted {dropped} stale result file(s)")
     return dropped
@@ -750,6 +852,31 @@ def submit_job_async(operation: str, params: dict[str, Any]) -> int:
     return run_id
 
 
+# How long get_run_status waits for a run to finish before reporting 'running'.
+#
+# Chosen against two hard limits, not preference: MCP clients and the Databricks Apps front door
+# commonly time out an idle HTTP request around 60s, and each in-flight poll holds an anyio worker
+# thread (the tools are sync). 30s stays clear of both while covering a large share of runs — the
+# job-backed tools take 50–90s end to end, so one submit plus two polls now completes the common
+# case instead of the agent giving up on the first one.
+#
+# Configurable via DQX_RUN_WAIT_SECONDS (the bundle exposes it as an app config value) so an operator
+# whose client has a tighter timeout can lower it. Note that lowering it does NOT make a run finish
+# sooner — the job takes as long as it takes — it only changes how many HTTP round-trips are spent
+# waiting: a 70s job costs 3 calls at 30s and ~470 at 0s. The upper bound is clamped below, because a
+# value above the client/proxy timeout converts a working poll into a hung request.
+_RUN_WAIT_CEILING_SECONDS = 55.0
+_RUN_WAIT_SECONDS = min(float(os.environ.get("DQX_RUN_WAIT_SECONDS", "30")), _RUN_WAIT_CEILING_SECONDS)
+
+# Poll fast at first (a short job should return promptly), then back off so a multi-minute run does
+# not cost one control-plane request per second. These bound how soon a *finished* run is noticed, so
+# they are what to lower if a test wants tighter latency — up to _RUN_POLL_MAX_SECONDS of the measured
+# time is just the gap before the sweep notices a job that has already completed.
+_RUN_POLL_INITIAL_SECONDS = float(os.environ.get("DQX_RUN_POLL_INITIAL_SECONDS", "2"))
+_RUN_POLL_MAX_SECONDS = float(os.environ.get("DQX_RUN_POLL_MAX_SECONDS", "8"))
+_RUN_POLL_BACKOFF = 1.5
+
+
 def _run_not_found(run_id: int) -> dict[str, Any]:
     """Structured 'not_found' result for an invalid/expired/foreign run_id."""
     return {
@@ -762,22 +889,53 @@ def _run_not_found(run_id: int) -> dict[str, Any]:
     }
 
 
-def get_run_status(run_id: int) -> dict[str, Any]:
-    """Check the status of a submitted job run with a single, non-blocking poll.
+def get_run_status(run_id: int, *, wait_seconds: float | None = None) -> dict[str, Any]:
+    """Check the status of a submitted job run, waiting briefly for it to finish.
 
-    Performs one status check and returns immediately as 'completed' (with result),
-    'failed', or 'running'. When 'running', the caller polls again — the client drives
-    the cadence. We deliberately do NOT wait/sleep internally: holding the HTTP
-    connection (and an anyio worker thread, since the tools are sync) open for the whole
-    job would risk client/proxy timeouts and saturate the thread pool under concurrent
-    polls.
+    Blocks up to *wait_seconds* (default `_RUN_WAIT_SECONDS`) for the run to reach a terminal
+    state, then returns 'completed' (with result), 'failed', or 'running'.
+
+    **Why this waits at all.** An LLM agent has no sleep primitive: told to "call again after a
+    short wait", it calls again *immediately*, which looks to its own loop detection like a
+    repeated no-progress action — so it stops and asks the user to confirm, mid-workflow, on every
+    submitted tool. Observed end-to-end against a real deployment: every single job-backed tool
+    stalled with "I kept repeating the same action without making progress". Absorbing the wait
+    server-side is what makes the submit→poll pattern usable by an agent.
+
+    The wait is deliberately bounded well below the ~60s that clients and proxies commonly
+    time out at, and it returns as soon as the run is terminal, so a fast job stays fast. A longer
+    job still needs more than one call — but each call now makes visible progress, which is what
+    the agent needs to keep going. Polling is done with a backoff so a slow job costs few requests.
 
     Args:
         run_id: The Databricks job run_id from a prior submit call.
+        wait_seconds: Maximum seconds to wait for a terminal state. 0 polls once and returns.
 
     Returns:
         Dict with 'status' ('running', 'completed', 'failed', 'not_found') and optionally 'result'.
         'not_found' means the run_id is invalid, expired, or not from this MCP's runner job.
+    """
+    budget = _RUN_WAIT_SECONDS if wait_seconds is None else max(0.0, wait_seconds)
+    deadline = time.monotonic() + budget
+    interval = _RUN_POLL_INITIAL_SECONDS
+    while True:
+        result = _get_run_status_once(run_id, waited_seconds=budget)
+        if result["status"] != "running":
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return result
+        time.sleep(min(interval, remaining))
+        # Back off so a multi-minute job does not cost one control-plane call per second.
+        interval = min(interval * _RUN_POLL_BACKOFF, _RUN_POLL_MAX_SECONDS)
+
+
+def _get_run_status_once(run_id: int, waited_seconds: float = _RUN_WAIT_SECONDS) -> dict[str, Any]:
+    """One non-blocking status check. See get_run_status for the authorization rules.
+
+    *waited_seconds* is the total budget get_run_status is blocking for, reported verbatim in the
+    'running' message so the caller is told the real wait — not the module default, which is wrong
+    whenever wait_seconds is overridden.
     """
     from databricks.sdk.errors.base import DatabricksError
 
@@ -792,6 +950,19 @@ def get_run_status(run_id: int) -> dict[str, Any]:
         # unstructured exception as a job failure.
         error_code = getattr(e, "error_code", "") or ""
         if error_code in ("RESOURCE_DOES_NOT_EXIST", "INVALID_PARAMETER_VALUE") or "does not exist" in str(e).lower():
+            return _run_not_found(run_id)
+        # A run the app SP cannot see is also not_found, for the same reason the job_id mismatch below
+        # is: telling the caller "permission denied" confirms the run EXISTS, which is exactly the
+        # disclosure the ownership guard exists to prevent — run ids are guessable integers. The job
+        # ACL blocking the read first is defence in depth, not a licence to leak. Logged so an
+        # operator can still distinguish a misconfigured ACL from a genuinely stale run_id.
+        # Gate on the STRUCTURED code only. A substring match on "permission" also swallowed unrelated
+        # failures whose text happens to mention it (e.g. "insufficient permissions to attach
+        # warehouse"), telling the run's rightful owner it does not exist and hiding the real error —
+        # a debugging dead end. Anything else propagates; the submitter/caller check below is what
+        # actually prevents the disclosure, so this branch does not need to be greedy.
+        if error_code == "PERMISSION_DENIED":
+            logger.warning(f"Denying run {run_id}: the app service principal cannot read it ({error_code})")
             return _run_not_found(run_id)
         raise
 
@@ -819,7 +990,18 @@ def get_run_status(run_id: int) -> dict[str, Any]:
 
     life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
     if life_cycle in ("PENDING", "RUNNING", "QUEUED", "BLOCKED"):
-        return {"status": "running", "run_id": run_id, "message": "Job is still running. Call get_run_result again."}
+        return {
+            "status": "running",
+            "run_id": run_id,
+            # Say explicitly that calling straight back is correct. Without this an agent treats an
+            # unchanged 'running' as making no progress and stops to ask the user, because it has no
+            # way to sleep between calls — the server already absorbed the wait before returning.
+            "message": (
+                f"Job is still running (waited {int(waited_seconds)}s). This is expected for a long job. "
+                f"Call get_run_result with run_id={run_id} again right away — the call itself waits, so "
+                f"repeating it is progress, not a retry loop. Do not ask the user to confirm."
+            ),
+        }
 
     # No local cleanup here: the runner job drops its own temp view, and any orphans are
     # reaped by the sweeper. This keeps get_run_status stateless and replica-independent.
