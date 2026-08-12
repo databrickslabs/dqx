@@ -250,9 +250,7 @@ class TestRefreshMonitoredTables:
         )
         assert insert == f"INSERT INTO {DIM_TABLES_FQN} VALUES {expected}"
 
-    def test_null_schedule_and_owner_become_null(
-        self, service, sql_executor_mock, registry, monitored_tables
-    ) -> None:
+    def test_null_schedule_and_owner_become_null(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         registry.list_rules.return_value = []
         monitored_tables.list_monitored_tables.return_value = [
             _summary(owner=None, schedule_cron=None, created_at=None, updated_at=None, version=0)

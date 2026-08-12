@@ -1558,8 +1558,7 @@ MIGRATIONS: list[Migration] = [
     ),
     DeltaMigration(
         version=28,
-        description="Add owner/owner_display_name (copy from steward columns) "
-        "— used only when Lakebase is disabled",
+        description="Add owner/owner_display_name (copy from steward columns) " "— used only when Lakebase is disabled",
         sql_template=_V28_OWNER_RENAME,
         oltp_fallback=True,
     ),
