@@ -64,7 +64,7 @@ variables:
   # discarded. Must match the databricks-labs-dqx pin in the runner dependency lists below; a unit
   # test enforces that.
   dqx_version:
-    default: "0.15.0"
+    default: "0.16.0"
   app_environment:
     type: complex
     default:
