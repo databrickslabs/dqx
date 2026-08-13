@@ -95,12 +95,13 @@ class TestUpdateDqxPins:
         assert "0.16.0-py3-none-any.whl" not in bundle
         assert "databricks-labs-dqx[datacontract]==0.16.0" not in bundle
 
-    def test_bumps_the_literal_pin_in_the_app_pyproject(self, repo):
-        """The Studio app pins a literal version (no bundle variable), so it IS rewritten in place."""
+    def test_leaves_the_app_pyproject_dqx_pin_untouched(self, repo):
+        """The Studio app installs DQX from the registry through its frozen uv.lock, so its pin is
+        bumped at release-publish time — never here, where a not-yet-published version would break CI."""
         sync_versions.update_dqx_pins("0.16.0")
         pyproject = (repo / "app" / "pyproject.toml").read_text()
-        assert 'databricks-labs-dqx[llm,datacontract]==0.16.0' in pyproject
-        assert "==0.15.0" not in pyproject
+        assert "databricks-labs-dqx[llm,datacontract]==0.15.0" in pyproject
+        assert "==0.16.0" not in pyproject
 
     def test_is_idempotent_at_the_current_version(self, repo):
         """Re-running with an unchanged version rewrites nothing (the make-fmt promise)."""
