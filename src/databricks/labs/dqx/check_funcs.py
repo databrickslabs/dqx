@@ -2982,7 +2982,12 @@ def compare_datasets(
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
         # map type columns must be skipped as they cannot be compared with eqNullSafe
-        map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
+        map_type_columns = {
+            field.name
+            for schema in (df.schema, ref_df.schema)
+            for field in schema.fields
+            if isinstance(field.dataType, types.MapType)
+        }
 
         # columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
         compare_columns = [
