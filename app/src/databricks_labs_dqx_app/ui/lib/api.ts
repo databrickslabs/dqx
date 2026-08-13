@@ -3619,6 +3619,10 @@ export type RunConfigLakebaseClientId = string | null;
 
 export type RunConfigLakebasePort = string | null;
 
+export type RunConfigActionsLocation = string | null;
+
+export type RunConfigActionEventsLocation = string | null;
+
 /**
  * Configuration class for the data quality checks
  */
@@ -3638,6 +3642,8 @@ export interface RunConfig {
   lakebase_instance_name?: RunConfigLakebaseInstanceName;
   lakebase_client_id?: RunConfigLakebaseClientId;
   lakebase_port?: RunConfigLakebasePort;
+  actions_location?: RunConfigActionsLocation;
+  action_events_location?: RunConfigActionEventsLocation;
 }
 
 export interface RunConfigIn {
