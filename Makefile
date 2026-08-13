@@ -11,7 +11,11 @@ export UV_FROZEN := 1
 export UV_BUILD_CONSTRAINT := .build-constraints.txt
 
 UV_RUN := uv run --exact --all-extras
-UV_TEST := $(UV_RUN) pytest -n 10 --timeout 60 --durations 20
+# xdist worker count. Recursively expanded so a target can override it (see ``test``).
+# Workspace-backed suites (integration/e2e) keep the fixed high count: they are bound by
+# control-plane latency rather than CPU, so oversubscribing the runner is what keeps them fast.
+TEST_WORKERS ?= 10
+UV_TEST = $(UV_RUN) pytest -n $(TEST_WORKERS) --timeout 60 --durations 20
 
 # ``make help`` parses ``##`` annotations next to each target and ``##@``
 # section headers so the listing stays in sync with the Makefile
@@ -53,6 +57,10 @@ fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, version syn
 
 ##@ Tests (DQX library)
 
+# One worker per core. The unit suite is CPU-bound, so a fixed ``-n 10`` oversubscribes the
+# CI runners and only widens the surface xdist has to tear down at session end. Override with
+# ``make test TEST_WORKERS=10`` to restore the old count.
+test: TEST_WORKERS := auto
 test: ## Run unit tests (writes coverage-unit.xml)
 	$(UV_TEST) --cov --cov-report=xml:coverage-unit.xml tests/unit/
 
