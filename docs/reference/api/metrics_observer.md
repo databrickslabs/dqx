@@ -13,7 +13,7 @@ Observer metrics class used to persist summary metrics.
 **Arguments**:
 
 * `run_id` - Unique observation id.
-* `run_name` - Name of the observations (default is 'dqx').
+* `run_name` - Name of the observations, taken from the engine's observer. None when the engine has no observer configured (e.g. metrics persisted via save\_results\_in\_table without an observer).
 * `observed_metrics` - Dictionary of observed metrics.
 * `run_time_overwrite` - Run time when the data quality summary metrics were observed. If None, current\_timestamp() is used.
 * `error_column_name` - Name of the error column when running quality checks.
@@ -117,3 +117,28 @@ Builds a Spark DataFrame from a DQMetricsObservation.
 **Returns**:
 
 A Spark DataFrame with summary metrics
+
+### build\_metrics\_df\_from\_aggregation[​](#build_metrics_df_from_aggregation "Direct link to build_metrics_df_from_aggregation")
+
+```python
+@staticmethod
+def build_metrics_df_from_aggregation(
+        aggregated_df: DataFrame,
+        observation: DQMetricsObservation) -> DataFrame
+
+```
+
+Reshapes a one-row wide aggregation of metric expressions into the long-format *OBSERVATION\_TABLE\_SCHEMA*, without triggering a Spark action.
+
+Used by *DQEngine.compute\_summary\_metrics* to keep a lazily-computed aggregation lazy, so the result can back a materialized view or table in a Spark Declarative Pipeline (where the pipeline runtime — not the caller — triggers the write). The already-collected path uses *build\_metrics\_df*.
+
+The input must be a **single-row global aggregation** (the output of *get\_metrics* selected with no *groupBy*). A multi-row input would emit one metrics row-set per input row, each stamped with the same run metadata and no grouping key, so this must not be used for windowed/grouped aggregations. The single-row property is guaranteed by construction — the only caller (*DQEngine.compute\_summary\_metrics*) feeds *get\_metrics* aggregates selected without *groupBy*, which always yield exactly one row — and is intentionally not enforced with a runtime row-count check: counting the rows would trigger a Spark action and defeat this method's whole purpose of staying lazy so it can back a Spark Declarative Pipeline materialized view.
+
+**Arguments**:
+
+* `aggregated_df` - A single-row DataFrame whose columns are the metric expressions produced by *DQMetricsObserver.get\_metrics* (e.g. *input\_row\_count*, *error\_row\_count*, *check\_metrics*).
+* `observation` - *DQMetricsObservation* carrying the run metadata (locations, fingerprint, run time).
+
+**Returns**:
+
+A lazy Spark DataFrame matching *OBSERVATION\_TABLE\_SCHEMA* with one row per metric.

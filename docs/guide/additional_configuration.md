@@ -120,6 +120,12 @@ The `_dq_info` reporting column is an **array of structs**: one element per data
 
 ## Suppressing skipped check entries[​](#suppressing-skipped-check-entries "Direct link to Suppressing skipped check entries")
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
 By default, when a check is skipped (e.g. because a referenced column or filter cannot be resolved in the input DataFrame), DQX records an entry in `_errors` or `_warnings` with `skipped=True` and a message describing why the check was skipped.
 
 You can suppress these entries entirely by setting `suppress_skipped=True` in `ExtraParams`. When enabled, skipped checks produce no entry in `_errors` or `_warnings`, so the row is not included in the bad DataFrame.
@@ -150,6 +156,12 @@ extra_params:
 
 ## Identifying skipped checks in results[​](#identifying-skipped-checks-in-results "Direct link to Identifying skipped checks in results")
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
 When a check is skipped and `suppress_skipped` is not enabled, the result struct includes a `skipped` boolean field set to `True`. This allows downstream consumers to distinguish skipped checks from actual data quality failures without parsing the message string.
 
 ```python
@@ -163,6 +175,12 @@ skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.ski
 ```
 
 ## Defining default variables for substitution[​](#defining-default-variables-for-substitution "Direct link to Defining default variables for substitution")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` and `save_checks` unless overridden by the per-call `variables` parameter.
 

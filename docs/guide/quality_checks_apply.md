@@ -35,7 +35,7 @@ Save destinations
 
 The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept `output_config`, `quarantine_config`, `metrics_config`, or combinations of these. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. If only `metrics_config` is provided for batch input, only summary metrics are written and no output or quarantine table is produced. Streaming metrics require an output or quarantine stream to emit the observed metrics. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
 
-The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/dqx/docs/guide/additional_configuration.md#suppressing-skipped-check-entries). The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax). In addition, you can also perform a standalone syntax validation of the checks as described [here](/dqx/docs/guide/quality_checks_definition.md#validating-syntax-of-quality-checks).
+The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/dqx/docs/guide/additional_configuration.md#suppressing-skipped-check-entries). The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax). In addition, you can also perform standalone validation of the checks as described [here](/dqx/docs/guide/quality_checks_definition.md#validating-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing. You can either use the end-to-end methods or manage the input stream and output directly with native Spark APIs (e.g. `spark.readStream` and `writeStream`).
 
@@ -237,6 +237,12 @@ Note
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression. Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression` and `sql_query`). Alternatively, `for_each_column` can be used to define a list of columns for which the same check should be applied. The `for_each_column` is supported for quality rules that take `column` or `columns` as arguments (e.g. not supported by `sql_expression` and `sql_query`). For details on each check, please refer to the documentation [here](/dqx/docs/reference/quality_checks.md).
 
 ### Applying checks on multiple tables[​](#applying-checks-on-multiple-tables "Direct link to Applying checks on multiple tables")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.9.3 "Available since DQX v0.9.3")
+
+<!-- -->
+
+[0.9.3](https://github.com/databrickslabs/dqx/releases/tag/v0.9.3 "Available since DQX v0.9.3")
 
 Applying checks on multiple tables can be performed by executing the same methods as described above in a loop. However, DQX provides a convenient method to handle multiple tables in a single method call. Use `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns` to perform end-to-end quality checking for multiple tables.
 
@@ -462,7 +468,9 @@ def silver():
 
 ```
 
-### Applying checks using foreachBatch[​](#applying-checks-using-foreachbatch "Direct link to Applying checks using foreachBatch")
+### Applying checks using Spark Structured Streaming foreachBatch[​](#applying-checks-using-spark-structured-streaming-foreachbatch "Direct link to Applying checks using Spark Structured Streaming foreachBatch")
+
+This section covers Spark's native Structured Streaming `foreachBatch` (`writeStream.foreachBatch(...)`), outside a Lakeflow pipeline. For applying checks and computing summary metrics per micro-batch inside a Lakeflow pipeline foreachBatch sink, see [Enabling summary metrics in Lakeflow Pipelines](#enabling-summary-metrics-in-lakeflow-pipelines) below.
 
 Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. DQX requires authentication with a Databricks SDK `WorkspaceClient` which is not supported inside `foreachBatch`. To use DQX in a `foreachBatch` function, create a `DQEngine` instance with a mock `WorkspaceClient`.
 
@@ -652,6 +660,12 @@ The workflows can be executed as batch or streaming jobs.
 
 ### Quality Checker Workflow[​](#quality-checker-workflow "Direct link to Quality Checker Workflow")
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
+
+<!-- -->
+
+[0.9.1](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
+
 Quality checker workflow performs the following:
 
 * apply checks to the input data (files or a table)
@@ -786,6 +800,12 @@ Example of the configuration file (relevant fields only):
 ```
 
 ### End-to-End Workflow[​](#end-to-end-workflow "Direct link to End-to-End Workflow")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
+
+<!-- -->
+
+[0.9.1](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
 
 The end-to-end (e2e) workflow is designed to automate the entire data quality checking process, from profiling the input data to applying quality checks and saving results. The workflow executes the profiler and quality checker workflows in sequence, allowing you to generate quality checks based on the input data and then apply those checks to the same data.
 
@@ -992,6 +1012,12 @@ Example of the configuration file (relevant fields only):
 
 ## Summary Metrics[​](#summary-metrics "Direct link to Summary Metrics")
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+
+<!-- -->
+
+[0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+
 DQX can capture and store summary metrics for your data quality checks in a centralized Delta table. These metrics can complement row-level quality checks stored in output DataFrames or be stored independently.
 
 When enabled, the system collects both default summary metrics (input row count, error row count, warning row count, valid row count) and any custom summary metrics you define. Metrics can be configured programmatically or via a configuration file when installing DQX as a tool in the workspace.
@@ -1053,6 +1079,103 @@ dq_engine.apply_checks_and_save_in_table(
 
 ```
 
+### Enabling summary metrics in Lakeflow Pipelines[​](#enabling-summary-metrics-in-lakeflow-pipelines "Direct link to Enabling summary metrics in Lakeflow Pipelines")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+
+<!-- -->
+
+[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+
+Inside a Lakeflow Pipeline (a.k.a. Spark Declarative Pipeline or DLT Pipeline), use the following approach:
+
+1. Persist the checked data to a table so the result columns are available downstream
+2. Add a materialized view that calls `compute_summary_metrics` on that table, passing the same `checks` you applied when checking the data
+
+* Python
+
+```python
+import dlt
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.sdk import WorkspaceClient
+
+# compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
+dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+@dlt.view
+def bronze():
+  return spark.readStream.table("catalog.schema.input")
+
+# 1. Apply checks and persist the checked data as a table.
+@dlt.table
+def silver():
+  df = dlt.read_stream("bronze")
+  return dq_engine.apply_checks_by_metadata(df, checks)
+
+# 2. Compute summary metrics as a materialized view over the checked table.
+@dlt.table
+def dq_summary_metrics():
+  df = dlt.read("silver")
+  return dq_engine.compute_summary_metrics(df, checks=checks)
+
+```
+
+This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+
+Summary Metrics: Snapshot vs. history
+
+This example uses a materialized view to compute summary metrics for the entire table. On each pipeline update the entire view is refreshed. This can be either:
+
+* **Incremental** when the query is deterministic (see the note above about setting a static *run\_time\_overwrite* and *run\_id\_overwrite*) and the engine can incrementalize the aggregation
+* **Fully recomputed** when the query is non-deterministic or the engine cannot incrementalize the aggregation
+
+The metrics view contains a **cumulative snapshot** over all rows in the checked table. Metrics are cumulative totals representing the current quality of the entire dataset and do not contain any per-run history.<br /><!-- -->To maintain a **history** of metrics over time, compute the metrics per micro-batch inside a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch) and append them to a table.
+
+#### Per-batch metrics with a foreachBatch sink[​](#per-batch-metrics-with-a-foreachbatch-sink "Direct link to Per-batch metrics with a foreachBatch sink")
+
+Instead of a materialized view, you can compute summary metrics inside a Lakeflow [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch). The sink function receives each streaming micro-batch, applies quality checks, writes the checked rows, and appends the per-batch `compute_summary_metrics` output. Use this when:
+
+* You want a **history** of metrics for each streaming micro-batch rather than a cumulative snapshot
+* You need better **performance on large or growing tables**; Only the current batch is aggregated rather than the whole table
+* You want to **share a metrics table across pipelines**; The sink appends to an external Delta table (not a pipeline-managed dataset); Several pipelines can write into a common metrics table; Set a distinct observer `name` per source so rows stay filterable
+
+- Python
+
+```python
+from pyspark import pipelines as dp
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.sdk import WorkspaceClient
+
+# compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
+dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+@dp.table
+def bronze():
+  return spark.readStream.table("catalog.schema.input")
+
+# foreachBatch sink: apply checks, write the checked rows, and append per-batch summary metrics.
+# compute_summary_metrics runs per micro-batch here (incremental history), rather than as a
+# cumulative-snapshot materialized view over the whole table.
+# A foreachBatch sink writes to tables *outside* the pipeline, so use fully-qualified names —
+# unqualified names would be captured as pipeline-managed streaming tables and rejected.
+@dp.foreach_batch_sink(name="silver_sink")
+def silver_sink(batch_df, batch_id):
+  checked_df = dq_engine.apply_checks_by_metadata(batch_df, checks)
+  checked_df.write.format("delta").mode("append").saveAsTable("catalog.schema.silver")
+  
+  metrics_df = dq_engine.compute_summary_metrics(checked_df, checks=checks)
+  metrics_df.write.format("delta").mode("append").saveAsTable("catalog.schema.dq_summary_metrics")
+
+@dp.append_flow(target="silver_sink")
+def silver_flow():
+  return spark.readStream.table("bronze")
+
+```
+
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
+
 ### Enabling summary metrics in DQX workflows[​](#enabling-summary-metrics-in-dqx-workflows "Direct link to Enabling summary metrics in DQX workflows")
 
 Summary metrics can also be enabled in DQX workflows. Metrics are configured:
@@ -1088,7 +1211,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 
 ```
 
-The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.15.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.16.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 
 * `name`: name of the check (string type).
 * `message`: message describing the quality issue (string type).

@@ -15,6 +15,7 @@ Core engine to apply data quality checks to a DataFrame.
 * `spark` - Optional SparkSession to use. If not provided, the active session is used.
 * `extra_params` - Optional extra parameters for the engine, such as result column names and run metadata.
 * `observer` - Optional DQMetricsObserver for tracking data quality summary metrics.
+* `actions` - Optional list of *DQAction* instances to evaluate after checks are applied.
 
 ### apply\_checks[​](#apply_checks "Direct link to apply_checks")
 
@@ -147,26 +148,36 @@ A tuple of two DataFrames: "good" (may include rows with warnings but no result 
 ```python
 @staticmethod
 def validate_checks(
-        checks: list[dict],
-        custom_check_functions: dict[str, Callable] | None = None,
-        validate_custom_check_functions: bool = True
+    checks: list[dict],
+    custom_check_functions: dict[str, Callable] | None = None,
+    validate_custom_check_functions: bool = True,
+    semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN
 ) -> ChecksValidationStatus
 
 ```
 
-Validate checks defined as metadata to ensure they conform to the expected structure and types.
+Validate checks defined as metadata to ensure they conform to the expected structure and types, and are semantically consistent as a ruleset.
 
-This method validates the presence of required keys, the existence and callability of functions, and the types of arguments passed to those functions.
+Structural validation checks for required keys, callable functions, and correct argument types. Semantic validation detects duplicate rules and similar rules with conflicting arguments (e.g. two is\_in\_range checks on the same column with different thresholds).
+
+**Notes**:
+
+Rules using raw Spark SQL expressions are not deeply inspected during semantic validation — only structured metadata is compared.
 
 **Arguments**:
 
 * `checks` - List of checks to apply to the DataFrame. Each check should be a dictionary.
 * `custom_check_functions` - Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
 * `validate_custom_check_functions` - If True, validate custom check functions.
+* `semantic_validation_mode` - Controls how semantic issues are surfaced. Use *ChecksSemanticValidationMode.WARN* (default) to log warnings, *ChecksSemanticValidationMode.FAIL* to raise on any issue, or *None* to skip semantic validation entirely.
 
 **Returns**:
 
-ChecksValidationStatus indicating the validation result.
+ChecksValidationStatus indicating the structural validation result.
+
+**Raises**:
+
+* `ValueError` - If semantic\_validation\_mode is FAIL and issues are found.
 
 ### get\_invalid[​](#get_invalid "Direct link to get_invalid")
 
@@ -262,6 +273,9 @@ This class delegates core checking logic to *DQEngineCore* while providing helpe
 * `checks_handler_factory` - Optional factory to create checks storage handlers. If not provided, a default factory is created.
 * `config_serializer` - Optional ConfigSerializer instance to use. If not provided, a new instance is created.
 * `observer` - Optional DQMetricsObserver for tracking data quality summary metrics.
+* `actions` - Optional list of *DQAction* instances or raw action dicts to evaluate after checks are applied in the batch path. Dict entries are deserialized to *DQAction* via *ActionSerializer.from\_dict* at construction time; mixed lists are supported. Requires an *observer* to be provided (actions need observed metrics to evaluate conditions). When provided without an *observer*, raises *InvalidParameterError* at construction time.
+* `action_evaluator_factory` - Optional factory callable that receives the list of *DQAction* instances and returns an *ActionEvaluator*. Used to inject a custom or test evaluator. When *None*, the default factory builds a real *ActionEvaluator* with *ActionStateStore*, *SecretResolver*, and *WebhookClient*.
+* `action_events_config` - Optional *ActionEventsConfig* (or *LakebaseActionsStorageConfig*) for a persistent action-events table. When provided, the action state store is seeded from it on first use and every fired action is appended to it, so frequency (*HOURLY* / *DAILY*) and *STATUS\_CHANGE* suppression survive engine restarts. When *None*, alert state is in-memory only for the engine's lifetime.
 
 ### apply\_checks[​](#apply_checks-1 "Direct link to apply_checks")
 
@@ -384,6 +398,46 @@ Apply data quality checks defined as metadata to the given DataFrame and split t
 **Returns**:
 
 A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows with errors or warnings and the corresponding result columns) and an optional Observation which tracks data quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
+
+### evaluate\_actions[​](#evaluate_actions "Direct link to evaluate_actions")
+
+```python
+@telemetry_logger("engine", "evaluate_actions")
+def evaluate_actions(
+        observed_metrics: dict[str, object],
+        *,
+        input_location: str | None = None,
+        output_location: str | None = None,
+        quarantine_location: str | None = None,
+        checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None) -> list[ActionResult]
+
+```
+
+Evaluate all configured actions against the observed metrics from the latest batch run.
+
+Builds an *ActionContext* from *observed\_metrics* plus the engine's run metadata and the supplied location hints, then delegates to the lazily constructed *ActionEvaluator*.
+
+When no actions are configured this is a no-op that returns an empty list immediately.
+
+Note: action evaluation requires that the engine was constructed with an *observer* and that *observed\_metrics* was obtained from a triggered Spark *Observation*. If the *batch\_observation* was never triggered (e.g. no output table was written and the metrics-only path was skipped), the metrics will be empty and actions will not receive meaningful values — avoid calling *evaluate\_actions* in that case.
+
+**Arguments**:
+
+* `observed_metrics` - Mapping of metric name to value collected from a Spark *Observation*.
+* `input_location` - Source path/URI of the data being checked, or *None*.
+* `output_location` - Destination path/URI of checked output, or *None*.
+* `quarantine_location` - Path/URI where quarantined rows are written, or *None*.
+* `checks_location` - Path/URI of the checks definition file, or *None*.
+* `rule_set_fingerprint` - Fingerprint of the rule set applied, or *None*.
+
+**Returns**:
+
+List of *ActionResult* instances for every action that actually fired. Returns an empty list when no actions are configured.
+
+**Raises**:
+
+* `PipelineFailedError` - When a *FailPipeline* action's condition is met, after all other actions have been evaluated and their notifications delivered.
 
 ### apply\_checks\_and\_save\_in\_table[​](#apply_checks_and_save_in_table "Direct link to apply_checks_and_save_in_table")
 
@@ -567,26 +621,32 @@ None
 ```python
 @staticmethod
 def validate_checks(
-        checks: list[dict],
-        custom_check_functions: dict[str, Callable] | None = None,
-        validate_custom_check_functions: bool = True
+    checks: list[dict],
+    custom_check_functions: dict[str, Callable] | None = None,
+    validate_custom_check_functions: bool = True,
+    semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN
 ) -> ChecksValidationStatus
 
 ```
 
 Validate checks defined as metadata to ensure they conform to the expected structure and types.
 
-This method validates the presence of required keys, the existence and callability of functions, and the types of arguments passed to those functions.
+This method validates the presence of required keys, the existence and callability of functions, and the types of arguments passed to those functions. It also runs semantic validation across the ruleset to detect duplicate and conflicting rules.
 
 **Arguments**:
 
 * `checks` - List of checks to apply to the DataFrame. Each check should be a dictionary.
 * `custom_check_functions` - Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
 * `validate_custom_check_functions` - If True, validate custom check functions.
+* `semantic_validation_mode` - Controls how semantic issues are surfaced. Use *ChecksSemanticValidationMode.WARN* (default) to log warnings, *ChecksSemanticValidationMode.FAIL* to raise on any issue, or *None* to skip semantic validation entirely.
 
 **Returns**:
 
 ChecksValidationStatus indicating the validation result.
+
+**Raises**:
+
+* `ValueError` - If semantic\_validation\_mode is FAIL and issues are found.
 
 ### get\_invalid[​](#get_invalid-1 "Direct link to get_invalid")
 
@@ -673,8 +733,10 @@ None
 ```python
 @telemetry_logger("engine", "load_checks")
 def load_checks(
-        config: BaseChecksStorageConfig,
-        variables: dict[str, VariableValue] | None = None) -> list[dict]
+    config: BaseChecksStorageConfig,
+    variables: dict[str, VariableValue] | None = None,
+    semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN
+) -> list[dict]
 
 ```
 
@@ -699,6 +761,7 @@ Per-call *variables* are merged with engine-level defaults from *ExtraParams.var
 
 * `config` - Configuration object describing the storage backend.
 * `variables` - Optional mapping of placeholder names to replacement values. Replaces placeholders in all string values of the check definitions before returning.
+* `semantic_validation_mode` - Controls semantic validation behavior after loading. Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue, *ChecksSemanticValidationMode.FAIL* to raise if issues are found, or *None* to skip semantic validation entirely.
 
 **Returns**:
 
@@ -707,14 +770,18 @@ List of DQ rules (checks) represented as dictionaries.
 **Raises**:
 
 * `InvalidConfigError` - If the configuration type is unsupported.
+* `ValueError` - If semantic\_validation\_mode is FAIL and issues are found.
 
 ### save\_checks[​](#save_checks "Direct link to save_checks")
 
 ```python
 @telemetry_logger("engine", "save_checks")
-def save_checks(checks: list[dict],
-                config: BaseChecksStorageConfig,
-                variables: dict[str, VariableValue] | None = None) -> None
+def save_checks(
+    checks: list[dict],
+    config: BaseChecksStorageConfig,
+    variables: dict[str, VariableValue] | None = None,
+    semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN
+) -> None
 
 ```
 
@@ -738,6 +805,7 @@ Per-call *variables* are merged with engine-level defaults from *ExtraParams.var
 * `checks` - List of DQ rules (checks) to save (as dictionaries).
 * `config` - Configuration object describing the storage backend and write options.
 * `variables` - Optional mapping of placeholder names to replacement values. Replaces placeholders in all string values of the check definitions before saving.
+* `semantic_validation_mode` - Controls semantic validation behavior before saving. Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue, *ChecksSemanticValidationMode.FAIL* to abort saving if issues are found, or *None* to skip semantic validation entirely.
 
 **Returns**:
 
@@ -746,6 +814,50 @@ None
 **Raises**:
 
 * `InvalidConfigError` - If the configuration type is unsupported.
+* `ValueError` - If semantic\_validation\_mode is FAIL and issues are found.
+
+### compute\_summary\_metrics[​](#compute_summary_metrics "Direct link to compute_summary_metrics")
+
+```python
+@telemetry_logger("engine", "compute_summary_metrics")
+def compute_summary_metrics(checked_df: DataFrame,
+                            checks: list[dict] | None = None,
+                            custom_check_functions: dict[str, Callable]
+                            | None = None,
+                            input_config: InputConfig | None = None,
+                            output_config: OutputConfig | None = None,
+                            quarantine_config: OutputConfig | None = None,
+                            checks_location: str | None = None,
+                            run_config_name: str = "default") -> DataFrame
+
+```
+
+Compute data quality summary metrics from a checked DataFrame by aggregation.
+
+Unlike the observer/listener path (which relies on Spark *observe()* and a caller-triggered action), this computes the same metrics as a plain aggregation over the result columns and returns a lazy DataFrame. This makes it usable inside Spark Declarative Pipelines (SDP / Lakeflow / DLT), where the pipeline runtime — not the caller — owns the write action: define a downstream materialized view over the checked table that returns the result of this method.
+
+**Arguments**:
+
+* `checked_df` - DataFrame produced by *apply\_checks* / *apply\_checks\_by\_metadata* (must still contain the DQX result columns, i.e. before *get\_valid* / *get\_invalid* drop them).
+* `checks` - Optional metadata checks that were applied (the same list of dicts passed to *apply\_checks\_by\_metadata*). When provided, a per-check breakdown (*check\_metrics*) is included covering every applied check, including checks with zero violations. The breakdown is derived from the check names and cannot be reconstructed from data alone, so pass the same checks used when applying. When omitted (and no *checks\_location* is given), only dataset-level metrics (row counts and any observer custom metrics) are produced.
+* `custom_check_functions` - Optional custom check functions used to resolve metadata checks. Pass the *same* functions that were used when the checks were applied — if the applied checks referenced a custom function and it is not supplied here, deserialization fails or resolves a different check name, so the *check\_metrics* breakdown and *rule\_set\_fingerprint* would not match the applied run.
+* `input_config` - Optional input configuration recorded in the metrics for traceability.
+* `output_config` - Optional output configuration recorded in the metrics for traceability.
+* `quarantine_config` - Optional quarantine configuration recorded in the metrics for traceability.
+* `checks_location` - Optional checks location. Recorded in the metrics for traceability, and — when *checks* is not passed — the checks are loaded from here so the per-check breakdown and *rule\_set\_fingerprint* are still produced.
+* `run_config_name` - Name of the run configuration to use when loading checks from a table (only used when *checks* is None and *checks\_location* points to a table).
+
+**Notes**:
+
+A *DQMetricsObserver* must be configured on this engine (*DQEngine(..., observer=...)*); its *custom\_metrics* (if any) are included alongside the built-in dataset-level metrics and the per-check breakdown (when *checks* is provided or loaded from *checks\_location*).
+
+**Returns**:
+
+A lazy DataFrame matching *OBSERVATION\_TABLE\_SCHEMA* with one row per metric.
+
+**Raises**:
+
+* `InvalidParameterError` - If no *DQMetricsObserver* is configured on the engine, or if *checked\_df* does not contain the DQX result columns.
 
 ### save\_summary\_metrics[​](#save_summary_metrics "Direct link to save_summary_metrics")
 
@@ -784,7 +896,7 @@ The observation must have been triggered by an action (e.g., count(), write()) o
 ```python
 @telemetry_logger("engine", "get_streaming_metrics_listener")
 def get_streaming_metrics_listener(
-        metrics_config: OutputConfig,
+        metrics_config: OutputConfig | None = None,
         input_config: InputConfig | None = None,
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
@@ -798,7 +910,7 @@ Gets a `StreamingMetricsListener` object for writing metrics to an output table.
 
 **Arguments**:
 
-* `metrics_config` - Configuration for writing summary metrics, including table name, mode, and options.
+* `metrics_config` - Optional configuration for writing summary metrics (table name, mode, options). When *None*, no metrics table is written; the listener still evaluates configured actions per micro-batch.
 * `input_config` - Optional configuration for input data containing location.
 * `output_config` - Optional configuration for output data containing location.
 * `quarantine_config` - Optional configuration for quarantine data containing location.

@@ -1,5 +1,38 @@
 # databricks.labs.dqx.rule
 
+### requires\_dbr\_version[​](#requires_dbr_version "Direct link to requires_dbr_version")
+
+```python
+def requires_dbr_version(version: str) -> Callable
+
+```
+
+Annotates a check function with a minimum Databricks Runtime version requirement.
+
+Parses *version* into a *(major, minor)* tuple and sets it as the *dqx\_requires\_dbr\_version* attribute on the decorated function. The engine reads this attribute before execution and raises an error if the current Databricks Runtime version is lower than the required one, failing the entire run.
+
+Example usage:
+
+```python
+@requires_dbr_version("15.1")
+@register_rule("row")
+def my_check(column: str) -> Column:
+    ...
+
+```
+
+**Arguments**:
+
+* `version` - The minimum required Databricks Runtime version in *"major.minor"* format (e.g., *"15.1"*).
+
+**Returns**:
+
+A decorator that annotates the function with the DBR version requirement.
+
+**Raises**:
+
+* `ValueError` - If *version* is not a valid *"major.minor"* string with non-negative integer components.
+
 ## Criticality Objects[​](#criticality-objects "Direct link to Criticality Objects")
 
 ```python
@@ -30,8 +63,7 @@ Mixin to handle columns-related functionalities.
 ## DQRule Objects[​](#dqrule-objects "Direct link to DQRule Objects")
 
 ```python
-@dataclass(frozen=True)
-class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin,
+class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin,
              MultipleColumnsMixin)
 
 ```
@@ -104,6 +136,27 @@ def prepare_check_func_args_and_kwargs() -> tuple[list, dict]
 
 Prepares positional arguments and keyword arguments for the check function. Includes only arguments supported by the check function and skips empty values.
 
+### replace[​](#replace "Direct link to replace")
+
+```python
+def replace(**changes: Any) -> "DQRule"
+
+```
+
+Return a new rule instance with the given field overrides.
+
+Unlike *model\_copy*, this rebuilds the instance through the constructor so validation re-runs and *functools.cached\_property* derived state (e.g. *rule\_fingerprint*, *columns\_as\_string\_expr*) is recomputed from the updated fields rather than copied stale. *model\_copy(update=...)* shallow-copies the instance dict, which carries over the already cached values and would therefore ignore the updated fields.
+
+Note that regular fields are copied verbatim and only re-validated, not re-derived: an already-populated *name* is preserved as-is (it is not regenerated from a changed *column*/*columns*), and a *column*/*columns* already promoted from *check\_func\_kwargs* is not re-promoted. Current callers only override *check\_func\_kwargs*, for which this is the intended behaviour.
+
+**Arguments**:
+
+* `**changes` - Field values to override on the new instance.
+
+**Returns**:
+
+A new, fully validated rule of the same concrete type.
+
 ### rule\_fingerprint[​](#rule_fingerprint "Direct link to rule_fingerprint")
 
 ```python
@@ -130,7 +183,6 @@ Converts a DQRule instance into a structured dictionary.
 ## DQRowRule Objects[​](#dqrowrule-objects "Direct link to DQRowRule Objects")
 
 ```python
-@dataclass(frozen=True)
 class DQRowRule(DQRule)
 
 ```
@@ -153,7 +205,6 @@ The Spark Column representing the check condition.
 ## DQDatasetRule Objects[​](#dqdatasetrule-objects "Direct link to DQDatasetRule Objects")
 
 ```python
-@dataclass(frozen=True)
 class DQDatasetRule(DQRule)
 
 ```
@@ -186,8 +237,7 @@ Return (condition, apply\_func, and optionally info\_column\_name).
 ## DQForEachColRule Objects[​](#dqforeachcolrule-objects "Direct link to DQForEachColRule Objects")
 
 ```python
-@dataclass(frozen=True)
-class DQForEachColRule(DQRuleTypeMixin)
+class DQForEachColRule(BaseModel, DQRuleTypeMixin)
 
 ```
 

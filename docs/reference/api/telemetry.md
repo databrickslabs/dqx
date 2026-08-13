@@ -1,5 +1,16 @@
 # databricks.labs.dqx.telemetry
 
+### reset\_telemetry\_cache[​](#reset_telemetry_cache "Direct link to reset_telemetry_cache")
+
+```python
+def reset_telemetry_cache() -> None
+
+```
+
+Clear the per-process telemetry dedup cache so previously sent signals can be sent again.
+
+Telemetry is deduplicated per process (each *(key, value)* is sent at most once). This resets that state; mainly useful for tests that assert on send behavior in isolation.
+
 ### log\_telemetry[​](#log_telemetry "Direct link to log_telemetry")
 
 ```python
@@ -8,6 +19,8 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None
 ```
 
 Trace specific telemetry information in the Databricks workspace by setting user agent extra info.
+
+Best-effort: telemetry must never affect the data path. Each *(key, value)* is sent at most once per process, the control-plane call is bounded by a short timeout, and any failure is swallowed (logged at debug) so telemetry can never block for long or propagate an exception into user code.
 
 **Arguments**:
 

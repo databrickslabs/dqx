@@ -39,6 +39,7 @@ Column object indicating whether the values in the input column are valid longit
 ### is\_geometry[​](#is_geometry "Direct link to is_geometry")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geometry(column: str | Column) -> Column
 
@@ -61,6 +62,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_geography[​](#is_geography "Direct link to is_geography")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geography(column: str | Column) -> Column
 
@@ -83,6 +85,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_point[​](#is_point "Direct link to is_point")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_point(column: str | Column) -> Column
 
@@ -105,6 +108,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_linestring[​](#is_linestring "Direct link to is_linestring")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_linestring(column: str | Column) -> Column
 
@@ -127,6 +131,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_polygon[​](#is_polygon "Direct link to is_polygon")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_polygon(column: str | Column) -> Column
 
@@ -149,6 +154,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_multipoint[​](#is_multipoint "Direct link to is_multipoint")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_multipoint(column: str | Column) -> Column
 
@@ -171,6 +177,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_multilinestring[​](#is_multilinestring "Direct link to is_multilinestring")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_multilinestring(column: str | Column) -> Column
 
@@ -193,6 +200,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_multipolygon[​](#is_multipolygon "Direct link to is_multipolygon")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_multipolygon(column: str | Column) -> Column
 
@@ -215,6 +223,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_geometrycollection[​](#is_geometrycollection "Direct link to is_geometrycollection")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geometrycollection(column: str | Column) -> Column
 
@@ -237,6 +246,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_ogc\_valid[​](#is_ogc_valid "Direct link to is_ogc_valid")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_ogc_valid(column: str | Column) -> Column
 
@@ -259,6 +269,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_non\_empty\_geometry[​](#is_non_empty_geometry "Direct link to is_non_empty_geometry")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_non_empty_geometry(column: str | Column) -> Column
 
@@ -281,6 +292,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_not\_null\_island[​](#is_not_null_island "Direct link to is_not_null_island")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_not_null_island(column: str | Column) -> Column
 
@@ -303,6 +315,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### has\_dimension[​](#has_dimension "Direct link to has_dimension")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def has_dimension(column: str | Column, dimension: int) -> Column
 
@@ -326,6 +339,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### has\_x\_coordinate\_between[​](#has_x_coordinate_between "Direct link to has_x_coordinate_between")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def has_x_coordinate_between(column: str | Column, min_value: float,
                              max_value: float) -> Column
@@ -351,6 +365,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### has\_y\_coordinate\_between[​](#has_y_coordinate_between "Direct link to has_y_coordinate_between")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def has_y_coordinate_between(column: str | Column, min_value: float,
                              max_value: float) -> Column
@@ -376,6 +391,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_area\_equal\_to[​](#is_area_equal_to "Direct link to is_area_equal_to")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_equal_to(column: str | Column,
                      value: int | float | str | Column,
@@ -404,6 +420,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_area\_not\_equal\_to[​](#is_area_not_equal_to "Direct link to is_area_not_equal_to")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_equal_to(column: str | Column,
                          value: int | float | str | Column,
@@ -432,6 +449,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_area\_not\_greater\_than[​](#is_area_not_greater_than "Direct link to is_area_not_greater_than")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_greater_than(column: str | Column,
                              value: int | float | str | Column,
@@ -460,6 +478,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_area\_not\_less\_than[​](#is_area_not_less_than "Direct link to is_area_not_less_than")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_less_than(column: str | Column,
                           value: int | float | str | Column,
@@ -488,6 +507,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_num\_points\_equal\_to[​](#is_num_points_equal_to "Direct link to is_num_points_equal_to")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_num_points_equal_to(column: str | Column,
                            value: int | float | str | Column) -> Column
@@ -512,6 +532,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_num\_points\_not\_equal\_to[​](#is_num_points_not_equal_to "Direct link to is_num_points_not_equal_to")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_num_points_not_equal_to(column: str | Column,
                                value: int | float | str | Column) -> Column
@@ -536,6 +557,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_num\_points\_not\_greater\_than[​](#is_num_points_not_greater_than "Direct link to is_num_points_not_greater_than")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_num_points_not_greater_than(
         column: str | Column, value: int | float | str | Column) -> Column
@@ -560,6 +582,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_num\_points\_not\_less\_than[​](#is_num_points_not_less_than "Direct link to is_num_points_not_less_than")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_num_points_not_less_than(column: str | Column,
                                 value: int | float | str | Column) -> Column
@@ -584,6 +607,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### are\_polygons\_mutually\_disjoint[​](#are_polygons_mutually_disjoint "Direct link to are_polygons_mutually_disjoint")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("dataset")
 def are_polygons_mutually_disjoint(
         column: str | Column,
@@ -612,6 +636,7 @@ This function requires Databricks runtime 17.1 or above. This check performs a s
 ### is\_geo\_contains[​](#is_geo_contains "Direct link to is_geo_contains")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geo_contains(column: str | Column,
                     reference_geometry: str | bytes | Column,
@@ -644,6 +669,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_geo\_covers[​](#is_geo_covers "Direct link to is_geo_covers")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geo_covers(column: str | Column,
                   reference_geometry: str | bytes | Column,
@@ -681,11 +707,12 @@ Column object indicating whether values in the input column are not covered by t
 
 **Notes**:
 
-This function requires Databricks serverless compute or runtime 17.1 or above.
+This function requires Databricks serverless compute or runtime 17.1 or above if `precise` is True.
 
 ### is\_geo\_intersects[​](#is_geo_intersects "Direct link to is_geo_intersects")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geo_intersects(column: str | Column,
                       reference_geometry: str | bytes | Column,
@@ -723,11 +750,12 @@ Column object indicating whether values in the input column do not intersect the
 
 **Notes**:
 
-This function requires Databricks serverless compute or runtime 17.1 or above.
+This function requires Databricks serverless compute or runtime 17.1 or above if `precise` is True.
 
 ### is\_geo\_touches[​](#is_geo_touches "Direct link to is_geo_touches")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geo_touches(column: str | Column,
                    reference_geometry: str | bytes | Column,
@@ -760,6 +788,7 @@ This function requires Databricks serverless compute or runtime 17.1 or above.
 ### is\_geo\_within[​](#is_geo_within "Direct link to is_geo_within")
 
 ```python
+@requires_dbr_version("17.1")
 @register_rule("row")
 def is_geo_within(column: str | Column,
                   reference_geometry: str | bytes | Column,

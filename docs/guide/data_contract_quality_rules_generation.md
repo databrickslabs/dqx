@@ -1,5 +1,11 @@
 # Data Contract Quality Rules Generation
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.11.0 "Available since DQX v0.11.0")
+
+<!-- -->
+
+[0.11.0](https://github.com/databrickslabs/dqx/releases/tag/v0.11.0 "Available since DQX v0.11.0")
+
 DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
 
 ## Overview[​](#overview "Direct link to Overview")
@@ -29,6 +35,10 @@ Data contract-based generation is ideal for:
 * **Data Mesh**: Support domain-oriented data ownership with clear contracts
 
 For automated discovery of data patterns without contracts, consider using the [Data Profiling](/dqx/docs/guide/data_profiling.md) approach instead. For generating rules from natural language without contracts, see [AI-Assisted Generation](/dqx/docs/guide/ai_assisted_quality_checks_generation.md).
+
+No-code: do it from DQX Studio
+
+The same pipeline is exposed in [DQX Studio](/dqx/docs/guide/dqx_studio.md) under **Create rules → Import rules → From data contract**. Upload or paste an ODCS contract, pick the Unity Catalog table each schema should target, preview the generated checks, and save them as drafts — no Python required. The CLI / Python API documented below is the right entry point when you want the generation to run inside a pipeline or CI job.
 
 ### ODCS v3.x Native Support[​](#odcs-v3x-native-support "Direct link to ODCS v3.x Native Support")
 
@@ -118,6 +128,12 @@ print(f"Generated {len(rules)} quality rules")
 ```
 
 ### Schema validation[​](#schema-validation "Direct link to Schema validation")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 When the contract defines a schema and `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. Set `generate_schema_validation=False` to skip these rules. The **strictness** of schema validation is controlled by `strict_schema_validation`: default `True` (exact columns, order, and types); set to `False` for permissive validation (expected columns must exist with compatible types; extra columns are allowed).
 

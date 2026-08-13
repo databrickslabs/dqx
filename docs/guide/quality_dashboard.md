@@ -1,5 +1,11 @@
 # Quality Dashboard
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.13.0 "Available since DQX v0.13.0")
+
+<!-- -->
+
+[0.13.0](https://github.com/databrickslabs/dqx/releases/tag/v0.13.0 "Available since DQX v0.13.0")
+
 The data quality dashboard can be set up in two ways: you can import it directly in your workspace from the GitHub repository, or it will be automatically deployed when you install DQX using the Databricks CLI. For more details on the installation process, see the [Installation Guide](/dqx/docs/installation.md#installing-dashboard).
 
 The dashboard makes it easy to monitor and track data quality issues across all tables, with the flexibility to customize it to your specific needs.
@@ -62,3 +68,43 @@ print(f"Open a dashboard from the following folder and refresh it:")
 print(dashboards_folder_link)
 
 ```
+
+## Connecting a Genie Space[​](#connecting-a-genie-space "Direct link to Connecting a Genie Space")
+
+You can link a [Databricks Genie Space](https://docs.databricks.com/aws/en/genie/index.html) to the DQX dashboard so that dashboard viewers can ask natural-language questions against the dashboard data — without leaving the dashboard.
+
+### Prerequisites[​](#prerequisites "Direct link to Prerequisites")
+
+Before starting, confirm that:
+
+* The Genie capability is enabled in your Databricks workspace.
+* The Genie space you want to link already exists and has been shared with the right users or groups.
+* Users who will interact with the linked Genie space have the appropriate Databricks access entitlement and at least `SELECT` privileges on the Unity Catalog data objects used by the space.
+
+To link the Genie space:
+
+1. Open the DQX dashboard in Databricks in **Edit Draft** mode.
+2. In the right-hand panel, click **Settings**. You can also open settings from the kebab menu (⋮) and choose **Settings**.
+3. Open the **General** section.
+4. Make sure **Enable Genie** is turned on.
+5. Select **Link existing Genie space**.
+6. Paste the URL of the existing Genie space into the field provided.
+7. Publish or republish the dashboard so viewers can use the linked Genie experience.
+
+To get the Genie space URL: open the Genie space, click **Share**, and use **Copy link**.
+
+Auto-generated Genie space
+
+If no existing space is linked, Databricks automatically generates a new companion Genie space from the dashboard when it is published and Genie is enabled.
+
+Data exposure
+
+Questions asked through Genie are answered from the full dataset query results behind the dashboard, not only from what is currently visible in the charts. Sensitive rows or columns included in the dataset can be exposed through Genie even if they are not shown in a visualization.
+
+### Troubleshooting[​](#troubleshooting "Direct link to Troubleshooting")
+
+**Genie option is unavailable:** Check whether Genie is enabled for the account and workspace.
+
+**Users can open the dashboard but not ask questions:** Verify Databricks SQL or consumer access entitlement and confirm users have permission on the underlying Unity Catalog objects.
+
+**Wrong or overly broad answers:** Review the Genie space configuration, attached data sources, and instructions. Genie can query beyond explicitly attached tables if permissions and context allow it.

@@ -1,5 +1,17 @@
 # AI-Assisted Quality Checks Generation
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+
+<!-- -->
+
+[0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+
+Changed in v0.16.0
+
+AI-assisted checks generation was updated in version 0.16.0 to not require a Spark session. Tables schemas are read from Unity Catalog using the workspace client, so `DQGenerator` can be used from environments without Spark.
+
+A Spark session is required when the input data is given as a storage path (e.g. `InputConfig(location="/Volumes/...")`) or using a Hive Metastore table name. Prior to v0.16.0, `DQGenerator` required a `SparkSession` on initialization, regardless of the input.
+
 DQX provides the capability to generate data quality rule candidates using AI/LLM assistance based on natural language descriptions of your data quality requirements. This feature leverages Large Language Models (LLMs) to automatically create appropriate data quality checks from business descriptions significantly reducing the time and effort required to define quality rules.
 
 ## Overview[​](#overview "Direct link to Overview")
@@ -57,9 +69,9 @@ Here's a simple example of generating quality rules from a natural language desc
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.sdk import WorkspaceClient
 
-# Initialize the generator
+# Initialize the generator (no SparkSession required)
 ws = WorkspaceClient()
-generator = DQGenerator(workspace_client=ws, spark=spark)
+generator = DQGenerator(workspace_client=ws)
 
 # Generate rules from natural language description
 user_input = """
@@ -106,6 +118,12 @@ print(checks)
 ```
 
 ### Using with Profiler Summary Statistics[​](#using-with-profiler-summary-statistics "Direct link to Using with Profiler Summary Statistics")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.12.0 "Available since DQX v0.12.0")
+
+<!-- -->
+
+[0.12.0](https://github.com/databrickslabs/dqx/releases/tag/v0.12.0 "Available since DQX v0.12.0")
 
 You can generate AI-assisted quality rules directly from profiler-generated summary statistics. This approach leverages the statistical patterns discovered during profiling to create appropriate data quality checks.
 

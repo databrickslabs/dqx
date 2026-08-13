@@ -1,5 +1,11 @@
 # AI Tools & Skills
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
 DQX ships [Agent Skills](https://agentskills.io/) that teach AI assistants how to use the library correctly. They're small, focused Markdown files with YAML frontmatter — the open format supported by [Databricks Genie Code](https://docs.databricks.com/aws/en/genie-code/skills), [Claude Code](https://docs.claude.com/en/docs/claude-code/plugins), and any other tool that follows the standard.
 
 The skills live in the [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills) directory of the DQX repo.
@@ -41,7 +47,7 @@ The skill fires when its description matches your request. Use `@` to manually i
 
 See the [Databricks Genie Code Documentation](https://docs.databricks.com/aws/en/genie-code/skills) for more details.
 
-The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.15.0/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
+The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.16.0/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
 
 ```bash
 # Inside Claude Code
@@ -119,5 +125,5 @@ DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when
 ## Source[​](#source "Direct link to Source")
 
 * Skills: [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills)
-* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.15.0/skills/.claude-plugin/plugin.json)
-* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.15.0/.claude-plugin/marketplace.json)
+* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.16.0/skills/.claude-plugin/plugin.json)
+* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.16.0/.claude-plugin/marketplace.json)

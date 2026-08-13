@@ -37,6 +37,22 @@ Budget caps (max\_tokens, temperature, timeout) come from *LLMModelConfig* and a
 
 A new LM instance configured with the current model config.
 
+### lm\_context[​](#lm_context "Direct link to lm_context")
+
+```python
+@contextmanager
+def lm_context() -> Iterator[None]
+
+```
+
+Scope a block of work to a freshly created LM instance.
+
+Each call creates a new LM so that the current credentials are picked up, rather than relying on a globally configured model. Use this to wrap any DSPy module invocation.
+
+**Yields**:
+
+None. The LM is active for the duration of the *with* block.
+
 ## DspySchemaGuesserSignature Objects[​](#dspyschemaguessersignature-objects "Direct link to DspySchemaGuesserSignature Objects")
 
 ```python

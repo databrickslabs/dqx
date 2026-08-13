@@ -1,5 +1,28 @@
 # databricks.labs.dqx.utils
 
+### to\_utc[​](#to_utc "Direct link to to_utc")
+
+```python
+def to_utc(value: datetime.datetime) -> datetime.datetime
+
+```
+
+Return *value* as a timezone-aware UTC datetime.
+
+Datetimes read back from Spark or SQL *TIMESTAMP* columns can be timezone-naive (for example, Spark Connect returns naive datetimes), while values produced in-process are timezone-aware UTC. Mixing the two in arithmetic raises *TypeError*, so this normalizes everything to UTC: a naive value is assumed to already be in UTC and given UTC tzinfo, and an aware value is converted to UTC.
+
+**Arguments**:
+
+* `value` - A timezone-aware or timezone-naive datetime.
+
+**Returns**:
+
+The equivalent timezone-aware UTC datetime.
+
+#### SparkColumn[​](#sparkcolumn "Direct link to SparkColumn")
+
+Pydantic-compatible Column type that accepts both classic and Spark Connect columns.
+
 #### VariableValue[​](#variablevalue "Direct link to VariableValue")
 
 Supported scalar types for variable substitution values.
@@ -90,7 +113,7 @@ def normalize_bound_args(val: Any,
 
 Normalize a value or collection of values for consistent processing.
 
-Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are recursively normalized with type preserved.
+Handles primitives, dates, Decimal, and column-like objects. Collections are recursively normalized, preserving list and tuple order while canonicalizing set and frozenset order.
 
 For Decimal values, uses a special JSON-serializable format to preserve type information for round-trip deserialization.
 
@@ -106,6 +129,25 @@ Normalized value or collection.
 **Raises**:
 
 * `TypeError` - If a column type is unsupported.
+
+### quote\_column\_name[​](#quote_column_name "Direct link to quote_column_name")
+
+```python
+def quote_column_name(name: str) -> str
+
+```
+
+Wraps a column name in backticks so it can be used as a SQL identifier.
+
+Column names containing spaces, non-ASCII characters, or other characters that require escaping (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before being parsed by `F.expr`.
+
+**Arguments**:
+
+* `name` - Column name to quote.
+
+**Returns**:
+
+The column name wrapped in backticks with embedded backticks escaped.
 
 ### normalize\_col\_str[​](#normalize_col_str "Direct link to normalize_col_str")
 
@@ -128,18 +170,79 @@ Normalizes string to be compatible with metastore column names by applying the f
 
 Normalized column name.
 
+### is\_sql\_query\_safe[​](#is_sql_query_safe "Direct link to is_sql_query_safe")
+
+```python
+def is_sql_query_safe(query: str) -> bool
+
+```
+
+Returns True if the query contains no destructive SQL statement keyword, otherwise False.
+
+Quoted string literals and backtick-quoted identifiers are stripped before scanning so that a forbidden keyword appearing as data (e.g. `status = &#x27;drop&#x27;`) or as a quoted column name (e.g. `` `drop` ``) is not mistaken for a statement. Comments are checked two ways so both a keyword *inside* a comment (e.g. `/* delete */`) and a keyword *split* by a comment (e.g. `dr/**/op`) are caught. `SELECT` is allowed: filters may legitimately use subqueries and are authored by trusted operators.
+
+**Arguments**:
+
+* \`\`1 - The SQL query or filter predicate to validate.
+
+**Returns**:
+
+True if the query is free of destructive statement keywords, False otherwise.
+
+### safe\_filter\_expr[​](#safe_filter_expr "Direct link to safe_filter_expr")
+
+```python
+def safe_filter_expr(filter_expr: str | None) -> Column
+
+```
+
+Build a Spark column from a filter expression, rejecting unsafe SQL.
+
+Validates the filter with *is\_sql\_query\_safe* before compiling it. Destructive statements (e.g. DELETE, DROP) are rejected; SELECT and subqueries are allowed, since filters are authored by trusted operators. Used for both check filters and *row\_filter* parameters.
+
+**Arguments**:
+
+* `filter_expr` - The filter predicate as a string, or None.
+
+**Returns**:
+
+The compiled filter column, or a literal true column when no filter is given.
+
+**Raises**:
+
+* `UnsafeSqlQueryError` - If the filter contains a destructive statement such as DELETE or DROP.
+
+### sanitize\_for\_logging[​](#sanitize_for_logging "Direct link to sanitize_for_logging")
+
+```python
+def sanitize_for_logging(value: str) -> str
+
+```
+
+Escapes newline and carriage-return characters in a user-supplied string so it cannot forge or corrupt log entries (CWE-117) when interpolated into a log message or user-facing result message.
+
+**Arguments**:
+
+* `value` - The untrusted string to sanitize.
+
+**Returns**:
+
+The string with CR and LF replaced by their escaped literal representations.
+
 ### safe\_json\_load[​](#safe_json_load "Direct link to safe_json_load")
 
 ```python
-def safe_json_load(value: str)
+def safe_json_load(value: str | None) -> object
 
 ```
 
 Safely load a JSON string, returning the original value if it fails to parse. This allows to specify string value without a need to escape the quotes.
 
+A *None* value is returned unchanged (a stored MAP\<STRING, STRING> may contain SQL NULL values, which surface as None and must not be passed to json.loads).
+
 **Arguments**:
 
-* `value` - The value to parse as JSON.
+* `value` - The value to parse as JSON, or None.
 
 ### safe\_strip\_file\_from\_path[​](#safe_strip_file_from_path "Direct link to safe_strip_file_from_path")
 
@@ -254,6 +357,33 @@ Set of column names that are primary keys. Returns empty set if:
 **Examples**:
 
 \>>> pk\_cols = get\_table\_primary\_keys("main.default.users", spark) >>> if "user\_id" in pk\_cols: ... print("user\_id is a primary key")
+
+### get\_table\_column\_metadata[​](#get_table_column_metadata "Direct link to get_table_column_metadata")
+
+```python
+def get_table_column_metadata(workspace_client: WorkspaceClient,
+                              table: str) -> str
+
+```
+
+Gets column metadata for a Unity Catalog table using the Databricks SDK.
+
+**Notes**:
+
+This method is used in place of *databricks.labs.dqx.llm.llm\_utils.get\_column\_metadata* when no Spark session is available. Schemas are read from Unity Catalog. The returned JSON has the same shape, so methods can be used interchangeably for LLM-based rule generation.
+
+**Arguments**:
+
+* `workspace_client` - Databricks WorkspaceClient instance.
+* `table` - Fully qualified table name (e.g. *catalog.schema.table*). Backtick-quoted identifiers are accepted and unquoted before the lookup.
+
+**Returns**:
+
+A JSON string containing the column metadata with columns wrapped in a "columns" key.
+
+**Raises**:
+
+* `NotFound` - If the table does not exist or is not accessible.
 
 ### missing\_required\_packages[​](#missing_required_packages "Direct link to missing_required_packages")
 

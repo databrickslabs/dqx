@@ -15,6 +15,7 @@ Implements a Spark `StreamingQueryListener` for writing data quality summary met
 * `metrics_observation` - `DQMetricsObservation` with data quality summary information
 * `spark` - `SparkSession` for writing summary metrics
 * `target_query_id` - Optional query ID of the specific streaming query to monitor. If provided, only events from this query will be processed (useful when multiple queries share the same observation).
+* `action_callback` - Optional callback the engine uses to evaluate actions, invoked per micro-batch with the per-batch *DQMetricsObservation* and run time. Optional because actions are optional: a metrics-only stream passes none. Kept a plain callable so this module never imports the actions subsystem, which databricks-connect would fail to re-import in its listener worker process. Exceptions propagate out of *onQueryProgress*; the callback decides what to swallow or re-raise.
 
 ### onQueryStarted[​](#onquerystarted "Direct link to onQueryStarted")
 

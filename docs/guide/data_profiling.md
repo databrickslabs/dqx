@@ -74,6 +74,12 @@ The profiler samples 30% of the data (sample ratio = 0.3) and limits the input t
 
 ### Profiling a table[​](#profiling-a-table "Direct link to Profiling a table")
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
+
+<!-- -->
+
+[0.6.0](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
+
 Profiling and quality checks generation can be run on individual tables.
 
 * Python
@@ -97,6 +103,12 @@ print("Generated Profiles:", profiles)
 ```
 
 ### Profiling multiple tables[​](#profiling-multiple-tables "Direct link to Profiling multiple tables")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
+
+<!-- -->
+
+[0.6.0](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
 
 The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
@@ -640,6 +652,12 @@ profiler_config:
 ```
 
 ## Stratified sampling by column[​](#stratified-sampling-by-column "Direct link to Stratified sampling by column")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.15.0 "Available since DQX v0.15.0")
+
+<!-- -->
+
+[0.15.0](https://github.com/databrickslabs/dqx/releases/tag/v0.15.0 "Available since DQX v0.15.0")
 
 By default, the profiler uses Spark's `DataFrame.sample` to get a uniform random sample over the whole dataset. For skewed or imbalanced data, this can under-represent (or miss entirely) rare strata of the dataset.
 

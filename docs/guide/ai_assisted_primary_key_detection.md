@@ -1,5 +1,11 @@
 # AI-Assisted Primary Key Detection
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.11.0 "Available since DQX v0.11.0")
+
+<!-- -->
+
+[0.11.0](https://github.com/databrickslabs/dqx/releases/tag/v0.11.0 "Available since DQX v0.11.0")
+
 DQX provides AI-assisted primary key detection that automatically identifies primary key columns in your tables using Large Language Models (LLMs). This feature analyzes table schemas and metadata to intelligently detect single or composite primary keys, and performs validation by checking for duplicate values.
 
 ## Overview[​](#overview "Direct link to Overview")

@@ -175,7 +175,7 @@ Save checks to a Delta table in the workspace.
 
 **Notes**:
 
-* `Idempotency` - If the table already contains a rule set with the same rule\_set\_fingerprint for this run\_config\_name, the save is skipped and the method returns without writing. This applies regardless of config.mode (including "overwrite"). So a call with mode="overwrite" and a checks payload that hashes to an existing fingerprint will not overwrite (e.g. if only non-fingerprinted metadata changed).
+* `Idempotency` - If the table already contains a rule set with the same rule\_set\_fingerprint for this run\_config\_name, the save is skipped and the method returns without writing. This applies regardless of config.mode (including "overwrite"). So a call with mode="overwrite" and a checks payload that hashes to an existing fingerprint will not overwrite (e.g. if only non-fingerprinted metadata changed). In particular, editing ONLY *message\_expr* (or ONLY *user\_metadata*) on an existing rule set is a no-op, because compute\_rule\_fingerprint hashes only name/criticality/function/arguments/filter/for\_each\_column.
 
   Mode behavior:
 
@@ -217,7 +217,8 @@ SQLAlchemy engine for the Lakebase instance.
 @staticmethod
 def get_table_definition(schema_name: str,
                          table_name: str,
-                         versioning: bool = True) -> Table
+                         versioning: bool = True,
+                         include_message_expr: bool = True) -> Table
 
 ```
 
@@ -228,6 +229,7 @@ Create a SQLAlchemy table definition for storing DQ rules (checks) in Lakebase.
 * `schema_name` - The schema where the checks table is located.
 * `table_name` - The table where the checks are stored.
 * `versioning` - If True (default), include versioning columns (created\_at, rule\_fingerprint, rule\_set\_fingerprint). Pass False for legacy tables that predate versioning support.
+* `include_message_expr` - If True (default), include the *message\_expr* column. Pass False for legacy tables that predate *message\_expr* support, so a select does not reference a column that does not exist on the table.
 
 **Returns**:
 
@@ -601,20 +603,3 @@ A tuple of (ChecksStorageHandler, BaseChecksStorageConfig).
 **Raises**:
 
 * `InvalidConfigError` - If the configuration is invalid or unsupported.
-
-### is\_table\_location[​](#is_table_location "Direct link to is_table_location")
-
-```python
-def is_table_location(location: str) -> bool
-
-```
-
-True if location points to a Delta table (catalog.schema.table) and is not a file path with a known checks serializer extension.
-
-**Arguments**:
-
-* `location` *str* - The checks location to validate.
-
-**Returns**:
-
-* `bool` - True if the location is a valid table name and not a file path, False otherwise.

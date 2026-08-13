@@ -137,6 +137,81 @@ make docs-build
 
 It will throw an error on any unresolved link.
 
+## Tagging features with lifecycle stage and version[​](#tagging-features-with-lifecycle-stage-and-version "Direct link to Tagging features with lifecycle stage and version")
+
+Annotate a feature page or subsection with its lifecycle stage and the release version it relates to, using the components in `src/components/FeatureTags.tsx`.
+
+### Applying tags to feature documentation[​](#applying-tags-to-feature-documentation "Direct link to Applying tags to feature documentation")
+
+Import the tags you need, then place a `<FeatureTags>`row directly **under** the heading. Pass the tags as children with `heading={false}`.
+
+* Tagging New Features
+* Tagging Breaking Changes
+* Tagging Deprecated Features
+
+```mdx
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags }
+  from '@site/src/components/FeatureTags';
+
+# My Feature
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+  <FeatureLifecycleStage stage="beta" heading={false} />
+</FeatureTags>
+
+```
+
+```mdx
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags }
+  from '@site/src/components/FeatureTags';
+import Admonition from '@theme/Admonition';
+
+# My Feature
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.16.0" heading={false} />
+</FeatureTags>
+<Admonition type="note" title="Changed in v0.16.0">
+Prior to v0.16.0, this option was called `foo`.
+</Admonition>
+
+```
+
+```mdx
+import { FeatureLifecycleStage, DeprecatedInVersion, FeatureTags }
+  from '@site/src/components/FeatureTags';
+
+# My Feature
+
+<FeatureTags>
+  <DeprecatedInVersion version="0.16.0" heading={false} />
+  <FeatureLifecycleStage stage="deprecated" heading={false} />
+</FeatureTags>
+
+```
+
+Each tag also accepts `heading` (default `true`) for the rarer case of sitting inline next to heading text; inside a `<FeatureTags>` row, pass `heading={false}` so the badges render at their normal size.
+
+Keep tags out of the heading line
+
+Place tags in a `<FeatureTags>` row under the heading, not inside the `#` line. Docusaurus derives the browser tab title and sidebar label from the raw heading text. A tag left in the heading would leak the component markup into these elements.
+
+### Feature tagging conventions[​](#feature-tagging-conventions "Direct link to Feature tagging conventions")
+
+Any page, section, or subsection heading can be tagged. The following conventions are used for tagging feature documentation:
+
+* Untagged features represent generally-available functionality. If a version tag is missing, the feature has been available since before release version 0.9.0.
+* If a feature page is tagged, all untagged subheadings share the same version and lifecycle stage.
+* If any subheading is tagged, that capability has it own version and lifecycle stage which differs from the page-level version and lifecycle stage.
+* Sections with structural content, explanations, or examples should not be tagged.
+
+### Available feature tags[​](#available-feature-tags "Direct link to Available feature tags")
+
+The following components are available:
+
+\*`<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked to the matching section of the [Feature lifecycle](/dqx/docs/reference/feature_lifecycle.md) reference. \*`<AvailableSinceVersion version="0.14.0" />` — "Available since v0.14.0", linked to that release's notes. \*`<DeprecatedInVersion version="0.16.0" replacement="the new_check function" />` — "Deprecated in v0.16.0", with an optional replacement named in the tooltip. \*`<FeatureTags>` — the row container that places the tags on their own line under the heading.
+
 ## Content alignment and structure of folders[​](#content-alignment-and-structure-of-folders "Direct link to Content alignment and structure of folders")
 
 When writing documentation, make sure to align the content with the existing documentation.
@@ -161,10 +236,10 @@ The API docs are generated in the `docs/dqx/docs/reference/api` directory.
 To generate API docs, run the following command:
 
 ```shell
-hatch run docs:pydoc-markdown
+uv run --group docs pydoc-markdown
 
 ```
 
-This command is run also as part of make docs build and server. The command will generate the API documentation from the Python codebase using pydoc-markdown.
+This is the same invocation that `make docs-build` and `make docs-serve-dev` run, so the recommended way is simply `make docs-build`. The command will generate the API documentation from the Python codebase using pydoc-markdown.
 
 For best practices on writing docstrings, refer to this [guidance](/dqx/docs/dev/contributing.md#writing-docstrings).

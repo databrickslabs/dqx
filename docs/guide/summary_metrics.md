@@ -1,5 +1,11 @@
 # Summary Metrics
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+
+<!-- -->
+
+[0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+
 DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see [Table Schemas and Relationships](/dqx/docs/reference/table_schemas.md).
 
 ## Overview[​](#overview "Direct link to Overview")
@@ -20,14 +26,23 @@ DQX automatically captures the following built-in metrics for every data quality
 
 ### Per-Check Metrics[​](#per-check-metrics "Direct link to Per-Check Metrics")
 
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
 When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error and warning counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
 
-The `check_metrics` value is a JSON-serialized array of structs, with one entry per check:
+`check_metrics` contains an entry for **every applied check**, not only the ones that failed. Checks that never triggered still appear with `error_count` and `warning_count` set to `0`. This differs from the row-level `_errors` / `_warnings` columns, which list only the checks that failed for a given row. As a result, the breakdown is derived from the applied checks (their names), so it cannot be reconstructed from the data alone — a check with zero violations leaves no trace in `_errors` / `_warnings`.
+
+The `check_metrics` value is a JSON-serialized array of structs, with one entry per applied check (here `passenger_incorrect_count` was applied but never triggered):
 
 ```json
 [
   {"check_name": "id_is_not_null", "error_count": 5, "warning_count": 0},
-  {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3}
+  {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3},
+  {"check_name": "passenger_incorrect_count", "error_count": 0, "warning_count": 0}
 ]
 
 ```
@@ -35,8 +50,8 @@ The `check_metrics` value is a JSON-serialized array of structs, with one entry 
 Each entry contains:
 
 * `check_name` — the name of the check (either explicitly set via `name` in the rule definition, or auto-derived from the check function and arguments)
-* `error_count` — number of rows where this check triggered an error
-* `warning_count` — number of rows where this check triggered a warning
+* `error_count` — number of rows where this check triggered an error (`0` if no rows failed the check)
+* `warning_count` — number of rows where this check triggered a warning (`0` if no rows failed the check)
 
 When persisted to the metrics table, `check_metrics` is stored as a single row with `metric_name = 'check_metrics'` and `metric_value` containing the JSON string. You can parse it with Spark's `from_json` or `json_tuple` functions for analysis:
 
@@ -367,9 +382,161 @@ engine.save_results_in_table(
 
 ```
 
+### Summary Metrics in Spark Declarative Pipelines (Lakeflow / DLT)[​](#summary-metrics-in-spark-declarative-pipelines-lakeflow--dlt "Direct link to Summary Metrics in Spark Declarative Pipelines (Lakeflow / DLT)")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+
+<!-- -->
+
+[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+
+To compute summary metrics in Spark Declarative Pipelines (a.k.a. SDP, Lakeflow Pipelines, or DLT), use `compute_summary_metrics`, passing the same `checks` you applied to the input data. For information about why the `DQObserver` cannot be used, see [Why not the observer](#why-not-the-observer-directly).
+
+Use compute\_summary\_metrics on batch data
+
+`compute_summary_metrics` computes aggregates over the entire input dataset. It cannot be used with append-mode streaming queries that write data using `df.writeStream` without a watermark. Use a materialized view, batch write, or foreachBatch sink instead.
+
+#### Strategies for writing summary metrics[​](#strategies-for-writing-summary-metrics "Direct link to Strategies for writing summary metrics")
+
+There are several approaches for computing and persisting summary metrics in a pipeline. Choose the approach based on your pipeline type, whether you need a snapshot or a history, and whether multiple pipelines must write into a single, shared metrics table:
+
+| Option                       | Metrics shape                            | Pipeline type      | Shared table across pipelines                        | Use when                                                                                                                                                                                                      |
+| ---------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Materialized view**        | Cumulative snapshot over the whole table | Batch or streaming | No — pipeline-managed dataset, owned by one pipeline | You want current totals and the simplest setup, don't need per-run history, and don't need to consolidate metrics across multiple pipelines.                                                                  |
+| **foreachBatch sink**        | Per-batch history (appended)             | Streaming          | Yes — appends to an external Delta table             | You want a history of metrics, better performance on large or growing tables (aggregates only the current micro-batch, not the whole table), or to centralize metrics from multiple pipelines into one table. |
+| **Windowed streaming table** | Per-time-window history (appended)       | Streaming          | No — pipeline-managed dataset, owned by one pipeline | You want time-windowed metrics and have a timestamp column and watermark to window on.                                                                                                                        |
+| **Batch companion job**      | Per-run history (appended)               | Batch              | Yes — appends to an external Delta table             | You want the simplest approach for keeping a history for 1 or more batch pipelines in a single metrics table.                                                                                                 |
+
+Choosing a history strategy
+
+Pick one history strategy per metrics table. Differet strategies require different columns and have outputs that cannot be appended into the same table (i.e. the windowed streaming table carries a `window` column plus metric columns while the foreachBatch-sink and batch-companion outputs use the long `OBSERVATION_TABLE_SCHEMA` shape).
+
+Pipeline-managed options (e.g. materialized views or windowed streaming tables) are defined by a single query in a single pipeline and cannot share a target metrics table. To centralize metrics from several checked tables in one pipeline, `unionByName` the results of `compute_summary_metrics` inside a single materialized view. To centralize metrics across pipelines, use a foreachBatch sink or a batch companion job. Set a distinct observer `name` and `input_config` for each source so rows stay filterable.
+
+##### Using a materialized view (cumulative snapshot)[​](#using-a-materialized-view-cumulative-snapshot "Direct link to Using a materialized view (cumulative snapshot)")
+
+Persist the checked data as a table so the result columns are available downstream, then add a materialized view that calls `compute_summary_metrics` over that table. After each pipeline update, the view contains a **cumulative snapshot** over all rows in the checked table. Metrics are cumulative totals representing the current quality of the entire dataset and do not contain any per-run history.
+
+* Python
+
+```python
+import dlt
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.sdk import WorkspaceClient
+
+# compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
+engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+@dlt.view
+def bronze():
+  return spark.readStream.table("catalog.schema.input")
+
+# 1. Apply checks and persist the checked data as a table.
+@dlt.table
+def silver():
+  df = dlt.read_stream("bronze")
+  return engine.apply_checks_by_metadata(df, checks)
+
+# 2. Compute summary metrics as a materialized view over the checked table.
+@dlt.table
+def dq_summary_metrics():
+  df = dlt.read("silver")
+  return engine.compute_summary_metrics(df, checks=checks)
+
+```
+
+See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+
+Incremental materialized views
+
+`compute_summary_metrics` stamps each metrics row with a `run_id` and `run_time`. Without static values these are non-deterministic across pipeline runs. To enable incremental updates to the metrics, override the *run\_time\_overwrite* and *run\_id\_overwrite* with static values when creating the `DQEngine` by passing `ExtraParams`.
+
+##### Using a foreachBatch sink (per-batch history)[​](#using-a-foreachbatch-sink-per-batch-history "Direct link to Using a foreachBatch sink (per-batch history)")
+
+Compute metrics per micro-batch using a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch). The sink function receives each streaming micro-batch, applies quality checks, writes the checked rows, and appends the per-batch `compute_summary_metrics` output. Use this when:
+
+* You want a **history** of metrics for each streaming micro-batch rather than a cumulative snapshot
+* You need better **performance on large or growing tables**; Only the current batch is aggregated rather than the whole table
+* You want to **share a metrics table across pipelines**; The sink appends to an external Delta table (not a pipeline-managed dataset); Several pipelines can write into a common metrics table; Set a distinct observer `name` per source so rows stay filterable
+
+- Python
+
+```python
+from pyspark import pipelines as dp
+
+@dp.table
+def bronze():
+  return spark.readStream.table("catalog.schema.input")
+
+# A foreachBatch sink writes to tables *outside* the pipeline, so use fully-qualified names —
+# unqualified names would be captured as pipeline-managed streaming tables and rejected.
+@dp.foreach_batch_sink(name="silver_sink")
+def silver_sink(batch_df, batch_id):
+  checked_df = engine.apply_checks_by_metadata(batch_df, checks)
+  checked_df.write.format("delta").mode("append").saveAsTable("catalog.schema.silver")
+  
+  metrics_df = engine.compute_summary_metrics(checked_df, checks=checks)
+  metrics_df.write.format("delta").mode("append").saveAsTable("catalog.schema.dq_summary_metrics")
+
+@dp.append_flow(target="silver_sink")
+def silver_flow():
+  return spark.readStream.table("bronze")
+
+```
+
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
+
+##### Using a windowed streaming table (per-window history)[​](#using-a-windowed-streaming-table-per-window-history "Direct link to Using a windowed streaming table (per-window history)")
+
+If you prefer time-windowed metrics, add a watermark on a timestamp column and aggregate the observer's metric expressions per time window. Each window's metrics are appended once the window completes:
+
+* Python
+
+```python
+import pyspark.sql.functions as F
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+
+# pass check names to get_metrics(check_names) to also include the per-check breakdown
+observer = DQMetricsObserver()
+
+@dlt.table
+def dq_summary_metrics():
+  df = dlt.read_stream("silver").withWatermark("event_time", "10 minutes")
+  metric_exprs = [F.expr(m) for m in observer.get_metrics()]
+  return df.groupBy(F.window("event_time", "1 hour")).agg(*metric_exprs)
+
+```
+
+Watermark requirements for time-windowed metrics
+
+Time-windowed metrics require that the source data contains a timestamp column to window on and a watermark. Ingestion or event time are commonly used. Each window's metrics are emitted only once the window closes and the watermark passes a configured delay interval. Late rows are dropped and not considered in the computed metrics. The output carries a `window` column plus the metric columns.
+
+##### Using a batch companion job (per-run history)[​](#using-a-batch-companion-job-per-run-history "Direct link to Using a batch companion job (per-run history)")
+
+For a batch pipeline, compute the metrics in a companion job or scheduled task and **append** the `compute_summary_metrics` output. This creates a row-set per run, stamped with a distinct `run_id` and `run_time`.
+
+* Python
+
+```python
+metrics_df = engine.compute_summary_metrics(spark.read.table("catalog.schema.silver"), checks=checks)
+metrics_df.write.mode("append").saveAsTable("catalog.schema.dq_metrics")
+
+```
+
+#### Why not the observer directly?[​](#why-not-the-observer-directly "Direct link to Why not the observer directly?")
+
+In Spark Declarative Pipelines, the pipeline runtime (not your code) triggers the write action. The Spark `Observation` that DQX's metrics observer relies on is never populated and the streaming listener receives no events. DQX automatically detects the pipeline runtime and automatically skips `observe()`, so `apply_checks*` returns the checked DataFrame without observable metrics. `compute_summary_metrics` computes the same metrics as an aggregation and returns a lazily-evaluated DataFrame with the same schema as the observer path. Pass the same `checks` to get the full per-check breakdown (including checks with zero violations). The metrics can be centralized alongside other batch and streaming workloads.
+
+Metrics require a DQMetricsObserver
+
+`compute_summary_metrics` uses the engine's `DQMetricsObserver`. An observer **must be configured** when initializing the engine. Calling `compute_summary_metrics` without an observer raises an `InvalidParameterError`.
+
 ### Configuring Custom Metrics[​](#configuring-custom-metrics "Direct link to Configuring Custom Metrics")
 
 Custom metrics are collected in addition to the built-in metrics. Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserver`. Custom metrics should be defined as Spark SQL expressions with column aliases and will be accessible by their alias.
+
+Each custom metric expression must return a **scalar** aggregate value. `metric_value` is a string column, so a non-scalar result (e.g. an array or struct) is stringified opaquely and is hard to consume downstream — aggregate to a single scalar per metric.
 
 * Python
 

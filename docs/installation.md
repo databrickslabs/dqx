@@ -99,7 +99,7 @@ See the [Data Contract Quality Rules Generation Guide](/dqx/docs/guide/data_cont
 
 ### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror "Direct link to Installing DQX with company-hosted PyPI mirror")
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.15.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.16.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
@@ -301,6 +301,9 @@ run_configs:                        # <- list of run configurations, each run co
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
+  actions_location: iot_actions.yml      # <- optional. Action definitions (alerting / fail-pipeline) to auto-load and apply after checks. Table, JSON/YAML file (absolute or relative to the installation folder, or volume path), or Lakebase table. Omit to run without actions.
+  action_events_location: main.iot.dq_action_events  # <- optional. UC or Lakebase table for action event history and durable alert suppression across runs. Omit to keep suppression state in memory per run.
+
   anomaly_config:                          # <- optional row anomaly detection configuration (model training via workflow)
     columns: [amount, quantity]            # <- optional, omit to use all supported columns
     model_name: main.iot.orders_monitor    # <- required when using anomaly config, fully qualified
@@ -406,7 +409,7 @@ resources:
 
 ### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror-1 "Direct link to Installing DQX with company-hosted PyPI mirror")
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.15.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.16.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
@@ -465,16 +468,16 @@ We plan to publish DQX Studio to the Databricks Marketplace for one-click instal
 
 ### Prerequisites[​](#prerequisites-2 "Direct link to Prerequisites")
 
-* **Databricks CLI** v0.268 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v0.268 is the minimum that supports `lifecycle.prevent_destroy` on bundle resources, which the studio's stateful schemas / volume / Lakebase instance rely on.
-* Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
-* `jq` and `make` available locally (used by the deployment scripts).
+* **Databricks CLI** v1.4.0 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v1.4.0 is required for the `postgres_projects` / `postgres_roles` resources; `lifecycle.prevent_destroy` on the studio's stateful schemas / volume / Lakebase project needs only v0.268+.
+* Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
+* `make` available locally, and **Databricks CLI v1.4.0+** (required for the `postgres_projects` / `postgres_roles` bundle resources).
 * **App build toolchain** — `make app-deploy` first builds the wheel via `make app-build`, which needs **uv**, **Node.js 18+** (provides `npm`; install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download)), and **yarn** (`npm install -g yarn`). (`bun` is only required for the optional `make app-check` type-check — install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.)
 * **Databricks Apps** feature enabled on the workspace.
 * **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
 * **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.
 * An **existing Unity Catalog catalog** where the studio's schemas and volumes will be provisioned. The bundle does not create the catalog itself; `make app-deploy` provisions the schemas and wheels volume *inside* the catalog automatically.
-* A **SQL warehouse**. You can either let the bundle create a dedicated X-Small serverless warehouse for the app (the default, "Mode A"), or point the app at an existing/shared warehouse you already have (`sql_warehouse_id: "<id>"`, "Mode B"). See [Choosing a SQL warehouse mode](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#choosing-a-sql-warehouse-mode) in the deployment guide.
-* **Lakebase Postgres** enabled on the workspace if you keep the default backend layout. DQX Studio stores its OLTP state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping) in a Lakebase instance for sub-millisecond reads. The bundle creates the instance for you. If your workspace doesn't have Lakebase, you can opt out and run everything on Delta — see the **Hybrid storage backend** admonition under the install steps below.
+* A **SQL warehouse** — the bundle creates and manages a dedicated serverless warehouse for the app; you don't supply one.
+* **Lakebase Postgres** enabled on the workspace if you keep the default backend layout. DQX Studio stores its OLTP state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping) in a Lakebase Postgres *project* for sub-millisecond reads. The bundle creates the project (and the app SP's Postgres role) for you. If your workspace doesn't have Lakebase, you can opt out and run everything on Delta — see the **Hybrid storage backend** admonition under the install steps below.
 
 ### Install DQX Studio using a Declarative Automation Bundle[​](#install-dqx-studio-using-a-declarative-automation-bundle "Direct link to Install DQX Studio using a Declarative Automation Bundle")
 
@@ -488,13 +491,12 @@ We plan to publish DQX Studio to the Databricks Marketplace for one-click instal
 
 2. Create a workspace service principal to run the task-runner job (separate from the app's auto-created SP, which cannot be used outside the Apps framework). In the Databricks workspace UI go to **Settings → Identity and Access → Service Principals**, create a new SP (for example `dqx-task-runner-sp`), and on its **Permissions** tab grant your deploying identity the **`User`** role. Note the SP's **Application ID** — you'll reference it as `dqx_service_principal_application_id` in the bundle.
 
-3. Update the deploy target in `app/databricks.yml`. Three variables are **required**:
+3. Update the deploy target in `app/databricks.yml`. Only two variables are **required**:
 
    * `catalog_name` — Unity Catalog catalog where the studio's schemas and volume live (must already exist).
    * `dqx_service_principal_application_id` — the task-runner SP you created in step 2.
-   * `sql_warehouse_id` — the warehouse the app queries. Two ways to populate it: chain it to a bundle-managed warehouse (**Mode A**: bundle creates a dedicated X-Small serverless warehouse), or set it to an existing warehouse's ID (**Mode B**: bundle reuses a warehouse you already own and never mutates or destroys it). Pick one per target; see [Choosing a SQL warehouse mode](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#choosing-a-sql-warehouse-mode).
 
-   Mode A example (bundle creates the warehouse):
+   The bundle manages its own SQL warehouse and Lakebase project, so there's nothing else to supply:
 
    ```yaml
    targets:
@@ -505,78 +507,50 @@ We plan to publish DQX Studio to the Databricks Marketplace for one-click instal
          # Required
          catalog_name: <your-catalog>
          dqx_service_principal_application_id: <your-sp-application-id>
-         sql_warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
 
          # Optional — uncomment and override defaults per target as needed
-         # admin_group: <your-admin-group>             # default: admins
-         # app_name: <your-app-name>                   # default: dqx-studio
-         # sql_warehouse_name: <your-warehouse-name>   # default: dqx-studio-sql-warehouse (Mode A only)
-         # schema_name: <your-schema-name>             # default: dqx_studio
+         # admin_group: <your-admin-group>              # default: admins
+         # app_name: <your-app-name>                    # default: dqx-studio
+         # sql_warehouse_size: <size>                   # default: Small
+         # schema_name: <your-schema-name>              # default: dqx_studio
 
-         # Lakebase backend (default: enabled). Set lakebase_instance_name
-         # to "" to disable Lakebase and run all OLTP tables on Delta.
-         # lakebase_instance_name: dqx-studio-lakebase
-         # lakebase_database_name: databricks_postgres  # always-present admin DB
-         # lakebase_capacity: CU_1                     # CU_1 / CU_2 / CU_4 / CU_8
-       resources:
-         sql_warehouses:
-           dqx_sql_warehouse:
-             name: ${var.sql_warehouse_name}
-             cluster_size: "X-Small"
-             enable_serverless_compute: true
-             max_num_clusters: 1
-             min_num_clusters: 1
-             auto_stop_mins: 10
-             permissions:
-               - group_name: "users"
-                 level: "CAN_USE"
+         # Lakebase backend (default: enabled). To disable Lakebase and run all
+         # OLTP tables on Delta, remove the postgres_projects / postgres_roles
+         # blocks from databricks.yml and set lakebase_endpoint: "-".
+         # lakebase_branch: dqx                         # default branch name
+         # lakebase_suspend_timeout: "300s"             # scale-to-zero idle window
        presets:
          trigger_pause_status: PAUSED
 
    ```
 
-   Mode B example (reuse an existing warehouse — typical when sharing a workspace warehouse across apps):
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
 
-   ```yaml
-   targets:
-     prod:
-       workspace:
-         profile: <your-profile>
-       variables:
-         catalog_name: <your-catalog>
-         dqx_service_principal_application_id: <your-sp-application-id>
-         sql_warehouse_id: "<existing-warehouse-id>"   # just the ID, nothing else
-       # No resources.sql_warehouses block — the bundle never touches the warehouse.
-       # post_deploy_grants.sh adds CAN_USE for the app SP, job SP, and `users` group
-       # via the warehouses permissions API after each deploy.
+4. Grant `USE CATALOG` on your chosen catalog. This is the **only** manual grant: the bundle applies all schema/volume permissions natively, but it does not manage the (pre-existing) catalog, so it cannot grant catalog-level access. Run this once per catalog (the app SP's client id is shown by `databricks apps get dqx-studio` after the first deploy):
+
+   ```sql
+   GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
+   GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
+   GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
 
    ```
 
-   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
-
-4. (One-time, only on a workspace whose schemas / volume / Lakebase instance were created out-of-band before adopting this layout) adopt them into bundle management:
-
-   ```commandline
-   make app-bind PROFILE=<your-profile> TARGET=<your-target>
-
-   ```
-
-5. Build, deploy, grant permissions, and start the studio in a single command:
+5. Build, deploy, and start the studio in a single command:
 
    ```commandline
    make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 
    ```
 
-   This runs `make app-build`, `databricks bundle deploy` (provisions the schemas, wheels volume, Lakebase Postgres instance, the SQL warehouse **in Mode A only**, the task-runner job, and the Databricks App in dependency order; the stateful resources — schemas, volume, and instance — carry `lifecycle.prevent_destroy: true`), `app/scripts/post_deploy_grants.sh` (which in Mode B also grants `CAN_USE` on the external warehouse to the app SP, job SP, and `users` group via the warehouses permissions API), and `databricks bundle run` in sequence. The app connects to the always-present `databricks_postgres` admin database on the instance and creates its own `dqx_studio` Postgres schema there on first start; no logical-database provisioning step is needed.
+   This runs `make app-build`, `databricks bundle deploy`, and `databricks bundle run` in sequence. `bundle deploy` provisions the schemas, wheels volume, Lakebase Postgres project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** — there is no post-deploy grant script and no bind step. The stateful resources (schemas, volume, Postgres project) carry `lifecycle.prevent_destroy: true`. The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start.
 
 6. Open the deployed app from the **Apps** page in your Databricks workspace.
 
 Stateful storage is destroy-protected
 
-The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, and Lakebase Postgres instance are declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase instance) is created at startup and is not itself a bundle resource, but it is protected transitively by the instance-level guard — as long as the instance survives, the schema and its tables survive. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
+The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, and Lakebase Postgres project are declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase project) is created at startup and is not itself a bundle resource, but it is protected transitively by the project-level guard — as long as the project survives, the schema and its tables survive. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
 
-For the full walkthrough — including step-by-step commands, manual `GRANT` statements, troubleshooting, target-specific configuration, and the bind workflow for adopting existing resources — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEPLOYMENT.md).
+For the full walkthrough — including step-by-step commands, the `USE CATALOG` prerequisite, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md).
 
 Hybrid storage backend
 
@@ -584,7 +558,7 @@ DQX Studio splits its data across two physical backends: high-volume append-most
 
 First-run wheel upload
 
-On its first start, DQX Studio runs database migrations (Delta and, if enabled, Lakebase) and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs. If Lakebase is enabled, also wait for `Lakebase OLTP routing enabled` before opening the UI — when Lakebase is configured (`DQX_LAKEBASE_INSTANCE_NAME` non-empty) and init fails, the app refuses to start and the Databricks Apps platform will restart it; silent fallback to Delta would split-brain OLTP writes across two physical stores and is not safe. To run on Delta only, unset `DQX_LAKEBASE_INSTANCE_NAME`.
+On its first start, DQX Studio runs database migrations (Delta and, if enabled, Lakebase) and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs. If Lakebase is enabled, also wait for `Lakebase OLTP routing enabled` before opening the UI — when Lakebase is configured (`DQX_LAKEBASE_ENDPOINT` non-empty) and init fails, the app refuses to start and the Databricks Apps platform will restart it; silent fallback to Delta would split-brain OLTP writes across two physical stores and is not safe. To run on Delta only, unset `DQX_LAKEBASE_ENDPOINT`.
 
 ### Upgrade DQX Studio[​](#upgrade-dqx-studio "Direct link to Upgrade DQX Studio")
 
@@ -600,7 +574,7 @@ Database migrations run automatically on app startup and preserve existing rules
 
 ### Uninstall DQX Studio[​](#uninstall-dqx-studio "Direct link to Uninstall DQX Studio")
 
-`databricks bundle destroy` removes the app, the task-runner job, and — **only in Mode A** — the bundle-managed SQL warehouse. In Mode B the warehouse is referenced by ID, not owned by the bundle, so `bundle destroy` leaves it intact. The bundle is **blocked** from dropping the stateful resources (schemas, volume, Lakebase instance) by their `prevent_destroy` flag. The DQX `dqx_studio` Postgres schema inside `databricks_postgres` lives below the resource layer DABs models and is therefore unaffected by `bundle destroy` — drop it manually if you want a fully clean wipe. To fully uninstall:
+`databricks bundle destroy` removes the app, the task-runner job, and the bundle-managed SQL warehouse. The bundle is **blocked** from dropping the stateful resources (schemas, volume, Lakebase project) by their `prevent_destroy` flag. The DQX `dqx_studio` Postgres schema inside `databricks_postgres` lives below the resource layer DABs models and is therefore unaffected by `bundle destroy` — drop it manually if you want a fully clean wipe. To fully uninstall:
 
 1. Edit `app/databricks.yml` and remove `lifecycle.prevent_destroy: true` from each of the stateful resources you want to drop.
 2. Unbind the resources so the bundle no longer tracks them, then destroy:
@@ -610,7 +584,7 @@ Database migrations run automatically on app startup and preserve existing rules
    databricks bundle deployment unbind main_schema -t <your-target>
    databricks bundle deployment unbind tmp_schema  -t <your-target>
    databricks bundle deployment unbind wheels      -t <your-target>
-   databricks bundle deployment unbind lakebase    -t <your-target>
+   databricks bundle deployment unbind dqx_studio  -t <your-target>   # the Lakebase project
    databricks bundle destroy -p <your-profile> -t <your-target>
 
    ```
@@ -622,21 +596,263 @@ Database migrations run automatically on app startup and preserve existing rules
    DROP SCHEMA IF EXISTS <catalog>.dqx_studio_tmp CASCADE;
 
    ```
-4. Drop the DQX Postgres schema and the Lakebase instance if desired:
+4. Drop the DQX Postgres schema and the Lakebase project if desired:
    <!-- -->
    ```bash
    # DQX schema inside ``databricks_postgres`` (connect to the
-   # Lakebase instance with psql via ``databricks_postgres``):
+   # Lakebase project endpoint with psql via ``databricks_postgres``):
    #   DROP SCHEMA IF EXISTS dqx_studio CASCADE;
 
-   # Lakebase instance:
-   databricks database delete-database-instance dqx-studio-lakebase -p <your-profile>
+   # Lakebase project: delete it from Compute → Database Instances in the
+   # workspace UI (or via the Databricks CLI postgres project commands).
 
    ```
 
 Destroy protection is intentional
 
 `prevent_destroy` is what stops a `databricks bundle destroy` (or a forced replace from a deploy) from wiping your rules, schedules, role mappings, and comments. The multi-step uninstall above is by design — silent data loss is the bigger risk to protect against.
+
+## DQX MCP Server installation[​](#dqx-mcp-server-installation "Direct link to DQX MCP Server installation")
+
+The [DQX MCP Server](/dqx/docs/guide/dqx_mcp_server.md) exposes DQX as Model Context Protocol (MCP) tools for AI agents (Genie Code, Cursor, Claude Code). This section covers the prerequisites and deployment; see the [guide](/dqx/docs/guide/dqx_mcp_server.md) for architecture, the available tools, configuration, and usage.
+
+### Prerequisites[​](#mcp-prerequisites "Direct link to Prerequisites")
+
+Before deploying, set up the following. That's all you need — the deploy creates the app, the job and its UC objects, and applies every grant for you, including the catalog-level ones the bundle cannot declare itself.
+
+1. **Databricks CLI 0.279.0+** — check with `databricks --version` (the bundle uses the [direct deployment engine](https://docs.databricks.com/aws/en/dev-tools/bundles/direct), which needs this version).
+2. **Workspace features enabled** (ask a workspace admin if any are off): **Databricks Apps**, **Serverless compute**, and **Unity Catalog**.
+3. **A Unity Catalog catalog you own (or hold `MANAGE` on).** The deploy grants privileges *on this catalog*, which only its owner / a `MANAGE` holder / a metastore admin can do — plain `ALL PRIVILEGES` is **not** enough. So a shared, foreign-owned catalog such as `main` will not work; use one you administer, or ask an admin to create one and make you owner. [Why »](#mcp-reference)
+4. **A runner service principal** — a dedicated workspace service principal the runner job runs as. Create it once ([steps below](#mcp-runner-sp)) and pass its Application ID as `runner_service_principal_id` at deploy.
+
+Fastest path
+
+If you're a workspace admin with your own catalog, you already meet 1–3; just create the runner SP (step 4) and run `make mcp-deploy`.
+
+#### Create the runner service principal[​](#mcp-runner-sp "Direct link to Create the runner service principal")
+
+The runner job runs as a dedicated, least-privilege **workspace service principal** — *not* the app's auto-created SP (which is app-scoped and cannot be a job's `run_as`) and *not* the deploying user. Create it once:
+
+1. Create a workspace service principal (**Settings → Identity and access → Service principals → Add**, or the SCIM API). Note its **Application ID**.
+
+2. Grant yourself (the deploying identity) the **User** role on it (**Settings → that SP → Permissions**). Do this even if you are a workspace admin — admin membership alone does **not** confer it, and without it `bundle deploy` fails partway through with:
+
+   ```text
+   Cannot bind the service principal provided in 'run_as' field (<sp-name>) to the job.
+   The user creating or updating the job must have 'servicePrincipal.user' role on the
+   service principal. (403 PERMISSION_DENIED)
+
+   ```
+
+3. Give the SP the **workspace-access** entitlement so it can run serverless jobs.
+
+The deploy grants this SP every UC privilege it needs automatically — no manual grants required.
+
+### Deploy the MCP server[​](#mcp-deploy "Direct link to Deploy the MCP server")
+
+#### 1. Authenticate[​](#1-authenticate "Direct link to 1. Authenticate")
+
+```bash
+databricks auth login --host https://<your-workspace-url> --profile <profile>
+
+```
+
+#### 2. Deploy[​](#2-deploy "Direct link to 2. Deploy")
+
+Pass your **catalog** and the **runner SP Application ID** from the prerequisites:
+
+```bash
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id>
+
+```
+
+That is the whole deploy, in one command. It runs three steps in an order that matters:
+
+1. **`bundle deploy`** creates the schema, both UC volumes, the runner job and the app, and applies every grant *on those objects* natively.
+2. **catalog grants** — the bundle cannot grant on your catalog because it does not own it, so the deploy applies those itself (`USE CATALOG` for your users group, the runner SP and the app's service principal; plus `CREATE SCHEMA` for the runner SP, which creates each caller's private output schema). The app's service principal only exists once the app does, which is why this comes after step 1.
+3. **`bundle run`** starts the app, which publishes the runner wheel to the volume the runner job installs it from.
+
+Granting before the app first starts is what keeps this a single pass — the app already holds the access it needs to publish the wheel, so there is no "grant, then restart" second step. Re-running is safe (idempotent). Add `TARGET=<target>` for a non-default bundle target.
+
+##### Bundle variables[​](#mcp-bundle-variables "Direct link to Bundle variables")
+
+Pass these at deploy time (as `--var name=value`, or via `BUNDLE_VARS=` with `make mcp-deploy`):
+
+| Variable                      | Description                                                                                                                                                                                                                                                                                                                                | Default                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| `catalog_name`                | **Required.** Catalog the bundle creates its schema and volumes in, and where per-user output schemas live. Passed into the app config as `DQX_CATALOG` — no secret scope (a catalog name isn't sensitive; UC grants govern access).                                                                                                       | `""`                                        |
+| `runner_service_principal_id` | **Required.** Application id of the workspace SP the runner job runs as (see [Create the runner service principal](#mcp-runner-sp)). The placeholder default is not a real SP. With `make mcp-deploy`, pass `RUNNER_SP=` instead — it sets this variable *and* grants the SP on the catalog, which passing the variable directly does not. | `00000000-…`                                |
+| `name_prefix`                 | Prefix for all resource names (app + job). Override to deploy an isolated second copy.                                                                                                                                                                                                                                                     | `mcp-dqx`                                   |
+| `tmp_schema_name`             | Schema holding the temp views, the results volume and the runner-wheel volume. Override (together with `name_prefix`) for a fully isolated second deployment. Must be a valid identifier — no `-`.                                                                                                                                         | `dqx_mcp_tmp`                               |
+| `users_group`                 | Group granted `CAN_USE` on the app, plus `USE CATALOG` and temp-schema access.                                                                                                                                                                                                                                                             | `account users`                             |
+| `runner_wheel_filename`       | Filename of the runner wheel the app publishes and the runner job installs. Bump together with the version in `mcp-server/runner/pyproject.toml` — a unit test enforces that they match.                                                                                                                                                   | `dqx_mcp_runner-<version>-py3-none-any.whl` |
+
+For example, to override the users group:
+
+```bash
+databricks bundle deploy --var users_group="users" --profile <profile>
+
+```
+
+Don't have `make` (e.g. on Windows)? Run these Databricks CLI commands instead
+
+`make mcp-deploy` is a shortcut for the commands below — only the Databricks CLI is needed, so they work in PowerShell or `cmd` as well as a POSIX shell. Run them from the `mcp-server/` directory. The **order matters**: the app's service principal does not exist until the app is created, and it needs `USE CATALOG` before it first starts, or it cannot publish the runner wheel.
+
+```bash
+# 1. Deploy the bundle: schema, both volumes, the runner job and the app, with their native grants.
+databricks bundle deploy --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+
+# 2. Look up the app's service principal (created with the app in step 1).
+databricks apps get mcp-dqx --profile <profile> -o json
+#    -> copy "service_principal_client_id" from the output
+
+# 3. Grant the catalog privileges the bundle cannot (it does not own your catalog).
+#    Idempotent, and no SQL warehouse needed. Replace the three principals.
+databricks grants update catalog <catalog> --profile <profile> --json "{\"changes\":[{\"principal\":\"account users\",\"add\":[\"USE_CATALOG\"]},{\"principal\":\"<runner-sp-application-id>\",\"add\":[\"USE_CATALOG\",\"CREATE_SCHEMA\"]},{\"principal\":\"<app-service-principal-client-id>\",\"add\":[\"USE_CATALOG\"]}]}"
+
+# 4. Start the app. It publishes the runner wheel to the volume on startup.
+databricks bundle run mcp-dqx --var catalog_name=<catalog> --var runner_service_principal_id=<runner-sp-application-id> --profile <profile>
+
+# 5. Confirm the wheel was published (should list dqx_mcp_runner-<version>-py3-none-any.whl).
+databricks fs ls dbfs:/Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts --profile <profile>
+
+```
+
+If step 5 lists nothing, check `databricks apps logs mcp-dqx --profile <profile>` — a failed publish is almost always a missing `USE CATALOG` grant from step 3. Apply it and re-run step 4.
+
+#### 3. Find your MCP endpoint[​](#3-find-your-mcp-endpoint "Direct link to 3. Find your MCP endpoint")
+
+The MCP endpoint is `https://<app-url>/mcp`. Find `<app-url>` in the Databricks UI under **Compute → Apps → mcp-dqx** (the **App URL**), or via the CLI:
+
+```bash
+databricks apps get mcp-dqx --profile <profile> -o json | jq -r .url
+
+```
+
+#### 4. Verify the deployment[​](#mcp-verify "Direct link to 4. Verify the deployment")
+
+```bash
+# a) The app is running.
+databricks apps get mcp-dqx --profile <profile> -o json | jq -r '.compute_status.state, .app_status.state'
+
+# b) The app published the runner wheel — every data tool needs this.
+databricks fs ls dbfs:/Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts --profile <profile>
+
+# c) The catalog grants are in place (users group, runner SP, app SP).
+databricks grants get catalog <catalog> --profile <profile>
+
+# d) The bundle applied its own grants on the schema and volumes.
+databricks grants get schema <catalog>.dqx_mcp_tmp --profile <profile>
+databricks grants get volume <catalog>.dqx_mcp_tmp.mcp_results --profile <profile>
+
+```
+
+Then call a tool through the endpoint. `save_checks` is the most complete check — it exercises the runner SP's `CREATE SCHEMA` grant and the per-user output schema.
+
+### Reference[​](#mcp-reference "Direct link to Reference")
+
+Everything below is explanatory — you don't act on it to deploy. It documents what the deploy creates, the grants it applies, and why the catalog-ownership prerequisite exists.
+
+#### What gets deployed[​](#what-gets-deployed "Direct link to What gets deployed")
+
+The bundle creates these in your workspace (all prefixed by `name_prefix`, default `mcp-dqx`):
+
+| Resource              | Name                         | Purpose                                                                                                                                                                                                       |
+| --------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Databricks App        | `mcp-dqx`                    | The MCP server (serves `/mcp`); runs as its own app service principal.                                                                                                                                        |
+| App service principal | auto-named                   | **Auto-created by the platform** when the app is deployed — its application id is assigned at deploy time (not known beforehand). The identity the app process runs as.                                       |
+| Job                   | `mcp-dqx-runner`             | Serverless **wheel-task** job that installs a **pinned, published `databricks-labs-dqx` release** from the registry; **runs as the runner SP**. Tools submit work to it. See [DQX version](#mcp-dqx-version). |
+| Schema                | `<catalog>.dqx_mcp_tmp`      | Bundle-managed, with its grants declared natively. Holds the two volumes below and short-lived temp views.                                                                                                    |
+| Volume                | `…dqx_mcp_tmp.mcp_results`   | Bundle-managed. Each run's JSON result plus staged job inputs.                                                                                                                                                |
+| Volume                | `…dqx_mcp_tmp.dqx_artifacts` | Bundle-managed. The runner wheel, published by the app at startup.                                                                                                                                            |
+
+The catalog is injected into the app as a plain `DQX_CATALOG` config value (no secret scope — a catalog name isn't sensitive; UC grants govern access). Nothing is destroy-protected, so `databricks bundle destroy` removes all of it — **including the schema and both volumes** (see [Upgrade and uninstall](#mcp-upgrade-uninstall)). Two things are not part of the bundle and survive: the runner service principal (you create it yourself) and any `dqx_mcp_<user>` output schemas.
+
+#### DQX version[​](#mcp-dqx-version "Direct link to DQX version")
+
+The runner job installs a **pinned, published `databricks-labs-dqx` release** from the package registry — set in the runner job's environment dependencies in [`mcp-server/databricks.yml`](https://github.com/databrickslabs/dqx/blob/v0.16.0/mcp-server/databricks.yml). This mirrors DQX Studio, which also pins a released version rather than building from source, so the DQX version the tools run is deterministic and independent of your local working tree.
+
+* **To upgrade DQX,** bump the pinned version in `mcp-server/databricks.yml` and redeploy.
+* **Redeploy to pick up changes:** the runner is *not* auto-updated — it keeps using the version from the last deploy until you redeploy (see [Upgrade and uninstall](#mcp-upgrade-uninstall)).
+
+#### What the deploy creates inside your catalog[​](#mcp-catalog-objects "Direct link to What the deploy creates inside your catalog")
+
+The catalog you provide is used as the MCP server's working area. The deploy and its tools create the following inside it — nothing else:
+
+| Object                                        | Type                  | Created by                         | Purpose & lifecycle                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------- | --------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<catalog>.dqx_mcp_tmp`                       | Schema                | `bundle deploy`                    | Bundle-managed, with native grants. Holds the two volumes below plus short-lived temp views. Removed by `bundle destroy`.                                                                                                                                                                                        |
+| `<catalog>.dqx_mcp_tmp.dqx_artifacts`         | Volume                | `bundle deploy`                    | Hosts the runner wheel, which the **app publishes at startup** (skipped when unchanged). Removed by `bundle destroy`.                                                                                                                                                                                            |
+| `<catalog>.dqx_mcp_tmp.mcp_results`           | Volume                | `bundle deploy`                    | Each tool run's JSON result keyed by `run_id`, plus staged job inputs. The app reads results back from here. Removed by `bundle destroy`.                                                                                                                                                                        |
+| Temporary views under `<catalog>.dqx_mcp_tmp` | View                  | **at runtime**, per data-tool call | Definer's-rights views created as the calling user for `profile_table` / `run_checks` / `apply_checks_and_save_to_table`. Dropped by the runner job after each run (a periodic sweeper reaps any orphans).                                                                                                       |
+| `<catalog>.dqx_mcp_<user>`                    | Schema (one per user) | **at runtime**, on demand          | Created + owned by the runner SP the first time a user calls a persisting tool. Holds that user's `save_checks` / `apply_checks_and_save_to_table` output tables. Access is granted only to that user; users never see each other's schemas. See [Write access](/dqx/docs/guide/dqx_mcp_server.md#write-access). |
+
+So beyond the bundle-managed `dqx_mcp_tmp` schema (with two volumes), the catalog accumulates **one `dqx_mcp_<user>` schema per user** who persists checks or results, plus transient temp views that clean themselves up. `databricks bundle destroy` removes the app, the runner job **and** the `dqx_mcp_tmp` schema with both volumes; the `dqx_mcp_<user>` schemas are not bundle-managed and survive — drop those manually for a fully clean catalog (see [Upgrade and uninstall](#mcp-upgrade-uninstall)).
+
+If a \`dqx\_mcp\_tmp\` schema already exists in the catalog
+
+The working schema is named `dqx_mcp_tmp` (DQX-namespaced to avoid clashing with a generic schema name). The bundle **creates** it, so a pre-existing schema of that name makes the deploy stop with `SCHEMA_ALREADY_EXISTS` rather than silently taking it over. That is deliberate — adopting a schema the bundle did not create, then deleting it on `bundle destroy`, would be worse than a clear error. Deploy with `--var tmp_schema_name=<another-name>` to use a different schema, or drop the existing one if it is not needed.
+
+#### Catalog grants the deploy applies[​](#catalog-grants-the-deploy-applies "Direct link to Catalog grants the deploy applies")
+
+Everything on the objects the bundle owns (the schema, both volumes, the runner job's ACL) is declared **natively in the bundle** and applied by `bundle deploy`. The catalog itself is not bundle-managed — the bundle cannot grant on a catalog it does not own — so `make mcp-deploy` applies these catalog-level grants itself via `mcp-server/scripts/grant_catalog_prereqs.sh` (idempotent; this is why the deploying user needs `MANAGE`/ownership on the catalog):
+
+| Grantee     | Grant                            | On                      | Applied by                          |
+| ----------- | -------------------------------- | ----------------------- | ----------------------------------- |
+| Users group | `USE CATALOG`                    | catalog                 | script (catalog not bundle-managed) |
+| Runner SP   | `USE CATALOG`, `CREATE SCHEMA`   | catalog                 | script                              |
+| App SP      | `USE CATALOG`                    | catalog                 | script (after the app exists)       |
+| Users group | `USE SCHEMA`, `CREATE TABLE`     | `<catalog>.dqx_mcp_tmp` | **native** (`bundle deploy`)        |
+| App SP      | `USE SCHEMA`, `SELECT`, `MODIFY` | `<catalog>.dqx_mcp_tmp` | **native**                          |
+| App SP      | `READ VOLUME`, `WRITE VOLUME`    | both volumes            | **native**                          |
+| App SP      | `CAN_MANAGE_RUN`                 | the runner job          | **native**                          |
+| Runner SP   | `USE SCHEMA`, `SELECT`, `MODIFY` | `<catalog>.dqx_mcp_tmp` | **native**                          |
+| Runner SP   | `READ VOLUME`, `WRITE VOLUME`    | `…mcp_results`          | **native**                          |
+| Runner SP   | `READ VOLUME`                    | `…dqx_artifacts`        | **native**                          |
+
+Notes: `CREATE SCHEMA` on the catalog lets the runner SP create each caller's private per-user output schema (`dqx_mcp_<user>`) on demand — it is a catalog-level grant, so it cannot be native. The app is deliberately given `CAN_MANAGE_RUN` and **not** `CAN_MANAGE` on the runner job: it only submits runs and polls results, and `CAN_MANAGE` would let it rewrite the job definition (including its `run_as`) and so escape the least-privilege boundary the dedicated runner SP exists to enforce.
+
+#### Deploying-user permissions[​](#deploying-user-permissions "Direct link to Deploying-user permissions")
+
+If a deploy step is rejected, this table tells you which grant is missing (typical names; exact entitlements vary by workspace):
+
+| Permission                                        | On                 | Used by                                                                        | Symptom if missing                                     |
+| ------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| Allow to **create/manage Apps**                   | workspace          | `bundle deploy` (the app)                                                      | app creation rejected                                  |
+| **Allow cluster create** / serverless entitlement | workspace          | the runner job                                                                 | job creation rejected                                  |
+| **USE CATALOG** + **CREATE SCHEMA**               | the target catalog | `bundle deploy` (creates `<catalog>.dqx_mcp_tmp` + both volumes)               | `User does not have CREATE SCHEMA`                     |
+| **MANAGE** (or owner) on the catalog              | the target catalog | the catalog-level `GRANT`s the deploy applies (the bundle cannot declare them) | `User does not have MANAGE on Catalog`                 |
+| **Service Principal: User** role on the runner SP | the runner SP      | `bundle deploy` sets the job's `run_as`                                        | `User is not authorized to use this service principal` |
+
+### Upgrade and uninstall[​](#mcp-upgrade-uninstall "Direct link to Upgrade and uninstall")
+
+**Upgrade** — pull the latest code and re-deploy; the bundle updates the app and job in place, and the app republishes the runner wheel if it changed (an unchanged wheel is skipped via a content hash):
+
+```bash
+git pull
+make mcp-deploy PROFILE=<profile> CATALOG=<catalog> RUNNER_SP=<runner-sp-application-id>
+
+```
+
+**Uninstall** — teardown is a single command:
+
+```bash
+# macOS / Linux (make)
+make mcp-destroy PROFILE=<profile> CATALOG=<catalog>
+
+# Any platform (Databricks CLI only)
+cd mcp-server
+databricks bundle destroy --auto-approve --var catalog_name=<catalog> --profile <profile>
+
+```
+
+What destroy removes
+
+The schema and its volumes are bundle-managed, so `bundle destroy` deletes the app, the runner job, **and** `<catalog>.dqx_mcp_tmp` together with the `mcp_results` and `dqx_artifacts` volumes inside it — including any result files still in `mcp_results`. Earlier versions left the schema behind. Back up anything you need first.
+
+What survives, because it is not part of the bundle: any `<catalog>.dqx_mcp_<user>` output schemas (they hold user data), the catalog and its grants, and the runner service principal — delete those separately if no longer needed.
+
+`bundle destroy` only removes resources **this** bundle deployment tracks. If the workspace has an `mcp-dqx` app or `mcp-dqx-runner` job from a *separate* deploy (a colleague's, or an isolated `name_prefix` copy), remove those separately.
 
 ## Installing Dashboard[​](#installing-dashboard "Direct link to Installing Dashboard")
 
@@ -646,7 +862,7 @@ You have two options to set up the dashboard:
 
 ### Option 1: Import directly in the workspace[​](#option-1-import-directly-in-the-workspace "Direct link to Option 1: Import directly in the workspace")
 
-You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.15.0/src/databricks/labs/dqx/dashboards/). To import it:
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.16.0/src/databricks/labs/dqx/dashboards/). To import it:
 
 1. Navigate to **Dashboards** in the Databricks UI
 2. Click **Import dashboard from file**

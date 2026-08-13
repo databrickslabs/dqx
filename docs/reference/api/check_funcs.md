@@ -152,6 +152,34 @@ Checks whether the values in the input column are either null or empty.
 
 Column object for condition
 
+### has\_valid\_string\_case[​](#has_valid_string_case "Direct link to has_valid_string_case")
+
+```python
+@register_rule("row")
+def has_valid_string_case(column: str | Column, case: str) -> Column
+
+```
+
+Checks whether string values match the requested letter case:
+
+* `upper` requires all alphabetic characters to be uppercase
+* `lower` requires all alphabetic characters to be lowercase
+* `title` requires the first character of each word to be uppercase; words are split on the ASCII space character only, so other whitespace (tabs, newlines, non-breaking spaces) is not treated as a word boundary. Only the first character of each word is checked; the rest is left as-is, so an all-uppercase word (e.g. *HELLO*) also passes.
+* `sentence` requires each segment's first non-whitespace character to be uppercase; segments are split on the period only. Only that first character is checked; the rest is left as-is.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `case` - expected case; one of *upper*, *lower*, *title*, or *sentence*
+
+**Returns**:
+
+Column object for condition
+
+**Raises**:
+
+* `InvalidParameterError` - If *case* is not a supported string case.
+
 ### is\_not\_null\_and\_is\_in\_list[​](#is_not_null_and_is_in_list "Direct link to is_not_null_and_is_in_list")
 
 ```python
@@ -167,7 +195,7 @@ Checks whether the values in the input column are not null and present in the li
 **Arguments**:
 
 * `column` - column to check; can be a string column name or a column expression
-* `allowed` - list of allowed values (actual values or Column objects)
+* `allowed` - list of allowed values. Each entry is resolved like the comparison-check limits: a bare string is treated as a **column expression**, a numeric string such as "3" as a number, and an ISO-date string such as "2024-01-01" as a date. To compare against a string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
 * `case_sensitive` - whether to perform a case-sensitive comparison (default: True)
 
 **Returns**:
@@ -198,7 +226,7 @@ This check is not suited for `MapType` or `StructType` columns. For best perform
 **Arguments**:
 
 * `column` - column to check; can be a string column name or a column expression
-* `allowed` - list of allowed values (actual values or Column objects)
+* `allowed` - list of allowed values. Each entry is resolved like the comparison-check limits: a bare string is treated as a **column expression**, a numeric string such as "3" as a number, and an ISO-date string such as "2024-01-01" as a date. To compare against a string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
 * `case_sensitive` - whether to perform a case-sensitive comparison (default: True)
 
 **Returns**:
@@ -229,7 +257,7 @@ This check is not suited for `MapType` or `StructType` columns. For best perform
 **Arguments**:
 
 * `column` - column to check; can be a string column name or a column expression
-* `forbidden` - list of forbidden values (actual values or Column objects)
+* `forbidden` - list of forbidden values. Each entry is resolved like the comparison-check limits: a bare string is treated as a **column expression**, a numeric string such as "3" as a number, and an ISO-date string such as "2024-01-01" as a date. To compare against a string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
 * `case_sensitive` - whether to perform a case-sensitive comparison (default: True)
 
 **Returns**:
@@ -257,7 +285,7 @@ Checks whether the condition provided as an SQL expression is met.
 
 **Arguments**:
 
-* `expression` - SQL expression. Fail if expression evaluates to False, pass if it evaluates to True.
+* `expression` - SQL expression. Fail if expression evaluates to False, pass if it evaluates to True. Security note: this parameter accepts arbitrary SQL and is evaluated as-is, so it may include subqueries and run with the permissions of the process executing the checks. Only use check definitions from trusted sources, especially in automated or multi-tenant pipelines.
 * `msg` - optional message of the *Column* type, automatically generated if None
 * `name` - optional name of the resulting column, automatically generated if None
 * `negate` - if the condition should be negated (true) or not. For example, "col is not null" will mark null values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
@@ -377,10 +405,8 @@ Check whether the values in the input column are equal to the given value.
 
 * `column` *str | Column* - Column to check. Can be a string column name or a column expression.
 * `value` - The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
-* `abs_tolerance` - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-* `Example` - abs(a - b) <= tolerance With tolerance=0.01: 2.001 and 2.0099 → equal (diff = 0.0089) 2.001 and 2.02 → not equal (diff = 0.019)
-* `rel_tolerance` - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-* `Example` - abs(a - b) <= rel\_tolerance \* max(abs(a), abs(b)) With tolerance=0.01 (1%): 100 vs 101 → equal (diff = 1, tolerance = 1) 100 vs 102 → not equal (diff = 2, tolerance = 1)
+* `abs_tolerance` - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns. For example, abs(a - b) <= tolerance. With abs\_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
+* `rel_tolerance` - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale. For example, abs(a - b) <= rel\_tolerance \* max(abs(a), abs(b)). With rel\_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
 **Returns**:
 
@@ -412,10 +438,8 @@ Check whether the values in the input column are not equal to the given value.
 
 * `column` *str | Column* - Column to check. Can be a string column name or a column expression.
 * `value` - The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
-* `abs_tolerance` - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-* `Example` - abs(a - b) <= tolerance With tolerance=0.01: 2.001 and 2.0099 → equal (diff = 0.0089) 2.001 and 2.02 → not equal (diff = 0.019)
-* `rel_tolerance` - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-* `Example` - abs(a - b) <= rel\_tolerance \* max(abs(a), abs(b)) With tolerance=0.01 (1%): 100 vs 101 → equal (diff = 1, tolerance = 1) 100 vs 102 → not equal (diff = 2, tolerance = 1)
+* `abs_tolerance` - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns. For example, abs(a - b) <= tolerance. With abs\_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
+* `rel_tolerance` - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale. For example, abs(a - b) <= rel\_tolerance \* max(abs(a), abs(b)). With rel\_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
 **Returns**:
 
@@ -656,6 +680,218 @@ Null values will pass the check with no violation reported.
 **Returns**:
 
 Column object for condition
+
+### is\_valid\_national\_id[​](#is_valid_national_id "Direct link to is_valid_national_id")
+
+```python
+@register_rule("row")
+def is_valid_national_id(column: str | Column, country: str = "US") -> Column
+
+```
+
+Checks whether the values in the input column are valid national identification numbers (for example, US Social Security Numbers) for the given country.
+
+Validation is limited to *format* and *number ranges*; it does not verify that a number was actually issued.
+
+Supported countries are keyed by ISO 3166 alpha-2 code. Currently only *US* is supported: the *AAA-GG-SSSS* form is required, where the separators may be all hyphens, all single spaces, or omitted entirely (e.g. *123-45-6789*, *123 45 6789* or *123456789*), but must be used consistently. Structurally invalid ranges are rejected (area *000*, *666* and *900-999* - the latter covering ITINs; group *00*; serial *0000*).
+
+Null values will pass the check with no violation reported.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `country` - ISO 3166 alpha-2 country code selecting the validation pattern (default: *US*)
+
+**Returns**:
+
+Column object for condition
+
+**Raises**:
+
+* `MissingParameterError` - if *country* is None.
+* `InvalidParameterError` - if *country* is not a string, or is not a supported country code.
+
+### is\_valid\_uuid[​](#is_valid_uuid "Direct link to is_valid_uuid")
+
+```python
+@register_rule("row")
+def is_valid_uuid(column: str | Column, strict: bool = False) -> Column
+
+```
+
+Checks whether the values in the input column are valid UUIDs (RFC 9562, obsoletes RFC 4122).
+
+By default, validates the canonical 8-4-4-4-12 hyphenated hex string form, case-insensitively. The all-zero Nil UUID, the all-one Max UUID, and legacy variant GUIDs all pass, since every common UUID library treats them as valid.
+
+When *strict* is True, the version nibble (1-8) and variant bits (8/9/a/b) are additionally enforced, so out-of-range version/variant values and the Nil and Max UUIDs are rejected.
+
+Null values will pass the check with no violation reported.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `strict` - if True, also validate the version nibble and variant bits per RFC 9562 (default: False)
+
+**Returns**:
+
+Column object for condition
+
+### load\_iso\_codes[​](#load_iso_codes "Direct link to load_iso_codes")
+
+```python
+def load_iso_codes(resource_name: str) -> frozenset[str]
+
+```
+
+Load a set of standard codes from a newline-delimited data file in the resources package.
+
+The large standard code lists are stored as data files rather than inline literals to keep them readable and easy to regenerate. See the files under *databricks/labs/dqx/resources* for the values and their authoritative sources.
+
+### is\_valid\_country\_code[​](#is_valid_country_code "Direct link to is_valid_country_code")
+
+```python
+@register_rule("row")
+def is_valid_country_code(column: str | Column,
+                          code_format: str = "alpha-2",
+                          case_sensitive: bool = True) -> Column
+
+```
+
+Checks whether the values in the input column are valid ISO 3166-1 country codes.
+
+ISO 3166-1 defines three code representations, selected with *code\_format*:
+
+* *alpha-2* (default): the two-letter code, e.g. *US*, *GB*, *DE*.
+* *alpha-3*: the three-letter code, e.g. *USA*, *GBR*, *DEU*.
+* *numeric*: the three-digit code, e.g. *840*, *826*, *276*.
+
+The valid codes follow the ISO 3166-1 standard; see <https://www.iso.org/iso-3166-country-codes.html>. Only officially assigned codes are accepted; user-assigned codes (e.g. *XK* for Kosovo) and reserved codes are intentionally excluded. Numeric codes are the three-digit, zero-padded form (e.g. *004*), so a numeric input column must preserve the leading zeros; a non-string column is cast to string for comparison, but the cast does not add back zero-padding an integer type may have dropped (e.g. an *int* column value *4* is compared as the string *"4"*, not *"004"*, and is correctly flagged as invalid).
+
+By default the comparison is case-sensitive; pass *case\_sensitive* as False to accept values in any case. *case\_sensitive* has no effect for *numeric* codes, which contain only digits. *code\_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alpha-2"* are also accepted). Null values will pass the check with no violation reported.
+
+For best performance with large lists in general, prefer the *foreign\_key* check function; the fixed ISO 3166-1 code lists used here are small enough (up to 249 codes) that this is not a concern.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `code_format` - ISO 3166-1 code representation to validate against: *alpha-2* (default), *alpha-3*, or *numeric*; matching is case-insensitive
+* `case_sensitive` - whether to perform a case-sensitive comparison (default: True); ignored when *code\_format* is *numeric*
+
+**Returns**:
+
+Column object for condition
+
+**Raises**:
+
+* `MissingParameterError` - if *code\_format* is None.
+* `InvalidParameterError` - if *code\_format* is not a string, or is not a supported representation.
+
+### is\_valid\_currency\_code[​](#is_valid_currency_code "Direct link to is_valid_currency_code")
+
+```python
+@register_rule("row")
+def is_valid_currency_code(column: str | Column,
+                           code_format: str = "alphabetic",
+                           case_sensitive: bool = True) -> Column
+
+```
+
+Checks whether the values in the input column are valid ISO 4217 currency codes.
+
+ISO 4217 defines two code representations, selected with *code\_format*:
+
+* *alphabetic* (default): the three-letter code, e.g. *USD*, *EUR*, *JPY*.
+* *numeric*: the three-digit code, e.g. *840*, *978*, *392*.
+
+The valid codes follow the ISO 4217 standard; see <https://www.iso.org/iso-4217-currency-codes.html>. Every code assigned by the standard is accepted, which includes codes that are not spendable currencies, such as *XXX* (no currency), *XTS* (reserved for testing), the precious metals (*XAU*, *XAG*, *XPT*, *XPD*) and *XDR* (IMF special drawing rights). Numeric codes are the three-digit, zero-padded form (e.g. *036*), so a numeric input column must preserve the leading zeros; a non-string column is cast to string for comparison, but the cast does not add back zero-padding an integer type may have dropped (e.g. an *int* column value *8* is compared as the string *"8"*, not *"008"*, and is flagged as invalid). If codes are stored as unpadded integers, zero-pad the column before calling this check, e.g. *F.lpad(column.cast("string"), 3, "0")*.
+
+By default the comparison is case-sensitive; pass *case\_sensitive* as False to accept values in any case. *case\_sensitive* has no effect for *numeric* codes, which contain only digits. *code\_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alphabetic"* are also accepted). Null values will pass the check with no violation reported.
+
+For best performance with large lists in general, prefer the *foreign\_key* check function; the fixed ISO 4217 code lists used here are small enough (178 codes) that this is not a concern.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `code_format` - ISO 4217 code representation to validate against, either *alphabetic* (default) or *numeric*; matching is case-insensitive
+* `case_sensitive` - whether to perform a case-sensitive comparison (default: True); ignored when *code\_format* is *numeric*
+
+**Returns**:
+
+Column object for condition
+
+**Raises**:
+
+* `MissingParameterError` - if *code\_format* is None.
+* `InvalidParameterError` - if *code\_format* is not a string, or is not a supported representation.
+
+### is\_valid\_subdivision\_code[​](#is_valid_subdivision_code "Direct link to is_valid_subdivision_code")
+
+```python
+@register_rule("row")
+def is_valid_subdivision_code(
+        column: str | Column,
+        case_sensitive: bool = True,
+        country_column: str | Column | None = None) -> Column
+
+```
+
+Checks whether the values in the input column are valid ISO 3166-2 country subdivision codes.
+
+ISO 3166-2 codes identify subdivisions (states, provinces, regions, etc.) of a country, e.g. *US-CA* (California, US), *GB-ENG* (England, GB), *DE-BY* (Bavaria, DE). Every code embeds its country's ISO 3166-1 alpha-2 prefix, so a plain membership check against the full code list already rejects a subdivision suffix paired with the wrong country (e.g. *US-BY* is not itself a registered code, even though *US* and *BY* are each valid on their own).
+
+If the checked column and a country code live in separate columns, pass *country\_column* to additionally verify that the subdivision's country prefix matches that column's value for the same row (e.g. *country\_column="country"* with *column="subdivision"* flags a row where *subdivision="US-CA"* but *country="GB"*). *country\_column* can be a string column name or a column expression.
+
+By default the comparison is case-sensitive; pass *case\_sensitive* as False to accept values in any case. *case\_sensitive* also governs the *country\_column* cross-check: with the default *case\_sensitive=True*, *column="US-CA"* paired with a *country\_column* value of *"us"* is flagged as a mismatch, since the comparison is exact on both sides. Null values will pass the check with no violation reported; a null *country\_column* value for an otherwise-valid *column* value also passes, since there is nothing to cross-check.
+
+For best performance with large lists in general, prefer the *foreign\_key* check function; the ISO 3166-2 code list is large enough that *foreign\_key* may perform better for high-volume checks.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `case_sensitive` - whether to perform a case-sensitive comparison (default: True)
+* `country_column` - optional column name or column expression holding the expected ISO 3166-1 alpha-2 country code; when provided, also flags a row where *column*'s country prefix does not match this column's value
+
+**Returns**:
+
+Column object for condition
+
+### is\_valid\_language\_code[​](#is_valid_language_code "Direct link to is_valid_language_code")
+
+```python
+@register_rule("row")
+def is_valid_language_code(column: str | Column,
+                           code_format: str = "alpha-2",
+                           case_sensitive: bool = True) -> Column
+
+```
+
+Checks whether the values in the input column are valid ISO 639 language codes.
+
+ISO 639 defines two code representations, selected with *code\_format*:
+
+* *alpha-2* (default): the two-letter ISO 639-1 code, e.g. *en*, *fr*, *de* (covering macrolanguages and individual languages in common use).
+* *alpha-3*: the three-letter ISO 639-3 code, e.g. *eng*, *fra*, *deu* (the comprehensive registry covering all known languages, including ancient, extinct and constructed ones).
+
+Unlike *is\_valid\_country\_code*/*is\_valid\_currency\_code*, *alpha-2* is not a subset representation of every *alpha-3* entry: most *alpha-3* codes have no *alpha-2* counterpart, since ISO 639-3 covers far more languages than ISO 639-1. Legacy ISO 639-2 bibliographic codes that differ from the terminology code (e.g. *ger* for German, instead of *deu*) are not accepted. Every code still recognized by the registration authorities is accepted, including deprecated *alpha-2* codes not yet withdrawn from circulation (e.g. *sh* for Serbo-Croatian). ISO 639 codes are conventionally lowercase; *case\_sensitive* compares against the codes as registered.
+
+By default the comparison is case-sensitive; pass *case\_sensitive* as False to accept values in any case. *code\_format* matching itself is case-insensitive (*"ALPHA-3"*/*"Alpha-2"* are also accepted). Null values will pass the check with no violation reported.
+
+For best performance with large lists in general, prefer the *foreign\_key* check function; the *alpha-2* list is small, but the *alpha-3* list is large enough that *foreign\_key* may perform better for high-volume checks.
+
+**Arguments**:
+
+* `column` - column to check; can be a string column name or a column expression
+* `code_format` - ISO 639 code representation to validate against, either *alpha-2* (default) or *alpha-3*; matching is case-insensitive
+* `case_sensitive` - whether to perform a case-sensitive comparison (default: True)
+
+**Returns**:
+
+Column object for condition
+
+**Raises**:
+
+* `MissingParameterError` - if *code\_format* is None.
+* `InvalidParameterError` - if *code\_format* is not a string, or is not a supported representation.
 
 ### is\_ipv4\_address\_in\_cidr[​](#is_ipv4_address_in_cidr "Direct link to is_ipv4_address_in_cidr")
 
@@ -941,6 +1177,10 @@ A tuple of:
 * A Spark Column representing the condition for aggregation limit violations.
 * A closure that applies the aggregation check and adds the necessary condition/metric columns.
 
+**Raises**:
+
+* `InvalidParameterError` - If parameters are invalid — e.g. an unknown aggregate, negative tolerances, or column '\*' with an unsupported aggregate (see *validate\_star\_aggregate*).
+
 ### is\_aggr\_not\_less\_than[​](#is_aggr_not_less_than "Direct link to is_aggr_not_less_than")
 
 ```python
@@ -974,6 +1214,10 @@ A tuple of:
 
 * A Spark Column representing the condition for aggregation limit violations.
 * A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+**Raises**:
+
+* `InvalidParameterError` - If parameters are invalid — e.g. an unknown aggregate, negative tolerances, or column '\*' with an unsupported aggregate (see *validate\_star\_aggregate*).
 
 ### is\_aggr\_equal[​](#is_aggr_equal "Direct link to is_aggr_equal")
 
@@ -1013,6 +1257,10 @@ A tuple of:
 * A Spark Column representing the condition for aggregation limit violations.
 * A closure that applies the aggregation check and adds the necessary condition/metric columns.
 
+**Raises**:
+
+* `InvalidParameterError` - If parameters are invalid — e.g. an unknown aggregate, negative tolerances, or column '\*' with an unsupported aggregate (see *validate\_star\_aggregate*).
+
 ### is\_aggr\_not\_equal[​](#is_aggr_not_equal "Direct link to is_aggr_not_equal")
 
 ```python
@@ -1050,6 +1298,10 @@ A tuple of:
 
 * A Spark Column representing the condition for aggregation limit violations.
 * A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+**Raises**:
+
+* `InvalidParameterError` - If parameters are invalid — e.g. an unknown aggregate, negative tolerances, or column '\*' with an unsupported aggregate (see *validate\_star\_aggregate*).
 
 ### has\_no\_aggr\_outliers[​](#has_no_aggr_outliers "Direct link to has_no_aggr_outliers")
 
@@ -1103,8 +1355,64 @@ A tuple of:
 
 **Raises**:
 
-* `time_column`2 - If *sigma <= 0*, *lookback\_num\_intervals < 2*, *warmup\_num\_intervals* is out of range, or *time\_interval* is unknown.
+* `time_column`2 - If *sigma <= 0*, *lookback\_num\_intervals < 2*, *warmup\_num\_intervals* is out of range, *time\_interval* is unknown, or *column* is *"*"\* with an unsupported aggregate (see *validate\_star\_aggregate*).
 * `time_column`3 - If *aggr\_type* requires *aggr\_params* that are not supplied (e.g. percentile functions).
+
+### aggr\_matches\_dataset[​](#aggr_matches_dataset "Direct link to aggr_matches_dataset")
+
+```python
+@register_rule("dataset")
+def aggr_matches_dataset(
+        column: str | Column,
+        ref_table: str | None = None,
+        ref_df_name: str | None = None,
+        ref_column: str | Column | None = None,
+        aggr_type: str = "count",
+        aggr_params: dict[str, Any] | None = None,
+        group_by: list[str | Column] | None = None,
+        ref_group_by: list[str | Column] | None = None,
+        row_filter: str | None = None,
+        ref_row_filter: str | None = None,
+        abs_tolerance: float | None = None,
+        rel_tolerance: float | None = None) -> tuple[Column, Callable]
+
+```
+
+Build an upstream table comparison check condition and closure for dataset-level validation.
+
+This function verifies that an aggregation on a column in the checked DataFrame matches the same aggregation computed on a reference (upstream) DataFrame or table. It is commonly used to validate that a row count (or other aggregate metric) in a downstream table matches its upstream source, catching data loss or duplication introduced during ingestion.
+
+**Arguments**:
+
+* `column` - Column name (str) or Column expression to aggregate in the checked DataFrame. Pass *"*"\* for *count(*)\* over all rows.
+* `ref_table` - Name of the reference (upstream) table to read from the catalog.
+* `ref_df_name` - Name of the reference (upstream) DataFrame (used when passing DataFrames directly).
+* `ref_column` - Column name (str) or Column expression to aggregate in the reference DataFrame. Defaults to *column* when not provided.
+* `aggr_type` - Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max, count\_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
+* `aggr_params` - Optional dict of parameters for aggregates requiring them (e.g., percentile value for percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword arguments to the Spark function.
+* `group_by` - Optional list of column names or Column expressions in the checked DataFrame to compare the aggregate per group instead of dataset-wide. Only simple column expressions are supported, e.g. *F.col("region")*. A group present in the checked DataFrame but absent from the reference is reported as a mismatch; groups present only in the reference are not surfaced. Group keys are matched null-safely on both the checked and reference sides (including window-incompatible aggregates such as *count\_distinct*), so a legitimately null group key is compared like any other rather than being dropped.
+* `ref_group_by` - Optional list of group-by columns on the reference (upstream) side, matched to *group\_by* by position. Defaults to *group\_by* when omitted. Must have the same length as *group\_by*. Requires *group\_by* to be set.
+* `row_filter` - Optional SQL expression to filter rows in the checked DataFrame before aggregation. Auto-injected from the check filter.
+* `ref_row_filter` - Optional SQL expression to filter rows in the reference DataFrame or table before aggregation (e.g. to align both sides on the same date partition).
+* `ref_table`0 - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric aggregates.
+* `ref_table`1 - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if the aggregates vary in scale. Because it compares two separately-computed aggregates, sum/avg over floating-point columns can differ across runs/clusters (non-associative summation) even for identical data. A small rel\_tolerance value is recommended for these situations.
+
+**Returns**:
+
+A tuple of:
+
+* A Spark Column representing the condition for upstream comparison violations.
+* A closure that applies the upstream comparison check and adds the necessary condition/metric columns.
+
+**Raises**:
+
+MissingParameterError:
+
+* if neither *ref\_df\_name* nor *ref\_table* is provided. InvalidParameterError:
+* if both *ref\_df\_name* and *ref\_table* are provided.
+* if *abs\_tolerance* or *rel\_tolerance* is negative.
+* if *ref\_group\_by* is provided without *group\_by*.
+* if *group\_by* and *ref\_group\_by* lengths differ.
 
 ### compare\_datasets[​](#compare_datasets "Direct link to compare_datasets")
 
@@ -1157,10 +1465,8 @@ The log containing detailed differences is written to the message field of the c
 * `null_safe_row_matching` - If True, treats nulls as equal when matching rows.
 * `null_safe_column_value_matching` - If True, treats nulls as equal when matching column values. If enabled, (NULL, NULL) column values are equal and matching.
 * `row_filter` - Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
-* `columns`0 - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
-* `columns`1 - abs(a - b) <= tolerance With tolerance=0.01: 2.001 and 2.0099 → equal (diff = 0.0089) 2.001 and 2.02 → not equal (diff = 0.019)
-* `columns`2 - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
-* `columns`1 - abs(a - b) <= rel\_tolerance \* max(abs(a), abs(b)) With tolerance=0.01 (1%): 100 vs 101 → equal (diff = 1, tolerance = 1) 2.001 vs 2.0099 → equal
+* `columns`0 - Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns. For example, abs(a - b) <= tolerance. With abs\_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
+* `columns`1 - Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale. For example, abs(a - b) <= rel\_tolerance \* max(abs(a), abs(b)). With rel\_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
 
 **Returns**:
 
@@ -1215,6 +1521,48 @@ A tuple of:
 **Raises**:
 
 * `InvalidParameterError` - If min\_records\_per\_window or window\_minutes are not positive integers, or if lookback\_windows is provided and is not a positive integer.
+
+### has\_no\_gaps\_per\_time\_window[​](#has_no_gaps_per_time_window "Direct link to has_no_gaps_per_time_window")
+
+```python
+@register_rule("dataset")
+def has_no_gaps_per_time_window(
+        column: str | Column,
+        window_minutes: int,
+        group_by: list[str | Column] | None = None,
+        trailing_gap: bool = False,
+        curr_timestamp: Column | None = None) -> tuple[Column, Callable]
+
+```
+
+Checks whether a time-series column has gaps, i.e. time windows that contain no rows at all between windows that do (for example no data for 2025-07-15 while 2025-07-14 and 2025-07-16 are present).
+
+A missing window has no row to attach a violation to, so the gap is reported on every row in the last present window before the gap. Distinct values of *column* are bucketed into fixed time windows of *window\_minutes* (a fixed grid aligned to absolute time), and a gap is flagged whenever the next present window starts more than one window after the current one. Gaps are therefore measured against this fixed absolute-time grid, not the elapsed time between consecutive events.
+
+When *group\_by* is provided, gaps are detected independently within each group (for example per device or session) and the work partitions by the group key, which is the common case for IoT or clickstream data. When it is omitted, the whole column is treated as a single series.
+
+By default, only interior gaps are detected: a trailing gap (no data for the most recent windows up to the current time) is not reported, because there is no later row to anchor it to. Set *trailing\_gap* to *True* to additionally flag the last present window when it ends more than one window before the current time, so that missing recent data (for example no rows reported today) is caught even at the tail of the series. Null values are ignored and pass with no violation reported.
+
+In streaming, gaps are detected within individual micro-batches only.
+
+**Arguments**:
+
+* `column` - timestamp or date column to check; can be a string column name or a column expression
+* `window_minutes` - size of the time window in minutes that defines the expected data grain (for example 1440 for daily)
+* `group_by` - optional list of column names or Column expressions to detect gaps independently within each group; when omitted, the whole column is treated as a single global series
+* `trailing_gap` - if *True*, also flags the last present window (per group) when it ends more than one window before *curr\_timestamp*, anchoring the trailing boundary to the current time instead of leaving it unchecked; defaults to *False*
+* `curr_timestamp` - optional current timestamp column used to anchor trailing-gap detection; only used when *trailing\_gap* is *True*; if not provided, *current\_timestamp()* is used. The anchor is bucketed onto the same absolute-time grid as the event windows, which aligns to UTC epoch boundaries regardless of *spark.sql.session.timeZone*. With daily windows this means the "current window" is the UTC day, which can differ from the local day near midnight (e.g. 21:00 in a UTC-4 timezone is already the next UTC day); pass an explicit *curr\_timestamp* shifted to your timezone if you need local-day anchoring.
+
+**Returns**:
+
+A tuple of:
+
+* A Spark Column representing the gap condition.
+* A closure that applies the gap detection and adds the necessary condition columns.
+
+**Raises**:
+
+* `InvalidParameterError` - if *window\_minutes* is not a positive integer, if *group\_by* is not a list, or if *curr\_timestamp* is provided while *trailing\_gap* is *False*.
 
 ### has\_valid\_schema[​](#has_valid_schema "Direct link to has_valid_schema")
 
@@ -1403,3 +1751,71 @@ A tuple containing:
 * Normalized column name as a string (suitable for use in aliases or metadata).
 * Original column name as a string.
 * Spark Column expression corresponding to the input.
+
+### resolve\_aggregate\_column[​](#resolve_aggregate_column "Direct link to resolve_aggregate_column")
+
+```python
+def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]
+
+```
+
+Resolve an aggregate column like *get\_normalized\_column\_and\_expr*, canonicalizing every "\*" form.
+
+Any bare-star form (the string *"*"*, *F.expr("*")*, or *F.col("*")*) is canonicalized to the *("", "*")* name pair, so a *count(*)\* check produces identical names and messages regardless of how it was constructed, and callers can detect the star with a simple *aggr\_col\_str == "*"\* check. See `1435`.
+
+**Arguments**:
+
+* `column` - Column name (str) or Column expression to aggregate.
+
+**Returns**:
+
+A tuple of the normalized column name, the display column name, and the Column expression.
+
+### build\_filtered\_aggregate\_input[​](#build_filtered_aggregate_input "Direct link to build_filtered_aggregate_input")
+
+```python
+def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str,
+                                   aggr_col_expr: Column) -> Column
+
+```
+
+Build the (optionally row-filtered) column expression fed into an aggregate function.
+
+When *row\_filter* is present the column is wrapped in a CASE WHEN. A star (*"*"*) cannot be the THEN value of a CASE WHEN — Spark star-expands it against every column in scope, raising *INVALID\_USAGE\_OF\_STAR\_OR\_REGEX* — so for *count(*)* a non-null literal placeholder is used instead (*count()* only cares about nullness). *safe\_filter\_expr* rejects unsafe SQL (see `1303`, `1435`).
+
+**Arguments**:
+
+* `row_filter` - Optional SQL expression to filter rows before aggregation.
+* `aggr_col_str` - Canonicalized display name of the column (as returned by *resolve\_aggregate\_column*).
+* `aggr_col_expr` - The Column expression to aggregate.
+
+**Returns**:
+
+The column expression to pass to the aggregate function.
+
+### validate\_star\_aggregate[​](#validate_star_aggregate "Direct link to validate_star_aggregate")
+
+```python
+def validate_star_aggregate(aggr_col_str: str, aggr_type: str, *,
+                            uses_placeholder: bool) -> None
+
+```
+
+Reject star-column/aggregate combinations that are unsupported or would be silently wrong.
+
+*"*"\* means "all rows" and is only meaningful for counting. Two evaluation paths exist:
+
+* Native (*uses\_placeholder=False*: no row filter, or *aggr\_matches\_dataset*'s reference side which filters the DataFrame directly): *count* and *count\_distinct* both accept *"*"\*; single-arg aggregates (sum, avg, ...) do not, so they are rejected at build time with a clear error rather than failing later in Spark.
+* Placeholder (*uses\_placeholder=True*: a row filter on the checked/outlier side wraps the column in a CASE WHEN whose THEN is a non-null literal, see *build\_filtered\_aggregate\_input*): only *count* is correct — the literal placeholder makes *count\_distinct* collapse to 1 and other aggregates meaningless — so everything except *count* is rejected.
+
+Comparison is case-sensitive to match the case-sensitive aggregate resolution (*getattr(F, aggr\_type)*).
+
+**Arguments**:
+
+* `aggr_col_str` - Canonicalized display name of the column (as returned by *resolve\_aggregate\_column*).
+* `aggr_type` - The aggregate function name.
+* `uses_placeholder` - True when the star will be aggregated via the filtered-count placeholder.
+
+**Raises**:
+
+* `InvalidParameterError` - If *aggr\_col\_str* is the star *"*"\* and *aggr\_type* is not a supported star aggregate for the evaluation path.

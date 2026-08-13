@@ -206,7 +206,7 @@ When using the quality checker or e2e workflows to apply quality checks, they lo
 
 Checks validation
 
-Wrong types, unknown arguments, and missing required check function parameters are reported by `DQEngine.validate_checks`. `load_checks` and `save_checks` (except delta storage) methods do not validate the returned/provided metadata. Call `validate_checks` after load / before save when you want to catch problems before apply (for example hand edited YAML/JSON or checks written to a table without going through DQX). For field semantics and validation details, see [Quality checks definition](/dqx/docs/guide/quality_checks_definition.md).
+Wrong types, unknown arguments, and missing required check function parameters (syntax validation) are reported by `DQEngine.validate_checks`. `load_checks` and `save_checks` do not run syntax validation on the returned/provided metadata, so call `validate_checks` after load / before save when you want to catch syntax problems before apply (for example hand edited YAML/JSON or checks written to a table without going through DQX). They do, however, run semantic (ruleset-level) validation to detect duplicate and conflicting rules; this is controlled by the `semantic_validation_mode` parameter (`"warn"` by default, `"fail"` to raise, or `None` to skip). For field semantics and validation details, see [Quality checks definition](/dqx/docs/guide/quality_checks_definition.md).
 
 ## Supported storage backends[​](#supported-storage-backends "Direct link to Supported storage backends")
 
@@ -261,6 +261,12 @@ The following backend configuration are currently supported:
 You can find details on how to define checks [here](/dqx/docs/guide/quality_checks_definition.md).
 
 ## Calculating fingerprints manually[​](#calculating-fingerprints-manually "Direct link to Calculating fingerprints manually")
+
+[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+
+<!-- -->
+
+[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 When loading from Delta or Lakebase tables, you typically pass a `run_config_name` for filtering. Alternatively, you can filter by `rule_set_fingerprint` to load a specific version of the rule set. You can also use the fingerprint to verify that the current rule set matches the one used to apply the checks.
 

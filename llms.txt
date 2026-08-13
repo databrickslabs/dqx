@@ -14,13 +14,15 @@
 > Complete guide for using DQX features
 
 - [User Guide](/dqx/docs/guide.md): This section provides a user guide.
+- [Actions and Alerting](/dqx/docs/guide/actions_and_alerts.md): DQX actions let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected.
 - [Additional Configuration](/dqx/docs/guide/additional_configuration.md): Adding user metadata to the results of all checks
 - [AI-Assisted Primary Key Detection](/dqx/docs/guide/ai_assisted_primary_key_detection.md): DQX provides AI-assisted primary key detection that automatically identifies primary key columns in your tables using Large Language Models (LLMs).
-- [AI-Assisted Quality Checks Generation](/dqx/docs/guide/ai_assisted_quality_checks_generation.md): DQX provides the capability to generate data quality rule candidates using AI/LLM assistance based on natural language descriptions of your data quality requirements. This feature leverages Large Language Models (LLMs) to automatically create appropriate data quality checks from business descriptions significantly reducing the time and effort required to define quality rules.
+- [AI-Assisted Quality Checks Generation](/dqx/docs/guide/ai_assisted_quality_checks_generation.md): AI-assisted checks generation was updated in version 0.16.0 to not require a Spark session. Tables schemas are read from
 - [AI Tools & Skills](/dqx/docs/guide/ai_tools_skills.md): DQX ships Agent Skills that teach AI assistants how to use the library correctly. They're small, focused Markdown files with YAML frontmatter — the open format supported by Databricks Genie Code, Claude Code, and any other tool that follows the standard.
 - [Best Practices in Production](/dqx/docs/guide/best_practices.md): This page provides practical guidance and best practices for using DQX in production, ensuring reliable, scalable, and maintainable data quality validation across your data pipelines and datasets.
 - [Data Contract Quality Rules Generation](/dqx/docs/guide/data_contract_quality_rules_generation.md): DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
 - [Profiling and Quality Checks Generation](/dqx/docs/guide/data_profiling.md): Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
+- [DQX MCP Server](/dqx/docs/guide/dqx_mcp_server.md): dqx-mcp-server}
 - [DQX Studio (No-Code UI)](/dqx/docs/guide/dqx_studio.md): DQX Studio is the web application for authoring, reviewing, running, and monitoring data quality rules without writing code.
 - [Applying Quality Checks](/dqx/docs/guide/quality_checks_apply.md): You can apply quality checks to your data using the following approaches:
 - [Quality Checks Definition](/dqx/docs/guide/quality_checks_definition.md): Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
@@ -36,6 +38,30 @@
 
 - [Reference](/dqx/docs/reference.md): This section provides additional details and configuration of DQX.
 - [API Reference](/dqx/docs/reference/api.md): This section contains the API reference for the Databricks Labs DQX project.
+- [databricks.labs.dqx.actions.alert](/dqx/docs/reference/api/actions/alert.md): DQAlert action and associated enumerations.
+- [databricks.labs.dqx.actions.base](/dqx/docs/reference/api/actions/base.md): Core action types for the DQX actions &amp; alerting subsystem.
+- [databricks.labs.dqx.actions.conditions](/dqx/docs/reference/api/actions/conditions.md): Safe AST-based condition evaluator for DQX action gating.
+- [databricks.labs.dqx.actions.definition_storage](/dqx/docs/reference/api/actions/definition_storage.md): Storage handlers for persisting DQAction definitions.
+- [databricks.labs.dqx.actions.delivery](/dqx/docs/reference/api/actions/delivery.md): Webhook delivery client with retry logic and SSRF guard.
+- [databricks.labs.dqx.actions.destinations.base](/dqx/docs/reference/api/actions/destinations/base.md): Abstract base class for DQX alert destinations.
+- [databricks.labs.dqx.actions.destinations.callback](/dqx/docs/reference/api/actions/destinations/callback.md): Callback alert destination for DQX actions.
+- [databricks.labs.dqx.actions.destinations.log](/dqx/docs/reference/api/actions/destinations/log.md): Log alert destination for DQX actions.
+- [databricks.labs.dqx.actions.destinations.slack](/dqx/docs/reference/api/actions/destinations/slack.md): Slack Block Kit alert destination.
+- [databricks.labs.dqx.actions.destinations.teams](/dqx/docs/reference/api/actions/destinations/teams.md): Microsoft Teams alert destination (Power Automate Workflows webhook).
+- [databricks.labs.dqx.actions.destinations.webhook](/dqx/docs/reference/api/actions/destinations/webhook.md): Generic webhook alert destination with optional Basic-auth support.
+- [databricks.labs.dqx.actions.destinations.webhook_base](/dqx/docs/reference/api/actions/destinations/webhook_base.md): Abstract base for webhook-based alert destinations.
+- [databricks.labs.dqx.actions.dq_action](/dqx/docs/reference/api/actions/dq_action.md): The DQAction binding.
+- [databricks.labs.dqx.actions.evaluator](/dqx/docs/reference/api/actions/evaluator.md): Action evaluator orchestrator for the DQX actions &amp; alerting subsystem.
+- [databricks.labs.dqx.actions.event_storage](/dqx/docs/reference/api/actions/event_storage.md): Concrete event store implementations for the DQX actions &amp; alerting subsystem.
+- [databricks.labs.dqx.actions.fail_pipeline](/dqx/docs/reference/api/actions/fail_pipeline.md): FailPipeline action for the DQX actions &amp; alerting subsystem.
+- [databricks.labs.dqx.actions.log_sanitize](/dqx/docs/reference/api/actions/log_sanitize.md): Shared log-sanitization helper for the DQX actions subsystem.
+- [databricks.labs.dqx.actions.manager](/dqx/docs/reference/api/actions/manager.md): DQActionManager — high-level entry point for persisting and loading DQAction definitions.
+- [databricks.labs.dqx.actions.message](/dqx/docs/reference/api/actions/message.md): Alert message representation and builder for DQX actions.
+- [databricks.labs.dqx.actions.noop](/dqx/docs/reference/api/actions/noop.md): No-op action for the DQX actions &amp; alerting subsystem.
+- [databricks.labs.dqx.actions.registry](/dqx/docs/reference/api/actions/registry.md): Registry of DQX action types, enabling custom (user-defined) actions.
+- [databricks.labs.dqx.actions.secrets](/dqx/docs/reference/api/actions/secrets.md): Secret resolution for DQX action destinations.
+- [databricks.labs.dqx.actions.serializer](/dqx/docs/reference/api/actions/serializer.md): Serializer for DQAction instances.
+- [databricks.labs.dqx.actions.state](/dqx/docs/reference/api/actions/state.md): Alert state store and event persistence interfaces for the DQX actions subsystem.
 - [databricks.labs.dqx.anomaly.anomaly_engine](/dqx/docs/reference/api/anomaly/anomaly_engine.md): AnomalyEngine entrypoint for row anomaly detection.
 - [databricks.labs.dqx.anomaly.anomaly_llm_explainer](/dqx/docs/reference/api/anomaly/anomaly_llm_explainer.md): LLM-based group explanation for row anomaly detection.
 - [databricks.labs.dqx.anomaly.anomaly_workflow](/dqx/docs/reference/api/anomaly/anomaly_workflow.md): Workflow to train anomaly detection models on Databricks.
@@ -67,11 +93,12 @@
 - [databricks.labs.dqx.base](/dqx/docs/reference/api/base.md): DQEngineBase Objects
 - [databricks.labs.dqx.check_funcs](/dqx/docs/reference/api/check_funcs.md): DQPattern Objects
 - [databricks.labs.dqx.checks_resolver](/dqx/docs/reference/api/checks_resolver.md): resolve\check\function
-- [databricks.labs.dqx.checks_serializer](/dqx/docs/reference/api/checks_serializer.md): ChecksNormalizer Objects
+- [databricks.labs.dqx.checks_semantic_validator](/dqx/docs/reference/api/checks_semantic_validator.md): Semantic (ruleset-level) validation for DQ checks.
+- [databricks.labs.dqx.checks_serializer](/dqx/docs/reference/api/checks_serializer.md): project\to\check\_schema
 - [databricks.labs.dqx.checks_storage](/dqx/docs/reference/api/checks_storage.md): DataFrameConverter Objects
-- [databricks.labs.dqx.checks_validator](/dqx/docs/reference/api/checks_validator.md): ChecksValidationStatus Objects
+- [databricks.labs.dqx.checks_validator](/dqx/docs/reference/api/checks_validator.md): CheckBlock Objects
 - [databricks.labs.dqx.cli](/dqx/docs/reference/api/cli.md): open\remote\config
-- [databricks.labs.dqx.config](/dqx/docs/reference/api/config.md): InputConfig Objects
+- [databricks.labs.dqx.config](/dqx/docs/reference/api/config.md): DQSecret Objects
 - [databricks.labs.dqx.config_serializer](/dqx/docs/reference/api/config_serializer.md): ConfigSerializer Objects
 - [databricks.labs.dqx.contexts.cli_context](/dqx/docs/reference/api/contexts/cli_context.md): CliContext Objects
 - [databricks.labs.dqx.contexts.global_context](/dqx/docs/reference/api/contexts/global_context.md): GlobalContext Objects
@@ -91,10 +118,12 @@
 - [databricks.labs.dqx.installer.workflow_installer](/dqx/docs/reference/api/installer/workflow_installer.md): TEST\NIGHTLY\CI\RESOURCES\PURGE\_TIMEOUT
 - [databricks.labs.dqx.installer.workflow_task](/dqx/docs/reference/api/installer/workflow_task.md): Task Objects
 - [databricks.labs.dqx.io](/dqx/docs/reference/api/io.md): read\input\data
+- [databricks.labs.dqx.lakebase_engine](/dqx/docs/reference/api/lakebase_engine.md): Shared helpers for creating SQLAlchemy engines connected to Databricks Lakebase (PostgreSQL).
 - [databricks.labs.dqx.llm.llm_core](/dqx/docs/reference/api/llm/llm_core.md): LLMModelConfigurator Objects
 - [databricks.labs.dqx.llm.llm_engine](/dqx/docs/reference/api/llm/llm_engine.md): DQLLMEngine Objects
 - [databricks.labs.dqx.llm.llm_pk_detector](/dqx/docs/reference/api/llm/llm_pk_detector.md): Primary key detection using LLM analysis.
-- [databricks.labs.dqx.llm.llm_utils](/dqx/docs/reference/api/llm/llm_utils.md): get\check\function\_definitions
+- [databricks.labs.dqx.llm.llm_pk_engine](/dqx/docs/reference/api/llm/llm_pk_engine.md): DQLLMPrimaryKeyEngine Objects
+- [databricks.labs.dqx.llm.llm_utils](/dqx/docs/reference/api/llm/llm_utils.md): extract\json\rules
 - [databricks.labs.dqx.llm.optimizers](/dqx/docs/reference/api/llm/optimizers.md): DspyOptimizerConfig Objects
 - [databricks.labs.dqx.llm.validators](/dqx/docs/reference/api/llm/validators.md): LLMValidationScoreWeights Objects
 - [databricks.labs.dqx.manager](/dqx/docs/reference/api/manager.md): DQRuleManager Objects
@@ -116,16 +145,17 @@
 - [databricks.labs.dqx.quality_checker.quality_checker_runner](/dqx/docs/reference/api/quality_checker/quality_checker_runner.md): QualityCheckerRunner Objects
 - [databricks.labs.dqx.quality_checker.quality_checker_workflow](/dqx/docs/reference/api/quality_checker/quality_checker_workflow.md): DataQualityWorkflow Objects
 - [databricks.labs.dqx.reporting_columns](/dqx/docs/reference/api/reporting_columns.md): DefaultColumnNames Objects
-- [databricks.labs.dqx.rule](/dqx/docs/reference/api/rule.md): Criticality Objects
+- [databricks.labs.dqx.rule](/dqx/docs/reference/api/rule.md): requires\dbr\version
 - [databricks.labs.dqx.rule_fingerprint](/dqx/docs/reference/api/rule_fingerprint.md): Rule fingerprint functions for deterministic hashing of DQ rules and rule sets.
 - [databricks.labs.dqx.schema.dq_info_schema](/dqx/docs/reference/api/schema/dq_info_schema.md): Wide schema for dqinfo: one struct type with optional fields (anomaly, …).
 - [databricks.labs.dqx.table_manager](/dqx/docs/reference/api/table_manager.md): TableDataProvider Objects
-- [databricks.labs.dqx.telemetry](/dqx/docs/reference/api/telemetry.md): log\_telemetry
-- [databricks.labs.dqx.utils](/dqx/docs/reference/api/utils.md): VariableValue
+- [databricks.labs.dqx.telemetry](/dqx/docs/reference/api/telemetry.md): reset\telemetry\cache
+- [databricks.labs.dqx.utils](/dqx/docs/reference/api/utils.md): to\_utc
 - [databricks.labs.dqx.workflows_runner](/dqx/docs/reference/api/workflows_runner.md): WorkflowsRunner Objects
 - [Performance Benchmarks Report](/dqx/docs/reference/benchmarks.md): Specification
 - [CLI Reference](/dqx/docs/reference/cli.md): This page summarizes the available DQX commands exposed via the Databricks CLI for DQX.
 - [DQX Engine](/dqx/docs/reference/engine.md): To perform data quality checking with DQX, you must create a DQEngine object.
+- [Feature lifecycle](/dqx/docs/reference/feature_lifecycle.md): DQX features move through release stages as they mature. When a feature is not yet generally
 - [DQX Installation Wizard](/dqx/docs/reference/installation_wizard.md): When you install DQX as a tool in a Databricks workspace using databricks labs install dqx, the installer runs an interactive wizard to collect settings for the "default" run configuration.
 - [DQX Profiler](/dqx/docs/reference/profiler.md): To profile data and generate candidate data quality rules with DQX, you can use the DQProfiler, DQGenerator, and DQDltGenerator classes.
 - [Quality Checks](/dqx/docs/reference/quality_checks.md): This page provides a reference for the quality check functions available in DQX. Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.

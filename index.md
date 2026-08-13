@@ -14,6 +14,10 @@ DQX is a data quality framework for Apache Spark that enables you to define, mon
 
 Author, review, run, and monitor quality rules from a browser.
 
+### MCP for AI Coding Agents
+
+Expose DQX tools to Genie Code, Cursor, and Claude Code over MCP.
+
 ### Info of Failed Checks
 
 Get detailed insights into why a check has failed.
@@ -57,6 +61,10 @@ Automatically detect unusual rows with trained ML Models and explanations.
 ### Data Contract
 
 Generate quality rules from ODCS data contracts, including schema validation.
+
+### Actions and Alerting
+
+Send Slack, Microsoft Teams, or webhook alerts, or fail the pipeline, when summary metrics cross a threshold.
 
 ## Improve your Data Quality now 🚀
 

@@ -48,6 +48,18 @@ def filter_condition() -> Column
 
 Returns the filter condition for the check.
 
+### has\_unsafe\_filter[​](#has_unsafe_filter "Direct link to has_unsafe_filter")
+
+```python
+@cached_property
+def has_unsafe_filter() -> bool
+
+```
+
+Returns True if the check filter contains unsafe SQL (e.g. a destructive statement keyword).
+
+This is a non-raising check: an unsafe filter causes the check to be skipped (like any other invalid filter) rather than aborting evaluation of the whole rule set. Note this does not apply to the *sql\_query* check, whose query runs via *spark.sql* and is still hard-rejected in the executor.
+
 ### invalid\_columns[​](#invalid_columns "Direct link to invalid_columns")
 
 ```python
@@ -57,6 +69,8 @@ def invalid_columns() -> list[str]
 ```
 
 Returns list of invalid check columns in the input DataFrame.
+
+Column names that contain characters requiring SQL identifier escaping (e.g. spaces, such as "Customer Name") are back-quoted so they are unambiguous in the skip / error messages.
 
 ### has\_invalid\_columns[​](#has_invalid_columns "Direct link to has_invalid_columns")
 
@@ -77,6 +91,8 @@ def has_invalid_filter() -> bool
 ```
 
 Returns a boolean indicating whether the filter is invalid in the input DataFrame.
+
+An unsafe filter is short-circuited here so that `filter_condition` (which rejects unsafe SQL by raising) is never compiled for it; the check is reported as skipped via `_get_invalid_cols_message`.
 
 ### has\_invalid\_custom\_message[​](#has_invalid_custom_message "Direct link to has_invalid_custom_message")
 

@@ -1,5 +1,26 @@
 # databricks.labs.dqx.checks\_serializer
 
+### project\_to\_check\_schema[​](#project_to_check_schema "Direct link to project_to_check_schema")
+
+```python
+def project_to_check_schema(check: dict) -> dict
+
+```
+
+Return a copy of *check* containing only the logical check-metadata keys.
+
+Storage backends persist columns alongside the check that are not part of the check metadata accepted by *apply\_checks\_by\_metadata* (e.g. *run\_config\_name*, *created\_at*, *rule\_fingerprint*, *rule\_set\_fingerprint*). Loading a check therefore yields those extra keys. This helper drops them so a loaded check round-trips cleanly.
+
+Both load paths funnel their assembled check dict through this single projection so they agree on the loaded shape: the Lakebase path (*LakebaseChecksStorageHandler.\_load\_checks\_from\_lakebase*) and the Delta path (*DataFrameConverter.from\_dataframe*). The allowed keys are derived from *CheckSpec.model\_fields*, so a new logical field added to the schema is retained by both paths automatically — provided the backing store also carries it (adding a *CheckSpec* field still requires a matching Delta table column and Lakebase column for the value to survive a round-trip).
+
+**Arguments**:
+
+* `check` - A check dict that may carry storage-only keys.
+
+**Returns**:
+
+A new dict with only the keys defined by *CheckSpec*.
+
 ## ChecksNormalizer Objects[​](#checksnormalizer-objects "Direct link to ChecksNormalizer Objects")
 
 ```python
@@ -275,7 +296,7 @@ def deserialize(checks: list[dict]) -> list[DQRule]
 
 ```
 
-Converts a list of quality checks defined as Python dictionaries to a list of `DQRule` objects.
+Converts a list of quality checks defined as Python dictionaries to a list of *DQRule* objects.
 
 **Arguments**:
 

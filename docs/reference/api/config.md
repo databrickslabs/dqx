@@ -1,5 +1,61 @@
 # databricks.labs.dqx.config
 
+## DQSecret Objects[​](#dqsecret-objects "Direct link to DQSecret Objects")
+
+```python
+@dataclass(frozen=True)
+class DQSecret()
+
+```
+
+A reference to a Databricks secret stored in a secret scope.
+
+Provides a canonical *scope/key* string representation that can be passed as a credential reference in DQX configuration without embedding the secret value in plain text.
+
+Resolves against **classic Databricks workspace secret scopes** (the *dbutils.secrets* / Secrets API), **not** Unity Catalog secrets. The value is read at delivery time from the workspace that the engine's *WorkspaceClient* targets, so the scope and key must exist in that same workspace.
+
+**Arguments**:
+
+* `scope` - The Databricks secret scope name.
+* `key` - The key within the secret scope.
+
+### as\_reference[​](#as_reference "Direct link to as_reference")
+
+```python
+def as_reference() -> str
+
+```
+
+Return the canonical *scope/key* reference string.
+
+**Returns**:
+
+A string of the form `scope/key`.
+
+### from\_reference[​](#from_reference "Direct link to from_reference")
+
+```python
+@classmethod
+def from_reference(cls, ref: str) -> "DQSecret"
+
+```
+
+Parse a *scope/key* reference string into a *DQSecret*.
+
+The string is split on the **first** `/` only, so a key that itself contains slashes is handled correctly.
+
+**Arguments**:
+
+* `ref` - A reference string in the form `scope/key`.
+
+**Returns**:
+
+A new *DQSecret* instance.
+
+**Raises**:
+
+* `InvalidParameterError` - If *ref* does not contain a `/`, or if either the scope or key part is empty.
+
 ## InputConfig Objects[​](#inputconfig-objects "Direct link to InputConfig Objects")
 
 ```python
@@ -299,11 +355,29 @@ The run configuration.
 
 * `InvalidConfigError` - If no run configurations are available or if the specified run configuration name is not found.
 
+### is\_table\_location[​](#is_table_location "Direct link to is_table_location")
+
+```python
+def is_table_location(location: str) -> bool
+
+```
+
+Return True if *location* is a Delta table name (catalog.schema.table), not a file path.
+
+A location is a table when it matches the table-identifier pattern AND does not end with a known checks-serializer file extension (.json/.yml/...). This is the single source of truth for the table-vs-file distinction; *io.py* and *checks\_storage.py* re-export it.
+
+**Arguments**:
+
+* `location` - The location string to classify.
+
+**Returns**:
+
+True if *location* names a table, False if it is a file path or otherwise not a table.
+
 ## BaseChecksStorageConfig Objects[​](#basechecksstorageconfig-objects "Direct link to BaseChecksStorageConfig Objects")
 
 ```python
-@dataclass
-class BaseChecksStorageConfig(abc.ABC)
+class BaseChecksStorageConfig(BaseModel, ABC)
 
 ```
 
@@ -313,10 +387,28 @@ Marker base class for storage configuration.
 
 * `location` - The file path or table name where checks are stored.
 
+### replace[​](#replace "Direct link to replace")
+
+```python
+def replace(**changes: Any) -> "BaseChecksStorageConfig"
+
+```
+
+Return a new config instance with the given field overrides, fully re-validated.
+
+Unlike *model\_copy(update=...)*, which shallow-copies the instance and skips all validators, this rebuilds the config through the constructor so the *model\_validator* checks (e.g. *mode* and *location* format) re-run against the updated fields. Use this instead of *model\_copy* when overriding fields, so an invalid override is rejected at the point of the change rather than failing later during a save/load operation.
+
+**Arguments**:
+
+* `**changes` - Field values to override on the new instance.
+
+**Returns**:
+
+A new, fully validated config of the same concrete type.
+
 ## FileChecksStorageConfig Objects[​](#filechecksstorageconfig-objects "Direct link to FileChecksStorageConfig Objects")
 
 ```python
-@dataclass
 class FileChecksStorageConfig(BaseChecksStorageConfig)
 
 ```
@@ -330,7 +422,6 @@ Configuration class for storing checks in a file.
 ## WorkspaceFileChecksStorageConfig Objects[​](#workspacefilechecksstorageconfig-objects "Direct link to WorkspaceFileChecksStorageConfig Objects")
 
 ```python
-@dataclass
 class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig)
 
 ```
@@ -344,7 +435,6 @@ Configuration class for storing checks in a workspace file.
 ## TableChecksStorageConfig Objects[​](#tablechecksstorageconfig-objects "Direct link to TableChecksStorageConfig Objects")
 
 ```python
-@dataclass
 class TableChecksStorageConfig(BaseChecksStorageConfig)
 
 ```
@@ -377,7 +467,6 @@ to filter checks by rule set fingerprint
 ## LakebaseChecksStorageConfig Objects[​](#lakebasechecksstorageconfig-objects "Direct link to LakebaseChecksStorageConfig Objects")
 
 ```python
-@dataclass
 class LakebaseChecksStorageConfig(BaseChecksStorageConfig)
 
 ```
@@ -408,7 +497,6 @@ Configuration class for storing checks in a Lakebase table.
 ## VolumeFileChecksStorageConfig Objects[​](#volumefilechecksstorageconfig-objects "Direct link to VolumeFileChecksStorageConfig Objects")
 
 ```python
-@dataclass
 class VolumeFileChecksStorageConfig(BaseChecksStorageConfig)
 
 ```
@@ -422,7 +510,6 @@ Configuration class for storing checks in a Unity Catalog volume file.
 ## InstallationChecksStorageConfig Objects[​](#installationchecksstorageconfig-objects "Direct link to InstallationChecksStorageConfig Objects")
 
 ```python
-@dataclass
 class InstallationChecksStorageConfig(WorkspaceFileChecksStorageConfig,
                                       TableChecksStorageConfig,
                                       VolumeFileChecksStorageConfig,
@@ -458,3 +545,83 @@ retrieved from the installation config
 #### run\_config\_name[​](#run_config_name-1 "Direct link to run_config_name")
 
 to retrieve run config
+
+## TableActionsStorageConfig Objects[​](#tableactionsstorageconfig-objects "Direct link to TableActionsStorageConfig Objects")
+
+```python
+class TableActionsStorageConfig(BaseChecksStorageConfig)
+
+```
+
+Configuration class for persisting DQ action definitions to a Unity Catalog table.
+
+**Arguments**:
+
+* `location` - Fully qualified UC table name (e.g. *catalog.schema.table*) where action definitions are stored.
+* `run_config_name` - Name of the run configuration these actions belong to (default is *default*).
+* `mode` - Write mode for the table (*append* or *overwrite*, default *append*).
+
+## LakebaseActionsStorageConfig Objects[​](#lakebaseactionsstorageconfig-objects "Direct link to LakebaseActionsStorageConfig Objects")
+
+```python
+class LakebaseActionsStorageConfig(BaseChecksStorageConfig)
+
+```
+
+Configuration class for persisting DQ action definitions to a Lakebase (PostgreSQL) table.
+
+The *location* must be a fully qualified three-part name in the form *database.schema.table*.
+
+**Arguments**:
+
+* `location` - Fully qualified Lakebase table name in the format *database.schema.table*.
+* `instance_name` - Name of the Lakebase instance.
+* `client_id` - ID of the Databricks service principal for the Lakebase connection.
+* `port` - Lakebase port (default is *5432*).
+* `run_config_name` - Name of the run configuration these actions belong to (default is *default*).
+* `mode` - Write mode for the table (*append* or *overwrite*, default *append*).
+
+### database\_name[​](#database_name "Direct link to database_name")
+
+```python
+@property
+def database_name() -> str
+
+```
+
+The database portion of the three-part location.
+
+### schema\_name[​](#schema_name "Direct link to schema_name")
+
+```python
+@property
+def schema_name() -> str
+
+```
+
+The schema portion of the three-part location.
+
+### table\_name[​](#table_name "Direct link to table_name")
+
+```python
+@property
+def table_name() -> str
+
+```
+
+The table portion of the three-part location.
+
+## ActionEventsConfig Objects[​](#actioneventsconfig-objects "Direct link to ActionEventsConfig Objects")
+
+```python
+class ActionEventsConfig(BaseChecksStorageConfig)
+
+```
+
+Configuration class for storing DQ action events in a Unity Catalog table.
+
+**Arguments**:
+
+* `location` - Fully qualified UC table name (e.g. *catalog.schema.events*) where action events are written.
+* `mode` - Reserved for API symmetry with the other storage configs. Action events form an append-only audit log, so the events table is always appended to regardless of this value.
+* `run_config_name` - Run configuration the events belong to. Events are stamped with, and loaded filtered by, this value so a shared events table keeps per-run-config alert suppression independent (default is *default*).

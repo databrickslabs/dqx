@@ -22,9 +22,23 @@ Initializes the DQGenerator with optional Spark session and LLM model configurat
 **Arguments**:
 
 * `workspace_client` - Databricks WorkspaceClient instance.
-* `spark` - Optional SparkSession instance. If not provided, a new session will be created.
+* `spark` - Optional SparkSession instance. Required to infer the schema of inputs given as a storage path; Unity Catalog tables are read through the workspace client. If needed and not provided, a new session will be created on first use.
 * `llm_model_config` - Optional LLM model configuration for AI-assisted rule generation.
 * `custom_check_functions` - Optional dictionary of custom check functions.
+
+### spark[​](#spark "Direct link to spark")
+
+```python
+@property
+def spark() -> SparkSession
+
+```
+
+Gets a Spark session. Gets an available one or creates a new one if none was provided.
+
+**Returns**:
+
+Spark session instance.
 
 ### generate\_dq\_rules[​](#generate_dq_rules "Direct link to generate_dq_rules")
 
@@ -72,6 +86,10 @@ A list of dictionaries representing the generated data quality rules. Rules that
 **Raises**:
 
 * `MissingParameterError` - If DSPy compiler is not available.
+
+**Notes**:
+
+A Spark session is required when using this method with an *input\_config* that is not a Unity Catalog table (e.g. files or temporary views). Schemas can be read without a Spark Session for tables with a valid 3-level name (e.g. catalog.schema.table).
 
 ### generate\_rules\_from\_contract[​](#generate_rules_from_contract "Direct link to generate_rules_from_contract")
 
@@ -256,6 +274,30 @@ Uses is\_unique with nulls\_distinct=True for uniqueness validation.
 * `column` - Comma-separated list of column names that form the primary key. Uses all columns if not provided.
 * `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
 * `params` - Additional parameters including columns list, confidence, reasoning, etc.
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq\_generate\_has\_no\_outliers[​](#dq_generate_has_no_outliers "Direct link to dq_generate_has_no_outliers")
+
+```python
+@staticmethod
+def dq_generate_has_no_outliers(column: str,
+                                criticality: str = "error",
+                                **params: dict)
+
+```
+
+Generates a data quality rule to check if a column's values contain no outliers.
+
+Uses the MAD (Median Absolute Deviation) method via the *has\_no\_outliers* check function. Values outside median ± 3.5 \* MAD are flagged as outliers.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters (unused; left for compatibility with other functions).
 
 **Returns**:
 
