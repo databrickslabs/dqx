@@ -2236,9 +2236,6 @@
     "suggestRulesToggleAll": "Attiva/disattiva tutti {{label}}",
     "suggestRulesSelectedCount": "{{selected}} di {{total}} selezionati",
     "suggestRulesAddAllButton": "Aggiungi tutti i controlli",
-    "suggestRulesAddMandatoryButton_one": "Aggiungi regola obbligatoria",
-    "suggestRulesAddMandatoryButton_other": "Aggiungi {{count}} regole obbligatorie",
-    "suggestRulesMandatoryBadge": "Obbligatoria",
     "wizard": {
       "title": "Monitora tabelle",
       "description": "Seleziona le tabelle da monitorare oppure incolla catalog.schema.table",

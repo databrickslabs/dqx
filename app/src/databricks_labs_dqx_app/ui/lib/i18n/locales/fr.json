@@ -2236,9 +2236,6 @@
     "suggestRulesToggleAll": "Toggle all {{label}}",
     "suggestRulesSelectedCount": "{{selected}} of {{total}} selected",
     "suggestRulesAddAllButton": "Add all checks",
-    "suggestRulesAddMandatoryButton_one": "Add mandatory rule",
-    "suggestRulesAddMandatoryButton_other": "Add {{count}} mandatory rules",
-    "suggestRulesMandatoryBadge": "Mandatory",
     "wizard": {
       "title": "Monitor tables",
       "description": "Sélectionnez une ou plusieurs tables à surveiller, ou collez catalog.schema.table",

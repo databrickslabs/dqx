@@ -43,10 +43,8 @@ import {
 } from "./shared";
 import {
   filterAlreadyApplied,
-  filterMandatorySuggestions,
   groupSelectState,
   groupSuggestions,
-  ruleHasMandatoryLabel,
   suggestionKey,
   type AppliedRuleMappingLike,
   type GroupMode,
@@ -127,20 +125,6 @@ export function AiSuggestionDialog({
     [state, appliedRules],
   );
 
-  // Rules tagged `mandatory=yes` (custom label on the registry rule). The
-  // suggestion payload does not carry free-form tags, so we resolve via the
-  // approved-rules snapshot already loaded for staging.
-  const isMandatoryRule = useMemo(() => {
-    return (ruleId: string) =>
-      ruleHasMandatoryLabel((ruleById.get(ruleId)?.user_metadata ?? undefined) as Record<string, unknown> | undefined);
-  }, [ruleById]);
-
-  const mandatorySuggestions = useMemo(
-    () => filterMandatorySuggestions(suggestions, isMandatoryRule),
-    [suggestions, isMandatoryRule],
-  );
-  const showMandatoryButton = mandatorySuggestions.length > 0;
-
   // Default every (surviving) suggestion to ON whenever a fresh result arrives.
   useEffect(() => {
     setSelected(new Set((state?.suggestions ?? []).map(suggestionKey)));
@@ -205,10 +189,6 @@ export function AiSuggestionDialog({
 
   const handleAdd = () => {
     stageSuggestions(suggestions.filter((s) => selected.has(suggestionKey(s))));
-  };
-
-  const handleAddMandatory = () => {
-    stageSuggestions(mandatorySuggestions);
   };
 
   const showToggle = suggestions.length > 0 && !loading;
@@ -289,7 +269,6 @@ export function AiSuggestionDialog({
                     ruleName={first.rule_name || first.rule_id}
                     dimension={first.dimension}
                     severity={first.severity}
-                    mandatory={isMandatoryRule(first.rule_id)}
                     ruleDescription={rule ? getTag(rule, "description") : ""}
                     dimensionColor={dimColor(first.dimension)}
                     severityColor={first.severity ? colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, first.severity) : undefined}
@@ -315,7 +294,6 @@ export function AiSuggestionDialog({
                   groupState={groupSelectState(group.items, selected)}
                   toggleAllLabel={t("monitoredTables.suggestRulesToggleAll", { label: group.label })}
                   labelDefinitions={labelDefinitions}
-                  isMandatoryRule={isMandatoryRule}
                   onToggleGroup={() => toggleGroup(group.items)}
                   isSelected={(s) => selected.has(suggestionKey(s))}
                   onToggle={(s) => toggle(suggestionKey(s))}
@@ -334,11 +312,6 @@ export function AiSuggestionDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t("common.cancel")}
           </Button>
-          {state && state.available && showMandatoryButton && (
-            <Button variant="outline" onClick={handleAddMandatory} className="gap-2">
-              {t("monitoredTables.suggestRulesAddMandatoryButton", { count: mandatorySuggestions.length })}
-            </Button>
-          )}
           {state && state.available && suggestions.length > 0 && (
             <Button
               onClick={handleAdd}
@@ -546,7 +519,6 @@ function RuleGroupCard({
   ruleName,
   dimension,
   severity,
-  mandatory,
   ruleDescription,
   dimensionColor,
   severityColor,
@@ -561,7 +533,6 @@ function RuleGroupCard({
   ruleName: string;
   dimension?: string | null;
   severity?: string | null;
-  mandatory?: boolean;
   ruleDescription?: string;
   dimensionColor?: string;
   severityColor?: string;
@@ -573,7 +544,6 @@ function RuleGroupCard({
   isSelected: (s: SuggestedRuleMappingOut) => boolean;
   onToggle: (s: SuggestedRuleMappingOut) => void;
 }) {
-  const { t } = useTranslation();
   return (
     <SuggestionGroupCard
       groupIndex={groupIndex}
@@ -585,7 +555,6 @@ function RuleGroupCard({
           <span className="text-sm font-semibold">{ruleName}</span>
           {dimension && <TagBadge label={dimension} color={dimensionColor} />}
           {severity && <SeverityBadge severity={severity} color={severityColor} />}
-          {mandatory && <TagBadge label={t("monitoredTables.suggestRulesMandatoryBadge")} />}
         </>
       }
       subhead={ruleDescription ? <p className="text-xs text-muted-foreground">{ruleDescription}</p> : undefined}
@@ -629,7 +598,6 @@ function ColumnGroupCard({
   groupState,
   toggleAllLabel,
   labelDefinitions,
-  isMandatoryRule,
   onToggleGroup,
   isSelected,
   onToggle,
@@ -640,7 +608,6 @@ function ColumnGroupCard({
   groupState: GroupSelectState;
   toggleAllLabel: string;
   labelDefinitions: LabelDefinition[];
-  isMandatoryRule: (ruleId: string) => boolean;
   onToggleGroup: () => void;
   isSelected: (s: SuggestedRuleMappingOut) => boolean;
   onToggle: (s: SuggestedRuleMappingOut) => void;
@@ -658,7 +625,6 @@ function ColumnGroupCard({
           key={suggestionKey(s)}
           suggestion={s}
           selected={isSelected(s)}
-          mandatory={isMandatoryRule(s.rule_id)}
           dimensionColor={s.dimension ? colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, s.dimension) : undefined}
           severityColor={s.severity ? colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, s.severity) : undefined}
           onToggle={() => onToggle(s)}
@@ -673,26 +639,22 @@ function ColumnGroupCard({
 function ColumnRuleRow({
   suggestion: s,
   selected,
-  mandatory,
   dimensionColor,
   severityColor,
   onToggle,
 }: {
   suggestion: SuggestedRuleMappingOut;
   selected: boolean;
-  mandatory?: boolean;
   dimensionColor?: string;
   severityColor?: string;
   onToggle: () => void;
 }) {
-  const { t } = useTranslation();
   return (
     <SuggestionRow label={s.rule_name || s.rule_id} selected={selected} onToggle={onToggle}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm font-semibold">{s.rule_name || s.rule_id}</span>
         {s.dimension && <TagBadge label={s.dimension} color={dimensionColor} />}
         {s.severity && <SeverityBadge severity={s.severity} color={severityColor} />}
-        {mandatory && <TagBadge label={t("monitoredTables.suggestRulesMandatoryBadge")} />}
       </div>
       {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
       <MappingChipsInline suggestion={s} />

@@ -2236,9 +2236,6 @@
     "suggestRulesToggleAll": "Alternar todos {{label}}",
     "suggestRulesSelectedCount": "{{selected}} de {{total}} selecionados",
     "suggestRulesAddAllButton": "Adicionar todas as verificações",
-    "suggestRulesAddMandatoryButton_one": "Adicionar regra obrigatória",
-    "suggestRulesAddMandatoryButton_other": "Adicionar {{count}} regras obrigatórias",
-    "suggestRulesMandatoryBadge": "Obrigatória",
     "wizard": {
       "title": "Monitorar tabelas",
       "description": "Selecione tabelas para aplicar regras e monitorar, ou cole catalog.schema.table",

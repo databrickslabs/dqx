@@ -1192,9 +1192,9 @@ PG_MIGRATIONS: list[PgMigration] = [
         version=23,
         description="Add notes + change-rationale columns (object notes; submit/approve/reject rationale)",
         sql=(
-            # Object Notes (sticky ops field) + lifecycle rationale fields.
-            # Rule "notes" live in user_metadata (RESERVED_NOTES_KEY); only
-            # monitored tables / products get a notes column. Rationale is
+            # Object Notes were later dropped (Pg v25); rationale fields remain.
+            # Rule sticky notes previously lived in user_metadata; only
+            # monitored tables / products got a notes column. Rationale is
             # stored on the entity for pending banners + on dq_rules_history
             # for audit.
             f"ALTER TABLE {_S}.dq_monitored_tables "

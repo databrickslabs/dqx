@@ -2236,9 +2236,6 @@
     "suggestRulesToggleAll": "Alternar todos {{label}}",
     "suggestRulesSelectedCount": "{{selected}} de {{total}} seleccionados",
     "suggestRulesAddAllButton": "Agregar todas las comprobaciones",
-    "suggestRulesAddMandatoryButton_one": "Agregar regla obligatoria",
-    "suggestRulesAddMandatoryButton_other": "Agregar {{count}} reglas obligatorias",
-    "suggestRulesMandatoryBadge": "Obligatoria",
     "wizard": {
       "title": "Supervisar tablas",
       "description": "Selecciona tablas para aplicar reglas y monitorear, o pega catalog.schema.table",

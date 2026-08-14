@@ -2,12 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { SuggestedRuleMappingOut } from "@/lib/api";
 import {
   filterAlreadyApplied,
-  filterMandatorySuggestions,
   groupSelectState,
   groupSuggestions,
-  isMandatoryTagValue,
   mappingSetKey,
-  ruleHasMandatoryLabel,
   suggestionKey,
 } from "./ai-suggestion-utils";
 
@@ -117,35 +114,5 @@ describe("groupSelectState", () => {
     expect(groupSelectState(items, all)).toBe("all");
     expect(groupSelectState(items, new Set([suggestionKey(items[0])]))).toBe("some");
     expect(groupSelectState(items, new Set())).toBe("none");
-  });
-});
-
-describe("mandatory label", () => {
-  test("isMandatoryTagValue accepts common truthy forms", () => {
-    expect(isMandatoryTagValue("yes")).toBe(true);
-    expect(isMandatoryTagValue("YES")).toBe(true);
-    expect(isMandatoryTagValue(" true ")).toBe(true);
-    expect(isMandatoryTagValue("1")).toBe(true);
-    expect(isMandatoryTagValue("y")).toBe(true);
-  });
-  test("isMandatoryTagValue rejects no / empty / non-strings", () => {
-    expect(isMandatoryTagValue("no")).toBe(false);
-    expect(isMandatoryTagValue("")).toBe(false);
-    expect(isMandatoryTagValue(null)).toBe(false);
-    expect(isMandatoryTagValue(1)).toBe(false);
-  });
-  test("ruleHasMandatoryLabel reads the mandatory key only", () => {
-    expect(ruleHasMandatoryLabel({ mandatory: "yes" })).toBe(true);
-    expect(ruleHasMandatoryLabel({ mandatory: "no" })).toBe(false);
-    expect(ruleHasMandatoryLabel({ severity: "High" })).toBe(false);
-    expect(ruleHasMandatoryLabel(undefined)).toBe(false);
-  });
-  test("filterMandatorySuggestions keeps only tagged rules", () => {
-    const suggestions = [
-      sug({ rule_id: "must" }),
-      sug({ rule_id: "opt", column_mapping: { column: "phone" } }),
-    ];
-    const out = filterMandatorySuggestions(suggestions, (id) => id === "must");
-    expect(out.map((s) => s.rule_id)).toEqual(["must"]);
   });
 });
