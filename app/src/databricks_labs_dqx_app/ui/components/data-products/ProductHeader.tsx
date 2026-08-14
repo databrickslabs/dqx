@@ -34,7 +34,7 @@ import {
   useApproveDataProductWithRationale,
   useRejectDataProductWithRationale,
 } from "@/lib/api-custom";
-import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
+import { RunSampleDialog } from "@/components/common/RunSampleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -318,8 +318,16 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [draftSampleKind, setDraftSampleKind] = useState<SampleKind>("records");
-  const [draftSampleValue, setDraftSampleValue] = useState(1000);
+  // Scope (full table vs an N-row sample) is asked for AFTER pressing a run
+  // button, not parked in the header: it only applies to the run being
+  // started. The pending source deliberately OUTLIVES the close — resetting it
+  // would swap the dialog's labels mid fade-out.
+  const [scopePrompt, setScopePrompt] = useState<RunDataProductInSource>(RunDataProductInSource.approved);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const promptScope = (source: RunDataProductInSource) => {
+    setScopePrompt(source);
+    setScopeOpen(true);
+  };
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
@@ -410,16 +418,15 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const goToRunsHistory = () =>
     void navigate({ to: "/runs-history", search: { productId: product.product_id } });
 
-  const handleRun = async (source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource]) => {
+  const handleRun = async (
+    source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource],
+    sampleSize: number,
+  ) => {
     setBusyRun(true);
     try {
-      const sample_size = draftSampleKind === "full" ? 0 : Math.max(1, draftSampleValue);
       const resp = await runMut.mutateAsync({
         productId: product.product_id,
-        data: {
-          source,
-          ...(source === RunDataProductInSource.draft ? { sample_size } : {}),
-        },
+        data: { source, sample_size: sampleSize },
       });
       // The run endpoint returns 200 even when EVERY member failed to launch
       // (their failures collected into `skipped`, `submitted` left empty, and
@@ -451,7 +458,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // Run draft is demoted. Draft wins as primary when both exist (item 59).
   const draftIsPrimary = canRunDraft;
 
-  const handleRunDraft = async () => {
+  const handleRunDraft = async (sampleSize: number) => {
     // Spans the whole save-then-run sequence, not just the run mutation, so a
     // fast double-click can't fire a second save while the first is still in
     // flight (the save leg predates `handleRun`'s own `busyRun` toggle).
@@ -461,7 +468,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         const ok = await editState.handleSaveDraft();
         if (!ok) return;
       }
-      await handleRun(RunDataProductInSource.draft);
+      await handleRun(RunDataProductInSource.draft, sampleSize);
     } finally {
       setBusyRun(false);
     }
@@ -541,20 +548,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             </Button>
           )}
 
-          {canRun && canRunDraft && (
-            <SampleSelector
-              kind={draftSampleKind}
-              value={draftSampleValue}
-              onKind={setDraftSampleKind}
-              onValue={setDraftSampleValue}
-              disablePercent
-            />
-          )}
-
           {canRun &&
             (draftIsPrimary ? (
               <Button
-                onClick={() => void handleRunDraft()}
+                onClick={() => promptScope(RunDataProductInSource.draft)}
                 disabled={runPending}
                 size="sm"
                 className="gap-2"
@@ -565,7 +562,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             ) : (
               <Button
-                onClick={() => void handleRun(RunDataProductInSource.approved)}
+                onClick={() => promptScope(RunDataProductInSource.approved)}
                 disabled={runPending || runnableCount === 0}
                 size="sm"
                 className="gap-2"
@@ -614,7 +611,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              void handleRun(RunDataProductInSource.approved);
+                              promptScope(RunDataProductInSource.approved);
                             }}
                             disabled={runPending || runnableCount === 0}
                             className="gap-2"
@@ -637,7 +634,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              void handleRunDraft();
+                              promptScope(RunDataProductInSource.draft);
                             }}
                             disabled={runPending || !canRunDraft}
                             className="gap-2"
@@ -671,6 +668,36 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             onOpenChange={setExportOpen}
             fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
             fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
+          />
+          <RunSampleDialog
+            open={scopeOpen}
+            onOpenChange={(next) => {
+              if (!next) setScopeOpen(false);
+            }}
+            title={
+              scopePrompt === RunDataProductInSource.draft
+                ? t("dataProducts.runDraftScopeTitle")
+                : t("dataProducts.runNowScopeTitle")
+            }
+            description={
+              scopePrompt === RunDataProductInSource.draft
+                ? t("dataProducts.runDraftScopeHint")
+                : t("dataProducts.runNowScopeHint")
+            }
+            confirmLabel={
+              scopePrompt === RunDataProductInSource.draft
+                ? t("dataProducts.runDraftAction")
+                : t("dataProducts.runNowButton")
+            }
+            busy={runPending}
+            // A draft run is a spot-check, so it opens on a 1000-row sample;
+            // a published run opens on the full table it has always scanned.
+            defaultKind={scopePrompt === RunDataProductInSource.draft ? "records" : "full"}
+            onConfirm={(sampleSize) => {
+              setScopeOpen(false);
+              if (scopePrompt === RunDataProductInSource.draft) void handleRunDraft(sampleSize);
+              else void handleRun(scopePrompt, sampleSize);
+            }}
           />
         </div>
       </div>

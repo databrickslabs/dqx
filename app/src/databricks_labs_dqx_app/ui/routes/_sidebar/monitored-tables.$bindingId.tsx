@@ -173,8 +173,7 @@ import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestions
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
-import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RunSampleDialog } from "@/components/common/RunSampleDialog";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -1069,8 +1068,11 @@ function VersionBadge({ table }: { table: MonitoredTableOut }) {
 }
 
 /** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
- *  checked by the caller). Primary click runs the latest approved snapshot
- *  ("Run now (vN)"), disabled with a tooltip at v0. The attached dropdown
+ *  checked by the caller). Every entry point here first opens the run-scope
+ *  dialog (full table or an N-row sample) and submits on confirm — a manual
+ *  run always gets to say how much of the table it reads. Primary click runs
+ *  the latest approved snapshot ("Run now (vN)"), disabled with a tooltip at
+ *  v0. The attached dropdown
  *  offers "Run draft" at the TOP (item 15) followed by each approved version.
  *  "Run draft" is only enabled when the binding is a draft OR has pending
  *  applied-rule edits; in the latter case those edits are SAVED first (so the
@@ -1127,24 +1129,25 @@ function RunTableAction({
   // mutation (not visible here), so without this a fast double-click could
   // fire a second save-then-run while the first save is still in flight.
   const [runDraftBusy, setRunDraftBusy] = useState(false);
-  const [draftSampleKind, setDraftSampleKind] = useState<SampleKind>("records");
-  const [draftSampleValue, setDraftSampleValue] = useState(1000);
-  // Scope is asked for AFTER pressing Run draft rather than sitting in the
-  // header: it only ever applies to a draft run, so it has no meaning until
-  // that run is actually being started.
-  const [draftScopeOpen, setDraftScopeOpen] = useState(false);
+  // Scope is asked for AFTER pressing a run button rather than sitting in the
+  // header: it only ever applies to the run being started, so it has no
+  // meaning until that run is actually on its way. The run (and its pinned
+  // version, if any) is parked in `scopePrompt` and deliberately OUTLIVES the
+  // close — clearing it would swap the dialog's labels mid fade-out.
+  const [scopePrompt, setScopePrompt] = useState<{ source: "approved" | "draft"; version?: number }>({
+    source: "approved",
+  });
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const promptScope = (prompt: { source: "approved" | "draft"; version?: number }) => {
+    setScopePrompt(prompt);
+    setScopeOpen(true);
+  };
 
-  const draftSampleSize = draftSampleKind === "full" ? 0 : Math.max(1, draftSampleValue);
-
-  const handleRun = (source: "approved" | "draft", version?: number) => {
+  const handleRun = (source: "approved" | "draft", sampleSize: number, version?: number) => {
     runMutation.mutate(
       {
         bindingId,
-        data: {
-          source,
-          version,
-          ...(source === "draft" ? { sample_size: draftSampleSize } : {}),
-        },
+        data: { source, version, sample_size: sampleSize },
       },
       {
         onSuccess: (resp) => {
@@ -1166,14 +1169,14 @@ function RunTableAction({
 
   // Save any pending edits first (so the draft run reflects them), then run.
   // A save failure is surfaced by `onSaveDraft` and we do NOT run.
-  const handleRunDraft = async () => {
+  const handleRunDraft = async (sampleSize: number) => {
     setRunDraftBusy(true);
     try {
       if (isDirty) {
         const ok = await onSaveDraft();
         if (!ok) return;
       }
-      handleRun("draft");
+      handleRun("draft", sampleSize);
     } finally {
       setRunDraftBusy(false);
     }
@@ -1227,7 +1230,7 @@ function RunTableAction({
       <TooltipTrigger asChild>
         <span className={cn(approvedDisabled && "cursor-not-allowed")}>
           <Button
-            onClick={() => handleRun("approved")}
+            onClick={() => promptScope({ source: "approved" })}
             disabled={approvedDisabled}
             className="gap-2 rounded-r-none"
           >
@@ -1241,48 +1244,43 @@ function RunTableAction({
   );
 
   const runDraftPrimary = (
-    <Popover open={draftScopeOpen} onOpenChange={setDraftScopeOpen}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className={cn(draftDisabled && "cursor-not-allowed")}>
-            <PopoverTrigger asChild>
-              <Button disabled={draftDisabled} className="gap-2 rounded-r-none">
-                {spinnerOrPlay}
-                {t("monitoredTables.runDraftAction")}
-              </Button>
-            </PopoverTrigger>
-          </span>
-        </TooltipTrigger>
-        {draftTooltip && <TooltipContent side="bottom">{draftTooltip}</TooltipContent>}
-      </Tooltip>
-      <PopoverContent align="end" className="w-auto space-y-3">
-        <div className="space-y-0.5">
-          <p className="text-sm font-medium">{t("monitoredTables.runDraftScopeTitle")}</p>
-          <p className="text-[11px] text-muted-foreground">{t("monitoredTables.runDraftScopeHint")}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <SampleSelector
-            kind={draftSampleKind}
-            value={draftSampleValue}
-            onKind={setDraftSampleKind}
-            onValue={setDraftSampleValue}
-            disablePercent
-          />
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(draftDisabled && "cursor-not-allowed")}>
           <Button
-            size="sm"
-            className="gap-2"
+            onClick={() => promptScope({ source: "draft" })}
             disabled={draftDisabled}
-            onClick={() => {
-              setDraftScopeOpen(false);
-              void handleRunDraft();
-            }}
+            className="gap-2 rounded-r-none"
           >
             {spinnerOrPlay}
             {t("monitoredTables.runDraftAction")}
           </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+        </span>
+      </TooltipTrigger>
+      {draftTooltip && <TooltipContent side="bottom">{draftTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const isDraftPrompt = scopePrompt.source === "draft";
+  const scopeDialog = (
+    <RunSampleDialog
+      open={scopeOpen}
+      onOpenChange={(next) => {
+        if (!next) setScopeOpen(false);
+      }}
+      title={isDraftPrompt ? t("monitoredTables.runDraftScopeTitle") : t("monitoredTables.runNowScopeTitle")}
+      description={isDraftPrompt ? t("monitoredTables.runDraftScopeHint") : t("monitoredTables.runNowScopeHint")}
+      confirmLabel={isDraftPrompt ? t("monitoredTables.runDraftAction") : t("monitoredTables.runNowButtonNoVersion")}
+      busy={busy}
+      // A draft run is a spot-check, so it opens on a 1000-row sample; a
+      // published run opens on the full table it has always scanned.
+      defaultKind={isDraftPrompt ? "records" : "full"}
+      onConfirm={(sampleSize) => {
+        setScopeOpen(false);
+        if (scopePrompt.source === "draft") void handleRunDraft(sampleSize);
+        else handleRun("approved", sampleSize, scopePrompt.version);
+      }}
+    />
   );
 
   const runNowMenuItem = (
@@ -1293,7 +1291,7 @@ function RunTableAction({
             disabled={approvedDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              handleRun("approved");
+              promptScope({ source: "approved" });
             }}
           >
             {t("monitoredTables.runNowApprovedOption")}
@@ -1312,7 +1310,7 @@ function RunTableAction({
             disabled={draftDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              void handleRunDraft();
+              promptScope({ source: "draft" });
             }}
           >
             {t("monitoredTables.runDraftAction")}
@@ -1346,7 +1344,7 @@ function RunTableAction({
               <DropdownMenuItem
                 key={v.version}
                 disabled={busy}
-                onSelect={() => handleRun("approved", v.version)}
+                onSelect={() => promptScope({ source: "approved", version: v.version })}
               >
                 {t("monitoredTables.runVersionOption", { version: v.version })}
               </DropdownMenuItem>
@@ -1355,6 +1353,7 @@ function RunTableAction({
         </DropdownMenu>
       </TooltipProvider>
       </div>
+      {scopeDialog}
     </div>
   );
 }

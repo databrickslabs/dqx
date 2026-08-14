@@ -15,7 +15,6 @@ import json
 import pytest
 from fastapi import HTTPException
 
-
 # ---------------------------------------------------------------------------
 # Task 1.1 — LabelDefinition model
 # ---------------------------------------------------------------------------

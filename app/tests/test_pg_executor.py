@@ -44,7 +44,6 @@ from databricks_labs_dqx_app.backend.pg_executor import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import RawSql
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

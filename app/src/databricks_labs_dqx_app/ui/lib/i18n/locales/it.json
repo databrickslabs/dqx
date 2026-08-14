@@ -15,7 +15,9 @@
       "profiling_and_dq": "Profiling + qualità dei dati",
       "profiling_only": "Solo profiling",
       "dq_only": "Solo qualità dei dati"
-    }
+    },
+    "sampleLabel": "Quanti dati analizza ogni esecuzione",
+    "sampleHint": "L'impostazione predefinita è la tabella intera. Un campione mantiene basso il costo delle esecuzioni pianificate, ma il punteggio di qualità rifletterà solo le righe analizzate."
   },
   "lifecycle": {
     "rationaleLabel": "Commenti",
@@ -2319,6 +2321,8 @@
     "runDraftDisabledHint": "Esegui bozza è disponibile in stato bozza o quando hai modifiche non salvate da salvare ed eseguire.",
     "runDraftScopeTitle": "Quanti dati deve analizzare questa esecuzione?",
     "runDraftScopeHint": "Le esecuzioni di bozza servono a verificare le regole, quindi per impostazione predefinita usano un campione.",
+    "runNowScopeTitle": "Quanti dati deve analizzare questa esecuzione?",
+    "runNowScopeHint": "Le esecuzioni approvate analizzano per impostazione predefinita l'intera tabella. Scegli un campione per un controllo più rapido.",
     "tabSchedule": "Pianificazione",
     "tabHistory": "Cronologia",
     "historyEmpty": "Ancora nessuna cronologia — una versione viene congelata a ogni approvazione di questa tabella.",
@@ -2497,6 +2501,10 @@
     "runInProgressHint": "È già in corso un'esecuzione. Attendi che finisca prima di avviarne un'altra.",
     "runDraftAction": "Esegui bozza",
     "runDraftDisabledHint": "Esegui bozza è disponibile in stato bozza o quando hai modifiche non salvate da salvare ed eseguire.",
+    "runDraftScopeTitle": "Quanti dati deve analizzare questa esecuzione?",
+    "runDraftScopeHint": "Le esecuzioni di bozza servono a verificare le regole, quindi per impostazione predefinita usano un campione. La dimensione si applica a ogni tabella di questa raccolta.",
+    "runNowScopeTitle": "Quanti dati deve analizzare questa esecuzione?",
+    "runNowScopeHint": "Le esecuzioni approvate analizzano per impostazione predefinita per intero ogni tabella di questa raccolta. Scegli un campione per un controllo più rapido.",
     "actionComments": "Commenti",
     "deleteAction": "Elimina",
     "actionsMenuLabel": "Azioni raccolta",

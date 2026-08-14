@@ -472,7 +472,12 @@ def update_monitored_table_schedule(
     )
     try:
         table = svc.update_schedule(
-            binding_id, body.schedule_cron, body.schedule_tz, user_email, schedule_kind=body.schedule_kind
+            binding_id,
+            body.schedule_cron,
+            body.schedule_tz,
+            user_email,
+            schedule_kind=body.schedule_kind,
+            schedule_sample_size=body.schedule_sample_size,
         )
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:

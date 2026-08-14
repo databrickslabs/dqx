@@ -11,7 +11,6 @@ from databricks_labs_dqx_app.backend.services.owner_display_name_service import 
     resolve_owner_display_name,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

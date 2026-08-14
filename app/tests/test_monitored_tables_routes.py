@@ -544,7 +544,31 @@ class TestUpdateSchedule:
         )
         assert result.schedule_cron == "0 6 * * *"
         assert result.schedule_tz == "UTC"
-        svc.update_schedule.assert_called_once_with("b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="dq_only")
+        svc.update_schedule.assert_called_once_with(
+            "b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="dq_only", schedule_sample_size=None
+        )
+
+    def test_forwards_schedule_sample_size(self):
+        svc = MagicMock()
+        table = _table(status="approved")
+        table.schedule_cron = "0 6 * * *"
+        table.schedule_tz = "UTC"
+        table.schedule_sample_size = 5000
+        svc.update_schedule.return_value = table
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC", schedule_sample_size=5000)
+        result = update_monitored_table_schedule(
+            "b1",
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        assert result.schedule_sample_size == 5000
+        svc.update_schedule.assert_called_once_with(
+            "b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="dq_only", schedule_sample_size=5000
+        )
 
     def test_clears_schedule(self):
         svc = MagicMock()
@@ -560,7 +584,9 @@ class TestUpdateSchedule:
             perms=MagicMock(),
         )
         assert result.schedule_cron is None
-        svc.update_schedule.assert_called_once_with("b1", None, None, "alice@x", schedule_kind="dq_only")
+        svc.update_schedule.assert_called_once_with(
+            "b1", None, None, "alice@x", schedule_kind="dq_only", schedule_sample_size=None
+        )
 
     def test_missing_raises_404(self):
         svc = MagicMock()
@@ -1600,12 +1626,12 @@ class TestRunMonitoredTable:
 
 
 class TestRunMonitoredTableInSamplingKnob:
-    """Pin ``RunMonitoredTableIn.sample_size`` as a bounded, draft-only knob.
+    """Pin ``RunMonitoredTableIn.sample_size`` as a bounded, opt-in knob.
 
-    Sampling is opt-in for draft runs (0 = full table, omitted = the 1000-row
-    default); approved/published runs discard it inside ``run_binding`` and
-    always scan the whole table, so an API caller can never silently turn a
-    monitoring run into a sample scan.
+    Sampling is opt-in on both sources (0 = full table; omitted = the
+    1000-row default on a draft run and the full table on an approved one).
+    A scheduled run gets its scope from the schedule's own
+    ``schedule_sample_size`` rather than from this body.
     """
 
     def test_sample_size_defaults_to_none(self):

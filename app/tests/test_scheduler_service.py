@@ -772,7 +772,9 @@ class TestTickOneProduct:
             {"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
         )
 
-        dp_service.run.assert_called_once_with("prod1", source="approved", user_email="scheduler", trigger="scheduled")
+        dp_service.run.assert_called_once_with(
+            "prod1", source="approved", user_email="scheduler", trigger="scheduled", sample_size=None
+        )
         mocks.oltp.upsert.assert_called_once()
         kwargs = mocks.oltp.upsert.call_args.kwargs
         assert kwargs["key_cols"] == {"schedule_name": "product:prod1"}
@@ -1053,7 +1055,7 @@ class TestTickOneTable:
         )
 
         br_service.run_binding.assert_called_once_with(
-            "b1", source="approved", version=None, user_email="scheduler", trigger="scheduled"
+            "b1", source="approved", version=None, user_email="scheduler", trigger="scheduled", sample_size=None
         )
         mocks.oltp.upsert.assert_called_once()
         kwargs = mocks.oltp.upsert.call_args.kwargs
@@ -1061,6 +1063,26 @@ class TestTickOneTable:
         value_cols = kwargs["value_cols"]
         assert value_cols["status"] == "success"
         assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_due_table_passes_the_schedules_sample_size(self, make_scheduler):
+        """A schedule with a run scope samples; without one it stays full-table."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "schedule_kind": "dq_only",
+                "schedule_sample_size": 5000,
+            },
+            now,
+        )
+
+        assert br_service.run_binding.call_args.kwargs["sample_size"] == 5000
 
     def test_not_due_table_is_skipped(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
@@ -1156,6 +1178,19 @@ class TestTickMonitoredTables:
         assert "schedule_cron IS NOT NULL" in sql
         assert "version > 0" in sql
         assert "status = 'approved'" not in sql
+
+    def test_load_reads_the_stored_run_scope(self, make_scheduler):
+        """A NULL scope loads as None (whole table); a number loads as itself."""
+        svc, mocks, _br = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            ["b1", "0 9 * * *", "UTC", "cat.sch.t1", "dq_only", "5000"],
+            ["b2", "0 9 * * *", "UTC", "cat.sch.t2", "dq_only", None],
+        ]
+
+        loaded = svc._load_scheduled_tables()
+
+        assert "schedule_sample_size" in mocks.oltp.query.call_args.args[0]
+        assert [t["schedule_sample_size"] for t in loaded] == [5000, None]
 
     def test_missing_table_is_tolerated(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)

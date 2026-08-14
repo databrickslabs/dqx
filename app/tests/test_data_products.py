@@ -69,6 +69,7 @@ def _product_row(
     schedule_kind: str | None = "profiling_and_dq",
     pending_rationale: str | None = None,
     last_decision_rationale: str | None = None,
+    schedule_sample_size: str | None = None,
     score: str | None = None,
     failed_tests: str | None = None,
     total_tests: str | None = None,
@@ -77,10 +78,11 @@ def _product_row(
     # ``schedule_kind`` (B2-52) at index 12;
     # ``owner_display_name`` at index 13;
     # pending_rationale / last_decision_rationale at 14..15;
+    # ``schedule_sample_size`` at index 16;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN
     # columns the list/get read paths select (P3.4) — all None when the
     # product has never been scored. The non-score read paths select only
-    # the first 16 columns; the extra cells are ignored by _row_to_product.
+    # the first 17 columns; the extra cells are ignored by _row_to_product.
     return [
         product_id,  # 0
         name,  # 1
@@ -98,10 +100,11 @@ def _product_row(
         owner_display_name,  # 13
         pending_rationale,  # 14
         last_decision_rationale,  # 15
-        score,  # 16
-        failed_tests,  # 17
-        total_tests,  # 18
-        score_computed_at,  # 19
+        schedule_sample_size,  # 16
+        score,  # 17
+        failed_tests,  # 18
+        total_tests,  # 19
+        score_computed_at,  # 20
     ]
 
 
@@ -743,6 +746,31 @@ class TestUpdate:
         sql.query.side_effect = [[_product_row(product_id="p1")]]
         service.update("p1", {"schedule_kind": None}, "bob@x")
         assert "schedule_kind =" not in sql.execute.call_args[0][0]
+
+    def test_update_persists_schedule_sample_size_unquoted(self, service, sql):
+        sql.query.side_effect = [[_product_row(product_id="p1")]]
+        updated = service.update("p1", {"schedule_sample_size": 5000}, "bob@x")
+        assert updated.schedule_sample_size == 5000
+        assert "schedule_sample_size = 5000" in sql.execute.call_args[0][0]
+
+    def test_update_treats_zero_sample_size_as_full_table(self, service, sql):
+        sql.query.side_effect = [[_product_row(product_id="p1")]]
+        updated = service.update("p1", {"schedule_sample_size": 0}, "bob@x")
+        assert updated.schedule_sample_size is None
+        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
+
+    def test_update_leaves_sample_size_alone_when_omitted(self, service, sql):
+        sql.query.side_effect = [[_product_row(product_id="p1", schedule_sample_size="5000")]]
+        service.update("p1", {"description": "x"}, "bob@x")
+        assert "schedule_sample_size" not in sql.execute.call_args[0][0]
+
+    def test_clearing_the_cron_also_clears_the_sample_size(self, service, sql):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", schedule_cron="0 0 * * *", schedule_sample_size="5000")]
+        ]
+        updated = service.update("p1", {"schedule_cron": None}, "bob@x")
+        assert updated.schedule_sample_size is None
+        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
 
 
 class TestMemberTableFqns:

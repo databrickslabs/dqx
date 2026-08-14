@@ -68,6 +68,8 @@ export function useEditProductState(product: DataProductOut) {
   const [scheduleCron, setScheduleCronLocal] = useState<string | null>(product.schedule_cron ?? null);
   const [scheduleTz, setScheduleTzLocal] = useState<string>(product.schedule_tz ?? "UTC");
   const [scheduleKind, setScheduleKindLocal] = useState<ScheduleKind>(product.schedule_kind ?? DEFAULT_SCHEDULE_KIND);
+  // Rows a due run samples per member; 0 = whole table (the pre-column default).
+  const [scheduleSampleSize, setScheduleSampleSizeLocal] = useState<number>(product.schedule_sample_size ?? 0);
   // Set by Task 9's ProductSchedulingTab/SchedulePicker while the raw-cron
   // (custom) editor holds an expression the backend scheduler would reject.
   // Gates the header's Save buttons below so a malformed cron never reaches
@@ -82,6 +84,7 @@ export function useEditProductState(product: DataProductOut) {
     if (tz) setScheduleTzLocal(tz);
   }, []);
   const setScheduleKind = useCallback((kind: ScheduleKind) => setScheduleKindLocal(kind), []);
+  const setScheduleSampleSize = useCallback((size: number) => setScheduleSampleSizeLocal(size), []);
 
   /** Add a member to the buffer. Newly added members carry no id yet and no
    *  counts — those land after save + refetch. */
@@ -152,11 +155,26 @@ export function useEditProductState(product: DataProductOut) {
     const serverCron = product.schedule_cron ?? null;
     const serverTz = product.schedule_tz ?? "UTC";
     const serverKind: ScheduleKind = product.schedule_kind ?? DEFAULT_SCHEDULE_KIND;
+    const serverSampleSize = product.schedule_sample_size ?? 0;
     if (scheduleCron !== serverCron) return true;
-    // Timezone + scope-kind only matter while a schedule exists.
-    if (scheduleCron !== null && (scheduleTz !== serverTz || scheduleKind !== serverKind)) return true;
+    // Timezone, scope-kind and run scope only matter while a schedule exists.
+    if (
+      scheduleCron !== null &&
+      (scheduleTz !== serverTz || scheduleKind !== serverKind || scheduleSampleSize !== serverSampleSize)
+    ) {
+      return true;
+    }
     return false;
-  }, [scheduleCron, scheduleTz, scheduleKind, product.schedule_cron, product.schedule_tz, product.schedule_kind]);
+  }, [
+    scheduleCron,
+    scheduleTz,
+    scheduleKind,
+    scheduleSampleSize,
+    product.schedule_cron,
+    product.schedule_tz,
+    product.schedule_kind,
+    product.schedule_sample_size,
+  ]);
 
   const membersDirty = useMemo(() => {
     const cur = new Set(members.map(memberKey));
@@ -243,8 +261,12 @@ export function useEditProductState(product: DataProductOut) {
       patch.schedule_cron = scheduleCron;
       patch.schedule_tz = scheduleCron !== null ? scheduleTz : (product.schedule_tz ?? "UTC");
       // Only send the scope kind while a schedule exists; clearing the cron
-      // leaves the stored kind untouched (the backend never nulls it).
-      if (scheduleCron !== null) patch.schedule_kind = scheduleKind;
+      // leaves the stored kind untouched (the backend never nulls it) and
+      // clears the run scope on its own.
+      if (scheduleCron !== null) {
+        patch.schedule_kind = scheduleKind;
+        patch.schedule_sample_size = scheduleSampleSize;
+      }
       patchNeeded = true;
     }
 
@@ -404,6 +426,8 @@ export function useEditProductState(product: DataProductOut) {
     setSchedule,
     scheduleKind,
     setScheduleKind,
+    scheduleSampleSize,
+    setScheduleSampleSize,
     scheduleCronInvalid,
     setScheduleCronInvalid,
 

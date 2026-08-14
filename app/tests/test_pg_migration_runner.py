@@ -45,7 +45,6 @@ from databricks_labs_dqx_app.backend.migrations.postgres import (
 )
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -233,6 +232,27 @@ class TestPgMigrationsCatalogue:
         assert "dq_data_products" in sql
         assert "pending_rationale" not in sql
         assert "last_decision_rationale" not in sql
+
+    def test_v26_adds_schedule_sample_size_columns(self):
+        """v26 adds a nullable run scope to both scheduled entities.
+
+        Nullable with no default so every existing schedule keeps scanning
+        whole tables, and ``IF NOT EXISTS`` so it no-ops on a fresh install
+        whose CREATE already declares the column.
+        """
+        v26 = next(m for m in PG_MIGRATIONS if m.version == 26)
+        sql = v26.sql
+        assert "dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_sample_size INTEGER" in sql
+        assert "dq_data_products ADD COLUMN IF NOT EXISTS schedule_sample_size INTEGER" in sql
+        assert "NOT NULL" not in sql
+        assert "DEFAULT" not in sql
+
+    def test_fresh_schema_declares_schedule_sample_size(self):
+        """The baseline CREATEs carry the column, making v26 a no-op there."""
+        v1 = next(m for m in PG_MIGRATIONS if m.version == 1)
+        assert v1.sql.count("schedule_sample_size INTEGER") == 1
+        v6 = next(m for m in PG_MIGRATIONS if m.version == 6)
+        assert "schedule_sample_size INTEGER" in v6.sql
 
     def test_v21_strips_execute_from_registry_rule_grants(self):
         """v21 must UPDATE dq_object_grants to remove EXECUTE from

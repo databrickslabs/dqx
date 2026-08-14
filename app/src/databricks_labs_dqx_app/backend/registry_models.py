@@ -228,6 +228,39 @@ MonitoredTableStatus = Literal["draft", "pending_approval", "approved", "rejecte
 ScheduleKind = Literal["profiling_only", "dq_only", "profiling_and_dq"]
 SCHEDULE_KIND_DEFAULT: ScheduleKind = "dq_only"
 
+# Upper bound on a schedule's sample size, matching the manual run endpoints'
+# ``sample_size`` ceiling so the two surfaces accept the same range.
+MAX_SCHEDULE_SAMPLE_SIZE = 10_000_000
+
+
+def normalize_schedule_sample_size(value: int | None) -> int | None:
+    """Reduce a caller-supplied schedule sample size to its stored form.
+
+    0 and None both mean "scan the whole table", so both normalize to None —
+    one representation in the column, and a NULL (what every row written
+    before the column existed carries) needs no special case downstream.
+    """
+    if value is None or value <= 0:
+        return None
+    return min(value, MAX_SCHEDULE_SAMPLE_SIZE)
+
+
+def parse_schedule_sample_size(value: object) -> int | None:
+    """Read a stored ``schedule_sample_size`` back as an int or None.
+
+    Tolerant by design: the column is NULL on rows predating it and the Delta
+    executor returns every value as text, so anything unparsable degrades to
+    None (= whole table) instead of failing a list read.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 # One mapping GROUP is ``{slot_name: column_name}`` — the slot→column binding
 # for exactly one materialized check. ``column_mapping`` on an applied rule is
 # a list of such groups so a single rule can be applied to a table more than
@@ -263,6 +296,12 @@ class MonitoredTable(BaseModel):
     schedule_kind: ScheduleKind = Field(
         default=SCHEDULE_KIND_DEFAULT,
         description="What a scheduled run does: profiling only, DQ only, or both (default both)",
+    )
+    schedule_sample_size: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_SCHEDULE_SAMPLE_SIZE,
+        description="Rows a scheduled run samples. None or 0 = scan the whole table (the default).",
     )
     last_profiled_at: datetime | None = None
     last_run_at: datetime | None = Field(
@@ -412,6 +451,12 @@ class DataProduct(BaseModel):
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT
+    schedule_sample_size: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_SCHEDULE_SAMPLE_SIZE,
+        description="Rows a scheduled run samples per member table. None or 0 = scan the whole table.",
+    )
     status: DataProductStatus = "draft"
     version: int = Field(default=0, description="0 until first approval; bumped ONLY on approve")
     pending_rationale: str | None = Field(

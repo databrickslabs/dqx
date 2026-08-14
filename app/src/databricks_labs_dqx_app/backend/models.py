@@ -22,6 +22,7 @@ from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import ScheduleKind as RegistryScheduleKind
 from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEFAULT
+from .registry_models import MAX_SCHEDULE_SAMPLE_SIZE
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
 from .rule_enums import RuleSource, RuleStatus
 from .registry_models import RuleSlot as RegistryRuleSlot
@@ -745,6 +746,12 @@ class UpdateMonitoredTableScheduleIn(BaseModel):
         default=REGISTRY_SCHEDULE_KIND_DEFAULT,
         description="What the scheduled run does: profiling only, DQ only, or both (default both)",
     )
+    schedule_sample_size: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_SCHEDULE_SAMPLE_SIZE,
+        description="Rows each scheduled run samples. None or 0 = scan the whole table (the default).",
+    )
 
 
 class UpdateMonitoredTableOwnerIn(BaseModel):
@@ -993,6 +1000,10 @@ class MonitoredTableOut(BaseModel):
         default=REGISTRY_SCHEDULE_KIND_DEFAULT,
         description="What the scheduled run does: profiling only, DQ only, or both (default both)",
     )
+    schedule_sample_size: int | None = Field(
+        default=None,
+        description="Rows each scheduled run samples. None or 0 = the whole table.",
+    )
     last_profiled_at: str | None = None
     last_run_at: str | None = Field(
         default=None,
@@ -1022,6 +1033,7 @@ class MonitoredTableOut(BaseModel):
             schedule_cron=table.schedule_cron,
             schedule_tz=table.schedule_tz,
             schedule_kind=table.schedule_kind,
+            schedule_sample_size=table.schedule_sample_size,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
             last_run_at=table.last_run_at.isoformat() if table.last_run_at else None,
             pending_rationale=table.pending_rationale,
@@ -1659,8 +1671,9 @@ class RunMonitoredTableIn(BaseModel):
         ge=0,
         le=10_000_000,
         description=(
-            "Rows to sample for draft runs (0 = full table). Ignored for approved/published "
-            "runs, which always scan the whole table. When omitted on a draft run, defaults to 1000."
+            "Rows to sample (0 = full table). Ignored for scheduled approved runs, which "
+            "always scan the whole table. When omitted, defaults to 1000 on a draft run and "
+            "to the full table on an approved run."
         ),
     )
 
@@ -1753,6 +1766,12 @@ class UpdateDataProductIn(BaseModel):
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     schedule_kind: RegistryScheduleKind | None = None
+    schedule_sample_size: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_SCHEDULE_SAMPLE_SIZE,
+        description="Rows each scheduled run samples per member table. None or 0 = the whole table.",
+    )
 
 
 class AddDataProductMemberIn(BaseModel):
@@ -1777,8 +1796,9 @@ class RunDataProductIn(BaseModel):
         ge=0,
         le=10_000_000,
         description=(
-            "Rows to sample for draft runs (0 = full table). Ignored for approved/published "
-            "runs. When omitted on a draft run, defaults to 1000. Applied to every member."
+            "Rows to sample (0 = full table). Ignored for scheduled approved runs, which "
+            "always scan the whole table. When omitted, defaults to 1000 on a draft run and "
+            "to the full table on an approved run. Applied to every member."
         ),
     )
 
@@ -1839,6 +1859,10 @@ class DataProductOut(BaseModel):
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     schedule_kind: RegistryScheduleKind = REGISTRY_SCHEDULE_KIND_DEFAULT
+    schedule_sample_size: int | None = Field(
+        default=None,
+        description="Rows each scheduled run samples per member table. None or 0 = the whole table.",
+    )
     status: RegistryDataProductStatus
     version: int
     pending_rationale: str | None = Field(
@@ -1878,6 +1902,7 @@ class DataProductOut(BaseModel):
             schedule_cron=product.schedule_cron,
             schedule_tz=product.schedule_tz,
             schedule_kind=product.schedule_kind,
+            schedule_sample_size=product.schedule_sample_size,
             status=product.status,
             version=product.version,
             pending_rationale=product.pending_rationale,

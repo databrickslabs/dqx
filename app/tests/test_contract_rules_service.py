@@ -19,7 +19,6 @@ from databricks_labs_dqx_app.backend.services.contract_rules_service import (
     ContractRulesService,
 )
 
-
 _VALID_CONTRACT = """
 kind: DataContract
 apiVersion: v3.0.2

@@ -42,8 +42,10 @@ logger = logging.getLogger(__name__)
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
 # Sampling policy inside run_binding:
-#   * source='approved' → sample_size 0 (whole table), unconditionally.
-#     Published monitoring runs must never sample.
+#   * source='approved' → caller-supplied sample_size, defaulting to 0 (whole
+#     table) when omitted. Manual runs get it from the run-scope dialog;
+#     scheduled runs from the schedule's own ``schedule_sample_size``, which is
+#     NULL (→ whole table) unless someone set it.
 #   * source='draft'    → caller-supplied sample_size, or
 #     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT (1000) when omitted; 0 = unlimited.
 # Dryrun/preview routes (routes/v1/dryrun.py) are a separate flow with
@@ -201,8 +203,10 @@ class BindingRunService:
         otherwise joins the caller-supplied run set (product fan-out).
 
         Sampling:
-        - approved/published runs always scan the whole table (sample size
-          0, unconditionally), ignoring *sample_size*.
+        - approved runs use *sample_size* when provided (0 = unlimited);
+          otherwise the whole table. Manual callers pass the run-scope
+          dialog's answer; the scheduler passes the schedule's
+          ``schedule_sample_size``.
         - draft runs use *sample_size* when provided (0 = unlimited);
           otherwise ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000).
 
@@ -213,8 +217,8 @@ class BindingRunService:
         ``run_mode`` provenance tag stamped onto every check below; the
         manual-vs-scheduled signal is the ``run_type`` derived from
         *trigger* and threaded through the job config (see below). Approved
-        runs submitted through this method are real monitoring runs and
-        always run full-table.
+        runs submitted through this method are real monitoring runs; they
+        run full-table unless the caller asked for a sample.
 
         Raises:
             BindingNotFoundError: *binding_id* does not exist.
@@ -246,13 +250,13 @@ class BindingRunService:
         run_mode = RUN_MODE_DRAFT if source == "draft" else RUN_MODE_PUBLISHED
         checks = _stamp_run_provenance(checks, run_mode, binding_version)
 
-        # Approved/published runs never sample — force a full-table scan
-        # regardless of any caller wishes. Draft runs use the caller-supplied
-        # size (0 = unlimited) or the compiled-in default of 1000.
-        if source == "approved":
-            resolved_sample_size = 0
-        elif sample_size is not None:
+        # Approved runs honour the caller's scope and fall back to a full
+        # table; draft runs fall back to the compiled-in default of 1000
+        # (0 = unlimited everywhere).
+        if sample_size is not None:
             resolved_sample_size = sample_size
+        elif source == "approved":
+            resolved_sample_size = 0
         else:
             resolved_sample_size = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
 

@@ -348,6 +348,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             # concrete value; v14 below converges already-deployed DBs (the same
             # edit-in-place trap ``schedule_cron``'s v9 had to correct).
             "  schedule_kind    TEXT NOT NULL DEFAULT 'dq_only',"
+            # How much data a scheduled run reads: NULL or 0 = the whole table
+            # (the long-standing behaviour), N = sample N rows. v26 converges
+            # already-deployed DBs.
+            "  schedule_sample_size INTEGER,"
             # Optional per-table pass threshold (percent of rows that must pass
             # for a run to be healthy). NULL = inherit the global default
             # (``default_pass_threshold`` in dq_app_settings). v16 converges
@@ -622,6 +626,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             # scheduled Table Space run. NOT NULL + default; v14 converges DBs
             # already carrying this v6 table without the column.
             "  schedule_kind  TEXT NOT NULL DEFAULT 'dq_only',"
+            # How much data a scheduled fan-out reads per member table: NULL or
+            # 0 = the whole table, N = sample N rows. v26 converges DBs already
+            # carrying this table without the column.
+            "  schedule_sample_size INTEGER,"
             "  status         TEXT NOT NULL,"
             "  version        INTEGER NOT NULL DEFAULT 0,"
             "  created_by     TEXT,"
@@ -1242,6 +1250,23 @@ PG_MIGRATIONS: list[PgMigration] = [
         sql=(
             f"ALTER TABLE {_S}.dq_monitored_tables DROP COLUMN IF EXISTS notes;"
             f"ALTER TABLE {_S}.dq_data_products DROP COLUMN IF EXISTS notes;"
+        ),
+    ),
+    PgMigration(
+        version=26,
+        description="Add schedule_sample_size to monitored tables + data products (sampled scheduled runs)",
+        sql=(
+            # ----------------------------------------------------------
+            # Per-schedule run scope. The CREATEs above now declare the
+            # column, so this is a no-op on fresh installs; it exists to
+            # converge already-deployed DBs (whose v1/v6 rows are recorded,
+            # so editing those in place could never reach them — the
+            # edit-in-place trap v13/v14 corrected before). Nullable with no
+            # default: NULL means "whole table", which is exactly what every
+            # existing schedule did before the column existed.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_sample_size INTEGER;"
+            f"ALTER TABLE {_S}.dq_data_products ADD COLUMN IF NOT EXISTS schedule_sample_size INTEGER;"
         ),
     ),
 ]

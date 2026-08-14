@@ -15,7 +15,9 @@
       "profiling_and_dq": "Profiling + qualidade de dados",
       "profiling_only": "Somente profiling",
       "dq_only": "Somente qualidade de dados"
-    }
+    },
+    "sampleLabel": "Quantos dados cada execução analisa",
+    "sampleHint": "A tabela inteira é o padrão. Uma amostra deixa as execuções programadas mais baratas, mas a pontuação de qualidade passa a refletir só as linhas analisadas."
   },
   "lifecycle": {
     "rationaleLabel": "Comentários",
@@ -2319,6 +2321,8 @@
     "runDraftDisabledHint": "Executar rascunho está disponível em rascunho ou quando você tem edições não salvas para salvar e executar.",
     "runDraftScopeTitle": "Quantos dados esta execução deve analisar?",
     "runDraftScopeHint": "Execuções de rascunho servem para verificar suas regras, então por padrão usam uma amostra.",
+    "runNowScopeTitle": "Quantos dados esta execução deve analisar?",
+    "runNowScopeHint": "Execuções aprovadas analisam a tabela inteira por padrão. Escolha uma amostra para uma verificação mais rápida.",
     "tabSchedule": "Agendamento",
     "tabHistory": "Histórico",
     "historyEmpty": "Ainda não há histórico — uma versão é congelada sempre que esta tabela é aprovada.",
@@ -2497,6 +2501,10 @@
     "runInProgressHint": "Já há uma execução em andamento. Aguarde a conclusão antes de iniciar outra.",
     "runDraftAction": "Executar rascunho",
     "runDraftDisabledHint": "Executar rascunho está disponível em rascunho ou quando você tem edições não salvas para salvar e executar.",
+    "runDraftScopeTitle": "Quantos dados esta execução deve analisar?",
+    "runDraftScopeHint": "Execuções de rascunho servem para verificar suas regras, então por padrão usam uma amostra. O tamanho vale para todas as tabelas desta coleção.",
+    "runNowScopeTitle": "Quantos dados esta execução deve analisar?",
+    "runNowScopeHint": "Execuções aprovadas analisam por completo todas as tabelas desta coleção por padrão. Escolha uma amostra para uma verificação mais rápida.",
     "actionComments": "Comentários",
     "deleteAction": "Excluir",
     "actionsMenuLabel": "Ações da coleção",

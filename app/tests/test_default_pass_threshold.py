@@ -26,7 +26,6 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import (
 )
 from databricks_labs_dqx_app.backend.routes.v1 import config as config_routes
 
-
 # ---------------------------------------------------------------------------
 # Request model bounds
 # ---------------------------------------------------------------------------

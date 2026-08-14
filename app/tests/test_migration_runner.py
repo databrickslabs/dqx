@@ -37,7 +37,6 @@ from databricks_labs_dqx_app.backend.migrations import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
-
 # ---------------------------------------------------------------------------
 # Template scanner: positive + negative + live regression
 # ---------------------------------------------------------------------------
@@ -289,6 +288,28 @@ class TestDropNotesMigration:
         idx28 = versions.index(28)
         idx29 = versions.index(29)
         assert idx29 == idx28 + 1, "v29 must immediately follow v28 in MIGRATIONS"
+
+
+class TestScheduleSampleSizeMigration:
+    """v30: per-schedule run scope on both scheduled entities (OLTP fallback)."""
+
+    def test_v30_adds_the_column_to_both_tables(self) -> None:
+        v30 = next(m for m in MIGRATIONS if m.version == 30)
+        sql = v30.sql_template
+        assert "dq_monitored_tables ADD COLUMN schedule_sample_size INT" in sql
+        assert "dq_data_products ADD COLUMN schedule_sample_size INT" in sql
+
+    def test_v30_is_oltp_fallback(self) -> None:
+        v30 = next(m for m in MIGRATIONS if m.version == 30)
+        assert v30.oltp_fallback is True
+
+    def test_v30_version_follows_v29(self) -> None:
+        versions = [m.version for m in MIGRATIONS]
+        assert versions.index(30) == versions.index(29) + 1, "v30 must immediately follow v29 in MIGRATIONS"
+
+    def test_column_already_exists_is_idempotent(self) -> None:
+        """A re-run against a converged DB must be swallowed, not fatal."""
+        assert "COLUMN_ALREADY_EXISTS" in MigrationRunner._IDEMPOTENT_ERROR_FRAGMENTS
 
 
 class TestStripExecuteFromRegistryRuleGrantsMigration:

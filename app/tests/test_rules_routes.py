@@ -27,7 +27,6 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
 )
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RuleCatalogEntry
 
-
 # ---------------------------------------------------------------------------
 # _catalog_of / _display_name
 # ---------------------------------------------------------------------------

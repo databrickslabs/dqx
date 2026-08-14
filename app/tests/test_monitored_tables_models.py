@@ -8,7 +8,6 @@ construction/validation, mirroring ``test_registry_models.py``'s style.
 import pytest
 from pydantic import ValidationError
 
-
 # ---------------------------------------------------------------------------
 # MonitoredTable
 # ---------------------------------------------------------------------------

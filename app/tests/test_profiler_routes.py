@@ -32,7 +32,6 @@ from databricks_labs_dqx_app.backend.routes.v1.profiler import (
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 
-
 # ---------------------------------------------------------------------------
 # _classify_table_error — error class detection
 # ---------------------------------------------------------------------------

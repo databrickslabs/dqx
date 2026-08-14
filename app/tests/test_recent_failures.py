@@ -27,7 +27,6 @@ from databricks_labs_dqx_app.backend.routes.v1.profiler import (
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------

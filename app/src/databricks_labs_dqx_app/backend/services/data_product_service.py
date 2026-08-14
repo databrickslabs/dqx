@@ -54,6 +54,8 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RunSetSource,
     RunSetTrigger,
     ScheduleKind,
+    normalize_schedule_sample_size,
+    parse_schedule_sample_size,
 )
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -398,12 +400,26 @@ class DataProductService:
         apply_kind = updates.get("schedule_kind") in get_args(ScheduleKind)
         if apply_kind:
             set_clauses.append(f"schedule_kind = {self._opt_str(updates['schedule_kind'])}")
+        # schedule_sample_size is numeric, so it also sits outside
+        # _UPDATABLE_FIELDS: ``_opt_str`` would quote it, and an INT column
+        # takes a bare literal on both backends. Clearing the cron clears the
+        # scope with it so a removed schedule leaves nothing dangling.
+        apply_sample = "schedule_sample_size" in updates or updates.get("schedule_cron", "") is None
+        sample_size = (
+            normalize_schedule_sample_size(updates.get("schedule_sample_size"))
+            if updates.get("schedule_cron", "") is not None
+            else None
+        )
+        if apply_sample:
+            set_clauses.append(f"schedule_sample_size = {self._opt_int(sample_size)}")
         e = escape_sql_string(product_id)
         self._sql.execute(f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'")
 
         applied = {k: v for k, v in updates.items() if k in _UPDATABLE_FIELDS}
         if apply_kind:
             applied["schedule_kind"] = updates["schedule_kind"]
+        if apply_sample:
+            applied["schedule_sample_size"] = sample_size
         return product.model_copy(
             update={**applied, "status": "draft", "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
         )
@@ -1083,9 +1099,11 @@ class DataProductService:
             # owner_display_name appended after schedule_kind (row[13]).
             f"{prefix}owner_display_name, "
             # lifecycle rationale (row[14..15]).
+            f"{prefix}pending_rationale, {prefix}last_decision_rationale, "
+            # schedule_sample_size appended last (row[16]).
             # NOTE: score-join cols are appended AFTER these in
-            # ``_score_joined_select``, so the score tuple offset is row[16..19].
-            f"{prefix}pending_rationale, {prefix}last_decision_rationale"
+            # ``_score_joined_select``, so the score tuple offset is row[17..20].
+            f"{prefix}schedule_sample_size"
         )
 
     def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
@@ -1145,14 +1163,14 @@ class DataProductService:
         if not rows:
             return None
         row = rows[0]
-        # Base cols end at last_decision_rationale (row[15]); score cols at row[16..19].
-        return self._row_to_product(row), parse_cached_score(row[16], row[17], row[18], row[19])
+        # Base cols end at schedule_sample_size (row[16]); score cols at row[17..20].
+        return self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])
 
     def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
         sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
         rows = self._sql.query(sql)
-        # Base cols end at last_decision_rationale (row[15]); score cols at row[16..19].
-        return [(self._row_to_product(row), parse_cached_score(row[16], row[17], row[18], row[19])) for row in rows]
+        # Base cols end at schedule_sample_size (row[16]); score cols at row[17..20].
+        return [(self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(
@@ -1176,6 +1194,7 @@ class DataProductService:
             owner_display_name=row[13] if len(row) > 13 else None,
             pending_rationale=row[14] if len(row) > 14 else None,
             last_decision_rationale=row[15] if len(row) > 15 else None,
+            schedule_sample_size=parse_schedule_sample_size(row[16] if len(row) > 16 else None),
         )
 
     @staticmethod

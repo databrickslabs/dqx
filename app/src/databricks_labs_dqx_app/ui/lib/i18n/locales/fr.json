@@ -15,7 +15,9 @@
       "profiling_and_dq": "Profiling + data quality",
       "profiling_only": "Profiling only",
       "dq_only": "Data quality only"
-    }
+    },
+    "sampleLabel": "How much data each run scans",
+    "sampleHint": "Full table is the default. A sample keeps scheduled runs cheap, but the quality score then reflects only the rows scanned."
   },
   "lifecycle": {
     "rationaleLabel": "Comments",
@@ -2319,6 +2321,8 @@
     "runDraftDisabledHint": "Run draft is available in draft, or when you have unsaved edits to save and run.",
     "runDraftScopeTitle": "How much data should this run scan?",
     "runDraftScopeHint": "Draft runs are for checking your rules, so they sample by default.",
+    "runNowScopeTitle": "How much data should this run scan?",
+    "runNowScopeHint": "Approved runs scan the whole table by default. Choose a sample for a quicker spot-check.",
     "tabSchedule": "Schedule",
     "tabHistory": "History",
     "historyEmpty": "No history yet — a version is frozen each time this table is approved.",
@@ -2497,6 +2501,10 @@
     "runInProgressHint": "A run is already in progress. Wait for it to finish before starting another.",
     "runDraftAction": "Run draft",
     "runDraftDisabledHint": "Run draft is available in draft, or when you have unsaved edits to save and run.",
+    "runDraftScopeTitle": "How much data should this run scan?",
+    "runDraftScopeHint": "Draft runs are for checking your rules, so they sample by default. The size applies to every table in this collection.",
+    "runNowScopeTitle": "How much data should this run scan?",
+    "runNowScopeHint": "Approved runs scan every table in this collection in full by default. Choose a sample for a quicker spot-check.",
     "actionComments": "Comments",
     "deleteAction": "Delete",
     "actionsMenuLabel": "Collection actions",

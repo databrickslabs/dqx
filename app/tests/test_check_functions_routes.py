@@ -36,7 +36,6 @@ from databricks_labs_dqx_app.backend.routes.v1.check_functions import (
     _serialize_default,
 )
 
-
 # ---------------------------------------------------------------------------
 # _classify_param_kind — collapse Python type hints to UI input kinds
 # ---------------------------------------------------------------------------

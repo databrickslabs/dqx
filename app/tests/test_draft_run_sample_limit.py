@@ -26,7 +26,6 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import (
     AppSettingsService,
 )
 
-
 # ---------------------------------------------------------------------------
 # AppSettingsService — storage layer
 # ---------------------------------------------------------------------------

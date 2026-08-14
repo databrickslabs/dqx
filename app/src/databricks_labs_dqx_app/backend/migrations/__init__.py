@@ -597,6 +597,10 @@ _V2_OLTP_FALLBACK = (
     # value on insert; the CHECK below allows NULL (Delta CHECK passes on NULL)
     # so legacy rows converged by v18 aren't rejected.
     "  schedule_kind STRING,"
+    # How much data a scheduled run reads: NULL or 0 = the whole table (what
+    # every schedule did before the column existed), N = sample N rows. v30
+    # converges Delta-OLTP databases deployed without it.
+    "  schedule_sample_size INT,"
     "  last_profiled_at TIMESTAMP,"
     # Denormalized last-run/last-profiled pointers written on run completion
     # (write-on-complete, T-perf): the list/detail read paths read these plain
@@ -860,6 +864,9 @@ _V10_DATA_PRODUCTS = (
     # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
     # Table Space run. Plain STRING; CHECK allows NULL for legacy rows (v18).
     "  schedule_kind  STRING,"
+    # Scheduled fan-out scope per member table: NULL or 0 = whole table, N =
+    # sample N rows. v30 converges databases deployed without it.
+    "  schedule_sample_size INT,"
     "  status         STRING NOT NULL,"
     "  version        INT NOT NULL,"
     "  created_by     STRING,"
@@ -1331,6 +1338,17 @@ _V29_DROP_NOTES = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_data_products DROP COLUMN notes"
 )
 
+# Per-schedule run scope. The v2 OLTP-fallback baseline above now declares the
+# column on both tables, so this is a NO-OP on fresh installs; it converges
+# Delta-OLTP databases already deployed without it (their v2 row is recorded,
+# so editing v2 in place could never reach them). A re-run raises
+# ``COLUMN_ALREADY_EXISTS``, which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
+# NULL means "whole table" — exactly what existing schedules already did.
+_V30_SCHEDULE_SAMPLE_SIZE = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_sample_size INT;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN schedule_sample_size INT"
+)
+
 
 # Rename ownership columns steward → owner (and steward_display_name →
 # owner_display_name) on the three OLTP tables. Delta has no reliable
@@ -1574,6 +1592,13 @@ MIGRATIONS: list[Migration] = [
         version=29,
         description="Drop sticky object notes columns " "— used only when Lakebase is disabled",
         sql_template=_V29_DROP_NOTES,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=30,
+        description="Add schedule_sample_size to monitored tables + data products "
+        "— used only when Lakebase is disabled",
+        sql_template=_V30_SCHEDULE_SAMPLE_SIZE,
         oltp_fallback=True,
     ),
 ]

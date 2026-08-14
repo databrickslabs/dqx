@@ -67,6 +67,7 @@ def _table_row(
     schedule_kind: str | None = "profiling_and_dq",
     pending_rationale: str | None = None,
     last_decision_rationale: str | None = None,
+    schedule_sample_size: str | None = None,
     score: str | None = None,
     failed_tests: str | None = None,
     total_tests: str | None = None,
@@ -76,10 +77,11 @@ def _table_row(
     # ``schedule_kind`` (B2-52) is at index 13;
     # ``owner_display_name`` at index 14;
     # pending_rationale / last_decision_rationale at 15..16;
+    # ``schedule_sample_size`` at index 17;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN columns
-    # (P3.4, indices 17..20) — all None when the table has never been scored.
-    # Index 21 is the version_state_json from the dq_monitored_table_versions
-    # LEFT JOIN. The single-row read paths select only the first 17 columns;
+    # (P3.4, indices 18..21) — all None when the table has never been scored.
+    # Index 22 is the version_state_json from the dq_monitored_table_versions
+    # LEFT JOIN. The single-row read paths select only the first 18 columns;
     # the extra cells are simply ignored by _row_to_table.
     return [
         binding_id,  # 0
@@ -99,11 +101,12 @@ def _table_row(
         owner_display_name,  # 14
         pending_rationale,  # 15
         last_decision_rationale,  # 16
-        score,  # 17
-        failed_tests,  # 18
-        total_tests,  # 19
-        score_computed_at,  # 20
-        version_state_json,  # 21
+        schedule_sample_size,  # 17
+        score,  # 18
+        failed_tests,  # 19
+        total_tests,  # 20
+        score_computed_at,  # 21
+        version_state_json,  # 22
     ]
 
 
@@ -822,6 +825,25 @@ class TestUpdateSchedule:
         table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x")
         assert table.schedule_kind == "dq_only"
         assert "schedule_kind = 'dq_only'" in sql.execute.call_args[0][0]
+
+    def test_persists_schedule_sample_size(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_sample_size=5000)
+        assert table.schedule_sample_size == 5000
+        # Numeric column — written bare, not quoted like the text columns.
+        assert "schedule_sample_size = 5000" in sql.execute.call_args[0][0]
+
+    def test_zero_sample_size_stores_null_meaning_full_table(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_sample_size=0)
+        assert table.schedule_sample_size is None
+        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
+
+    def test_clearing_cron_also_nulls_sample_size(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved", schedule_cron="0 6 * * *")]
+        table = svc.update_schedule("b1", None, "UTC", "alice@x", schedule_sample_size=5000)
+        assert table.schedule_sample_size is None
+        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []

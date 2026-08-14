@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.logger import get_logger
+from databricks_labs_dqx_app.backend.registry_models import parse_schedule_sample_size
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingRunError,
     BindingRunService,
@@ -702,7 +703,8 @@ class SchedulerService:
         """
         try:
             sql = (
-                f"SELECT product_id, schedule_cron, schedule_tz, schedule_kind FROM {self._products_table} "
+                f"SELECT product_id, schedule_cron, schedule_tz, schedule_kind, schedule_sample_size "
+                f"FROM {self._products_table} "
                 f"WHERE schedule_cron IS NOT NULL AND version > 0"
             )
             rows = self._oltp_sql.query(sql)
@@ -715,6 +717,7 @@ class SchedulerService:
                 "schedule_cron": row[1],
                 "schedule_tz": row[2],
                 "schedule_kind": _normalize_schedule_kind(row[3] if len(row) > 3 else None),
+                "schedule_sample_size": parse_schedule_sample_size(row[4] if len(row) > 4 else None),
             }
             for row in rows
             if row and row[0] and row[1]
@@ -807,6 +810,9 @@ class SchedulerService:
                     source="approved",
                     user_email="scheduler",
                     trigger="scheduled",
+                    # Applies to every member; None (no scope set on the
+                    # schedule) leaves each member scanning its whole table.
+                    sample_size=product.get("schedule_sample_size"),
                 )
                 logger.info(
                     "Product schedule '%s': submitted run set %s (%d member(s), %d skipped)",
@@ -917,7 +923,7 @@ class SchedulerService:
         """
         try:
             sql = (
-                f"SELECT binding_id, schedule_cron, schedule_tz, table_fqn, schedule_kind "
+                f"SELECT binding_id, schedule_cron, schedule_tz, table_fqn, schedule_kind, schedule_sample_size "
                 f"FROM {self._monitored_tables_table} "
                 f"WHERE schedule_cron IS NOT NULL AND version > 0"
             )
@@ -932,6 +938,7 @@ class SchedulerService:
                 "schedule_tz": row[2],
                 "table_fqn": row[3] if len(row) > 3 else None,
                 "schedule_kind": _normalize_schedule_kind(row[4] if len(row) > 4 else None),
+                "schedule_sample_size": parse_schedule_sample_size(row[5] if len(row) > 5 else None),
             }
             for row in rows
             if row and row[0] and row[1]
@@ -1018,6 +1025,9 @@ class SchedulerService:
                     version=None,
                     user_email="scheduler",
                     trigger="scheduled",
+                    # None (every schedule that never set a scope) means the
+                    # whole table, which is what run_binding falls back to.
+                    sample_size=table.get("schedule_sample_size"),
                 )
                 logger.info(
                     "Table schedule '%s': submitted DQ run %s (run_set %s)",

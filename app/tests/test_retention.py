@@ -17,7 +17,6 @@ tests exercise both resolvers separately.
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # AppSettingsService — storage layer
 # ---------------------------------------------------------------------------

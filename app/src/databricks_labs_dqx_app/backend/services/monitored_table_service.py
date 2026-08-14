@@ -40,6 +40,8 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
     get_rule_pass_threshold,
     get_rule_severity,
+    normalize_schedule_sample_size,
+    parse_schedule_sample_size,
 )
 from databricks.sdk import WorkspaceClient
 
@@ -229,7 +231,9 @@ class MonitoredTableService:
             # owner_display_name appended after schedule_kind (row[14]).
             f"{prefix}owner_display_name, "
             # lifecycle rationale (row[15..16]).
-            f"{prefix}pending_rationale, {prefix}last_decision_rationale"
+            f"{prefix}pending_rationale, {prefix}last_decision_rationale, "
+            # schedule_sample_size appended last (row[17]).
+            f"{prefix}schedule_sample_size"
         )
 
     def _build_applied_select_cols(self) -> str:
@@ -449,14 +453,14 @@ class MonitoredTableService:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        # Base columns end with last_decision_rationale (index 16, after
-        # pending_rationale at 15), so the score-cache LEFT-JOIN columns
-        # follow at 17..20, and the version_state_json at 21.
+        # Base columns end with schedule_sample_size (index 17), so the
+        # score-cache LEFT-JOIN columns follow at 18..21, and the
+        # version_state_json at 22.
         tables = [
             (
                 self._row_to_table(row),
-                parse_cached_score(row[17], row[18], row[19], row[20]),
-                _parse_snapshot_check_count(row[21]),
+                parse_cached_score(row[18], row[19], row[20], row[21]),
+                _parse_snapshot_check_count(row[22]),
             )
             for row in rows
         ]
@@ -944,6 +948,7 @@ class MonitoredTableService:
         schedule_tz: str | None,
         user_email: str,
         schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT,
+        schedule_sample_size: int | None = None,
     ) -> MonitoredTable:
         """Set (or clear) the binding's run schedule (P21 item 14).
 
@@ -953,9 +958,12 @@ class MonitoredTableService:
         approved (and thus schedulable) after its cadence changes. Only the
         ``schedule_*`` columns and the ``updated_*`` audit fields move.
 
-        Pass ``schedule_cron=None`` to remove the schedule; ``schedule_tz`` is
-        forced to NULL alongside it so a cleared schedule never leaves a dangling
-        timezone.
+        Pass ``schedule_cron=None`` to remove the schedule; ``schedule_tz`` and
+        ``schedule_sample_size`` are forced to NULL alongside it so a cleared
+        schedule never leaves a dangling timezone or run scope behind.
+
+        *schedule_sample_size* is the rows a due run reads; None or 0 means the
+        whole table, which is what every schedule did before the column existed.
 
         Raises:
             RuntimeError: *binding_id* does not exist.
@@ -966,25 +974,29 @@ class MonitoredTableService:
         cron = schedule_cron or None
         tz = schedule_tz if cron is not None else None
         kind = schedule_kind if schedule_kind in get_args(ScheduleKind) else SCHEDULE_KIND_DEFAULT
+        sample = normalize_schedule_sample_size(schedule_sample_size) if cron is not None else None
         e = escape_sql_string(binding_id)
         self._sql.execute(
             f"UPDATE {self._table} SET schedule_cron = {self._opt_str(cron)}, "
             f"schedule_tz = {self._opt_str(tz)}, "
             f"schedule_kind = {self._opt_str(kind)}, "
+            f"schedule_sample_size = {sample if sample is not None else 'NULL'}, "
             f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
             f"WHERE binding_id = '{e}'"
         )
         table.schedule_cron = cron
         table.schedule_tz = tz
         table.schedule_kind = kind
+        table.schedule_sample_size = sample
         table.updated_by = user_email
         logger.info(
-            "Updated monitored table %s (binding_id=%s) schedule (cron=%s, tz=%s, kind=%s, by %s)",
+            "Updated monitored table %s (binding_id=%s) schedule (cron=%s, tz=%s, kind=%s, sample=%s, by %s)",
             table.table_fqn,
             binding_id,
             cron,
             tz,
             kind,
+            sample,
             user_email,
         )
         return table
@@ -1262,6 +1274,7 @@ class MonitoredTableService:
             owner_display_name=row[14] if len(row) > 14 else None,
             pending_rationale=row[15] if len(row) > 15 else None,
             last_decision_rationale=row[16] if len(row) > 16 else None,
+            schedule_sample_size=parse_schedule_sample_size(row[17] if len(row) > 17 else None),
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:

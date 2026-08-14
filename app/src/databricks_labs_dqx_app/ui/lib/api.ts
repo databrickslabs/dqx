@@ -1097,6 +1097,11 @@ export const DataProductOutScheduleKind = {
   profiling_and_dq: 'profiling_and_dq',
 } as const;
 
+/**
+ * Rows each scheduled run samples per member table. None or 0 = the whole table.
+ */
+export type DataProductOutScheduleSampleSize = number | null;
+
 export type DataProductOutStatus = typeof DataProductOutStatus[keyof typeof DataProductOutStatus];
 
 
@@ -1155,6 +1160,8 @@ export interface DataProductOut {
   schedule_cron?: DataProductOutScheduleCron;
   schedule_tz?: DataProductOutScheduleTz;
   schedule_kind?: DataProductOutScheduleKind;
+  /** Rows each scheduled run samples per member table. None or 0 = the whole table. */
+  schedule_sample_size?: DataProductOutScheduleSampleSize;
   status: DataProductOutStatus;
   version: number;
   /** Author's change rationale while status is pending_approval */
@@ -2293,6 +2300,11 @@ export const MonitoredTableOutScheduleKind = {
   profiling_and_dq: 'profiling_and_dq',
 } as const;
 
+/**
+ * Rows each scheduled run samples. None or 0 = the whole table.
+ */
+export type MonitoredTableOutScheduleSampleSize = number | null;
+
 export type MonitoredTableOutLastProfiledAt = string | null;
 
 /**
@@ -2336,6 +2348,8 @@ export interface MonitoredTableOut {
   schedule_tz?: MonitoredTableOutScheduleTz;
   /** What the scheduled run does: profiling only, DQ only, or both (default both) */
   schedule_kind?: MonitoredTableOutScheduleKind;
+  /** Rows each scheduled run samples. None or 0 = the whole table. */
+  schedule_sample_size?: MonitoredTableOutScheduleSampleSize;
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
   /** Newest terminal validation-run instant for this table (either trigger surface); drives the overview 'Last run' column. */
   last_run_at?: MonitoredTableOutLastRunAt;
@@ -3636,7 +3650,7 @@ export const RunDataProductInSource = {
 } as const;
 
 /**
- * Rows to sample for draft runs (0 = full table). Ignored for approved/published runs. When omitted on a draft run, defaults to 1000. Applied to every member.
+ * Rows to sample (0 = full table). Ignored for scheduled approved runs, which always scan the whole table. When omitted, defaults to 1000 on a draft run and to the full table on an approved run. Applied to every member.
  */
 export type RunDataProductInSampleSize = number | null;
 
@@ -3646,7 +3660,7 @@ export type RunDataProductInSampleSize = number | null;
 export interface RunDataProductIn {
   /** 'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state */
   source: RunDataProductInSource;
-  /** Rows to sample for draft runs (0 = full table). Ignored for approved/published runs. When omitted on a draft run, defaults to 1000. Applied to every member. */
+  /** Rows to sample (0 = full table). Ignored for scheduled approved runs, which always scan the whole table. When omitted, defaults to 1000 on a draft run and to the full table on an approved run. Applied to every member. */
   sample_size?: RunDataProductInSampleSize;
 }
 
@@ -3698,7 +3712,7 @@ export type RunMonitoredTableInVersion = number | null;
 export type RunMonitoredTableInRuleIds = string[] | null;
 
 /**
- * Rows to sample for draft runs (0 = full table). Ignored for approved/published runs, which always scan the whole table. When omitted on a draft run, defaults to 1000.
+ * Rows to sample (0 = full table). Ignored for scheduled approved runs, which always scan the whole table. When omitted, defaults to 1000 on a draft run and to the full table on an approved run.
  */
 export type RunMonitoredTableInSampleSize = number | null;
 
@@ -3712,7 +3726,7 @@ export interface RunMonitoredTableIn {
   version?: RunMonitoredTableInVersion;
   /** Optional registry rule ids to run. Omit to run every applied rule on the binding. */
   rule_ids?: RunMonitoredTableInRuleIds;
-  /** Rows to sample for draft runs (0 = full table). Ignored for approved/published runs, which always scan the whole table. When omitted on a draft run, defaults to 1000. */
+  /** Rows to sample (0 = full table). Ignored for scheduled approved runs, which always scan the whole table. When omitted, defaults to 1000 on a draft run and to the full table on an approved run. */
   sample_size?: RunMonitoredTableInSampleSize;
 }
 
@@ -4427,6 +4441,11 @@ export type UpdateDataProductInScheduleTz = string | null;
 export type UpdateDataProductInScheduleKind = 'profiling_only' | 'dq_only' | 'profiling_and_dq' | null;
 
 /**
+ * Rows each scheduled run samples per member table. None or 0 = the whole table.
+ */
+export type UpdateDataProductInScheduleSampleSize = number | null;
+
+/**
  * Body of ``PATCH /data-products/{id}`` (``updateDataProduct``).
 
 Every field is optional; the route uses ``model_dump(exclude_unset=True)``
@@ -4443,6 +4462,8 @@ export interface UpdateDataProductIn {
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
   schedule_kind?: UpdateDataProductInScheduleKind;
+  /** Rows each scheduled run samples per member table. None or 0 = the whole table. */
+  schedule_sample_size?: UpdateDataProductInScheduleSampleSize;
 }
 
 /**
@@ -4480,6 +4501,11 @@ export const UpdateMonitoredTableScheduleInScheduleKind = {
 } as const;
 
 /**
+ * Rows each scheduled run samples. None or 0 = scan the whole table (the default).
+ */
+export type UpdateMonitoredTableScheduleInScheduleSampleSize = number | null;
+
+/**
  * Request body for setting/clearing a monitored table's run schedule (P21 item 14).
 
 ``schedule_cron=None`` clears the schedule. When a cron is present the caller
@@ -4492,6 +4518,8 @@ export interface UpdateMonitoredTableScheduleIn {
   schedule_tz?: UpdateMonitoredTableScheduleInScheduleTz;
   /** What the scheduled run does: profiling only, DQ only, or both (default both) */
   schedule_kind?: UpdateMonitoredTableScheduleInScheduleKind;
+  /** Rows each scheduled run samples. None or 0 = scan the whole table (the default). */
+  schedule_sample_size?: UpdateMonitoredTableScheduleInScheduleSampleSize;
 }
 
 export type UpdateRegistryRuleInMode = 'dqx_native' | 'lowcode' | 'sql' | null;

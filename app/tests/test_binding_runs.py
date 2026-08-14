@@ -291,22 +291,54 @@ class TestSubmission:
 
         view_service.drop_view.assert_called_once_with("dqx_studio_tmp.tmp_view_1")
 
-    def test_approved_always_scans_full_table(self, service, monitored_tables, version_service, job_service):
-        """Approved/published runs never sample — sample_size is forced to 0.
-
-        Even when a caller passes a draft-style sample_size, approved runs
-        still force ``sample_size=0`` (full table) in both the job config
-        and the run row.
-        """
+    def test_approved_defaults_to_full_table(self, service, monitored_tables, version_service, job_service):
+        """An approved run with no caller sample size scans the whole table."""
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
 
-        service.run_binding("b1", source="approved", version=2, user_email="alice@x", sample_size=250)
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
 
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 0
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["sample_size"] == 0
+
+    def test_manual_approved_uses_caller_sample_size(self, service, monitored_tables, version_service, job_service):
+        """A user asking "Run now" on N rows gets a sampled published run.
+
+        The size lands in both the job config and the run row so Runs
+        History shows what was actually scanned.
+        """
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x", trigger="manual", sample_size=250)
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["sample_size"] == 250
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["sample_size"] == 250
+
+    def test_scheduled_approved_uses_the_schedules_sample_size(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        """A schedule carrying a run scope samples, like a manual run does.
+
+        The scheduler passes the schedule's own ``schedule_sample_size``; a
+        schedule that never set one passes None and lands on a full table via
+        :meth:`test_approved_defaults_to_full_table`.
+        """
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding(
+            "b1", source="approved", version=2, user_email="scheduler", trigger="scheduled", sample_size=250
+        )
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["sample_size"] == 250
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["sample_size"] == 250
 
     def test_draft_uses_caller_sample_size(self, service, monitored_tables, materializer, job_service):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
@@ -339,7 +371,9 @@ class TestSubmission:
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 1000
 
-    def test_approved_ignores_caller_sample_size(self, service, monitored_tables, version_service, settings_service):
+    def test_approved_does_not_consult_the_draft_sample_limit(
+        self, service, monitored_tables, version_service, settings_service
+    ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
 

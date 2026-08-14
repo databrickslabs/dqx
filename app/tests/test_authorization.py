@@ -19,7 +19,6 @@ from databricks_labs_dqx_app.backend.common.authorization import (
     get_user_email,
 )
 
-
 # ---------------------------------------------------------------------------
 # Permission map
 # ---------------------------------------------------------------------------
