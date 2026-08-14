@@ -272,10 +272,6 @@ def _quote_list(values: list[object], qualify: bool = False) -> str:
     return ", ".join(_value_sql(v, qualify) for v in values)
 
 
-def _like_literal(value: object) -> str:
-    return str(value).replace("'", "''")
-
-
 def _split_top_level_commas(value: str) -> list[str]:
     """Split at TOP-LEVEL commas only — commas inside parens or single-quoted
     literals are not split points (mirrors ``splitTopLevelCommas``)."""

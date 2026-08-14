@@ -18,8 +18,6 @@ Usage (from ``app/``):
     uv run python scripts/post_deploy_lakebase_migrations.py -p <profile> -t <target>
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import subprocess

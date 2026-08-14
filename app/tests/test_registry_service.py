@@ -689,6 +689,30 @@ class TestLifecycle:
         updated = svc.approve("r1", "approver@x")
         assert updated.version == 2
 
+    def test_concurrent_approve_race_raises_error(self, svc, sql):
+        """Two concurrent approvals of the same pending rule: the second one should fail.
+
+        Simulates:
+        1. Approver A reads rule at version=N, status=pending_approval
+        2. Approver B reads rule at version=N, status=pending_approval
+        3. Approver A succeeds in updating to version=N+1, status=approved
+        4. Approver B attempts the update but the WHERE clause fails (version already N+1)
+        5. Approver B's re-read sees version=N+1 but updated_by!=approver_b
+        6. CAS returns False and RuntimeError is raised
+        """
+        pending = self._rule("pending_approval")
+        # When Approver B calls approve(), they first read the rule (still at version=0, pending)
+        # Then the UPDATE WHERE version=0 AND status=pending fails because Approver A already changed it
+        # The re-read sees version=1, status=approved, updated_by=alice (not bob)
+        sql.query.side_effect = [
+            [_row_for(pending)],  # approve._get reads pending at version=0
+            [_row_for(pending.model_copy(update={"version": 1, "status": "approved", "updated_by": "alice@x"}))],
+            # CAS re-read sees it's already been updated by Alice
+        ]
+
+        with pytest.raises(RuntimeError, match="Concurrent modification"):
+            svc.approve("r1", "bob@x")
+
     def test_reject_pending(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("pending_approval"))]
         updated = svc.reject("r1", "approver@x")
@@ -997,6 +1021,25 @@ class TestSeedBuiltinRule:
         )
         assert rule.created_by == "system"
         assert rule.owner == "system"
+
+    def test_rejects_unsafe_sql_definition(self, svc, sql):
+        """seed_builtin_rule applies the same SQL-safety gate as create_rule and update_draft.
+
+        Unsafe SQL definitions must be rejected at save time, not persisted at
+        status='approved'. This ensures seeded built-in rules can never carry
+        prohibited statements.
+        """
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        unsafe_definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "sql_query", "arguments": {"query": "DROP TABLE users", "negate": False}},
+                "slots": [],
+                "parameters": [],
+            }
+        )
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.seed_builtin_rule(definition=unsafe_definition, user_metadata={})
 
 
 # ---------------------------------------------------------------------------

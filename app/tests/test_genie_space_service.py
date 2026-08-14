@@ -939,3 +939,37 @@ def test_list_failure_degrades_to_create(settings: MagicMock, ws: MagicMock) -> 
     ]
     assert ensure(settings, ws) == "space-9"
     assert settings.store[gs.SETTING_SPACE_ID] == "space-9"
+
+
+def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: MagicMock, caplog) -> None:
+    # Invalid catalog/schema should fail fast with a clear error during validation,
+    # not silently emit malformed SQL statements. The error is caught by the
+    # best-effort exception handler and logged, keeping the app resilient.
+    result = gs.ensure_dq_genie_space(
+        settings=settings,
+        ws=ws,
+        warehouse_id="wh-1",
+        parent_path="/Users/sp",
+        catalog="bad`catalog",  # Invalid: contains backtick
+        schema=SCHEMA,
+    )
+    assert result is None
+    assert "Invalid identifier" in caplog.text
+    # Settings status should be set to error
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
+
+
+def test_invalid_schema_fails_fast_with_clear_error(settings: MagicMock, ws: MagicMock, caplog) -> None:
+    # Invalid schema should fail fast with a clear error during validation.
+    result = gs.ensure_dq_genie_space(
+        settings=settings,
+        ws=ws,
+        warehouse_id="wh-1",
+        parent_path="/Users/sp",
+        catalog=CATALOG,
+        schema="bad\\schema",  # Invalid: contains backslash
+    )
+    assert result is None
+    assert "Invalid identifier" in caplog.text
+    # Settings status should be set to error
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR

@@ -37,8 +37,6 @@ pipeline, which additionally builds the task-runner wheel for the job).
 Designed to be cwd-independent — paths resolve relative to this file.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shutil

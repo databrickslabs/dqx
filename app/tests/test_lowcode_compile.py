@@ -53,6 +53,11 @@ class TestCompileAstToSql:
         assert sql == "`t`.`x WHERE 1=1 UNION SELECT 1` IS NOT NULL"
         assert "UNION SELECT" not in sql.replace("`t`.`x WHERE 1=1 UNION SELECT 1`", "")
 
+    def test_dotted_ref_with_backtick_is_rejected(self):
+        # Backticks in identifiers break out of quoting — must be rejected.
+        with pytest.raises(ValueError, match="Invalid identifier"):
+            compile_ast_to_sql(_ast([_row(column_ref="t.`malicious", operator="is not null")]))
+
     def test_in_operator_quotes_each_literal(self):
         sql = compile_ast_to_sql(_ast([_row(column_ref="status", operator="in", value=["a", "b"])]))
         assert sql == "{{status}} IN ('a', 'b')"

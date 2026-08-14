@@ -1,7 +1,5 @@
 """Tests for ``app/scripts/build_app.py``."""
 
-from __future__ import annotations
-
 import importlib.util
 from pathlib import Path
 

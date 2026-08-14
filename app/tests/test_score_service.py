@@ -86,6 +86,27 @@ class TestComputeTableScore:
         score = ScoreService.compute_table_score(check_metrics, input_row_count=100)
         assert score == pytest.approx(0.9)
 
+    def test_score_clamped_when_failures_exceed_row_count(self):
+        # When failed count exceeds input_row_count (e.g. from two checks collapsing
+        # or a filtered run), the score is clamped to [0, 1] to avoid negative values.
+        check_metrics = [
+            CheckMetricBreakdown(check_name="rule_a", error_count=150, warning_count=0),
+        ]
+        score = ScoreService.compute_table_score(check_metrics, input_row_count=100)
+        assert score == pytest.approx(0.0)  # Clamped to 0, not negative
+
+    def test_multiple_checks_with_excess_failures_table_score_stays_in_range(self):
+        # Multiple checks with one having excess failures should still yield
+        # a table score in [0, 1] — the clamping prevents negative rule means.
+        check_metrics = [
+            CheckMetricBreakdown(check_name="rule_a", error_count=0, warning_count=0),
+            CheckMetricBreakdown(check_name="rule_b", error_count=200, warning_count=0),
+        ]
+        score = ScoreService.compute_table_score(check_metrics, input_row_count=100)
+        # rule_a score = 1.0, rule_b score = max(0, 1 - 200/100) = 0, mean = 0.5
+        assert score == pytest.approx(0.5)
+        assert 0.0 <= score <= 1.0
+
 
 class TestComputeProductScore:
     def test_unweighted_mean_of_member_scores(self):

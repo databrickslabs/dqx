@@ -50,7 +50,7 @@ class ScoreService:
             if metric.check_name in dataset_names:
                 check_score = 0.0 if failed > 0 else 1.0
             else:
-                check_score = 1.0 - failed / input_row_count
+                check_score = max(0.0, 1.0 - failed / input_row_count)
             rule_key = (check_rule_ids or {}).get(metric.check_name, metric.check_name)
             rule_scores[rule_key].append(check_score)
         per_rule = [sum(scores) / len(scores) for scores in rule_scores.values()]
