@@ -199,9 +199,25 @@ app-test-ui: ## Run app UI unit tests (bun test)
 # adding an ``all`` extra later "just works".
 app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
-	cd app && $(UV_RUN) --group test pytest tests/ \
+	cd app && $(UV_RUN) --group test pytest tests/ --ignore=tests/eval_live \
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
+
+# Live evaluation of the AI rule suggester's suggestion quality against real
+# serving endpoints. Separate from ``app-test`` because it costs tokens and needs
+# workspace auth; ``app-test`` ignores the directory so this is the only way in.
+#
+# The offline half of the same eval (tests/test_rule_suggester_eval.py) runs in
+# ``app-test`` and in CI, and is where all pass/fail logic lives — this target
+# reports numbers a human reads. Deliberately absent from push.yml, following the
+# ``mcp-integration`` precedent: LLM output is not reproducible enough across
+# model versions to gate a PR on.
+#
+# Override the endpoints with DQX_EVAL_EMBEDDING_ENDPOINT / DQX_EVAL_JUDGE_ENDPOINT;
+# they default to the ones a fresh Studio deploy uses. Report path: DQX_EVAL_REPORT.
+app-test-eval: ## Run live AI suggester quality eval (costs tokens; requires workspace auth)
+	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
+	cd app && DQX_EVAL_LIVE=1 $(UV_RUN) --group test pytest tests/eval_live/ -v -s --durations 10
 
 # Run the MCP server's unit-test suite (pytest, no Databricks/Spark dependencies).
 # Usage:  make mcp-test           # run everything

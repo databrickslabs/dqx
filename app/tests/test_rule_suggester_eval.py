@@ -178,6 +178,9 @@ class TestRetrievalCoverage:
         _, total = evaluated
         attributed = len(total.missed_unretrieved) + len(total.missed_after_retrieval)
         assert attributed == total.false_negatives
+        # Tier 1 always observes retrieval, so nothing should land in the
+        # can't-attribute bucket that exists for the live tier.
+        assert total.missed_unattributed == ()
 
     def test_the_wide_table_exercises_the_retrieval_column_cap(self):
         """Confirm the 64-column cap is actually engaged, and that we can see it.

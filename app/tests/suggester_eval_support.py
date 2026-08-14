@@ -445,11 +445,11 @@ def replay_client(recordings: Recordings) -> tuple[Any, ReplayEndpoints]:
 # ---------------------------------------------------------------------------
 
 
-def _app_settings() -> Any:
+def _app_settings(*, embed_endpoint: str = EMBED_ENDPOINT, judge_endpoint: str = JUDGE_ENDPOINT) -> Any:
     settings = create_autospec(AppSettingsService, instance=True)
-    settings.get_embedding_endpoint_name.return_value = EMBED_ENDPOINT
+    settings.get_embedding_endpoint_name.return_value = embed_endpoint
     settings.get_ai_enabled.return_value = True
-    settings.get_ai_endpoint_name.return_value = JUDGE_ENDPOINT
+    settings.get_ai_endpoint_name.return_value = judge_endpoint
     # 0 means unlimited in AIGateway. The limiter is per-instance and
     # in-memory; a 20-table sweep would otherwise trip the production default
     # of 30/hour partway through and score the remaining tables as failures.
@@ -457,18 +457,23 @@ def _app_settings() -> Any:
     return settings
 
 
-def corpus_executor(corpus: Sequence[RegistryRule], recordings: Recordings) -> Any:
-    """Fake the OLTP executor so ``dq_rule_embeddings`` reads come from the recording.
+def corpus_executor(corpus: Sequence[RegistryRule], vector_for: Callable[[str], list[float]]) -> Any:
+    """Fake the OLTP executor so ``dq_rule_embeddings`` reads come from *vector_for*.
 
-    The corpus vectors are derived by running each rule through the **real**
-    :func:`build_rule_embed_text` and looking the result up in the recording.
-    That is deliberate: if someone changes how a rule is turned into embed
-    text, the digest stops matching and :class:`MissingRecordingError` says so,
-    instead of the eval quietly scoring against a stale corpus.
+    Each rule's stored vector is derived by running it through the **real**
+    :func:`build_rule_embed_text`. That is deliberate on the replay path: if
+    someone changes how a rule becomes embed text, the digest stops matching and
+    :class:`MissingRecordingError` says so, instead of the eval quietly scoring
+    against a stale corpus.
+
+    Args:
+        corpus: The pinned registry rules to stock the corpus table with.
+        vector_for: Maps embed text to a vector. Replay passes
+            :meth:`Recordings.vector_for`; the live tier passes a closure over
+            the real embedding endpoint.
     """
     rows = [
-        {"rule_id": rule.rule_id, "embedding": json.dumps(recordings.vector_for(build_rule_embed_text(rule)))}
-        for rule in corpus
+        {"rule_id": rule.rule_id, "embedding": json.dumps(vector_for(build_rule_embed_text(rule)))} for rule in corpus
     ]
     executor = create_autospec(SqlExecutor, instance=True)
     executor.fqn.return_value = "eval.dqx_studio.dq_rule_embeddings"
@@ -476,14 +481,17 @@ def corpus_executor(corpus: Sequence[RegistryRule], recordings: Recordings) -> A
     return executor
 
 
-def build_suggester(
+def assemble_suggester(
     table: EvalTable,
     corpus: Sequence[RegistryRule],
-    recordings: Recordings,
+    client: Any,
+    vector_for: Callable[[str], list[float]],
     *,
+    embed_endpoint: str = EMBED_ENDPOINT,
+    judge_endpoint: str = JUDGE_ENDPOINT,
     applied: Sequence[Any] = (),
-) -> tuple[RuleSuggester, ReplayEndpoints]:
-    """Assemble the real suggester pipeline for one table.
+) -> RuleSuggester:
+    """Assemble the real suggester pipeline for one table around *client*.
 
     Real: :class:`RuleSuggester`, :class:`CosineRuleRetriever`,
     :class:`RuleEmbeddingsService`, :class:`AIGateway`, and every
@@ -494,15 +502,18 @@ def build_suggester(
     *inputs* to the thing being measured, not part of it. This mirrors the
     fixture style already used in ``test_rule_suggester.py``.
 
+    Both tiers come through here, differing only in the ``WorkspaceClient`` they
+    are handed. Sharing the assembly is the point: if the live tier built its
+    own pipeline, the two tiers could drift and stop being comparable.
+
     One suggester is built per table, which also matches production: these
     services come from per-request ``Depends`` factories, so the embeddings
     corpus cache lives for exactly one ``suggest`` call.
     """
-    client, endpoints = replay_client(recordings)
-    settings = _app_settings()
+    settings = _app_settings(embed_endpoint=embed_endpoint, judge_endpoint=judge_endpoint)
 
     embeddings = RuleEmbeddingsService(
-        sql=corpus_executor(corpus, recordings),
+        sql=corpus_executor(corpus, vector_for),
         sp_ws=client,
         app_settings=settings,
         user_ws=client,
@@ -527,7 +538,7 @@ def build_suggester(
     discovery = create_autospec(DiscoveryService, instance=True)
     discovery.get_table_columns_async.return_value = list(table.columns)
 
-    suggester = RuleSuggester(
+    return RuleSuggester(
         monitored_tables=monitored_tables,
         registry=registry,
         apply_rules=apply_rules,
@@ -535,6 +546,18 @@ def build_suggester(
         ai_gateway=gateway,
         discovery=discovery,
     )
+
+
+def build_suggester(
+    table: EvalTable,
+    corpus: Sequence[RegistryRule],
+    recordings: Recordings,
+    *,
+    applied: Sequence[Any] = (),
+) -> tuple[RuleSuggester, ReplayEndpoints]:
+    """Tier 1 assembly: the shared pipeline wired to the replaying client."""
+    client, endpoints = replay_client(recordings)
+    suggester = assemble_suggester(table, corpus, client, recordings.vector_for, applied=applied)
     return suggester, endpoints
 
 
@@ -563,12 +586,21 @@ class Metrics:
     violations: tuple[str, ...] = ()
     retrieved_expected: int = 0
     retrievable_expected: int = 0
+    # Whether retrieval coverage was observable at all. It depends on reading the
+    # outgoing judge prompt, which only the replay client can do, so the live
+    # tier cannot measure it. Without this flag an unmeasured run reports
+    # retrieval_recall as 0.000, which reads as a total retrieval failure.
+    retrieval_observed: bool = False
     # Missed answers, split by *where* they were lost. A rule the judge never
     # saw is a retrieval problem; one it saw and passed over is a judge or
     # prompt problem. Merging the two into a single recall figure hides which
     # half to go and fix, so both are carried through the aggregate.
     missed_unretrieved: tuple[str, ...] = ()
     missed_after_retrieval: tuple[str, ...] = ()
+    # Misses from a run where retrieval was not observable (the live tier), so
+    # they cannot honestly be blamed on either stage. Kept separate rather than
+    # lumped into "unretrieved", which would invent an attribution.
+    missed_unattributed: tuple[str, ...] = ()
 
     def __add__(self, other: "Metrics") -> "Metrics":
         return Metrics(
@@ -582,8 +614,10 @@ class Metrics:
             violations=self.violations + other.violations,
             retrieved_expected=self.retrieved_expected + other.retrieved_expected,
             retrievable_expected=self.retrievable_expected + other.retrievable_expected,
+            retrieval_observed=self.retrieval_observed or other.retrieval_observed,
             missed_unretrieved=self.missed_unretrieved + other.missed_unretrieved,
             missed_after_retrieval=self.missed_after_retrieval + other.missed_after_retrieval,
+            missed_unattributed=self.missed_unattributed + other.missed_unattributed,
         )
 
     @staticmethod
@@ -611,19 +645,27 @@ class Metrics:
         return self._ratio(self.hits_at_k, self.ranked_at_k)
 
     @property
-    def retrieval_recall(self) -> float:
+    def retrieval_recall(self) -> float | None:
         """Share of expected rules that retrieval put in front of the judge.
 
         Separates the two failure modes: a rule the judge never saw is a
-        retrieval miss (and the number the ``MAX_RETRIEVAL_COLUMNS`` cap
-        moves); a rule it saw and passed over is a judge miss.
+        retrieval miss (and the number the ``MAX_RETRIEVAL_COLUMNS`` cap moves);
+        a rule it saw and passed over is a judge miss.
+
+        ``None`` when retrieval was not observed — measuring it means reading the
+        outgoing judge prompt, which only the replay client can do. Returning
+        ``None`` rather than ``0.0`` keeps "not measured" from being read as
+        "retrieved nothing".
         """
+        if not self.retrieval_observed:
+            return None
         return self._ratio(self.retrieved_expected, self.retrievable_expected)
 
     def summary(self) -> str:
+        coverage = "n/a" if self.retrieval_recall is None else f"{self.retrieval_recall:.3f}"
         return (
             f"precision={self.precision:.3f} recall={self.recall:.3f} f1={self.f1:.3f} "
-            f"p@k={self.precision_at_k:.3f} retrieval_recall={self.retrieval_recall:.3f} "
+            f"p@k={self.precision_at_k:.3f} retrieval_recall={coverage} "
             f"tp={self.true_positives} fp={self.false_positives} fn={self.false_negatives} "
             f"(unretrieved={len(self.missed_unretrieved)} post-retrieval={len(self.missed_after_retrieval)}) "
             f"violations={len(self.violations)}"
@@ -671,11 +713,17 @@ def score(
     # a stage rather than just at a number.
     unretrieved: list[str] = []
     after_retrieval: list[str] = []
+    unattributed: list[str] = []
     for label in labels.expected:
         if label.keys() in predicted_set:
             continue
-        where = after_retrieval if label.rule_id in offered else unretrieved
-        where.append(f"{labels.binding_id}:{label.rule_id}->{label.mapping}")
+        described = f"{labels.binding_id}:{label.rule_id}->{label.mapping}"
+        if not judge_calls:
+            unattributed.append(described)
+        elif label.rule_id in offered:
+            after_retrieval.append(described)
+        else:
+            unretrieved.append(described)
 
     return Metrics(
         true_positives=len(predicted_set & expected_set),
@@ -688,8 +736,10 @@ def score(
         violations=violations,
         retrieved_expected=len(expected_rule_ids & offered),
         retrievable_expected=len(expected_rule_ids),
+        retrieval_observed=bool(judge_calls),
         missed_unretrieved=tuple(unretrieved),
         missed_after_retrieval=tuple(after_retrieval),
+        missed_unattributed=tuple(unattributed),
     )
 
 
