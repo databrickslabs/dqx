@@ -28,7 +28,7 @@ path is inert — we have shipped that bug before (the MCP telemetry wrapper was
 green in every test and sent nothing in production, because every test called
 the inner function directly).
 
-**Tier 2 — live measurement** (``tests/eval_live/``, on demand). Same fixtures,
+**Tier 2 — live measurement** (``tests/ai_eval/``, on demand). Same fixtures,
 same :func:`score`, real embedding and judge endpoints. This is the tier that
 answers "is it any good" and "what does the 64-column retrieval cap cost".
 

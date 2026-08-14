@@ -6,7 +6,7 @@ post-process) over a labelled golden set, replaying only the outbound
 and, importantly, for what this tier does and does not hold fixed: it measures
 **retrieval + post-process** against a recorded judge oracle, so a change to the
 judge's prompt is invisible here and has to be measured live in
-``tests/eval_live/``.
+``tests/ai_eval/``.
 
 The point of these tests is not to prove the suggester is good. It is to make a
 change in suggestion quality *visible*, so the next retrieval refactor lands

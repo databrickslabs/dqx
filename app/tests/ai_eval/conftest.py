@@ -5,7 +5,7 @@ Lives in its own directory rather than behind a pytest marker because
 because ``make app-test`` should never be one forgotten ``-m`` away from
 spending tokens. Directory separation makes the exclusion structural: the
 ``app-test`` target ignores this path outright, and the only way in is the
-dedicated ``make app-test-eval`` target.
+dedicated ``make app-ai-eval`` target.
 
 Every test here is skipped unless ``DQX_EVAL_LIVE=1`` is set, so a checkout of
 this branch on a machine that happens to hold workspace credentials still costs
@@ -30,7 +30,7 @@ DEFAULT_JUDGE_ENDPOINT = AppSettingsService.AI_ENDPOINT_NAME_DEFAULT
 def require_opt_in():
     """Skip the whole directory unless the caller explicitly asked for a live run."""
     if os.environ.get("DQX_EVAL_LIVE") != "1":
-        pytest.skip("live suggester eval is opt-in; set DQX_EVAL_LIVE=1 (see make app-test-eval)")
+        pytest.skip("live suggester eval is opt-in; set DQX_EVAL_LIVE=1 (see make app-ai-eval)")
 
 
 @pytest.fixture(scope="session")

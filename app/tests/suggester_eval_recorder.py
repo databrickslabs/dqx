@@ -29,7 +29,7 @@ it will not connect ``created_at`` to the word "timestamp" the way
 That is a deliberate Phase-1 tradeoff, and it is why Tier 1 is a
 change-detector rather than a quality measurement: it makes the eval runnable
 in CI today, with no workspace and no tokens. Capturing vectors from the real
-endpoint is Tier 2's job (``tests/eval_live/``), and when those recordings land
+endpoint is Tier 2's job (``tests/ai_eval/``), and when those recordings land
 they overwrite this same file — the replay path does not change, only the
 numbers in it.
 

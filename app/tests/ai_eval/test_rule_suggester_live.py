@@ -2,7 +2,7 @@
 
 Run with::
 
-    make app-test-eval
+    make app-ai-eval
 
 This is the tier that answers "is it any good". Same fixtures and same
 :func:`score` as Tier 1, but the embedding endpoint and the judge are real, so
@@ -10,13 +10,13 @@ unlike Tier 1 this **does** respond to a change in the judge's system prompt.
 
 What is asserted versus what is reported
 ----------------------------------------
-Quality is *reported*, not asserted, until a baseline is recorded from a real
-run. An absolute precision threshold on LLM output is brittle and gets muted
-within a month, so the design is to compare against a recorded baseline instead.
-Fill in the ``LIVE_BASELINE_*`` constants from a field-engineering run and the
-comparison starts enforcing.
+**Recall** is gated against a per-endpoint baseline recorded from a real run.
+**Precision** is measured and printed but never asserted on: an absolute threshold
+on LLM output is brittle and gets muted within a month, and precision here is both
+the noisier metric and the less meaningful one. See :data:`LIVE_BASELINE_RECALL`
+for the numbers behind that split.
 
-What is asserted here does not depend on how good the model is:
+What else is asserted does not depend on how good the model is:
 
 * every table reaches ``available=True``, so the run proves the real
   configuration works end to end;
@@ -128,10 +128,18 @@ from tests.suggester_eval_support import (
 # Recorded as measured rather than after tuning anything — the point of a
 # baseline is to notice when behaviour changes, not to flatter it.
 #
-# (embedding endpoint, judge endpoint) -> (precision, recall)
-LIVE_BASELINES: dict[tuple[str, str], tuple[float, float]] = {
-    ("databricks-gte-large-en", "databricks-gpt-5-4-nano"): (0.456, 0.854),
-    ("databricks-gte-large-en", "databricks-claude-opus-4-7"): (0.469, 0.938),
+# (embedding endpoint, judge endpoint) -> recall
+#
+# **Recall only, deliberately.** Precision is measured and reported but never
+# gated on, for two reasons. It is the noisier metric — single-table precision
+# swung 0.353 / 0.429 / 0.375 across three consecutive runs of the same fixture —
+# and it is the less meaningful one here, because the answer key labels the rules
+# a table *must* have while the judge is instructed to apply universal checks
+# broadly, so defensible suggestions count against it. Gating on it would buy a
+# flaky nightly and no signal. Recall held at 1.000 on six of eight tables.
+LIVE_BASELINE_RECALL: dict[tuple[str, str], float] = {
+    ("databricks-gte-large-en", "databricks-gpt-5-4-nano"): 0.854,
+    ("databricks-gte-large-en", "databricks-claude-opus-4-7"): 0.938,
 }
 
 # How far quality may fall below the recorded baseline before the run fails.
@@ -275,29 +283,25 @@ class TestLiveQuality:
         print(f"\nwrote live eval report to {path}")
         assert path.exists()
 
-    def test_quality_has_not_dropped_below_the_recorded_baseline(self, live_run, embed_endpoint, judge_endpoint):
-        """Compare against the baseline for *these* endpoints, or skip.
+    def test_recall_has_not_dropped_below_the_recorded_baseline(self, live_run, embed_endpoint, judge_endpoint):
+        """Gate on recall for *these* endpoints, or skip. Precision is reported only.
 
         Gating on the endpoint pair matters: the first Claude run cleared a
         baseline recorded on nano and reported a pass, which would have been a
         meaningless comparison presented as a green test.
         """
         _, total, _ = live_run
-        baseline = LIVE_BASELINES.get((embed_endpoint, judge_endpoint))
-        if baseline is None:
+        baseline_recall = LIVE_BASELINE_RECALL.get((embed_endpoint, judge_endpoint))
+        print(f"\nprecision {total.precision:.3f} (reported, never gated) recall {total.recall:.3f}")
+        if baseline_recall is None:
             pytest.skip(
-                f"no baseline recorded for ({embed_endpoint}, {judge_endpoint}). This run measured "
-                f"precision {total.precision:.3f} and recall {total.recall:.3f}; add that pair to "
-                f"LIVE_BASELINES to start enforcing it."
+                f"no recall baseline for ({embed_endpoint}, {judge_endpoint}). This run measured "
+                f"recall {total.recall:.3f}; add that pair to LIVE_BASELINE_RECALL to start enforcing it."
             )
-        baseline_precision, baseline_recall = baseline
-        assert total.precision >= baseline_precision - LIVE_TOLERANCE, (
-            f"precision {total.precision:.3f} is below the {judge_endpoint} baseline "
-            f"{baseline_precision:.3f} by more than {LIVE_TOLERANCE}"
-        )
         assert total.recall >= baseline_recall - LIVE_TOLERANCE, (
             f"recall {total.recall:.3f} is below the {judge_endpoint} baseline "
-            f"{baseline_recall:.3f} by more than {LIVE_TOLERANCE}"
+            f"{baseline_recall:.3f} by more than {LIVE_TOLERANCE}. Misses:\n"
+            + "\n".join(f"  {line}" for line in total.missed_unattributed)
         )
 
     def test_reports_wrong_column_bindings(self, live_run):
