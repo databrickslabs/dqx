@@ -7,14 +7,12 @@ from pyspark.sql import SparkSession, DataFrameWriter
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.streaming import StreamingQuery, DataStreamWriter
 
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.config import InputConfig, OutputConfig, TABLE_PATTERN
 from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-# catalog.schema.table or schema.table or database.table (backticks allow special chars like hyphens)
-TABLE_PATTERN = re.compile(r"^(?:(?:`[^`]+`|[a-zA-Z0-9_]+)\.)?(?:`[^`]+`|[a-zA-Z0-9_]+)\.(?:`[^`]+`|[a-zA-Z0-9_]+)$")
 
 
 def read_input_data(

@@ -39,7 +39,7 @@ REJECTED_ORIGINS = [
 def _make_client() -> TestClient:
     """Minimal app wrapped with the production exact-origin CORS config."""
 
-    async def ok(request):  # noqa: ANN001, ANN202 - test stub
+    async def ok(request):  # test stub
         return PlainTextResponse("ok")
 
     app = Starlette(routes=[Route("/", ok, methods=["GET", "POST"])])

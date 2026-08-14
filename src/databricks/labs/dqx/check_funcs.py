@@ -36,6 +36,9 @@ from databricks.labs.dqx.errors import (
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
+# Unanchored dotted-quad body, shared by the IPV4_ADDRESS and IPV4_CIDR_BLOCK patterns so each can
+# apply its own \A...\z anchors without one deriving from the other's (already-anchored) value.
+_IPV4_ADDRESS_BODY = rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 _VALID_STRING_CASES = {"upper", "lower", "title", "sentence"}
@@ -84,13 +87,17 @@ WINDOW_INCOMPATIBLE_AGGREGATES = {
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
-    IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
-    IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
+    # Anchored with \A...\z (Java regex, used by Spark rlike), NOT ^...$: in Java $ also matches
+    # just before a final line terminator, so a value with a trailing newline would pass. \z is the
+    # absolute end of input, so "1.2.3.4\n" is correctly rejected. See issue #1440.
+    IPV4_ADDRESS = rf"\A{_IPV4_ADDRESS_BODY}\z"
+    IPV4_CIDR_BLOCK = rf"\A{_IPV4_ADDRESS_BODY}/{_IPV4_CIDR_SUFFIX}\z"
     # RFC 5322 pragmatic subset: dot-atom or quoted-string local part, dot-atom or
     # IP-literal domain, with RFC 5321 length caps (local ≤ 64, total ≤ 254).
     # Excludes CFWS, obsolete grammar, and SMTPUTF8/IDN. ReDoS-safe.
+    # \A...\z anchors (not ^...$) so a trailing newline is rejected under Java regex - see IPV4_ADDRESS.
     EMAIL_ADDRESS = (
-        rf"^(?=.{{1,254}}$)"
+        rf"\A(?=.{{1,254}}\z)"
         # Local part: dot-atom or quoted-string limited to 64-characters
         rf"(?=[^@]{{1,64}}@)"
         rf"(?:"
@@ -103,13 +110,19 @@ class DQPattern(Enum):
         rf"(?:{_EMAIL_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}"
         rf"|\[(?:{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}|IPv6:[A-Fa-f0-9:]+)\]"
         rf")"
-        rf"$"
+        rf"\z"
     )
 
     # US Social Security Number AAA-GG-SSSS: the separator (hyphen, single space, or
     # none) must be consistent via backreference \1. Excludes invalid ranges - area
     # 000/666/9xx (9xx covers ITINs), group 00, serial 0000. Anchored, fixed-width; ReDoS-safe.
-    SSN_US = r"^(?!000|666|9\d{2})\d{3}([- ]?)(?!00)\d{2}\1(?!0000)\d{4}$"
+    SSN_US = r"\A(?!000|666|9\d{2})\d{3}([- ]?)(?!00)\d{2}\1(?!0000)\d{4}\z"
+
+    # Canonical UUID form per RFC 9562: 8-4-4-4-12 hex groups. UUID validates the shape
+    # only, so RFC-defined Nil/Max sentinels and legacy variant GUIDs pass; UUID_STRICT
+    # also pins the version nibble to 1-8 and variant bits to 8/9/a/b. Anchored, fixed-width; ReDoS-safe.
+    UUID = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\z"
+    UUID_STRICT = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\z"
 
 
 # ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
@@ -118,6 +131,18 @@ class DQPattern(Enum):
 _NATIONAL_ID_PATTERNS_BY_COUNTRY: dict[str, DQPattern] = {
     "US": DQPattern.SSN_US,
 }
+
+
+def _pattern_for_python_re(pattern: DQPattern) -> str:
+    """Return a *DQPattern* value usable with Python's *re* module.
+
+    *DQPattern* values are Java regular expressions (consumed by Spark *rlike*), where the absolute
+    end-of-input anchor is *\\z*. Python's *re* does not understand *\\z* (it raises *bad escape*) and
+    spells the same anchor *\\Z*. The start anchor *\\A* is identical in both engines. Translating only
+    the end anchor keeps a single source of truth for each pattern while letting *re* validate scalar
+    arguments (e.g. a *cidr_block* string) with the same shape Spark applies to column values.
+    """
+    return pattern.value.replace(r"\z", r"\Z")
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -348,6 +373,17 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
     return make_condition(condition, message, f"{col_str_norm}_has_invalid_{case}_string_case")
 
 
+def _get_limit_exprs(values: list[Any]) -> list[Column]:
+    """Resolve a list of allowed/forbidden values into Spark Column expressions.
+
+    Each value is resolved through *get_limit_expr* (which returns *Column* inputs unchanged), so the
+    same conventions as the comparison checks apply: a bare string is interpreted as a **column
+    expression**, a numeric string such as "3" is parsed as a number, and an ISO-date string such as
+    "2024-01-01" as a date. To match a string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
+    """
+    return [get_limit_expr(item) for item in values]
+
+
 @register_rule("row")
 def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
@@ -356,7 +392,10 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
 
     Args:
         column: column to check; can be a string column name or a column expression
-        allowed: list of allowed values (actual values or Column objects)
+        allowed: list of allowed values. Each entry is resolved like the comparison-check limits: a
+            bare string is treated as a **column expression**, a numeric string such as "3" as a
+            number, and an ISO-date string such as "2024-01-01" as a date. To compare against a
+            string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
@@ -373,7 +412,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
 
-    allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+    allowed_cols = _get_limit_exprs(allowed)
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
@@ -414,7 +453,10 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 
     Args:
         column: column to check; can be a string column name or a column expression
-        allowed: list of allowed values (actual values or Column objects)
+        allowed: list of allowed values. Each entry is resolved like the comparison-check limits: a
+            bare string is treated as a **column expression**, a numeric string such as "3" as a
+            number, and an ISO-date string such as "2024-01-01" as a date. To compare against a
+            string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
@@ -431,7 +473,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
 
-    allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+    allowed_cols = _get_limit_exprs(allowed)
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
@@ -471,7 +513,10 @@ def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool =
 
     Args:
         column: column to check; can be a string column name or a column expression
-        forbidden: list of forbidden values (actual values or Column objects)
+        forbidden: list of forbidden values. Each entry is resolved like the comparison-check limits: a
+            bare string is treated as a **column expression**, a numeric string such as "3" as a
+            number, and an ISO-date string such as "2024-01-01" as a date. To compare against a
+            string literal, quote it (e.g. "'value'") or pass *F.lit("value")*.
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
@@ -488,7 +533,7 @@ def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool =
     if not forbidden:
         raise InvalidParameterError("forbidden list must not be empty.")
 
-    forbidden_cols = [item if isinstance(item, Column) else F.lit(item) for item in forbidden]
+    forbidden_cols = _get_limit_exprs(forbidden)
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
@@ -1164,6 +1209,29 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     return _matches_pattern(column, pattern)
 
 
+@register_rule("row")
+def is_valid_uuid(column: str | Column, strict: bool = False) -> Column:
+    """Checks whether the values in the input column are valid UUIDs (RFC 9562, obsoletes RFC 4122).
+
+    By default, validates the canonical 8-4-4-4-12 hyphenated hex string form, case-insensitively.
+    The all-zero Nil UUID, the all-one Max UUID, and legacy variant GUIDs all pass, since every
+    common UUID library treats them as valid.
+
+    When *strict* is True, the version nibble (1-8) and variant bits (8/9/a/b) are additionally
+    enforced, so out-of-range version/variant values and the Nil and Max UUIDs are rejected.
+
+    Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        strict: if True, also validate the version nibble and variant bits per RFC 9562 (default: False)
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.UUID_STRICT if strict else DQPattern.UUID)
+
+
 def load_iso_codes(resource_name: str) -> frozenset[str]:
     """Load a set of standard codes from a newline-delimited data file in the resources package.
 
@@ -1581,7 +1649,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not cidr_block:
         raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
-    if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
+    if not re.match(_pattern_for_python_re(DQPattern.IPV4_CIDR_BLOCK), cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
@@ -1888,7 +1956,7 @@ def is_unique(
 
         df = (
             # Add condition column used in make_condition
-            df.withColumn(condition_col, F.col(window_count_col) > 1)
+            df.withColumn(condition_col, filter_condition & (F.col(window_count_col) > 1))
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
         )
@@ -2206,6 +2274,10 @@ def is_aggr_not_greater_than(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2251,6 +2323,10 @@ def is_aggr_not_less_than(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2300,6 +2376,10 @@ def is_aggr_equal(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2351,6 +2431,10 @@ def is_aggr_not_equal(
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
             - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+
+    Raises:
+        InvalidParameterError: If parameters are invalid — e.g. an unknown aggregate, negative tolerances,
+            or column '*' with an unsupported aggregate (see *validate_star_aggregate*).
     """
     return _is_aggr_compare(
         column,
@@ -2432,7 +2516,8 @@ def has_no_aggr_outliers(
 
     Raises:
         InvalidParameterError: If *sigma <= 0*, *lookback_num_intervals < 2*,
-            *warmup_num_intervals* is out of range, or *time_interval* is unknown.
+            *warmup_num_intervals* is out of range, *time_interval* is unknown, or *column* is *"*"* with
+            an unsupported aggregate (see *validate_star_aggregate*).
         MissingParameterError: If *aggr_type* requires *aggr_params* that
             are not supplied (e.g. percentile functions).
     """
@@ -2461,7 +2546,9 @@ def has_no_aggr_outliers(
             stacklevel=2,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
+    # The star is aggregated via the filtered-count placeholder only when a row filter is present.
+    validate_star_aggregate(aggr_col_str, aggr_type, uses_placeholder=bool(row_filter))
 
     # Unique suffix so multiple applications of this check don't collide
     unique_str = uuid.uuid4().hex
@@ -2492,7 +2579,7 @@ def has_no_aggr_outliers(
                 f"but got type '{time_col_type.simpleString()}' instead."
             )
 
-        filtered_expr = F.when(safe_filter_expr(row_filter), aggr_col_expr) if row_filter else aggr_col_expr
+        filtered_expr = build_filtered_aggregate_input(row_filter, aggr_col_str, aggr_col_expr)
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
@@ -2702,7 +2789,13 @@ def aggr_matches_dataset(
         ref_group_by_names = get_columns_as_strings(resolved_ref_group_by, allow_simple_expressions_only=True)
 
     ref_column = column if ref_column is None else ref_column
-    _, ref_col_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
+    # Canonicalize the star the same way the checked side does (via _is_aggr_compare) so a count(*)
+    # comparison built with F.col("*") reports '*' consistently on both sides of the message. See #1435.
+    _, ref_col_str, ref_col_expr = resolve_aggregate_column(ref_column)
+    # The reference aggregate is built directly (F.count/F.count_distinct/... over ref_col_expr) on a
+    # DataFrame.filter'd frame, bypassing _is_aggr_compare and its placeholder — so this is the native
+    # path: count(*) and count(DISTINCT *) are valid, other aggregates are not.
+    validate_star_aggregate(ref_col_str, aggr_type, uses_placeholder=False)
     ref_label = f"table '{ref_table}'" if ref_table else f"DataFrame '{ref_df_name}'"
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2748,7 +2841,10 @@ def aggr_matches_dataset(
             The DataFrame with additional condition and metric columns for upstream comparison.
         """
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-        ref_filtered_df = ref_df.filter(ref_row_filter) if ref_row_filter else ref_df
+        # Validate ref_row_filter with safe_filter_expr, like every other filter in this module: it is
+        # user/templated SQL, so a destructive predicate must raise UnsafeSqlQueryError (with sanitized
+        # logging) rather than reach ref_df.filter() as a raw string. SELECT subqueries stay allowed.
+        ref_filtered_df = ref_df.filter(safe_filter_expr(ref_row_filter)) if ref_row_filter else ref_df
         ref_aggr_expr = _build_aggregate_expression(aggr_type, ref_col_expr, aggr_params)
 
         if group_by_names and ref_group_by_names:
@@ -4299,7 +4395,9 @@ def _is_aggr_compare(
             stacklevel=3,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
+    # The star is aggregated via the filtered-count placeholder only when a row filter is present.
+    validate_star_aggregate(aggr_col_str, aggr_type, uses_placeholder=bool(row_filter))
     name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
@@ -4321,16 +4419,7 @@ def _is_aggr_compare(
         Returns:
             The DataFrame with additional condition and metric columns for aggregation validation.
         """
-        if row_filter:
-            # aggr_col_str == "*" only for count(*) over all rows (the only valid use of column="*").
-            # F.expr("*") can't be embedded as the THEN value of a CASE WHEN: Spark's star-expansion
-            # resolves it against every column in scope instead of treating it as a placeholder value.
-            # count() only cares about nullness, so a non-null literal is a safe stand-in.
-            # safe_filter_expr rejects unsafe SQL in the filter (see #1303).
-            then_expr = F.lit(1) if aggr_col_str == "*" else aggr_col_expr
-            filtered_expr = F.when(safe_filter_expr(row_filter), then_expr)
-        else:
-            filtered_expr = aggr_col_expr
+        filtered_expr = build_filtered_aggregate_input(row_filter, aggr_col_str, aggr_col_expr)
 
         # Build aggregation expression
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
@@ -4532,6 +4621,102 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+# count(*) over all rows can be provided three ways that otherwise stringify differently: the string
+# "*" and F.expr("*") render as "*", while F.col("*") renders as "unresolvedstar()". These are the exact
+# forms get_column_name_or_alias produces for a bare star, and are pinned by a unit test. Match them
+# exactly: broadening (case-insensitive or the paren-less "unresolvedstar") would misclassify a real
+# column literally named "unresolvedstar" as count(*). See #1435.
+_STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()"})
+
+
+def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
+    """Resolve an aggregate column like *get_normalized_column_and_expr*, canonicalizing every "*" form.
+
+    Any bare-star form (the string *"*"*, *F.expr("*")*, or *F.col("*")*) is canonicalized to the
+    *("", "*")* name pair, so a *count(*)* check produces identical names and messages regardless of
+    how it was constructed, and callers can detect the star with a simple *aggr_col_str == "*"* check.
+    See #1435.
+
+    Args:
+        column: Column name (str) or Column expression to aggregate.
+
+    Returns:
+        A tuple of the normalized column name, the display column name, and the Column expression.
+    """
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    if aggr_col_str in _STAR_COLUMN_FORMS:
+        return "", "*", aggr_col_expr
+    return aggr_col_str_norm, aggr_col_str, aggr_col_expr
+
+
+def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str, aggr_col_expr: Column) -> Column:
+    """Build the (optionally row-filtered) column expression fed into an aggregate function.
+
+    When *row_filter* is present the column is wrapped in a CASE WHEN. A star (*"*"*) cannot be the THEN
+    value of a CASE WHEN — Spark star-expands it against every column in scope, raising
+    *INVALID_USAGE_OF_STAR_OR_REGEX* — so for *count(*)* a non-null literal placeholder is used instead
+    (*count()* only cares about nullness). *safe_filter_expr* rejects unsafe SQL (see #1303, #1435).
+
+    Args:
+        row_filter: Optional SQL expression to filter rows before aggregation.
+        aggr_col_str: Canonicalized display name of the column (as returned by *resolve_aggregate_column*).
+        aggr_col_expr: The Column expression to aggregate.
+
+    Returns:
+        The column expression to pass to the aggregate function.
+    """
+    if not row_filter:
+        return aggr_col_expr
+    then_expr = F.lit(1) if aggr_col_str == "*" else aggr_col_expr
+    return F.when(safe_filter_expr(row_filter), then_expr)
+
+
+# Aggregates that accept a star column when evaluated natively: count(*) always, and count(DISTINCT *)
+# (count_distinct expands "*" through its varargs). Single-arg aggregates (sum, avg, min, ...) never
+# accept "*".
+_STAR_NATIVE_AGGREGATES = frozenset({"count", "count_distinct"})
+# Through the filtered-count placeholder (F.lit(1)) only count stays correct: the literal collapses
+# count_distinct to 1 and makes other aggregates meaningless. See build_filtered_aggregate_input.
+_STAR_PLACEHOLDER_AGGREGATES = frozenset({"count"})
+
+
+def validate_star_aggregate(aggr_col_str: str, aggr_type: str, *, uses_placeholder: bool) -> None:
+    """Reject star-column/aggregate combinations that are unsupported or would be silently wrong.
+
+    *"*"* means "all rows" and is only meaningful for counting. Two evaluation paths exist:
+
+    - Native (*uses_placeholder=False*: no row filter, or *aggr_matches_dataset*'s reference side which
+      filters the DataFrame directly): *count* and *count_distinct* both accept *"*"*; single-arg
+      aggregates (sum, avg, ...) do not, so they are rejected at build time with a clear error rather than
+      failing later in Spark.
+    - Placeholder (*uses_placeholder=True*: a row filter on the checked/outlier side wraps the column in a
+      CASE WHEN whose THEN is a non-null literal, see *build_filtered_aggregate_input*): only *count* is
+      correct — the literal placeholder makes *count_distinct* collapse to 1 and other aggregates
+      meaningless — so everything except *count* is rejected.
+
+    Comparison is case-sensitive to match the case-sensitive aggregate resolution (*getattr(F, aggr_type)*).
+
+    Args:
+        aggr_col_str: Canonicalized display name of the column (as returned by *resolve_aggregate_column*).
+        aggr_type: The aggregate function name.
+        uses_placeholder: True when the star will be aggregated via the filtered-count placeholder.
+
+    Raises:
+        InvalidParameterError: If *aggr_col_str* is the star *"*"* and *aggr_type* is not a supported
+            star aggregate for the evaluation path.
+    """
+    if aggr_col_str != "*":
+        return
+    allowed = _STAR_PLACEHOLDER_AGGREGATES if uses_placeholder else _STAR_NATIVE_AGGREGATES
+    if aggr_type not in allowed:
+        supported = "'count'" if uses_placeholder else "'count' or 'count_distinct'"
+        qualifier = " with a row filter" if uses_placeholder else ""
+        raise InvalidParameterError(
+            f"Column '*'{qualifier} is only supported with {supported} (got '{aggr_type}'). "
+            "Use an explicit column for other aggregates."
+        )
 
 
 def _get_aggregate_display_name(aggr_type: str, aggr_params: dict[str, Any] | None = None) -> str:

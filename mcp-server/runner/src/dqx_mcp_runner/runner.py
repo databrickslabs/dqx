@@ -7,17 +7,15 @@ MCP's results UC volume, keyed by the job run id. The MCP server (app) submits t
 Why a wheel task (not a notebook): the job runs as a dedicated, least-privilege workspace service
 principal (``run_as``), and the runner is a proper, unit-testable package rather than a notebook
 full of ``dbutils`` — mirroring the DQX Studio task runner. The wheel is hosted in a UC volume
-(``{catalog}.dqx_mcp_tmp.dqx_artifacts``, the bundle's ``workspace.artifact_path``); the setup job grants
-the run_as SP ``READ VOLUME`` there so the serverless environment can install it (see
-notebooks/setup.py).
+(``{catalog}.{tmp_schema}.dqx_artifacts``), which the bundle creates and grants the run_as SP
+``READ VOLUME`` on natively; the app publishes the wheel there at startup (see server/bootstrap.py)
+so the serverless environment can install it from that absolute path.
 
 Result passing: notebook ``dbutils.notebook.exit`` is unavailable to wheel tasks, so results go to
 ``{catalog}.{schema}.mcp_results`` (a UC volume) as ``<run_id>.json``. The app reads them via the
 Files API (no SQL warehouse needed). On failure the entry point raises, so the job's result_state
 becomes FAILED and the app surfaces the error from the run output.
 """
-
-from __future__ import annotations
 
 import argparse
 import datetime
@@ -355,7 +353,8 @@ def _compute_rule_summary(invalid_df) -> list:
 def _ensure_output_schema(spark: SparkSession, catalog: str, user_schema: str, grant_to: str) -> None:
     """Create the caller's SP-owned per-user output schema (idempotent) and grant them USE SCHEMA.
 
-    The runner SP has CREATE SCHEMA on the catalog (see notebooks/setup.py), so it owns the schema
+    The runner SP has CREATE SCHEMA on the catalog (a documented one-time grant applied by
+    scripts/grant_catalog_prereqs.sh — the bundle cannot grant on a catalog it does not own), so it owns the schema
     it creates and can freely write the caller's outputs — no write pre-check needed. The caller is
     granted USE SCHEMA on ONLY their own schema, so users are isolated from each other's outputs.
     """

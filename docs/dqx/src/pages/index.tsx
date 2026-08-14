@@ -1,7 +1,7 @@
 import Layout from '@theme/Layout';
 import { JSX } from 'react';
 import Button from '../components/Button';
-import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar, ScrollText, AppWindow } from 'lucide-react';
+import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar, ScrollText, AppWindow, Bell, BotMessageSquare } from 'lucide-react';
 
 const CallToAction = () => {
   return (
@@ -30,6 +30,11 @@ const Capabilities = () => {
       title: 'DQX Studio (No-Code UI)',
       description: 'Author, review, run, and monitor quality rules from a browser.',
       icon: AppWindow,
+    },
+    {
+      title: 'MCP for AI Coding Agents',
+      description: 'Expose DQX tools to Genie Code, Cursor, and Claude Code over MCP.',
+      icon: BotMessageSquare,
     },
     {
       title: 'Info of Failed Checks',
@@ -85,6 +90,11 @@ const Capabilities = () => {
       title: 'Data Contract',
       description: 'Generate quality rules from ODCS data contracts, including schema validation.',
       icon: ScrollText,
+    },
+    {
+      title: 'Actions and Alerting',
+      description: 'Send Slack, Microsoft Teams, or webhook alerts, or fail the pipeline, when summary metrics cross a threshold.',
+      icon: Bell,
     },
   ];
 

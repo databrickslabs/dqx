@@ -9,14 +9,8 @@ failure mode that motivated this module.
 """
 
 import dataclasses
-import pathlib
-import sys
 
-_RUNNER_SRC = pathlib.Path(__file__).resolve().parent.parent / "runner" / "src"
-if str(_RUNNER_SRC) not in sys.path:
-    sys.path.insert(0, str(_RUNNER_SRC))
-
-from dqx_mcp_runner.config_compat import config_has_field, config_replace  # noqa: E402
+from dqx_mcp_runner.config_compat import config_has_field, config_replace
 
 
 # --- Dataclass-shaped config (older DQX releases, e.g. 0.15.0) ---------------------------------
