@@ -246,6 +246,12 @@ class Recordings:
     **whole** corpus. See the module docstring for why it is filtered rather
     than keyed on the exact prompt.
 
+    Note the oracle bounds what Tier 1 can ever suggest: a corpus rule the oracle
+    does not name cannot become a Tier 1 prediction. That is a property of the
+    replay tier only — the live judge suggests distractor rules readily (it
+    proposed a shipment-weight rule for ``parcel_count``), which is exactly the
+    kind of thing Tier 2 exists to catch.
+
     ``embedder`` is set only by ``suggester_eval_recorder.py``. With it, a cache
     miss is *filled* instead of raised, which is how the cache gets built: the
     recorder drives the real pipeline and captures whatever texts flow past the
@@ -663,12 +669,17 @@ class Metrics:
 
     def summary(self) -> str:
         coverage = "n/a" if self.retrieval_recall is None else f"{self.retrieval_recall:.3f}"
+        if self.retrieval_observed:
+            breakdown = (
+                f"unretrieved={len(self.missed_unretrieved)} " f"post-retrieval={len(self.missed_after_retrieval)}"
+            )
+        else:
+            breakdown = f"unattributed={len(self.missed_unattributed)}"
         return (
             f"precision={self.precision:.3f} recall={self.recall:.3f} f1={self.f1:.3f} "
             f"p@k={self.precision_at_k:.3f} retrieval_recall={coverage} "
             f"tp={self.true_positives} fp={self.false_positives} fn={self.false_negatives} "
-            f"(unretrieved={len(self.missed_unretrieved)} post-retrieval={len(self.missed_after_retrieval)}) "
-            f"violations={len(self.violations)}"
+            f"({breakdown}) violations={len(self.violations)}"
         )
 
 

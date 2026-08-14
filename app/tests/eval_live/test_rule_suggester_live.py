@@ -34,6 +34,68 @@ batched embedding calls for the corpus. Even at ``temperature=0`` the judge is
 not perfectly reproducible across model versions, so treat one run as one
 sample: report a range over a few runs, and keep all pass/fail logic in Tier 1
 where it is deterministic.
+
+Measured on field-eng, both against ``databricks-gte-large-en``
+----------------------------------------------------------------
+
+======================  ===========  =========  =====  ======  ==========  ========
+judge                   precision    recall     f1     p@10    violations  golden
+======================  ===========  =========  =====  ======  ==========  ========
+databricks-gpt-5-4-nano       0.456      0.854  0.594   0.500           3     45s
+databricks-claude-opus-4-7    0.469      0.938  0.625   0.500           0     87s
+======================  ===========  =========  =====  ======  ==========  ========
+
+``gpt-5-4-nano`` is the shipped default. Claude finds more of the right answers
+and, notably, fell for **none** of the seven planted wrong-column bindings that
+``_post_process`` cannot catch, where nano fell for three. It costs about twice
+the wall clock.
+
+**Read the precision figure with care — it understates real quality**, and the
+reason is this fixture, not the model. The answer key labels the rules a table
+*must* have; the judge's system prompt tells it to apply universal checks to
+"every column a reasonable analyst would consider required", so it also proposes
+not-null on ``dispatched_at``, ``joined_on``, ``destination_country`` and
+similar. Those are defensible suggestions counted here as false positives. A
+trustworthy precision number needs either every defensible mapping labelled, or a
+human judgement over the actual output. Recall is the figure to trust as-is.
+
+Some genuine over-suggestion is in there too: ``rr-d-weight-positive`` (a
+shipment *weight* rule) bound to ``parcel_count``, and ``rr-not-null-not-empty``
+emitted alongside ``rr-not-null`` on the same column.
+
+The retrieval column cap, priced
+--------------------------------
+``MAX_RETRIEVAL_COLUMNS = 64`` on the 90-column fixture, reproduced across two
+runs with Claude:
+
+    capped at 64:  recall 0.750   precision 0.462
+    raised to 90:  recall 1.000   precision 0.471
+    recall delta: +0.250
+
+So the cap costs a quarter of the recall on a wide table and does not buy
+precision back. The two answers it loses are the labelled columns sitting past
+position 64.
+
+Output-budget exhaustion on wide tables (nano only)
+---------------------------------------------------
+With ``gpt-5-4-nano`` the cap could not be priced at all, because the judge blows
+the fixed ``max_tokens=2048`` mid-JSON and the user gets **no suggestions**:
+
+    columns   completion_tokens   available   suggestions
+         10                1174         yes            20
+         20                1599         yes            41
+         30                1344         yes            31
+         45                1831         yes            47
+         64          2048 (cap)          NO             0
+         90          2048 (cap)          NO             0
+
+Output size scales with column count; the budget does not. The failure is also
+mis-reported: ``AIGateway._extract_content`` raises its budget-specific error
+only when content is *empty* and ``finish_reason`` is ``length``, but this
+endpoint returns non-empty truncated JSON with ``finish_reason`` unset, so the
+caller sees the generic "AI judge returned an unparsable response". And
+``MAX_RETRIEVAL_COLUMNS`` does not mitigate it — that bounds the *retrieval*
+queries, while the judge prompt still receives every column.
 """
 
 import asyncio
@@ -58,11 +120,19 @@ from tests.suggester_eval_support import (
     score,
 )
 
-# Set these from a real run, then the comparison below starts enforcing. Record
-# the wall-clock duration alongside them: an eval nobody can afford to run is an
-# eval nobody runs.
-LIVE_BASELINE_PRECISION: float | None = None
-LIVE_BASELINE_RECALL: float | None = None
+# Recorded per endpoint pair, because a baseline from one model says nothing
+# about another: the first Claude run scored 0.469/0.938 against a nano baseline
+# of 0.456/0.854 and "passed", which would have been a meaningless comparison
+# dressed up as a green test. The check skips unless the endpoints match.
+#
+# Recorded as measured rather than after tuning anything — the point of a
+# baseline is to notice when behaviour changes, not to flatter it.
+#
+# (embedding endpoint, judge endpoint) -> (precision, recall)
+LIVE_BASELINES: dict[tuple[str, str], tuple[float, float]] = {
+    ("databricks-gte-large-en", "databricks-gpt-5-4-nano"): (0.456, 0.854),
+    ("databricks-gte-large-en", "databricks-claude-opus-4-7"): (0.469, 0.938),
+}
 
 # How far quality may fall below the recorded baseline before the run fails.
 # Wide enough to absorb run-to-run LLM variance, narrow enough that a real
@@ -205,20 +275,29 @@ class TestLiveQuality:
         print(f"\nwrote live eval report to {path}")
         assert path.exists()
 
-    def test_quality_has_not_dropped_below_the_recorded_baseline(self, live_run):
+    def test_quality_has_not_dropped_below_the_recorded_baseline(self, live_run, embed_endpoint, judge_endpoint):
+        """Compare against the baseline for *these* endpoints, or skip.
+
+        Gating on the endpoint pair matters: the first Claude run cleared a
+        baseline recorded on nano and reported a pass, which would have been a
+        meaningless comparison presented as a green test.
+        """
         _, total, _ = live_run
-        if LIVE_BASELINE_PRECISION is None or LIVE_BASELINE_RECALL is None:
+        baseline = LIVE_BASELINES.get((embed_endpoint, judge_endpoint))
+        if baseline is None:
             pytest.skip(
-                f"no live baseline recorded yet. This run measured precision "
-                f"{total.precision:.3f} and recall {total.recall:.3f}; set the "
-                f"LIVE_BASELINE_* constants from a field-engineering run to start enforcing."
+                f"no baseline recorded for ({embed_endpoint}, {judge_endpoint}). This run measured "
+                f"precision {total.precision:.3f} and recall {total.recall:.3f}; add that pair to "
+                f"LIVE_BASELINES to start enforcing it."
             )
-        assert total.precision >= LIVE_BASELINE_PRECISION - LIVE_TOLERANCE, (
-            f"precision {total.precision:.3f} is below baseline "
-            f"{LIVE_BASELINE_PRECISION:.3f} by more than {LIVE_TOLERANCE}"
+        baseline_precision, baseline_recall = baseline
+        assert total.precision >= baseline_precision - LIVE_TOLERANCE, (
+            f"precision {total.precision:.3f} is below the {judge_endpoint} baseline "
+            f"{baseline_precision:.3f} by more than {LIVE_TOLERANCE}"
         )
-        assert total.recall >= LIVE_BASELINE_RECALL - LIVE_TOLERANCE, (
-            f"recall {total.recall:.3f} is below baseline " f"{LIVE_BASELINE_RECALL:.3f} by more than {LIVE_TOLERANCE}"
+        assert total.recall >= baseline_recall - LIVE_TOLERANCE, (
+            f"recall {total.recall:.3f} is below the {judge_endpoint} baseline "
+            f"{baseline_recall:.3f} by more than {LIVE_TOLERANCE}"
         )
 
     def test_reports_wrong_column_bindings(self, live_run):
@@ -273,16 +352,31 @@ class TestRetrievalColumnCap:
 
         Reported rather than asserted: the answer is the number, and hard-coding
         an expected delta would freeze today's model behaviour into the suite.
+
+        **Currently blocked, and the block is itself the finding.** On a
+        90-column table the judge exhausts ``max_tokens`` and returns truncated
+        JSON, so both arms degrade to zero suggestions and the cap cannot be
+        priced at all. Availability is asserted rather than quietly scored: the
+        first version of this test read a degraded result as "recall 0.000" and
+        printed a meaningless ``+0.000`` delta, which is precisely the sort of
+        false green this harness exists to prevent. Measured threshold is in the
+        module docstring.
         """
         table = next(t for t in tables if t.binding_id == "b-wide-events")
         table_labels = labels[table.binding_id]
         assert len(table.columns) > MAX_RETRIEVAL_COLUMNS
 
         capped, _ = asyncio.run(_suggest(table, corpus, live_client, live_vector_for, embed_endpoint, judge_endpoint))
+        assert capped.available, (
+            f"Cannot price the retrieval cap: the suggester degraded on a "
+            f"{len(table.columns)}-column table with {capped.reason!r}. The measured cause is "
+            f"output-budget exhaustion in the judge, not the retrieval cap — see the module docstring."
+        )
         capped_metrics = score(capped.suggestions, table_labels)
 
         monkeypatch.setattr(rule_suggester_module, "MAX_RETRIEVAL_COLUMNS", len(table.columns))
         uncapped, _ = asyncio.run(_suggest(table, corpus, live_client, live_vector_for, embed_endpoint, judge_endpoint))
+        assert uncapped.available, f"Uncapped arm degraded: {uncapped.reason!r}"
         uncapped_metrics = score(uncapped.suggestions, table_labels)
 
         print(
