@@ -1,18 +1,22 @@
 """Rule-mapping suggester — Rules Registry Phase 4C (design spec §8).
 
 Suggests published registry rules (with a complete slot→column mapping)
-for a monitored table: Vector Search retrieve top-K -> LLM judge -> filter/
+for a monitored table: cosine retrieve top-K -> LLM judge -> filter/
 dedup/exclude-already-applied.
 
-**Deploy-safe by construction**: every failure path — Vector Search /
-embedding / AI not configured, retrieval error, judge error, or an
-unparsable judge response — degrades to ``available=False`` with a
-human-readable *reason*. The route calling :meth:`RuleSuggester.suggest`
-always returns HTTP 200; it never raises for a missing-infra deployment.
+**Deploy-safe by construction**: every failure path — embedding / AI not
+configured, retrieval error, judge error, or an unparsable judge response —
+degrades to ``available=False`` with a human-readable *reason*. The route
+calling :meth:`RuleSuggester.suggest` always returns HTTP 200; it never
+raises for a missing-infra deployment.
 
 The LLM judge's output is treated as **untrusted**: every suggested column
 mapping is re-validated against the table's actual columns and the rule's
 declared slots before it is returned (see :meth:`RuleSuggester._post_process`).
+Published rule descriptions and Unity Catalog column comments also reach the
+judge prompt (an injection surface), but that same post-process gate keeps
+the blast radius to a plausible-but-wrong suggestion rather than an unsafe
+mapping that bypasses column/slot checks.
 """
 
 import json
@@ -52,10 +56,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20  # Per-column retrieval unions per column; cap = max(top_k, top_k*3) in _retrieve_per_column
 
+# Bound how many columns get their own retrieval query. Embedding round trips
+# (even batched) and prompt size still grow with width; beyond this we keep
+# UC order and drop the rest from retrieval only — the judge still sees the
+# full column list for mapping.
+MAX_RETRIEVAL_COLUMNS = 64
+
 # NL "describe a rule" match path: retrieve against the user prompt (not
 # column-built queries), then run the same mapping judge for staging.
 DEFAULT_MATCH_TOP_K = 5
-MIN_MATCH_SCORE = 0.45  # Cosine similarity floor for a hit to count as a match
+MIN_MATCH_SCORE = 0.45  # Cosine floor for match_from_query hits only; re-tune per embedding model
 
 # Human-readable reasons for the genuine "available, but nothing to show"
 # outcomes. Kept as constants so the exact wording is asserted by tests and
@@ -182,6 +192,11 @@ class RuleSuggester:
     :class:`AIGateway`-backed LLM judge to propose slot→column mappings ->
     post-process (drop invalid columns, enforce multi-slot completeness,
     dedup, exclude already-applied mappings).
+
+    Rule descriptions and column comments are included in the judge prompt,
+    so they are a prompt-injection surface; :meth:`_post_process` re-checks
+    every mapping against real columns and declared slots, so the worst case
+    is a wrong suggestion rather than an unsafe accepted mapping.
     """
 
     def __init__(
@@ -504,6 +519,11 @@ class RuleSuggester:
         while the judge still decides the final per-column fit. Scores are kept
         so the union can be capped deterministically (highest-scoring first).
 
+        Embedding calls are batched via :meth:`RuleRetriever.retrieve_many`
+        (chunked under FMAPI payload limits). Column count is also capped at
+        :data:`MAX_RETRIEVAL_COLUMNS` so a very wide table neither crawls nor
+        blows a single unbounded batch.
+
         Falls back to a single table-level query when the column list is empty
         (no profile yet) so behaviour degrades to the old path rather than
         returning nothing.
@@ -511,10 +531,20 @@ class RuleSuggester:
         if not columns:
             return self._retriever.retrieve(self._build_query_text(table_fqn, columns), self._top_k)
 
+        retrieval_columns = columns
+        if len(columns) > MAX_RETRIEVAL_COLUMNS:
+            logger.info(
+                "Table %s has %d columns; retrieving against the first %d only",
+                table_fqn,
+                len(columns),
+                MAX_RETRIEVAL_COLUMNS,
+            )
+            retrieval_columns = columns[:MAX_RETRIEVAL_COLUMNS]
+
+        query_texts = [self._build_column_query_text(table_fqn, column) for column in retrieval_columns]
         best_by_rule: dict[str, RetrievedRule] = {}
-        for column in columns:
-            query_text = self._build_column_query_text(table_fqn, column)
-            for hit in self._retriever.retrieve(query_text, self._top_k):
+        for hits in self._retriever.retrieve_many(query_texts, self._top_k):
+            for hit in hits:
                 existing = best_by_rule.get(hit.rule_id)
                 if existing is None or hit.score > existing.score:
                     best_by_rule[hit.rule_id] = hit

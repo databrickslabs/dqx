@@ -60,7 +60,6 @@ export function useEditProductState(product: DataProductOut) {
   // --- Local buffered state, seeded once from the server snapshot ---
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description ?? "");
-  const [notes, setNotes] = useState(product.notes ?? "");
   const [owner, setOwnerLocal] = useState(product.owner ?? "");
   const [ownerDisplayName, setOwnerDisplayNameLocal] = useState(product.owner_display_name ?? "");
   // Pending owner grant intent — stashed when the user confirms the
@@ -175,12 +174,11 @@ export function useEditProductState(product: DataProductOut) {
   const isDirty = useMemo(() => {
     if (name !== product.name) return true;
     if (description !== (product.description ?? "")) return true;
-    if (notes !== (product.notes ?? "")) return true;
     if (ownerDirty) return true;
     if (scheduleDirty) return true;
     if (membersDirty) return true;
     return false;
-  }, [name, description, notes, product.name, product.description, product.notes, ownerDirty, scheduleDirty, membersDirty]);
+  }, [name, description, product.name, product.description, ownerDirty, scheduleDirty, membersDirty]);
 
   // Save is blocked while the Schedule tab's raw-cron editor holds an
   // expression the backend scheduler can't parse — otherwise a PATCH would
@@ -234,10 +232,6 @@ export function useEditProductState(product: DataProductOut) {
     }
     if (description !== (product.description ?? "")) {
       patch.description = description;
-      patchNeeded = true;
-    }
-    if (notes !== (product.notes ?? "")) {
-      patch.notes = notes.trim() || null;
       patchNeeded = true;
     }
     if (ownerDirty) {
@@ -322,7 +316,6 @@ export function useEditProductState(product: DataProductOut) {
     t,
     name,
     description,
-    notes,
     owner,
     ownerDisplayName,
     ownerDirty,
@@ -397,10 +390,8 @@ export function useEditProductState(product: DataProductOut) {
   return {
     name,
     description,
-    notes,
     setName,
     setDescription,
-    setNotes,
 
     owner,
     setOwner,

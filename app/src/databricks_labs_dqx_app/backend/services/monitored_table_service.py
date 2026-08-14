@@ -228,8 +228,8 @@ class MonitoredTableService:
             f"{prefix}schedule_kind, "
             # owner_display_name appended after schedule_kind (row[14]).
             f"{prefix}owner_display_name, "
-            # notes + lifecycle rationale (row[15..17]).
-            f"{prefix}notes, {prefix}pending_rationale, {prefix}last_decision_rationale"
+            # lifecycle rationale (row[15..16]).
+            f"{prefix}pending_rationale, {prefix}last_decision_rationale"
         )
 
     def _build_applied_select_cols(self) -> str:
@@ -449,14 +449,14 @@ class MonitoredTableService:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        # Base columns end with last_decision_rationale (index 17, after notes
-        # at 15 / pending_rationale at 16), so the score-cache LEFT-JOIN
-        # columns follow at 18..21, and the version_state_json at 22.
+        # Base columns end with last_decision_rationale (index 16, after
+        # pending_rationale at 15), so the score-cache LEFT-JOIN columns
+        # follow at 17..20, and the version_state_json at 21.
         tables = [
             (
                 self._row_to_table(row),
-                parse_cached_score(row[18], row[19], row[20], row[21]),
-                _parse_snapshot_check_count(row[22]),
+                parse_cached_score(row[17], row[18], row[19], row[20]),
+                _parse_snapshot_check_count(row[21]),
             )
             for row in rows
         ]
@@ -937,35 +937,6 @@ class MonitoredTableService:
         )
         return table
 
-    def update_notes(self, binding_id: str, notes: str | None, user_email: str) -> MonitoredTable:
-        """Set or clear sticky operational notes on a monitored table binding.
-
-        Notes are orthogonal to the review lifecycle and to description (tables
-        have no description column — notes are the free-text ops field). Does
-        NOT flip ``status``.
-
-        Raises:
-            RuntimeError: *binding_id* does not exist.
-        """
-        table = self._get(binding_id)
-        if table is None:
-            raise RuntimeError(f"Monitored table not found: {binding_id}")
-        e = escape_sql_string(binding_id)
-        self._sql.execute(
-            f"UPDATE {self._table} SET notes = {self._opt_str(notes)}, "
-            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
-            f"WHERE binding_id = '{e}'"
-        )
-        table.notes = notes
-        table.updated_by = user_email
-        logger.info(
-            "Updated monitored table %s (binding_id=%s) notes (by %s)",
-            table.table_fqn,
-            binding_id,
-            user_email,
-        )
-        return table
-
     def update_schedule(
         self,
         binding_id: str,
@@ -1289,9 +1260,8 @@ class MonitoredTableService:
             updated_at=self._parse_timestamp(row[12]),
             schedule_kind=self._parse_schedule_kind(row[13] if len(row) > 13 else None),
             owner_display_name=row[14] if len(row) > 14 else None,
-            notes=row[15] if len(row) > 15 else None,
-            pending_rationale=row[16] if len(row) > 16 else None,
-            last_decision_rationale=row[17] if len(row) > 17 else None,
+            pending_rationale=row[15] if len(row) > 15 else None,
+            last_decision_rationale=row[16] if len(row) > 16 else None,
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:

@@ -224,6 +224,16 @@ class TestPgMigrationsCatalogue:
         assert "dq_rules ADD COLUMN IF NOT EXISTS notes" not in sql
         assert "IF NOT EXISTS" in sql
 
+    def test_v25_drops_notes_columns(self):
+        """v25 drops sticky object notes; rationale columns stay."""
+        v25 = next(m for m in PG_MIGRATIONS if m.version == 25)
+        sql = v25.sql
+        assert "DROP COLUMN IF EXISTS notes" in sql
+        assert "dq_monitored_tables" in sql
+        assert "dq_data_products" in sql
+        assert "pending_rationale" not in sql
+        assert "last_decision_rationale" not in sql
+
     def test_v21_strips_execute_from_registry_rule_grants(self):
         """v21 must UPDATE dq_object_grants to remove EXECUTE from
         registry_rule rows, leaving ALL_PRIVILEGES (owner) rows untouched."""

@@ -65,7 +65,6 @@ def _table_row(
     last_profiled_at: str | None = None,
     last_run_at: str | None = None,
     schedule_kind: str | None = "profiling_and_dq",
-    notes: str | None = None,
     pending_rationale: str | None = None,
     last_decision_rationale: str | None = None,
     score: str | None = None,
@@ -76,11 +75,11 @@ def _table_row(
 ) -> list[str]:
     # ``schedule_kind`` (B2-52) is at index 13;
     # ``owner_display_name`` at index 14;
-    # notes / pending_rationale / last_decision_rationale at 15..17;
+    # pending_rationale / last_decision_rationale at 15..16;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN columns
-    # (P3.4, indices 18..21) — all None when the table has never been scored.
-    # Index 22 is the version_state_json from the dq_monitored_table_versions
-    # LEFT JOIN. The single-row read paths select only the first 18 columns;
+    # (P3.4, indices 17..20) — all None when the table has never been scored.
+    # Index 21 is the version_state_json from the dq_monitored_table_versions
+    # LEFT JOIN. The single-row read paths select only the first 17 columns;
     # the extra cells are simply ignored by _row_to_table.
     return [
         binding_id,  # 0
@@ -98,14 +97,13 @@ def _table_row(
         "2026-07-02T00:00:00+00:00",  # 12 updated_at
         schedule_kind,  # 13
         owner_display_name,  # 14
-        notes,  # 15
-        pending_rationale,  # 16
-        last_decision_rationale,  # 17
-        score,  # 18
-        failed_tests,  # 19
-        total_tests,  # 20
-        score_computed_at,  # 21
-        version_state_json,  # 22
+        pending_rationale,  # 15
+        last_decision_rationale,  # 16
+        score,  # 17
+        failed_tests,  # 18
+        total_tests,  # 19
+        score_computed_at,  # 20
+        version_state_json,  # 21
     ]
 
 

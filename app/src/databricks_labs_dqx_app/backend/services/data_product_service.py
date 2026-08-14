@@ -76,7 +76,6 @@ logger = logging.getLogger(__name__)
 _UPDATABLE_FIELDS = (
     "name",
     "description",
-    "notes",
     "owner",
     "owner_display_name",
     "schedule_cron",
@@ -301,7 +300,6 @@ class DataProductService:
         owner: str | None,
         created_by: str,
         owner_display_name: str | None = None,
-        notes: str | None = None,
     ) -> DataProduct:
         """Create a new data product in ``draft`` status (no approver gate — design spec §3.3).
 
@@ -323,7 +321,6 @@ class DataProductService:
             product_id=uuid4().hex,
             name=name,
             description=description,
-            notes=notes,
             owner=resolved_owner,
             owner_display_name=owner_display_name,
             schedule_cron=None,
@@ -337,10 +334,10 @@ class DataProductService:
         )
         self._sql.execute(
             f"INSERT INTO {self._products_table} "
-            "(product_id, name, description, notes, owner, owner_display_name, schedule_cron, schedule_tz, "
+            "(product_id, name, description, owner, owner_display_name, schedule_cron, schedule_tz, "
             "schedule_kind, status, version, created_by, created_at, updated_by, updated_at) VALUES ("
             f"'{escape_sql_string(product.product_id)}', '{escape_sql_string_strict(product.name)}', "
-            f"{self._opt_str(product.description)}, {self._opt_str(product.notes)}, "
+            f"{self._opt_str(product.description)}, "
             f"{self._opt_str(product.owner)}, "
             f"{self._opt_str(product.owner_display_name)}, NULL, NULL, "
             f"{self._opt_str(product.schedule_kind)}, "
@@ -1085,10 +1082,10 @@ class DataProductService:
             f"{prefix}schedule_kind, "
             # owner_display_name appended after schedule_kind (row[13]).
             f"{prefix}owner_display_name, "
-            # notes + lifecycle rationale (row[14..16]).
+            # lifecycle rationale (row[14..15]).
             # NOTE: score-join cols are appended AFTER these in
-            # ``_score_joined_select``, so the score tuple offset is row[17..20].
-            f"{prefix}notes, {prefix}pending_rationale, {prefix}last_decision_rationale"
+            # ``_score_joined_select``, so the score tuple offset is row[16..19].
+            f"{prefix}pending_rationale, {prefix}last_decision_rationale"
         )
 
     def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
@@ -1148,14 +1145,14 @@ class DataProductService:
         if not rows:
             return None
         row = rows[0]
-        # Base cols end at last_decision_rationale (row[16]); score cols at row[17..20].
-        return self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])
+        # Base cols end at last_decision_rationale (row[15]); score cols at row[16..19].
+        return self._row_to_product(row), parse_cached_score(row[16], row[17], row[18], row[19])
 
     def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
         sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
         rows = self._sql.query(sql)
-        # Base cols end at last_decision_rationale (row[16]); score cols at row[17..20].
-        return [(self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])) for row in rows]
+        # Base cols end at last_decision_rationale (row[15]); score cols at row[16..19].
+        return [(self._row_to_product(row), parse_cached_score(row[16], row[17], row[18], row[19])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(
@@ -1177,9 +1174,8 @@ class DataProductService:
                 else SCHEDULE_KIND_DEFAULT
             ),
             owner_display_name=row[13] if len(row) > 13 else None,
-            notes=row[14] if len(row) > 14 else None,
-            pending_rationale=row[15] if len(row) > 15 else None,
-            last_decision_rationale=row[16] if len(row) > 16 else None,
+            pending_rationale=row[14] if len(row) > 14 else None,
+            last_decision_rationale=row[15] if len(row) > 15 else None,
         )
 
     @staticmethod

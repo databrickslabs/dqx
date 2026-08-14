@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { HelpTooltip } from "@/components/HelpTooltip";
 import { formatDateShort } from "@/lib/format-utils";
 import type { DataProductOut } from "@/lib/api";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
@@ -87,7 +86,7 @@ function DetailsPanel({ product }: { product: DataProductOut }) {
 
 export function ProductAboutTab({ product, editState, canEdit }: Props) {
   const { t } = useTranslation();
-  const { name, description, notes, setName, setDescription, setNotes } = editState;
+  const { name, description, setName, setDescription } = editState;
 
   // Two columns: editable/read fields on the left, the read-only Details
   // provenance panel on the right — mirroring the rule About tab. Owner is
@@ -111,19 +110,6 @@ export function ProductAboutTab({ product, editState, canEdit }: Props) {
                 placeholder={t("dataProducts.descriptionPlaceholder")}
               />
             </section>
-            <section className="flex flex-col gap-3">
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor="product-notes">{t("dataProducts.notesLabel")}</Label>
-                <HelpTooltip text={t("dataProducts.notesTooltip")} />
-              </div>
-              <Textarea
-                id="product-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                placeholder={t("dataProducts.notesPlaceholder")}
-              />
-            </section>
           </>
         ) : (
           <>
@@ -137,14 +123,6 @@ export function ProductAboutTab({ product, editState, canEdit }: Props) {
                 <p className="text-sm whitespace-pre-wrap">{description}</p>
               ) : (
                 <p className="text-sm text-muted-foreground italic">{t("dataProducts.aboutNoDescription")}</p>
-              )}
-            </section>
-            <section className="flex flex-col gap-3">
-              <p className="text-sm font-medium leading-none">{t("dataProducts.notesLabel")}</p>
-              {notes ? (
-                <p className="text-sm whitespace-pre-wrap">{notes}</p>
-              ) : (
-                <p className="text-sm text-muted-foreground italic">{t("dataProducts.aboutNoNotes")}</p>
               )}
             </section>
           </>

@@ -604,7 +604,7 @@ class DemoSeedService:
         logger.info("Demo rule '%s' -> %s (submitted for approval, unmapped)", spec.key, rule.rule_id)
 
     def _embed_rule(self, rule: RegistryRule) -> None:
-        """Embed an approved rule into the Vector Search corpus (best-effort).
+        """Embed an approved rule into the OLTP embeddings corpus (best-effort).
 
         The HTTP approve route calls ``RuleEmbeddingsService.embed_and_store``
         so a published rule is retrievable by the suggest-rules feature; the

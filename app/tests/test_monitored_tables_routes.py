@@ -1382,13 +1382,16 @@ class TestSuggestRulesForTable:
     async def test_unavailable_result_returns_200_with_reason(self):
         svc = MagicMock()
         svc.suggest = AsyncMock(
-            return_value=SuggestRulesResult(available=False, reason="Vector Search is not configured.")
+            return_value=SuggestRulesResult(
+                available=False,
+                reason="AI rule suggestions aren't available: no embedding endpoint is configured.",
+            )
         )
 
         result = await suggest_rules_for_table("b1", svc=svc, obo_ws=_mock_obo_ws())
 
         assert result.available is False
-        assert result.reason == "Vector Search is not configured."
+        assert result.reason == "AI rule suggestions aren't available: no embedding endpoint is configured."
         assert result.suggestions == []
 
 

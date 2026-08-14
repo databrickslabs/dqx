@@ -50,7 +50,6 @@ import {
   useSaveAiSettings,
   getGetAiSettingsQueryKey,
   useListServingEndpoints,
-  useEnsureVectorStore,
   useGetRulesRegistrySettings,
   useSaveRulesRegistrySettings,
   getGetRulesRegistrySettingsQueryKey,
@@ -67,7 +66,6 @@ import {
   useSaveShareTablesWithWorkspaceUsers,
   getGetShareTablesWithWorkspaceUsersQueryKey,
   useListComputeWarehouses,
-  useListComputeClusters,
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
@@ -76,7 +74,6 @@ import {
   type ComputeSettingsIn,
   type JobsComputeModel,
   type WarehouseOut,
-  type ClusterOut,
 } from "@/lib/api";
 import {
   Select,
@@ -1520,17 +1517,15 @@ function RunReviewStatusesSettings() {
 // suggest). ADMIN only — every AI affordance elsewhere in the app degrades
 // to hidden/disabled while these are unset (see hooks/use-ai-availability.ts).
 //
-// The rule-mapping suggester's Vector Search settings (embedding endpoint,
-// VS endpoint/index) are no longer surfaced here — they auto-derive from
-// this toggle + endpoint alone (see ``AppSettingsService`` on the backend),
-// so the suggester is always-on whenever AI is enabled, no extra fields to
-// fill in.
+// The rule-mapping suggester uses in-app cosine retrieval over OLTP
+// embeddings — no Vector Search settings are surfaced here. Embedding
+// endpoint names auto-derive server-side (see ``AppSettingsService``), so
+// the suggester is always-on whenever AI is enabled.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Sentinel values for Radix Select — it rejects empty-string item values.
 const NO_ENDPOINT_VALUE = "__none__";
 const NO_WAREHOUSE_VALUE = "__default__";
-const NO_CLUSTER_VALUE = "__none__";
 
 /**
  * SQL-warehouse dropdown. Groups warehouses into Serverless and Classic with
@@ -1624,69 +1619,6 @@ function WarehouseSelect({
 }
 
 /**
- * All-purpose cluster dropdown for jobs compute. Mirrors {@link WarehouseSelect}:
- * always exposes a "none" sentinel item and keeps the saved cluster id selectable
- * even when the list is empty or still loading.
- */
-function ClusterSelect({
-  value,
-  onChange,
-  clusters,
-  clustersError,
-  disabled,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  clusters: ClusterOut[];
-  clustersError?: boolean;
-  disabled?: boolean;
-}) {
-  const { t } = useTranslation();
-  const options = useMemo(() => {
-    const byId = new Map(clusters.map((c) => [c.cluster_id, c]));
-    if (value && !byId.has(value)) {
-      byId.set(value, { cluster_id: value, cluster_name: value, state: "" });
-    }
-    return Array.from(byId.values()).sort((a, b) => a.cluster_name.localeCompare(b.cluster_name));
-  }, [clusters, value]);
-
-  return (
-    <Select
-      value={value || NO_CLUSTER_VALUE}
-      onValueChange={(v) => onChange(v === NO_CLUSTER_VALUE ? "" : v)}
-      disabled={disabled}
-    >
-      <SelectTrigger className="h-8 text-xs w-52 mt-1.5">
-        <SelectValue placeholder={t("config.computeClusterPlaceholder")} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={NO_CLUSTER_VALUE} className="text-xs">
-          {t("config.computeClusterNone")}
-        </SelectItem>
-        {options.length === 0 && (
-          <SelectGroup>
-            <SelectLabel className="font-normal">
-              {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
-            </SelectLabel>
-          </SelectGroup>
-        )}
-        {options.map((c) => (
-          <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs">
-            <span className="flex items-center gap-1.5">
-              <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", c.state === "RUNNING" ? "bg-green-500" : "bg-red-500")} />
-              {c.cluster_name}
-              {c.cluster_id === value && !clusters.some((x) => x.cluster_id === value)
-                ? ` (${t("config.computeClusterCustomOption")})`
-                : ""}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-/**
  * Serving-endpoint dropdown for the AI endpoint field. Always includes the
  * currently-configured value as an option even if it's missing from the
  * fetched workspace list (e.g. typed before this dropdown existed, or the
@@ -1747,7 +1679,6 @@ function AiSettingsCard() {
   const data = settingsResp?.data;
   const queryClient = useQueryClient();
   const saveMutation = useSaveAiSettings();
-  const ensureVectorStoreMutation = useEnsureVectorStore();
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
   const { data: servingEndpointsResp } = useListServingEndpoints();
@@ -1767,23 +1698,13 @@ function AiSettingsCard() {
     }
   }, [data, hydrated]);
 
-  const doSave = (payload: AiSettingsIn, enabledForVS: boolean) => {
+  const doSave = (payload: AiSettingsIn) => {
     saveMutation.mutate(
       { data: payload },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetAiSettingsQueryKey() });
           toast.success(t("config.aiSettingsSaved"));
-          // Fire-and-forget: kick off Vector Search endpoint/index creation
-          // now that AI is enabled — the embedding/VS names auto-derive
-          // server-side, so the only gate is the enable toggle. Provisioning
-          // is async and can take minutes, so this call is never awaited by
-          // the UI — the suggester reports readiness separately once the
-          // index comes online. Silently ignore failures; this is
-          // best-effort.
-          if (enabledForVS) {
-            ensureVectorStoreMutation.mutate(undefined, { onError: () => {} });
-          }
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
@@ -1795,12 +1716,12 @@ function AiSettingsCard() {
 
   const handleEnabledChange = (checked: boolean) => {
     setAiEnabled(checked);
-    doSave({ ai_enabled: checked, ai_endpoint_name: aiEndpoint.trim() }, checked);
+    doSave({ ai_enabled: checked, ai_endpoint_name: aiEndpoint.trim() });
   };
 
   const handleEndpointChange = (value: string) => {
     setAiEndpoint(value);
-    doSave({ ai_enabled: aiEnabled, ai_endpoint_name: value.trim() }, aiEnabled);
+    doSave({ ai_enabled: aiEnabled, ai_endpoint_name: value.trim() });
   };
 
   if (isLoading || !data) {
@@ -1936,13 +1857,13 @@ function RulesRegistrySettingsCard() {
 
         <div className="flex items-center justify-between rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
-            <Label htmlFor="tag-auto-apply" className="text-sm">
-              {t("config.tagAutoApplyLabel")}
+            <Label htmlFor="tag-auto-assign" className="text-sm">
+              {t("config.tagAutoAssignLabel")}
             </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.tagAutoApplyHint")}</p>
+            <p className="text-[11px] text-muted-foreground">{t("config.tagAutoAssignHint")}</p>
           </div>
           <Switch
-            id="tag-auto-apply"
+            id="tag-auto-assign"
             checked={settings.tag_auto_apply}
             onCheckedChange={(checked) => save({ tag_auto_apply: checked })}
             disabled={!isAdmin || saveMutation.isPending}
@@ -2292,54 +2213,23 @@ function ComputeSettingsCard() {
   const settings = settingsResp?.data;
   const { data: warehousesResp } = useListComputeWarehouses();
   const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
-  // The clusters list is best-effort: the backend swallows a missing-scope /
-  // permission error to `[]` (200), so a genuinely empty list and a
-  // permission-blocked list both surface here as `[]`. `clustersError` only
-  // trips on a hard transport error (network / 500). Either way we degrade to a
-  // subtle inline note in the picker — never a hard section failure.
-  const { data: clustersResp, isError: clustersError } = useListComputeClusters();
-  const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
   const { isAdmin } = usePermissions();
 
   const saveMutation = useSaveComputeSettings();
   const grantMutation = useGrantWarehouseAccess();
 
   const [warehouseId, setWarehouseId] = useState("");
-  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>("serverless");
-  const [clusterId, setClusterId] = useState("");
   const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => {
-    if (settings && !hydrated) {
-      setWarehouseId(settings.sql_warehouse_id ?? "");
-      setJobsKind(settings.jobs_compute?.kind ?? "serverless");
-      setClusterId(settings.jobs_compute?.cluster_id ?? "");
-      setHydrated(true);
-    }
-  }, [settings, hydrated]);
+  // Keep a ref so save() never reads stale closure state.
+  const currentRef = useRef({ warehouseId: "" });
+  currentRef.current = { warehouseId };
 
-  // Keep a ref to current field values so save() never reads stale closure state.
-  const currentRef = useRef({ warehouseId: "", jobsKind: "serverless" as JobsComputeModel["kind"], clusterId: "" });
-  currentRef.current = { warehouseId, jobsKind, clusterId };
-
-  // The warehouse whose SP access we check: the picked one, else the effective
-  // (env-fallback) warehouse. Re-runs whenever the pick changes.
-  const checkWarehouseId = warehouseId || settings?.effective_warehouse_id || "";
-  const { data: accessResp } = useGetWarehouseAccess(
-    { warehouse_id: checkWarehouseId },
-    { query: { enabled: !!checkWarehouseId } },
-  );
-  const access = accessResp?.data;
-
-  const save = useCallback((patch: { warehouseId?: string; kind?: JobsComputeModel["kind"]; clusterId?: string }) => {
-    // Read siblings from the ref so we never close over stale state.
-    const resolvedKind = patch.kind ?? currentRef.current.jobsKind;
-    const resolvedCluster = patch.clusterId ?? currentRef.current.clusterId;
+  // Jobs compute is serverless-only in the UI. Always persist that kind so a
+  // warehouse change also clears any legacy existing_cluster selection.
+  const save = useCallback((patch: { warehouseId?: string }) => {
     const resolvedWarehouse = patch.warehouseId ?? currentRef.current.warehouseId;
-    const jobs_compute: JobsComputeModel =
-      resolvedKind === "existing_cluster"
-        ? { kind: "existing_cluster", cluster_id: resolvedCluster || null }
-        : { kind: "serverless", cluster_id: null };
+    const jobs_compute: JobsComputeModel = { kind: "serverless", cluster_id: null };
     const payload: ComputeSettingsIn = { sql_warehouse_id: resolvedWarehouse, jobs_compute };
     saveMutation.mutate(
       { data: payload },
@@ -2355,22 +2245,44 @@ function ComputeSettingsCard() {
         },
       },
     );
-  }, [saveMutation, queryClient, t]); // currentRef is stable — no need in deps
+  }, [saveMutation, queryClient, t]);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setWarehouseId(settings.sql_warehouse_id ?? "");
+      setHydrated(true);
+      // Migrate legacy all-purpose cluster settings to serverless on first load
+      // (admins only — the save endpoint is admin-gated).
+      if (isAdmin && settings.jobs_compute?.kind === "existing_cluster") {
+        saveMutation.mutate(
+          {
+            data: {
+              sql_warehouse_id: settings.sql_warehouse_id ?? "",
+              jobs_compute: { kind: "serverless", cluster_id: null },
+            },
+          },
+          {
+            onSuccess: () => {
+              queryClient.invalidateQueries({ queryKey: getGetComputeSettingsQueryKey() });
+            },
+          },
+        );
+      }
+    }
+  }, [settings, hydrated, isAdmin, saveMutation, queryClient]);
+
+  // The warehouse whose SP access we check: the picked one, else the effective
+  // (env-fallback) warehouse. Re-runs whenever the pick changes.
+  const checkWarehouseId = warehouseId || settings?.effective_warehouse_id || "";
+  const { data: accessResp } = useGetWarehouseAccess(
+    { warehouse_id: checkWarehouseId },
+    { query: { enabled: !!checkWarehouseId } },
+  );
+  const access = accessResp?.data;
 
   const handleWarehouseChange = (v: string) => {
     setWarehouseId(v);
     save({ warehouseId: v });
-  };
-
-  const handleJobsKindChange = (v: string) => {
-    const kind = v as JobsComputeModel["kind"];
-    setJobsKind(kind);
-    save({ kind });
-  };
-
-  const handleClusterChange = (v: string) => {
-    setClusterId(v);
-    save({ clusterId: v });
   };
 
   const handleGrant = () => {
@@ -2488,50 +2400,15 @@ function ComputeSettingsCard() {
         </div>
       )}
 
-      {/* Jobs compute */}
-      <div className="flex items-start justify-between rounded-md border p-3">
+      {/* Jobs compute — serverless only */}
+      <div className="flex items-center justify-between rounded-md border p-3">
         <div className="space-y-0.5 pr-4">
           <Label className="text-sm">{t("config.computeJobsLabel")}</Label>
           <p className="text-[11px] text-muted-foreground">{t("config.computeJobsHint")}</p>
         </div>
-        <div className="space-y-1.5">
-          <Select
-            value={jobsKind}
-            onValueChange={handleJobsKindChange}
-            disabled={!isAdmin || saveMutation.isPending}
-          >
-            <SelectTrigger className="h-8 text-xs w-52">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="serverless" className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
-                  {t("config.computeJobsServerless")}
-                </span>
-              </SelectItem>
-              <SelectItem value="existing_cluster" className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full border border-muted-foreground/50 shrink-0" />
-                  {t("config.computeJobsCluster")}
-                </span>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          {jobsKind === "existing_cluster" && (
-            <>
-              <ClusterSelect
-                value={clusterId}
-                onChange={handleClusterChange}
-                clusters={clusters}
-                clustersError={clustersError}
-                disabled={!isAdmin || saveMutation.isPending}
-              />
-              <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
-                {t("config.computeJobsClusterNote")}
-              </p>
-            </>
-          )}
+        <div className="flex h-8 w-52 items-center gap-1.5 rounded-md border border-input bg-muted/40 px-3 text-xs text-foreground">
+          <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+          {t("config.computeJobsServerless")}
         </div>
       </div>
 

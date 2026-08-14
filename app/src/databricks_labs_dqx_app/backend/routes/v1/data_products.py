@@ -192,7 +192,6 @@ def create_data_product(
             body.owner,
             user_email,
             owner_display_name=body.owner_display_name,
-            notes=body.notes,
         )
         detail = svc.get(product.product_id)
         assert detail is not None  # just created

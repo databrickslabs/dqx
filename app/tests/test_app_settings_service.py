@@ -216,72 +216,44 @@ class TestRulesResultsTabEnabled:
         assert svc.get_rules_results_tab_enabled() is True
 
 
-class TestVectorSearchSettings:
-    """Vector Search / embeddings settings (Rules Registry Phase 4B/4C, auto-derived since 8B).
+class TestEmbeddingEndpointSettings:
+    """Embedding endpoint setting (Rules Registry Phase 4B/4C, auto-derived since 8B).
 
-    All three auto-derive a sensible default when unset, so the
-    rule-mapping suggester's vector store is fully provisioned from just
-    the AI enable toggle + serving endpoint (no separate embedding/VS
-    fields in the admin UI).
+    Auto-derives a sensible default when unset so cosine rule suggestions
+    work from the AI enable toggle + serving endpoint alone.
     """
 
-    @pytest.mark.parametrize(
-        ("getter_name", "key", "expected"),
-        [
-            ("get_embedding_endpoint_name", "embedding_endpoint_name", "databricks-gte-large-en"),
-            ("get_vs_endpoint_name", "vs_endpoint_name", "dqx_studio_rule_suggester_dqx_test"),
-            ("get_vs_index_name", "vs_index_name", "dqx_test.dqx_app_test.dq_rule_embeddings_index"),
-        ],
-    )
-    def test_defaults_to_auto_derived_value(self, settings_service, getter_name, key, expected):
+    def test_defaults_to_auto_derived_value(self, settings_service):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert getattr(svc, getter_name)() == expected
+        assert svc.get_embedding_endpoint_name() == "databricks-gte-large-en"
 
-    @pytest.mark.parametrize(
-        ("getter_name", "expected"),
-        [
-            ("get_embedding_endpoint_name", "databricks-gte-large-en"),
-            ("get_vs_endpoint_name", "dqx_studio_rule_suggester_dqx_test"),
-            ("get_vs_index_name", "dqx_test.dqx_app_test.dq_rule_embeddings_index"),
-        ],
-    )
     @pytest.mark.parametrize("stored", ["", "   ", "\n\t"])
-    def test_empty_or_whitespace_row_falls_back_to_auto_derived_value(
-        self, settings_service, getter_name, expected, stored
-    ):
+    def test_empty_or_whitespace_row_falls_back_to_auto_derived_value(self, settings_service, stored):
         """A row holding an empty/whitespace value must be treated as unset.
 
-        Regression: deployments seeded these keys with empty strings (pre-8B),
-        which blocked auto-derive and silently disabled Vector Search
-        provisioning + the mapping suggester. Empty must fall back to default.
+        Regression: deployments seeded this key with empty strings (pre-8B),
+        which blocked auto-derive and silently disabled the mapping
+        suggester. Empty must fall back to default.
         """
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = [[stored]]
 
-        assert getattr(svc, getter_name)() == expected
+        assert svc.get_embedding_endpoint_name() == "databricks-gte-large-en"
 
-    @pytest.mark.parametrize(
-        ("setter_name", "getter_name", "key"),
-        [
-            ("save_embedding_endpoint_name", "get_embedding_endpoint_name", "embedding_endpoint_name"),
-            ("save_vs_endpoint_name", "get_vs_endpoint_name", "vs_endpoint_name"),
-            ("save_vs_index_name", "get_vs_index_name", "vs_index_name"),
-        ],
-    )
-    def test_save_trims_whitespace_and_round_trips(self, settings_service, setter_name, getter_name, key):
+    def test_save_trims_whitespace_and_round_trips(self, settings_service):
         svc, sql_executor_mock = settings_service
 
-        saved = getattr(svc, setter_name)("  my-value  ", user_email="admin@x")
+        saved = svc.save_embedding_endpoint_name("  my-value  ", user_email="admin@x")
 
         assert saved == "my-value"
         _, kwargs = sql_executor_mock.upsert.call_args
-        assert kwargs["key_cols"] == {"setting_key": key}
+        assert kwargs["key_cols"] == {"setting_key": "embedding_endpoint_name"}
         assert kwargs["value_cols"]["setting_value"] == "my-value"
 
         sql_executor_mock.query.return_value = [["my-value"]]
-        assert getattr(svc, getter_name)() == "my-value"
+        assert svc.get_embedding_endpoint_name() == "my-value"
 
 
 class TestDefaultAutoUpgrade:

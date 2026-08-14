@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_ai_bootstrap,
     get_app_settings_service,
     get_conf,
     get_sp_ws,
-    get_vector_store_provisioner,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -32,7 +32,7 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import (
     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
     AppSettingsService,
 )
-from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
+from databricks_labs_dqx_app.backend.services.ai_bootstrap import AiBootstrap
 
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
@@ -974,16 +974,14 @@ def save_run_review_statuses(
 
 
 class AiSettingsOut(BaseModel):
-    """Effective AI Gateway + Vector Search settings.
+    """Effective AI Gateway + embedding settings.
 
-    ``embedding_endpoint_name``/``vs_endpoint_name``/``vs_index_name``
-    (Rules Registry Phase 4B/4C) are auto-derived since Phase 8B — the
-    admin UI no longer exposes them as separate inputs. They always
-    resolve to a usable value (see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``
-    and ``_default_vs_endpoint_name``/``_default_vs_index_name``) so the
-    rule-mapping suggester's vector store works from the AI enable
-    toggle + serving endpoint alone. Still independently settable via
-    this API for backwards compatibility/testing.
+    ``embedding_endpoint_name`` is auto-derived since Phase 8B — the admin UI
+    no longer exposes it as a separate input. It always resolves to a usable
+    value (see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``) so
+    cosine rule suggestions work from the AI enable toggle + serving endpoint
+    alone. Still independently settable via this API for backwards
+    compatibility/testing.
     """
 
     ai_enabled: bool
@@ -992,8 +990,6 @@ class AiSettingsOut(BaseModel):
     ai_rate_limit_per_user_per_hour: int
     ai_rate_limit_default: int = AppSettingsService.AI_RATE_LIMIT_DEFAULT
     embedding_endpoint_name: str = ""
-    vs_endpoint_name: str = ""
-    vs_index_name: str = ""
 
 
 class AiSettingsIn(BaseModel):
@@ -1003,35 +999,26 @@ class AiSettingsIn(BaseModel):
     ai_endpoint_name: str | None = None
     ai_rate_limit_per_user_per_hour: int | None = None
     embedding_endpoint_name: str | None = None
-    vs_endpoint_name: str | None = None
-    vs_index_name: str | None = None
 
 
-def _fire_and_forget_ensure_vector_store(provisioner: VectorStoreProvisioner) -> None:
-    """Kick off Vector Search auto-provisioning on a background thread.
+def _fire_and_forget_ensure_ai_ready(bootstrap: AiBootstrap) -> None:
+    """Kick off AI grants + embeddings backfill on a background thread.
 
-    ``VectorStoreProvisioner.ensure_vector_store`` is an async, best-effort,
-    never-raising coroutine (see ``services/vector_store.py``) that submits
-    the Vector Search endpoint/index creation calls and returns immediately
-    — creation itself finishes asynchronously on the Databricks control
-    plane. The app startup lifespan can attach it to the running event loop
-    via ``asyncio.create_task``, but this route runs synchronously with no
-    event loop of its own, so we run the coroutine to completion on a
-    dedicated daemon thread via ``asyncio.run`` instead.
+    ``AiBootstrap.ensure_ai_ready`` is an async, best-effort, never-raising
+    coroutine. This route runs synchronously with no event loop of its own,
+    so we run the coroutine on a dedicated daemon thread via ``asyncio.run``.
 
-    This must never block the admin's "save AI settings" request or
-    propagate an error back to the caller: any failure here — including one
-    that somehow escapes ``ensure_vector_store``'s own swallow-and-log
-    behaviour — is logged and dropped.
+    Must never block the admin's "save AI settings" request or propagate an
+    error back to the caller.
     """
 
     def _run() -> None:
         try:
-            asyncio.run(provisioner.ensure_vector_store())
+            asyncio.run(bootstrap.ensure_ai_ready())
         except Exception:
-            logger.warning("Background Vector Search auto-provisioning failed (non-fatal)", exc_info=True)
+            logger.warning("Background AI bootstrap failed (non-fatal)", exc_info=True)
 
-    threading.Thread(target=_run, name="ensure-vector-store-on-save", daemon=True).start()
+    threading.Thread(target=_run, name="ensure-ai-ready-on-save", daemon=True).start()
 
 
 def _ai_settings_out(svc: AppSettingsService) -> AiSettingsOut:
@@ -1040,8 +1027,6 @@ def _ai_settings_out(svc: AppSettingsService) -> AiSettingsOut:
         ai_endpoint_name=svc.get_ai_endpoint_name(),
         ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
         embedding_endpoint_name=svc.get_embedding_endpoint_name(),
-        vs_endpoint_name=svc.get_vs_endpoint_name(),
-        vs_index_name=svc.get_vs_index_name(),
     )
 
 
@@ -1054,7 +1039,7 @@ def _ai_settings_out(svc: AppSettingsService) -> AiSettingsOut:
 def get_ai_settings(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> AiSettingsOut:
-    """Return the current AI Gateway + Vector Search settings (admin only)."""
+    """Return the current AI Gateway settings (admin only)."""
     return _ai_settings_out(svc)
 
 
@@ -1067,20 +1052,18 @@ def get_ai_settings(
 def save_ai_settings(
     body: AiSettingsIn,
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    provisioner: Annotated[VectorStoreProvisioner, Depends(get_vector_store_provisioner)],
+    bootstrap: Annotated[AiBootstrap, Depends(get_ai_bootstrap)],
     email: Annotated[str, Depends(get_user_email)],
 ) -> AiSettingsOut:
-    """Update one or more AI Gateway / Vector Search settings (admin only)."""
+    """Update one or more AI Gateway settings (admin only)."""
     fields = (
         body.ai_enabled,
         body.ai_endpoint_name,
         body.ai_rate_limit_per_user_per_hour,
         body.embedding_endpoint_name,
-        body.vs_endpoint_name,
-        body.vs_index_name,
     )
     if all(field is None for field in fields):
-        raise HTTPException(status_code=400, detail="At least one AI/Vector Search setting must be provided.")
+        raise HTTPException(status_code=400, detail="At least one AI setting must be provided.")
 
     if body.ai_enabled is not None:
         svc.save_ai_enabled(body.ai_enabled, user_email=email)
@@ -1092,22 +1075,14 @@ def save_ai_settings(
         svc.save_ai_rate_limit_per_user_per_hour(body.ai_rate_limit_per_user_per_hour, user_email=email)
     if body.embedding_endpoint_name is not None:
         svc.save_embedding_endpoint_name(body.embedding_endpoint_name, user_email=email)
-    if body.vs_endpoint_name is not None:
-        svc.save_vs_endpoint_name(body.vs_endpoint_name, user_email=email)
-    if body.vs_index_name is not None:
-        svc.save_vs_index_name(body.vs_index_name, user_email=email)
 
-    logger.info("Saved AI Gateway / Vector Search settings (by=%s)", email)
+    logger.info("Saved AI Gateway settings (by=%s)", email)
 
-    # Best-effort, non-blocking Vector Search auto-provisioning: whenever a
-    # save leaves AI enabled (whether this call just flipped the switch on
-    # or merely updated an endpoint/rate-limit while it was already on),
-    # give the endpoint/index creation a kick so admins don't also have to
-    # remember to hit the dedicated ``POST /ensure-vector-store`` endpoint.
-    # No-op (inside the provisioner) when embedding/VS settings aren't
-    # fully configured; never raises; never blocks this response.
+    # Best-effort, non-blocking AI bootstrap: whenever a save leaves AI
+    # enabled, grant serving-endpoint access and backfill embeddings so
+    # cosine rule suggestions work without a separate admin action.
     if svc.get_ai_enabled():
-        _fire_and_forget_ensure_vector_store(provisioner)
+        _fire_and_forget_ensure_ai_ready(bootstrap)
 
     return _ai_settings_out(svc)
 
@@ -1174,7 +1149,7 @@ class RulesRegistrySettingsOut(BaseModel):
         "(True, default) vs. pin to the current version (False)."
     )
     tag_auto_apply: bool = Field(
-        description="Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules "
+        description="Tag-mapping assign behaviour: eagerly auto-assign tag-mapped rules "
         "across monitored tables (True) vs. only surface them as suggestions (False, default)."
     )
     default_pass_threshold: int = Field(
@@ -1523,32 +1498,3 @@ def save_share_tables_with_workspace_users(
     saved = svc.save_share_tables_with_workspace_users(body.share_tables_with_workspace_users, user_email=email)
     logger.info("Saved share_tables_with_workspace_users = %s (by=%s)", saved, email)
     return ShareTablesWithWorkspaceUsersOut(share_tables_with_workspace_users=saved)
-
-
-# ----------------------------------------------------------------------
-# Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
-# dedicated endpoint (rather than folding this into ``save_ai_settings``)
-# so provisioning can be retried independently of a settings save, and so
-# the settings route's synchronous, dependency-light signature stays
-# unchanged for its existing tests. Always returns 204 — provisioning is
-# async on the Databricks side and ``ensure_vector_store`` never raises;
-# admins check actual readiness via the rule-mapping suggester's
-# ``available``/``reason`` fields, not this call's response.
-# ----------------------------------------------------------------------
-
-
-@router.post(
-    "/ensure-vector-store",
-    operation_id="ensureVectorStore",
-    status_code=204,
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-async def ensure_vector_store_route(
-    provisioner: Annotated[VectorStoreProvisioner, Depends(get_vector_store_provisioner)],
-) -> None:
-    """Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
-
-    No-op when embedding/Vector Search settings aren't fully configured.
-    Never raises — see :meth:`VectorStoreProvisioner.ensure_vector_store`.
-    """
-    await provisioner.ensure_vector_store()

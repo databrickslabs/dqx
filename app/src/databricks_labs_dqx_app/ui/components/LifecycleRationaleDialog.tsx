@@ -36,7 +36,8 @@ export function LifecycleRationaleDialog({
   onOpenChange: (open: boolean) => void;
   action: LifecycleAction;
   title: string;
-  description: string;
+  /** Optional subtitle under the title. Omitted when empty. */
+  description?: string;
   confirmLabel: string;
   /** When true, Confirm stays disabled until rationale is non-empty. */
   requireRationale?: boolean;
@@ -59,7 +60,11 @@ export function LifecycleRationaleDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
+          {description ? (
+            <AlertDialogDescription>{description}</AlertDialogDescription>
+          ) : (
+            <AlertDialogDescription className="sr-only">{title}</AlertDialogDescription>
+          )}
         </AlertDialogHeader>
         <div className="space-y-2 py-1">
           <Label htmlFor={`lifecycle-rationale-${action}`}>

@@ -213,10 +213,6 @@ export type AiSettingsInAiRateLimitPerUserPerHour = number | null;
 
 export type AiSettingsInEmbeddingEndpointName = string | null;
 
-export type AiSettingsInVsEndpointName = string | null;
-
-export type AiSettingsInVsIndexName = string | null;
-
 /**
  * Update payload — omitted fields are left unchanged.
  */
@@ -225,21 +221,17 @@ export interface AiSettingsIn {
   ai_endpoint_name?: AiSettingsInAiEndpointName;
   ai_rate_limit_per_user_per_hour?: AiSettingsInAiRateLimitPerUserPerHour;
   embedding_endpoint_name?: AiSettingsInEmbeddingEndpointName;
-  vs_endpoint_name?: AiSettingsInVsEndpointName;
-  vs_index_name?: AiSettingsInVsIndexName;
 }
 
 /**
- * Effective AI Gateway + Vector Search settings.
+ * Effective AI Gateway + embedding settings.
 
-``embedding_endpoint_name``/``vs_endpoint_name``/``vs_index_name``
-(Rules Registry Phase 4B/4C) are auto-derived since Phase 8B — the
-admin UI no longer exposes them as separate inputs. They always
-resolve to a usable value (see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``
-and ``_default_vs_endpoint_name``/``_default_vs_index_name``) so the
-rule-mapping suggester's vector store works from the AI enable
-toggle + serving endpoint alone. Still independently settable via
-this API for backwards compatibility/testing.
+``embedding_endpoint_name`` is auto-derived since Phase 8B — the admin UI
+no longer exposes it as a separate input. It always resolves to a usable
+value (see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``) so
+cosine rule suggestions work from the AI enable toggle + serving endpoint
+alone. Still independently settable via this API for backwards
+compatibility/testing.
  */
 export interface AiSettingsOut {
   ai_enabled: boolean;
@@ -248,8 +240,6 @@ export interface AiSettingsOut {
   ai_rate_limit_per_user_per_hour: number;
   ai_rate_limit_default?: number;
   embedding_endpoint_name?: string;
-  vs_endpoint_name?: string;
-  vs_index_name?: string;
 }
 
 /**
@@ -919,11 +909,6 @@ export interface ContractSchemaRulesOut {
 export type CreateDataProductInDescription = string | null;
 
 /**
- * Sticky operational notes (separate from description)
- */
-export type CreateDataProductInNotes = string | null;
-
-/**
  * Defaults to the creator's email when omitted
  */
 export type CreateDataProductInOwner = string | null;
@@ -939,8 +924,6 @@ export type CreateDataProductInOwnerDisplayName = string | null;
 export interface CreateDataProductIn {
   name: string;
   description?: CreateDataProductInDescription;
-  /** Sticky operational notes (separate from description) */
-  notes?: CreateDataProductInNotes;
   /** Defaults to the creator's email when omitted */
   owner?: CreateDataProductInOwner;
   /** Human-readable display name for the owner; sourced from the principal picker. */
@@ -1093,11 +1076,6 @@ export interface DataProductMemberOut {
 
 export type DataProductOutDescription = string | null;
 
-/**
- * Sticky operational notes (separate from description)
- */
-export type DataProductOutNotes = string | null;
-
 export type DataProductOutOwner = string | null;
 
 /**
@@ -1171,8 +1149,6 @@ export interface DataProductOut {
   product_id: string;
   name: string;
   description?: DataProductOutDescription;
-  /** Sticky operational notes (separate from description) */
-  notes?: DataProductOutNotes;
   owner?: DataProductOutOwner;
   /** Human-readable display name for the owner; falls back to the owner email when null. */
   owner_display_name?: DataProductOutOwnerDisplayName;
@@ -2325,11 +2301,6 @@ export type MonitoredTableOutLastProfiledAt = string | null;
 export type MonitoredTableOutLastRunAt = string | null;
 
 /**
- * Sticky operational notes
- */
-export type MonitoredTableOutNotes = string | null;
-
-/**
  * Author's change rationale while status is pending_approval
  */
 export type MonitoredTableOutPendingRationale = string | null;
@@ -2368,8 +2339,6 @@ export interface MonitoredTableOut {
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
   /** Newest terminal validation-run instant for this table (either trigger surface); drives the overview 'Last run' column. */
   last_run_at?: MonitoredTableOutLastRunAt;
-  /** Sticky operational notes */
-  notes?: MonitoredTableOutNotes;
   /** Author's change rationale while status is pending_approval */
   pending_rationale?: MonitoredTableOutPendingRationale;
   /** Approver's rationale from the most recent approve/reject decision */
@@ -3587,7 +3556,7 @@ export interface RulesRegistrySettingsOut {
   auto_upgrade_without_approval: boolean;
   /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
   default_auto_upgrade: boolean;
-  /** Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
+  /** Tag-mapping assign behaviour: eagerly auto-assign tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
   tag_auto_apply: boolean;
   /** Org-wide default minimum pass rate (%) below which a check warns. Overridable per rule and per column. Clamped to [0, 100]. */
   default_pass_threshold: number;
@@ -4154,8 +4123,8 @@ export interface SlotIn {
  * Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
 
 ``available=False`` (with a human-readable ``reason``) covers every
-degraded path — Vector Search/embedding/AI not configured, retrieval or
-judge failure — and is always returned with HTTP 200, never a 500.
+degraded path — embedding/AI not configured, retrieval or judge
+failure — and is always returned with HTTP 200, never a 500.
  */
 export interface SuggestRulesOut {
   available: boolean;
@@ -4444,11 +4413,6 @@ export type UpdateDataProductInName = string | null;
 
 export type UpdateDataProductInDescription = string | null;
 
-/**
- * Sticky operational notes (separate from description)
- */
-export type UpdateDataProductInNotes = string | null;
-
 export type UpdateDataProductInOwner = string | null;
 
 /**
@@ -4473,27 +4437,12 @@ back to ``draft`` without bumping ``version`` (P21 item 30).
 export interface UpdateDataProductIn {
   name?: UpdateDataProductInName;
   description?: UpdateDataProductInDescription;
-  /** Sticky operational notes (separate from description) */
-  notes?: UpdateDataProductInNotes;
   owner?: UpdateDataProductInOwner;
   /** Human-readable display name for the owner; sourced from the principal picker. */
   owner_display_name?: UpdateDataProductInOwnerDisplayName;
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
   schedule_kind?: UpdateDataProductInScheduleKind;
-}
-
-/**
- * Sticky operational notes; null clears
- */
-export type UpdateMonitoredTableNotesInNotes = string | null;
-
-/**
- * Request body for PATCH ``/monitored-tables/{id}/notes``.
- */
-export interface UpdateMonitoredTableNotesIn {
-  /** Sticky operational notes; null clears */
-  notes?: UpdateMonitoredTableNotesInNotes;
 }
 
 /**
@@ -7871,7 +7820,7 @@ export const useSaveRunReviewStatuses = <TError = AxiosError<HTTPValidationError
     }
     
 /**
- * Return the current AI Gateway + Vector Search settings (admin only).
+ * Return the current AI Gateway settings (admin only).
  * @summary Get Ai Settings
  */
 export const getAiSettings = (
@@ -8018,7 +7967,7 @@ export function useGetAiSettingsSuspense<TData = Awaited<ReturnType<typeof getAi
 
 
 /**
- * Update one or more AI Gateway / Vector Search settings (admin only).
+ * Update one or more AI Gateway settings (admin only).
  * @summary Save Ai Settings
  */
 export const saveAiSettings = (
@@ -9290,71 +9239,6 @@ export const useSaveShareTablesWithWorkspaceUsers = <TError = AxiosError<HTTPVal
       > => {
 
       const mutationOptions = getSaveShareTablesWithWorkspaceUsersMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
-/**
- * Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
-
-No-op when embedding/Vector Search settings aren't fully configured.
-Never raises — see :meth:`VectorStoreProvisioner.ensure_vector_store`.
- * @summary Ensure Vector Store Route
- */
-export const ensureVectorStore = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<void>> => {
-    
-    
-    return axios.default.post(
-      `/api/v1/config/ensure-vector-store`,undefined,options
-    );
-  }
-
-
-
-export const getEnsureVectorStoreMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ensureVectorStore>>, TError,void, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof ensureVectorStore>>, TError,void, TContext> => {
-
-const mutationKey = ['ensureVectorStore'];
-const {mutation: mutationOptions, axios: axiosOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, axios: undefined};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof ensureVectorStore>>, void> = () => {
-          
-
-          return  ensureVectorStore(axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EnsureVectorStoreMutationResult = NonNullable<Awaited<ReturnType<typeof ensureVectorStore>>>
-    
-    export type EnsureVectorStoreMutationError = AxiosError<HTTPValidationError>
-
-    /**
- * @summary Ensure Vector Store Route
- */
-export const useEnsureVectorStore = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ensureVectorStore>>, TError,void, TContext>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof ensureVectorStore>>,
-        TError,
-        void,
-        TContext
-      > => {
-
-      const mutationOptions = getEnsureVectorStoreMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -15509,73 +15393,6 @@ export const useUpdateMonitoredTableSchedule = <TError = AxiosError<HTTPValidati
     }
     
 /**
- * Set or clear sticky operational notes on a monitored table.
-
-Requires ``MODIFY`` on the monitored table unless the caller is an
-admin/approver. Orthogonal to the review lifecycle — does NOT flip status.
- * @summary Update Monitored Table Notes
- */
-export const updateMonitoredTableNotes = (
-    bindingId: string,
-    updateMonitoredTableNotesIn: UpdateMonitoredTableNotesIn, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<MonitoredTableOut>> => {
-    
-    
-    return axios.default.patch(
-      `/api/v1/monitored-tables/${bindingId}/notes`,
-      updateMonitoredTableNotesIn,options
-    );
-  }
-
-
-
-export const getUpdateMonitoredTableNotesMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, TError,{bindingId: string;data: UpdateMonitoredTableNotesIn}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, TError,{bindingId: string;data: UpdateMonitoredTableNotesIn}, TContext> => {
-
-const mutationKey = ['updateMonitoredTableNotes'];
-const {mutation: mutationOptions, axios: axiosOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, axios: undefined};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, {bindingId: string;data: UpdateMonitoredTableNotesIn}> = (props) => {
-          const {bindingId,data} = props ?? {};
-
-          return  updateMonitoredTableNotes(bindingId,data,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateMonitoredTableNotesMutationResult = NonNullable<Awaited<ReturnType<typeof updateMonitoredTableNotes>>>
-    export type UpdateMonitoredTableNotesMutationBody = UpdateMonitoredTableNotesIn
-    export type UpdateMonitoredTableNotesMutationError = AxiosError<HTTPValidationError>
-
-    /**
- * @summary Update Monitored Table Notes
- */
-export const useUpdateMonitoredTableNotes = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableNotes>>, TError,{bindingId: string;data: UpdateMonitoredTableNotesIn}, TContext>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updateMonitoredTableNotes>>,
-        TError,
-        {bindingId: string;data: UpdateMonitoredTableNotesIn},
-        TContext
-      > => {
-
-      const mutationOptions = getUpdateMonitoredTableNotesMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
-/**
  * Return the most recent profiling result for this monitored table's underlying table.
  * @summary Get Monitored Table Profile
  */
@@ -16997,9 +16814,9 @@ export const useRevertMonitoredTable = <TError = AxiosError<HTTPValidationError>
  * Suggest published registry rules (with a complete column mapping) for a monitored table.
 
 Always returns HTTP 200 with ``available=False`` + a ``reason`` for every
-degraded path — Vector Search/embedding/AI not configured, retrieval or
-judge failure — so a deployment with no AI/Vector Search infra behaves
-exactly like today. Never raises for a missing-infra deployment.
+degraded path — embedding/AI not configured, retrieval or judge failure —
+so a deployment with no AI infra behaves exactly like today. Never raises
+for a missing-infra deployment.
  * @summary Suggest Rules For Table
  */
 export const suggestRulesForTable = (

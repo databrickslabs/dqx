@@ -268,6 +268,29 @@ class TestNotesAndRationaleMigration:
         assert idx27 == idx26 + 1, "v27 must immediately follow v26 in MIGRATIONS"
 
 
+class TestDropNotesMigration:
+    """v29: drop sticky object notes columns (OLTP fallback)."""
+
+    def test_v29_drops_notes_columns(self) -> None:
+        v29 = next(m for m in MIGRATIONS if m.version == 29)
+        sql = v29.sql_template
+        assert "dq_monitored_tables" in sql
+        assert "dq_data_products" in sql
+        assert "DROP COLUMN notes" in sql
+        assert "pending_rationale" not in sql
+        assert "last_decision_rationale" not in sql
+
+    def test_v29_is_oltp_fallback(self) -> None:
+        v29 = next(m for m in MIGRATIONS if m.version == 29)
+        assert v29.oltp_fallback is True
+
+    def test_v29_version_follows_v28(self) -> None:
+        versions = [m.version for m in MIGRATIONS]
+        idx28 = versions.index(28)
+        idx29 = versions.index(29)
+        assert idx29 == idx28 + 1, "v29 must immediately follow v28 in MIGRATIONS"
+
+
 class TestStripExecuteFromRegistryRuleGrantsMigration:
     """v25: strip EXECUTE from registry_rule users-group grant rows (OLTP fallback)."""
 

@@ -9,8 +9,8 @@ configured, embeds + stores it in the ``dq_rule_embeddings`` corpus table
 when ``embedding_endpoint_name`` (see ``AppSettingsService``) is unset — the
 default on every fresh deploy. :meth:`RuleEmbeddingsService.embed_and_store`
 never raises; it is safe to call unconditionally from the registry-rule
-approve route on every publish. No Vector Search or embedding infrastructure
-is required for the app to build, deploy, or serve any other feature.
+approve route on every publish. No embedding infrastructure is required for
+the app to build, deploy, or serve any other feature.
 """
 
 import json
@@ -36,10 +36,14 @@ logger = logging.getLogger(__name__)
 _RESERVED_TAG_KEYS = {"name", "description", "dimension", "severity"}
 
 # Predicate/body text is truncated before embedding: it may be a full SQL
-# query or low-code AST, and this text can end up replicated into a shared
-# Vector Search index — keep it bounded (OWASP LLM04-style budget, applied
+# query or low-code AST — keep it bounded (OWASP LLM04-style budget, applied
 # here defensively even though there is no LLM call in this module).
 _MAX_PREDICATE_CHARS = 500
+
+# Foundation-model / serving-endpoint ``input`` arrays have per-request payload
+# and token limits. Chunk so a wide-table retrieval batch never blows the
+# endpoint while still collapsing N round trips into a few.
+EMBED_BATCH_SIZE = 32
 
 
 def build_rule_embed_text(rule: RegistryRule) -> str:
@@ -115,54 +119,117 @@ class RuleEmbeddingsService:
 
     Owns the ``dq_rule_embeddings`` corpus table (rule_id, rule_version,
     embed_text, embedding, model, updated_at) — the source-of-truth text
-    corpus a Databricks Vector Search index syncs from (see
-    ``services.rule_retriever.VectorSearchRetriever``).
+    corpus scanned by
+    :class:`~databricks_labs_dqx_app.backend.services.rule_retriever.CosineRuleRetriever`.
+
+    Auth is split on purpose:
+
+    * **Writes / backfill** (:meth:`embed_and_store`) always use the app
+      service principal — publish and startup backfill often have no end-user
+      token in scope.
+    * **Query-time embeds** (:meth:`embed_texts` / :meth:`embed_text`) use the
+      caller's OBO client when one was injected, matching :class:`AIGateway`
+      (user-facing, request-scoped). Falls back to the SP only when no user
+      client is available (tests, startup-only construction).
     """
 
-    def __init__(self, sql: OltpExecutorProtocol, sp_ws: WorkspaceClient, app_settings: AppSettingsService) -> None:
+    def __init__(
+        self,
+        sql: OltpExecutorProtocol,
+        sp_ws: WorkspaceClient,
+        app_settings: AppSettingsService,
+        user_ws: WorkspaceClient | None = None,
+    ) -> None:
         self._sql = sql
         self._sp_ws = sp_ws
+        self._user_ws = user_ws
         self._app_settings = app_settings
         self._table = sql.fqn("dq_rule_embeddings")
+        # Per-request Depends factory → this cache lives only for one request.
+        # Cleared on write so a same-request publish+retrieve never sees a
+        # stale corpus (see :meth:`_upsert`).
+        self._corpus_cache: list[tuple[str, list[float]]] | None = None
 
     def is_configured(self) -> bool:
         """Return whether an embedding serving endpoint is configured."""
         return bool(self._app_settings.get_embedding_endpoint_name())
 
     def embed_text(self, text: str) -> list[float] | None:
-        """Call the configured embedding endpoint for *text*.
+        """Call the configured embedding endpoint for *text* (query-time / OBO).
 
         Returns ``None`` (never raises) when unconfigured. Propagates SDK
         errors from an actual call failure — callers that want a
         best-effort no-op should use :meth:`embed_and_store` instead, which
         catches and logs them.
         """
+        return self.embed_texts([text])[0]
+
+    def embed_texts(self, texts: list[str], *, batch_size: int = EMBED_BATCH_SIZE) -> list[list[float] | None]:
+        """Embed many texts in chunked serving-endpoint calls (query-time).
+
+        Uses the caller's OBO ``WorkspaceClient`` when one was injected so
+        retrieval sits on the same identity / endpoint ACL as the AIGateway
+        judge. Falls back to the service principal only when no user client
+        is available.
+
+        The Databricks serving-endpoints ``input`` field accepts an array and
+        returns one element per input (with an ``index``). Batching collapses
+        per-column retrieval round trips; *batch_size* keeps each call under
+        FMAPI payload/token limits so a very wide table doesn't fail the
+        whole request.
+
+        Args:
+            texts: Query (or document) texts to embed, in order.
+            batch_size: Max texts per ``serving_endpoints.query`` call.
+
+        Returns:
+            A list aligned with *texts*. Each entry is the embedding vector,
+            or ``None`` when the endpoint is unconfigured or that element was
+            missing from the response. Propagates SDK errors from a failed
+            call (same contract as :meth:`embed_text`).
+        """
+        return self._embed_texts_with(self._user_ws or self._sp_ws, texts, batch_size=batch_size)
+
+    def _embed_texts_with(
+        self,
+        ws: WorkspaceClient,
+        texts: list[str],
+        *,
+        batch_size: int = EMBED_BATCH_SIZE,
+    ) -> list[list[float] | None]:
+        if not texts:
+            return []
         endpoint = self._app_settings.get_embedding_endpoint_name()
         if not endpoint:
-            return None
-        response = self._sp_ws.serving_endpoints.query(name=endpoint, input=[text])
-        data = getattr(response, "data", None) or []
-        for item in data:
-            embedding = getattr(item, "embedding", None)
-            if embedding:
-                return list(embedding)
-        return None
+            return [None] * len(texts)
+
+        out: list[list[float] | None] = [None] * len(texts)
+        chunk = max(1, batch_size)
+        for start in range(0, len(texts), chunk):
+            batch = texts[start : start + chunk]
+            response = ws.serving_endpoints.query(name=endpoint, input=batch)
+            data = getattr(response, "data", None) or []
+            for position, item in enumerate(data):
+                embedding = getattr(item, "embedding", None)
+                if not embedding:
+                    continue
+                # Prefer the endpoint's ``index`` when present; fall back to
+                # response order so older/mock shapes still work.
+                idx = getattr(item, "index", None)
+                offset = idx if isinstance(idx, int) else position
+                abs_idx = start + offset
+                if 0 <= abs_idx < len(out):
+                    out[abs_idx] = list(embedding)
+        return out
 
     def embed_and_store(self, rule: RegistryRule) -> bool:
         """Embed *rule* and upsert it into ``dq_rule_embeddings``.
 
-        Best-effort and never raises: returns ``False`` when unconfigured
-        or on any failure (network error, malformed endpoint response,
-        etc.) so a Vector Search / embedding hiccup never fails a rule
-        publish. Safe to call unconditionally from the approve route.
-
-        When ``vs_endpoint_name``/``vs_index_name`` are also configured,
-        also best-effort upserts the same row into the Direct Access Vector
-        Search index (see ``services.vector_store``) — the OLTP corpus
-        table isn't a UC Delta source a Delta-Sync index could read from,
-        so the app keeps the index in sync itself. A failure on that leg
-        (e.g. index not yet ONLINE) never fails the OLTP write, which is
-        the source of truth.
+        Always embeds with the **service principal** (startup backfill and
+        publish have no end-user serving identity to rely on). Best-effort
+        and never raises: returns ``False`` when unconfigured or on any
+        failure so an embedding hiccup never fails a rule publish. Safe to
+        call unconditionally from the approve route.
 
         Args:
             rule: The just-published registry rule.
@@ -175,17 +242,15 @@ class RuleEmbeddingsService:
             return False
         try:
             text = build_rule_embed_text(rule)
-            embedding = self.embed_text(text)
+            embedding = self._embed_texts_with(self._sp_ws, [text])[0]
             if embedding is None:
                 logger.warning("Embedding endpoint returned no vector for rule %s", rule.rule_id)
                 return False
             self._upsert(rule.rule_id, rule.version, text, embedding)
+            return True
         except Exception:
             logger.warning("Failed to embed rule %s (non-fatal)", rule.rule_id, exc_info=True)
             return False
-
-        self._upsert_vector_search_index(rule.rule_id, text, embedding)
-        return True
 
     def iter_embeddings(self) -> list[tuple[str, list[float]]]:
         """Load every stored ``(rule_id, vector)`` row from the OLTP corpus.
@@ -196,6 +261,10 @@ class RuleEmbeddingsService:
         best-effort on every publish (see :meth:`embed_and_store`) and by
         :meth:`backfill`.
 
+        Memoised on the service instance (a per-request Depends factory), so
+        per-column retrieval in one request reuses a single SELECT + JSON
+        parse. Writes clear the cache via :meth:`_upsert`.
+
         Best-effort by construction: a read failure or a malformed stored
         vector never raises — it is logged and skipped so retrieval degrades
         to "no candidates" rather than a 500.
@@ -204,7 +273,13 @@ class RuleEmbeddingsService:
             A list of ``(rule_id, embedding)`` tuples. Rows with an empty,
             non-list, or unparseable embedding are omitted.
         """
+        if self._corpus_cache is None:
+            self._corpus_cache = self._load_embeddings()
+        return self._corpus_cache
+
+    def _load_embeddings(self) -> list[tuple[str, list[float]]]:
         try:
+            # Table name comes from sql.fqn (internal), never user input.
             rows = self._sql.query_dicts(f"SELECT rule_id, embedding FROM {self._table}")  # noqa: S608
         except Exception:
             logger.warning("Failed to read rule embeddings corpus %s (non-fatal)", self._table, exc_info=True)
@@ -251,23 +326,6 @@ class RuleEmbeddingsService:
                 "updated_at": RawSql("current_timestamp()"),
             },
         )
-
-    def _upsert_vector_search_index(self, rule_id: str, text: str, embedding: list[float]) -> None:
-        """Best-effort mirror of the OLTP row into the Direct Access VS index.
-
-        No-op when ``vs_endpoint_name``/``vs_index_name`` are unset (the
-        suggester reports ``available=False`` in that case anyway). Any SDK
-        failure — e.g. the index hasn't finished provisioning yet — is
-        logged and swallowed; the OLTP corpus row (the source of truth) is
-        already written by the time this runs.
-        """
-        index_name = self._app_settings.get_vs_index_name()
-        if not self._app_settings.get_vs_endpoint_name() or not index_name:
-            return
-        try:
-            self._sp_ws.vector_search_indexes.upsert_data_vector_index(
-                index_name=index_name,
-                inputs_json=json.dumps([{"rule_id": rule_id, "embed_text": text, "embedding": embedding}]),
-            )
-        except Exception:
-            logger.warning("Failed to upsert rule %s into Vector Search index %s (non-fatal)", rule_id, index_name)
+        # Same-request publish then retrieve must not score against a stale
+        # snapshot taken before this write.
+        self._corpus_cache = None

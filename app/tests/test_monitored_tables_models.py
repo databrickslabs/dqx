@@ -42,19 +42,16 @@ class TestMonitoredTable:
         assert table.updated_at is None
         # schedule_kind defaults to "dq_only" (B2-52) — preserves prior DQ-only behavior.
         assert table.schedule_kind == "dq_only"
-        assert table.notes is None
         assert table.pending_rationale is None
         assert table.last_decision_rationale is None
 
-    def test_accepts_notes_and_rationale(self, MonitoredTable):
+    def test_accepts_rationale(self, MonitoredTable):
         table = MonitoredTable(
             binding_id="b1",
             table_fqn="t",
-            notes="ops note",
             pending_rationale="why submit",
             last_decision_rationale="why approve",
         )
-        assert table.notes == "ops note"
         assert table.pending_rationale == "why submit"
         assert table.last_decision_rationale == "why approve"
 

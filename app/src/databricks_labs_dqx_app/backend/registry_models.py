@@ -270,10 +270,6 @@ class MonitoredTable(BaseModel):
         description="Newest terminal validation-run instant for this table (either trigger surface); "
         "written on run completion so the list/detail read paths never touch the warehouse.",
     )
-    notes: str | None = Field(
-        default=None,
-        description="Sticky operational notes (separate from description / change rationale).",
-    )
     pending_rationale: str | None = Field(
         default=None,
         description="Author's change rationale while status is pending_approval (cleared on approve/reject).",
@@ -418,10 +414,6 @@ class DataProduct(BaseModel):
     schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT
     status: DataProductStatus = "draft"
     version: int = Field(default=0, description="0 until first approval; bumped ONLY on approve")
-    notes: str | None = Field(
-        default=None,
-        description="Sticky operational notes (separate from description / change rationale).",
-    )
     pending_rationale: str | None = Field(
         default=None,
         description="Author's change rationale while status is pending_approval (cleared on approve/reject).",
@@ -497,7 +489,6 @@ class RunSetMember(BaseModel):
 
 RESERVED_NAME_KEY = "name"
 RESERVED_DESCRIPTION_KEY = "description"
-RESERVED_NOTES_KEY = "notes"
 RESERVED_DIMENSION_KEY = "dimension"
 RESERVED_SEVERITY_KEY = "severity"
 RESERVED_SLOT_TAGS_KEY = "slot_tags"
@@ -524,7 +515,6 @@ RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
     {
         RESERVED_NAME_KEY,
         RESERVED_DESCRIPTION_KEY,
-        RESERVED_NOTES_KEY,
         RESERVED_DIMENSION_KEY,
         RESERVED_SEVERITY_KEY,
         RESERVED_SLOT_TAGS_KEY,
@@ -614,11 +604,6 @@ def get_rule_name(user_metadata: dict[str, Any]) -> str | None:
 def get_rule_description(user_metadata: dict[str, Any]) -> str | None:
     """Read the reserved ``description`` tag."""
     return get_reserved_tag(user_metadata, RESERVED_DESCRIPTION_KEY)
-
-
-def get_rule_notes(user_metadata: dict[str, Any]) -> str | None:
-    """Read the reserved ``notes`` tag (ops/sticky notes; separate from description)."""
-    return get_reserved_tag(user_metadata, RESERVED_NOTES_KEY)
 
 
 def get_rule_dimension(user_metadata: dict[str, Any]) -> str | None:

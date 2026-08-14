@@ -175,7 +175,7 @@ class TestCreate:
             perms=MagicMock(),
         )
         assert result.product_id == "p1"
-        svc.create.assert_called_once_with("Orders", None, None, "alice@x", owner_display_name=None, notes=None)
+        svc.create.assert_called_once_with("Orders", None, None, "alice@x", owner_display_name=None)
 
     def test_create_seeds_default_grants_via_service(self):
         """Seeding is now the service's responsibility (not the route's).

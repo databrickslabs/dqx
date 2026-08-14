@@ -1323,6 +1323,14 @@ _V27_NOTES_AND_RATIONALE = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_rules_history ADD COLUMN rationale STRING"
 )
 
+# Drop sticky object notes columns (rationale columns stay). Re-runs after a
+# half-applied attempt raise COLUMN_NOT_FOUND / DELTA_COLUMN_NOT_FOUND which
+# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
+_V29_DROP_NOTES = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables DROP COLUMN notes;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products DROP COLUMN notes"
+)
+
 
 # Rename ownership columns steward → owner (and steward_display_name →
 # owner_display_name) on the three OLTP tables. Delta has no reliable
@@ -1560,6 +1568,12 @@ MIGRATIONS: list[Migration] = [
         version=28,
         description="Add owner/owner_display_name (copy from steward columns) " "— used only when Lakebase is disabled",
         sql_template=_V28_OWNER_RENAME,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=29,
+        description="Drop sticky object notes columns " "— used only when Lakebase is disabled",
+        sql_template=_V29_DROP_NOTES,
         oltp_fallback=True,
     ),
 ]
@@ -1807,6 +1821,11 @@ class MigrationRunner:
         # plain English wording at different times.
         "DELTA_CONSTRAINT_ALREADY_EXISTS",
         "constraint already exists",
+        # DROP COLUMN re-runs after a half-applied attempt (or on a DB that
+        # never had the column) surface these — safe because the desired
+        # state is "column gone".
+        "DELTA_COLUMN_NOT_FOUND",
+        "COLUMN_NOT_FOUND",
     )
 
     def _apply(self, migration: Migration) -> None:

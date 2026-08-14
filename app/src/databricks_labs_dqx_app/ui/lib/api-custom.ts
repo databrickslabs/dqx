@@ -10,7 +10,6 @@ import type {
   BatchImportRegistryRulesIn,
   BatchImportRegistryRulesOut,
   CreateRegistryRuleOut,
-  MonitoredTableOut,
   RuleCatalogEntryOut,
   RunStatusOut,
 } from "./api";
@@ -1573,44 +1572,12 @@ export const downloadExportFile = (out: ExportOut): void => {
 };
 
 // ---------------------------------------------------------------------------
-// Notes + lifecycle change rationale (until OpenAPI / orval regenerate)
+// Lifecycle change rationale (until OpenAPI / orval regenerate)
 // ---------------------------------------------------------------------------
 
 export interface LifecycleRationaleIn {
   rationale?: string | null;
 }
-
-export interface UpdateMonitoredTableNotesIn {
-  notes?: string | null;
-}
-
-export const updateMonitoredTableNotes = (
-  bindingId: string,
-  data: UpdateMonitoredTableNotesIn,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<MonitoredTableOut>> =>
-  axios.default.patch(`/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/notes`, data, options);
-
-export const useUpdateMonitoredTableNotes = <
-  TError = AxiosError<unknown>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof updateMonitoredTableNotes>>,
-    TError,
-    { bindingId: string; data: UpdateMonitoredTableNotesIn },
-    TContext
-  >;
-  axios?: AxiosRequestConfig;
-}) => {
-  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
-  return useMutation({
-    mutationKey: ["updateMonitoredTableNotes"],
-    mutationFn: (props: { bindingId: string; data: UpdateMonitoredTableNotesIn }) =>
-      updateMonitoredTableNotes(props.bindingId, props.data, axiosOptions),
-    ...mutationOptions,
-  });
-};
 
 type LifecycleVars = { rationale?: string | null };
 

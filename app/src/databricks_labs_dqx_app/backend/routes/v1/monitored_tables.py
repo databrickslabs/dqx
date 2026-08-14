@@ -66,7 +66,6 @@ from databricks_labs_dqx_app.backend.models import (
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
     RunMonitoredTableOut,
-    UpdateMonitoredTableNotesIn,
     UpdateMonitoredTableOwnerIn,
     UpdateMonitoredTableScheduleIn,
     SaveAppliedRulesIn,
@@ -483,45 +482,6 @@ def update_monitored_table_schedule(
     except Exception as e:
         logger.error(f"Failed to update monitored table schedule {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to update monitored table schedule: {e}")
-
-
-@router.patch(
-    "/{binding_id}/notes",
-    response_model=MonitoredTableOut,
-    operation_id="updateMonitoredTableNotes",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
-)
-def update_monitored_table_notes(
-    binding_id: str,
-    body: UpdateMonitoredTableNotesIn,
-    svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    role: CurrentUserRole,
-    principal_ids: CurrentPrincipalIds,
-    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
-) -> MonitoredTableOut:
-    """Set or clear sticky operational notes on a monitored table.
-
-    Requires ``MODIFY`` on the monitored table unless the caller is an
-    admin/approver. Orthogonal to the review lifecycle — does NOT flip status.
-    """
-    user_email = _current_user_email(obo_ws)
-    perms.require_object(
-        ObjectType.MONITORED_TABLE.value,
-        binding_id,
-        Privilege.MODIFY,
-        role=role,
-        principal_ids=set(principal_ids),
-        principal_email=user_email,
-    )
-    try:
-        table = svc.update_notes(binding_id, body.notes, user_email)
-        return MonitoredTableOut.from_domain(table)
-    except RuntimeError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to update monitored table notes {binding_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to update monitored table notes: {e}")
 
 
 # ------------------------------------------------------------------
@@ -1525,9 +1485,9 @@ async def suggest_rules_for_table(
     """Suggest published registry rules (with a complete column mapping) for a monitored table.
 
     Always returns HTTP 200 with ``available=False`` + a ``reason`` for every
-    degraded path — Vector Search/embedding/AI not configured, retrieval or
-    judge failure — so a deployment with no AI/Vector Search infra behaves
-    exactly like today. Never raises for a missing-infra deployment.
+    degraded path — embedding/AI not configured, retrieval or judge failure —
+    so a deployment with no AI infra behaves exactly like today. Never raises
+    for a missing-infra deployment.
     """
     user_email = _current_user_email(obo_ws)
     result = await svc.suggest(binding_id, user_email)

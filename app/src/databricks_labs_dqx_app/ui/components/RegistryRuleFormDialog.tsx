@@ -186,7 +186,6 @@ import { AI_EXAMPLE_COUNT, pickAiExampleKey } from "@/lib/aiExamplePrompt";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
-const RESERVED_NOTES_KEY = "notes";
 const RESERVED_DIMENSION_KEY = "dimension";
 const RESERVED_SEVERITY_KEY = "severity";
 const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
@@ -1471,8 +1470,10 @@ function SlotsPanel({
                     <input
                       value={slot.name}
                       onChange={(e) => setAt(i, { name: e.target.value })}
-                      className="bg-transparent outline-none min-w-[4ch] max-w-[14rem]"
-                      size={Math.max(slot.name.length || 1, 4)}
+                      className="bg-transparent outline-none max-w-[14rem] p-0"
+                      // Monospace ch width tracks the text exactly, so the
+                      // closing }} sits flush with no trailing gap.
+                      style={{ width: `${slot.name.length || 1}ch` }}
                       spellCheck={false}
                     />
                     <span className="text-muted-foreground select-none">{"}}"}</span>
@@ -1616,7 +1617,6 @@ function stableStringify(value: unknown): string {
 interface RuleEditSnapshot {
   name: string;
   description: string;
-  notes: string;
   dimension: string;
   severity: string;
   passThreshold: number | null;
@@ -1660,7 +1660,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   };
   const tags: Record<string, string> = {};
   for (const [k, v] of Object.entries(md)) {
-    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_NOTES_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
+    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
     if (typeof v === "string") tags[k] = v;
   }
   const isNative = rule.mode === "dqx_native";
@@ -1681,7 +1681,6 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   return {
     name: asString(RESERVED_NAME_KEY),
     description: asString(RESERVED_DESCRIPTION_KEY),
-    notes: asString(RESERVED_NOTES_KEY),
     dimension: asString(RESERVED_DIMENSION_KEY),
     severity: asString(RESERVED_SEVERITY_KEY),
     passThreshold: asIntOrNull(RESERVED_PASS_THRESHOLD_KEY),
@@ -1726,7 +1725,6 @@ const seededFirstLowcodeRow = (columnRef: string): AnyRow => ({
 const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   name: "",
   description: "",
-  notes: "",
   dimension: "",
   severity: "",
   passThreshold: null,
@@ -1895,7 +1893,6 @@ export function RegistryRuleFormDialog({
   const [polarity, setPolarity] = useState<Polarity>("pass");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [notes, setNotes] = useState("");
   const [dimension, setDimension] = useState<string>("");
   const [severity, setSeverity] = useState<string>("");
   const [passThreshold, setPassThreshold] = useState<number | null>(null);
@@ -1986,7 +1983,6 @@ export function RegistryRuleFormDialog({
     };
     setName(asString(RESERVED_NAME_KEY));
     setDescription(asString(RESERVED_DESCRIPTION_KEY));
-    setNotes(asString(RESERVED_NOTES_KEY));
     setDimension(asString(RESERVED_DIMENSION_KEY));
     setSeverity(asString(RESERVED_SEVERITY_KEY));
     setPassThreshold(asIntOrNull(RESERVED_PASS_THRESHOLD_KEY));
@@ -2009,7 +2005,7 @@ export function RegistryRuleFormDialog({
     setPendingNativeSlots(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
-      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_NOTES_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
       if (typeof v === "string") freeTags[k] = v;
     }
     setTags(freeTags);
@@ -2239,7 +2235,6 @@ export function RegistryRuleFormDialog({
   const currentSnapshot: RuleEditSnapshot = {
     name,
     description,
-    notes,
     dimension,
     severity,
     passThreshold,
@@ -2593,7 +2588,6 @@ export function RegistryRuleFormDialog({
     const md: Record<string, unknown> = { ...tags };
     if (name.trim()) md[RESERVED_NAME_KEY] = name.trim();
     if (description.trim()) md[RESERVED_DESCRIPTION_KEY] = description.trim();
-    if (notes.trim()) md[RESERVED_NOTES_KEY] = notes.trim();
     if (dimension) md[RESERVED_DIMENSION_KEY] = dimension;
     if (severity) md[RESERVED_SEVERITY_KEY] = severity;
     if (passThreshold !== null) md[RESERVED_PASS_THRESHOLD_KEY] = passThreshold;
@@ -2651,7 +2645,6 @@ export function RegistryRuleFormDialog({
     const md = parsed.userMetadata;
     setName(md[RESERVED_NAME_KEY] ?? "");
     setDescription(md[RESERVED_DESCRIPTION_KEY] ?? "");
-    setNotes(md[RESERVED_NOTES_KEY] ?? "");
     setDimension(md[RESERVED_DIMENSION_KEY] ?? "");
     setSeverity(md[RESERVED_SEVERITY_KEY] ?? "");
     {
@@ -2661,7 +2654,7 @@ export function RegistryRuleFormDialog({
     }
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
-      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_NOTES_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
       freeTags[k] = v;
     }
     setTags(freeTags);
@@ -3192,20 +3185,6 @@ export function RegistryRuleFormDialog({
             />
           )}
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex items-center gap-1.5">
-          <Label>{t("rulesRegistry.notesLabel")}</Label>
-          <HelpTooltip text={t("rulesRegistry.notesTooltip")} />
-        </div>
-        <Textarea
-          className="text-xs min-h-[60px]"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          disabled={readOnly}
-          placeholder={t("rulesRegistry.notesPlaceholder")}
-        />
       </div>
 
       <Separator />
@@ -4769,7 +4748,6 @@ export function RegistryRuleFormDialog({
                 ? t("rulesRegistry.actionSubmit")
                 : t("rulesRegistry.saveAndSubmit")
         }
-        description={t("rulesRegistry.statusPendingApproval")}
         confirmLabel={
           willAutoApprove
             ? pendingSubmitMode === "submitOnly"

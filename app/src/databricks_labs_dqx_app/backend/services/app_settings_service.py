@@ -1,12 +1,10 @@
 import json
 import logging
-import re
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
-from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
@@ -879,35 +877,25 @@ class AppSettingsService:
         return enabled
 
     # ------------------------------------------------------------------
-    # Vector Search / embeddings settings — Rules Registry Phase 4B/4C,
-    # auto-derived since Phase 8B. The admin UI only exposes the AI
-    # enable toggle + serving-endpoint dropdown; the rule-mapping
-    # suggester's vector store is fully auto-provisioned from that alone
-    # — these three settings are no longer surfaced as admin inputs.
+    # Embeddings settings — Rules Registry Phase 4B/4C, auto-derived since
+    # Phase 8B. The admin UI only exposes the AI enable toggle + serving-
+    # endpoint dropdown; the embedding endpoint defaults so cosine rule
+    # suggestions work from that alone.
     #
     #   * ``embedding_endpoint_name`` — Databricks serving endpoint that
     #     turns rule/query text into an embedding vector
     #     (``services/rule_embeddings.py``). Defaults to
     #     :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT`, a Foundation Model API
     #     embedding endpoint available out-of-the-box in most workspaces.
-    #   * ``vs_endpoint_name`` / ``vs_index_name`` — the Databricks Vector
-    #     Search endpoint + index that stores rule embeddings for
-    #     nearest-neighbour retrieval. Auto-derived from this app's own
-    #     catalog/schema (see :meth:`_default_vs_endpoint_name` /
-    #     :meth:`_default_vs_index_name`) so multiple ``dqx_studio``
-    #     deployments on the same metastore never collide.
     #
-    # The setter methods are kept (and the settings remain independently
-    # overridable via direct API calls) purely for backwards
-    # compatibility/testing — nothing in the UI writes to them anymore.
-    # ``VectorStoreProvisioner.ensure_vector_store`` / the suggester
-    # degrade gracefully (best-effort, never raise) if the auto-created
-    # infra isn't ready yet — see ``services/vector_store.py``.
+    # The setter is kept (and the setting remains independently overridable
+    # via direct API calls) for backwards compatibility/testing — nothing
+    # in the UI writes to it anymore. ``AiBootstrap.ensure_ai_ready`` /
+    # the suggester degrade gracefully if the embedding endpoint isn't
+    # usable yet — see ``services/ai_bootstrap.py``.
     # ------------------------------------------------------------------
 
     _EMBEDDING_ENDPOINT_NAME_KEY = "embedding_endpoint_name"
-    _VS_ENDPOINT_NAME_KEY = "vs_endpoint_name"
-    _VS_INDEX_NAME_KEY = "vs_index_name"
 
     # A widely-available Foundation Model API embedding endpoint — a
     # reasonable out-of-the-box default so the rule-mapping suggester
@@ -915,20 +903,12 @@ class AppSettingsService:
     # embedding-endpoint field to fill in.
     EMBEDDING_ENDPOINT_NAME_DEFAULT = "databricks-gte-large-en"
 
-    # Fixed prefix/suffix for the auto-derived Vector Search endpoint and
-    # index names (see ``_default_vs_endpoint_name``/``_default_vs_index_name``).
-    _VS_ENDPOINT_NAME_PREFIX = "dqx_studio_rule_suggester"
-    _VS_INDEX_NAME_SUFFIX = "dq_rule_embeddings_index"
-
     def get_embedding_endpoint_name(self) -> str:
         """Return the embedding serving endpoint name.
 
         Defaults to :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT` when the
         setting is unset — either no row at all, or a row holding an
-        empty/whitespace-only value. Vector Search cannot provision
-        without a real embedding endpoint, so an empty stored value is
-        treated as "unset" and falls back to the default rather than
-        silently disabling provisioning.
+        empty/whitespace-only value.
         """
         raw = self.get_setting(self._EMBEDDING_ENDPOINT_NAME_KEY)
         if raw is None or not raw.strip():
@@ -939,55 +919,6 @@ class AppSettingsService:
         """Persist the embedding serving endpoint name. Returns the cleaned (trimmed) value."""
         cleaned = (endpoint_name or "").strip()
         self.save_setting(self._EMBEDDING_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
-        return cleaned
-
-    def _default_vs_endpoint_name(self) -> str:
-        """Auto-derive a Vector Search endpoint name scoped to this app's catalog."""
-        safe_catalog = re.sub(r"[^A-Za-z0-9_]", "_", conf.catalog)
-        return f"{self._VS_ENDPOINT_NAME_PREFIX}_{safe_catalog}"
-
-    def get_vs_endpoint_name(self) -> str:
-        """Return the Vector Search endpoint name.
-
-        Defaults to an auto-derived, catalog-scoped name (see
-        :meth:`_default_vs_endpoint_name`) when the setting is unset —
-        either no row at all, or a row holding an empty/whitespace-only
-        value (an empty stored value would otherwise silently disable
-        Vector Search provisioning).
-        """
-        raw = self.get_setting(self._VS_ENDPOINT_NAME_KEY)
-        if raw is None or not raw.strip():
-            return self._default_vs_endpoint_name()
-        return raw.strip()
-
-    def save_vs_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
-        """Persist the Vector Search endpoint name. Returns the cleaned (trimmed) value."""
-        cleaned = (endpoint_name or "").strip()
-        self.save_setting(self._VS_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
-        return cleaned
-
-    def _default_vs_index_name(self) -> str:
-        """Auto-derive a fully-qualified (UC three-level) Vector Search index name."""
-        return f"{conf.catalog}.{conf.schema_name}.{self._VS_INDEX_NAME_SUFFIX}"
-
-    def get_vs_index_name(self) -> str:
-        """Return the fully-qualified Vector Search index name.
-
-        Defaults to an auto-derived name under this app's own UC
-        catalog/schema (see :meth:`_default_vs_index_name`) when the
-        setting is unset — either no row at all, or a row holding an
-        empty/whitespace-only value (an empty stored value would
-        otherwise silently disable Vector Search provisioning).
-        """
-        raw = self.get_setting(self._VS_INDEX_NAME_KEY)
-        if raw is None or not raw.strip():
-            return self._default_vs_index_name()
-        return raw.strip()
-
-    def save_vs_index_name(self, index_name: str, *, user_email: str | None = None) -> str:
-        """Persist the Vector Search index name. Returns the cleaned (trimmed) value."""
-        cleaned = (index_name or "").strip()
-        self.save_setting(self._VS_INDEX_NAME_KEY, cleaned, user_email=user_email)
         return cleaned
 
     # ------------------------------------------------------------------

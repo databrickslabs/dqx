@@ -8,8 +8,8 @@ import pytest
 from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.routes.v1.config import AiSettingsIn, get_ai_settings, save_ai_settings
+from databricks_labs_dqx_app.backend.services.ai_bootstrap import AiBootstrap
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
 
 
 @pytest.fixture
@@ -20,14 +20,14 @@ def svc(sql_executor_mock):
 
 
 @pytest.fixture
-def provisioner():
-    """Autospec'd provisioner whose ``ensure_vector_store`` is awaitable and inert."""
+def bootstrap():
+    """Autospec'd bootstrap whose ``ensure_ai_ready`` is awaitable and inert."""
 
     async def _noop() -> None:
         return None
 
-    mock = create_autospec(VectorStoreProvisioner, instance=True)
-    mock.ensure_vector_store.side_effect = _noop
+    mock = create_autospec(AiBootstrap, instance=True)
+    mock.ensure_ai_ready.side_effect = _noop
     return mock
 
 
@@ -43,11 +43,8 @@ class TestGetAiSettings:
         assert result.ai_rate_limit_per_user_per_hour == 30
         assert result.ai_rate_limit_default == 30
         # Auto-derived (Rules Registry Phase 8B) — no separate admin
-        # inputs for these; see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``
-        # and ``_default_vs_endpoint_name``/``_default_vs_index_name``.
+        # input for this; see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``.
         assert result.embedding_endpoint_name == "databricks-gte-large-en"
-        assert result.vs_endpoint_name == "dqx_studio_rule_suggester_dqx_test"
-        assert result.vs_index_name == "dqx_test.dqx_app_test.dq_rule_embeddings_index"
 
 
 def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
@@ -71,23 +68,23 @@ def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
 
 
 class TestSaveAiSettings:
-    def test_requires_at_least_one_field(self, svc, provisioner):
+    def test_requires_at_least_one_field(self, svc, bootstrap):
         with pytest.raises(HTTPException) as exc_info:
-            save_ai_settings(AiSettingsIn(), svc, provisioner, "admin@x")
+            save_ai_settings(AiSettingsIn(), svc, bootstrap, "admin@x")
         assert exc_info.value.status_code == 400
 
-    def test_rejects_negative_rate_limit(self, svc, provisioner):
+    def test_rejects_negative_rate_limit(self, svc, bootstrap):
         with pytest.raises(HTTPException) as exc_info:
-            save_ai_settings(AiSettingsIn(ai_rate_limit_per_user_per_hour=-1), svc, provisioner, "admin@x")
+            save_ai_settings(AiSettingsIn(ai_rate_limit_per_user_per_hour=-1), svc, bootstrap, "admin@x")
         assert exc_info.value.status_code == 400
 
-    def test_saves_and_echoes_effective_settings(self, svc, sql_executor_mock, provisioner):
+    def test_saves_and_echoes_effective_settings(self, svc, sql_executor_mock, bootstrap):
         _wire_stateful_store(sql_executor_mock)
 
         result = save_ai_settings(
             AiSettingsIn(ai_enabled=True, ai_endpoint_name="my-endpoint", ai_rate_limit_per_user_per_hour=5),
             svc,
-            provisioner,
+            bootstrap,
             "admin@x",
         )
 
@@ -96,34 +93,26 @@ class TestSaveAiSettings:
         assert result.ai_endpoint_name == "my-endpoint"
         assert result.ai_rate_limit_per_user_per_hour == 5
 
-    def test_saves_vector_search_settings(self, svc, sql_executor_mock, provisioner):
+    def test_saves_embedding_endpoint_name(self, svc, sql_executor_mock, bootstrap):
         _wire_stateful_store(sql_executor_mock)
 
         result = save_ai_settings(
-            AiSettingsIn(
-                embedding_endpoint_name="embed-endpoint",
-                vs_endpoint_name="vs-endpoint",
-                vs_index_name="catalog.schema.index",
-            ),
+            AiSettingsIn(embedding_endpoint_name="embed-endpoint"),
             svc,
-            provisioner,
+            bootstrap,
             "admin@x",
         )
 
         assert result.embedding_endpoint_name == "embed-endpoint"
-        assert result.vs_endpoint_name == "vs-endpoint"
-        assert result.vs_index_name == "catalog.schema.index"
 
 
-class TestSaveAiSettingsTriggersVectorStoreProvisioning:
-    """Rules Registry follow-up: ``ensure_vector_store`` was implemented but never
-    invoked from the admin "enable AI" / save-settings path. These tests pin
-    down that ``save_ai_settings`` now kicks it off — non-blocking, off the
-    request thread, and without letting a provisioning failure affect the
-    save response.
+class TestSaveAiSettingsTriggersEnsureAiReady:
+    """``save_ai_settings`` kicks off ``ensure_ai_ready`` — non-blocking, off the
+    request thread, and without letting a bootstrap failure affect the save
+    response.
     """
 
-    def test_enabling_ai_invokes_ensure_vector_store_off_request_thread(self, svc, sql_executor_mock, provisioner):
+    def test_enabling_ai_invokes_ensure_ai_ready_off_request_thread(self, svc, sql_executor_mock, bootstrap):
         _wire_stateful_store(sql_executor_mock)
         request_thread_id = threading.get_ident()
         done = threading.Event()
@@ -133,16 +122,16 @@ class TestSaveAiSettingsTriggersVectorStoreProvisioning:
             captured["thread_id"] = threading.get_ident()
             done.set()
 
-        provisioner.ensure_vector_store.side_effect = _record
+        bootstrap.ensure_ai_ready.side_effect = _record
 
-        result = save_ai_settings(AiSettingsIn(ai_enabled=True), svc, provisioner, "admin@x")
+        result = save_ai_settings(AiSettingsIn(ai_enabled=True), svc, bootstrap, "admin@x")
 
         assert result.ai_enabled is True
-        assert done.wait(timeout=2), "ensure_vector_store was not invoked in time"
-        provisioner.ensure_vector_store.assert_called_once()
+        assert done.wait(timeout=2), "ensure_ai_ready was not invoked in time"
+        bootstrap.ensure_ai_ready.assert_called_once()
         assert captured["thread_id"] != request_thread_id
 
-    def test_does_not_invoke_when_ai_stays_disabled(self, svc, sql_executor_mock, provisioner):
+    def test_does_not_invoke_when_ai_stays_disabled(self, svc, sql_executor_mock, bootstrap):
         # AI now defaults ON, so "stays disabled" means the kill-switch is
         # explicitly held off — pass ai_enabled=False alongside the edit.
         _wire_stateful_store(sql_executor_mock)
@@ -150,15 +139,15 @@ class TestSaveAiSettingsTriggersVectorStoreProvisioning:
         result = save_ai_settings(
             AiSettingsIn(ai_enabled=False, ai_rate_limit_per_user_per_hour=10),
             svc,
-            provisioner,
+            bootstrap,
             "admin@x",
         )
 
         assert result.ai_enabled is False
-        provisioner.ensure_vector_store.assert_not_called()
+        bootstrap.ensure_ai_ready.assert_not_called()
 
-    def test_ensure_vector_store_failure_does_not_affect_save_response(
-        self, svc, sql_executor_mock, provisioner, monkeypatch
+    def test_ensure_ai_ready_failure_does_not_affect_save_response(
+        self, svc, sql_executor_mock, bootstrap, monkeypatch
     ):
         # The app's shared ``logger`` singleton disables propagation to the
         # root logger (see ``backend/logger.py``), so ``caplog`` can't see
@@ -173,14 +162,14 @@ class TestSaveAiSettingsTriggersVectorStoreProvisioning:
 
         async def _boom() -> None:
             done.set()
-            raise RuntimeError("Vector Search control plane unreachable")
+            raise RuntimeError("Serving control plane unreachable")
 
-        provisioner.ensure_vector_store.side_effect = _boom
+        bootstrap.ensure_ai_ready.side_effect = _boom
 
-        result = save_ai_settings(AiSettingsIn(ai_enabled=True), svc, provisioner, "admin@x")
+        result = save_ai_settings(AiSettingsIn(ai_enabled=True), svc, bootstrap, "admin@x")
 
         assert result.ai_enabled is True
-        assert done.wait(timeout=2), "ensure_vector_store was not invoked in time"
+        assert done.wait(timeout=2), "ensure_ai_ready was not invoked in time"
         # Give the background thread's exception handler a moment to log
         # before asserting — the save call itself must already have
         # returned successfully regardless.

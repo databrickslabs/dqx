@@ -510,12 +510,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ``embedding`` is stored as a JSON-encoded array of floats in
             # a portable TEXT column (not a native vector/array type) so
             # the same DDL/read path works unchanged on the Delta OLTP
-            # fallback. The Databricks Vector Search index itself is the
-            # actual ANN store the mapping suggester queries at runtime
-            # (see ``services.rule_retriever.VectorSearchRetriever``) —
-            # this table is the source-of-truth corpus a Vector Search
-            # "Delta Sync" index would sync from, or that a backfill job
-            # can re-embed from without re-deriving ``embed_text``.
+            # fallback. Cosine rule suggestions
+            # (``services.rule_retriever.CosineRuleRetriever``) scan this
+            # table directly — it is the source-of-truth corpus a backfill
+            # job can re-embed from without re-deriving ``embed_text``.
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_rule_embeddings ("
             "  rule_id      TEXT PRIMARY KEY,"
@@ -1236,6 +1234,14 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_data_products RENAME COLUMN steward TO owner;"
             f"ALTER TABLE {_S}.dq_data_products RENAME COLUMN steward_display_name TO owner_display_name;"
             f"ALTER INDEX IF EXISTS {_S}.idx_dq_rules_steward RENAME TO idx_dq_rules_owner;"
+        ),
+    ),
+    PgMigration(
+        version=25,
+        description="Drop sticky object notes columns from monitored tables and data products",
+        sql=(
+            f"ALTER TABLE {_S}.dq_monitored_tables DROP COLUMN IF EXISTS notes;"
+            f"ALTER TABLE {_S}.dq_data_products DROP COLUMN IF EXISTS notes;"
         ),
     ),
 ]

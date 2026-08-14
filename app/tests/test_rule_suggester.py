@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.services.registry_service import RegistrySe
 from databricks_labs_dqx_app.backend.services.rule_retriever import RetrievedRule, RuleRetrievalUnavailableError
 from databricks_labs_dqx_app.backend.services.rule_suggester import (
     DEFAULT_TOP_K,
+    MAX_RETRIEVAL_COLUMNS,
     _NO_CLEAN_MAPPING_REASON,
     _NO_MATCH_REASON,
     _NO_PUBLISHED_RULES_REASON,
@@ -96,6 +97,9 @@ class FakeRetriever:
         if self.error is not None:
             raise self.error
         return self._candidates[:top_k]
+
+    def retrieve_many(self, query_texts: list[str] | tuple[str, ...], top_k: int) -> list[list[RetrievedRule]]:
+        return [self.retrieve(query_text, top_k) for query_text in query_texts]
 
 
 def _gateway(judge_response: dict | str | None = None, error: Exception | None = None) -> create_autospec:
@@ -328,6 +332,9 @@ class TestHappyPath:
                 if "id" in query_text:
                     return [RetrievedRule(rule_id="r_id", score=0.90)]
                 return []
+
+            def retrieve_many(self, query_texts, top_k: int):
+                return [self.retrieve(query_text, top_k) for query_text in query_texts]
 
         gateway = _gateway({"suggestions": []})
         suggester = _suggester(monitored_tables, registry, apply_rules, ColumnAwareRetriever(), gateway)
@@ -581,7 +588,7 @@ class TestTopKAndSameColumnGuard:
         assert DEFAULT_TOP_K == 20
 
     async def test_per_column_retrieval_uses_top_k_20(self, monitored_tables, registry, apply_rules):
-        """_retrieve_per_column must call retrieve() with DEFAULT_TOP_K=20."""
+        """_retrieve_per_column must call retrieve_many() with DEFAULT_TOP_K=20."""
         monitored_tables.get.return_value = _binding_detail()
         monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
         registry.get_rule.return_value = _rule("r1", ["column"])
@@ -596,6 +603,10 @@ class TestTopKAndSameColumnGuard:
                 calls.append(top_k)
                 return [RetrievedRule(rule_id="r1", score=0.9)]
 
+            def retrieve_many(self, query_texts, top_k: int) -> list[list[RetrievedRule]]:
+                calls.append(top_k)
+                return [[RetrievedRule(rule_id="r1", score=0.9)] for _ in query_texts]
+
         gateway = _gateway({"suggestions": []})
         suggester = _suggester(monitored_tables, registry, apply_rules, RecordingRetriever(), gateway)
 
@@ -603,6 +614,33 @@ class TestTopKAndSameColumnGuard:
 
         assert calls, "retriever was never called"
         assert all(k == 20 for k in calls), f"expected top_k=20, got {calls}"
+
+    async def test_wide_table_retrieval_caps_column_queries(self, monitored_tables, registry, apply_rules):
+        """Wide tables must not embed one query per UC column unbounded."""
+        monitored_tables.get.return_value = _binding_detail()
+        wide = {f"c{i}": {} for i in range(MAX_RETRIEVAL_COLUMNS + 25)}
+        monitored_tables.get_latest_profile.return_value = _profile(wide)
+        registry.get_rule.return_value = _rule("r1", ["column"])
+
+        query_counts: list[int] = []
+
+        class CountingRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int) -> list[RetrievedRule]:
+                return [RetrievedRule(rule_id="r1", score=0.9)]
+
+            def retrieve_many(self, query_texts, top_k: int) -> list[list[RetrievedRule]]:
+                query_counts.append(len(query_texts))
+                return [[RetrievedRule(rule_id="r1", score=0.9)] for _ in query_texts]
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, CountingRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        assert query_counts == [MAX_RETRIEVAL_COLUMNS]
 
     async def test_same_column_multi_slot_mapping_is_rejected(self, monitored_tables, registry, apply_rules):
         """A mapping binding two slots to the same column must be dropped."""

@@ -21,8 +21,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
@@ -121,7 +119,6 @@ import {
   useListPendingApplications,
   useListValidationRuns,
   useWorkspaceHost,
-  useUpdateMonitoredTableNotes,
   useSubmitMonitoredTableWithRationale,
   useApproveMonitoredTableWithRationale,
   useRejectMonitoredTableWithRationale,
@@ -141,7 +138,6 @@ import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { formatDateShort } from "@/lib/format-utils";
 import {
   LLM_PK_SUMMARY_KEY,
-  columnProfilePercents,
   columnStatsFromSummary,
   formatProfileDuration,
 } from "@/lib/profile-format";
@@ -178,6 +174,7 @@ import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsT
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -944,7 +941,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} canEdit={perms.canCreateRules} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -1132,6 +1129,10 @@ function RunTableAction({
   const [runDraftBusy, setRunDraftBusy] = useState(false);
   const [draftSampleKind, setDraftSampleKind] = useState<SampleKind>("records");
   const [draftSampleValue, setDraftSampleValue] = useState(1000);
+  // Scope is asked for AFTER pressing Run draft rather than sitting in the
+  // header: it only ever applies to a draft run, so it has no meaning until
+  // that run is actually being started.
+  const [draftScopeOpen, setDraftScopeOpen] = useState(false);
 
   const draftSampleSize = draftSampleKind === "full" ? 0 : Math.max(1, draftSampleValue);
 
@@ -1240,21 +1241,48 @@ function RunTableAction({
   );
 
   const runDraftPrimary = (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className={cn(draftDisabled && "cursor-not-allowed")}>
+    <Popover open={draftScopeOpen} onOpenChange={setDraftScopeOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={cn(draftDisabled && "cursor-not-allowed")}>
+            <PopoverTrigger asChild>
+              <Button disabled={draftDisabled} className="gap-2 rounded-r-none">
+                {spinnerOrPlay}
+                {t("monitoredTables.runDraftAction")}
+              </Button>
+            </PopoverTrigger>
+          </span>
+        </TooltipTrigger>
+        {draftTooltip && <TooltipContent side="bottom">{draftTooltip}</TooltipContent>}
+      </Tooltip>
+      <PopoverContent align="end" className="w-auto space-y-3">
+        <div className="space-y-0.5">
+          <p className="text-sm font-medium">{t("monitoredTables.runDraftScopeTitle")}</p>
+          <p className="text-[11px] text-muted-foreground">{t("monitoredTables.runDraftScopeHint")}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <SampleSelector
+            kind={draftSampleKind}
+            value={draftSampleValue}
+            onKind={setDraftSampleKind}
+            onValue={setDraftSampleValue}
+            disablePercent
+          />
           <Button
-            onClick={() => void handleRunDraft()}
+            size="sm"
+            className="gap-2"
             disabled={draftDisabled}
-            className="gap-2 rounded-r-none"
+            onClick={() => {
+              setDraftScopeOpen(false);
+              void handleRunDraft();
+            }}
           >
             {spinnerOrPlay}
             {t("monitoredTables.runDraftAction")}
           </Button>
-        </span>
-      </TooltipTrigger>
-      {draftTooltip && <TooltipContent side="bottom">{draftTooltip}</TooltipContent>}
-    </Tooltip>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 
   const runNowMenuItem = (
@@ -1297,15 +1325,6 @@ function RunTableAction({
 
   return (
     <div className="inline-flex items-center gap-2" role="group" aria-label={t("monitoredTables.runActionGroupAria")}>
-      {canRunDraft && (
-        <SampleSelector
-          kind={draftSampleKind}
-          value={draftSampleValue}
-          onKind={setDraftSampleKind}
-          onValue={setDraftSampleValue}
-          disablePercent
-        />
-      )}
       <div className="inline-flex">
       <TooltipProvider delayDuration={200}>
         {draftIsPrimary ? runDraftPrimary : runNowPrimary}
@@ -1388,70 +1407,23 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 
 function AboutTab({
   table,
-  canEdit,
   onColumnClick,
 }: {
   table: MonitoredTableOut;
-  canEdit: boolean;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
    *  between the by-rule/by-column lenses in ApplyRulesTab. */
   onColumnClick: (columnName: string) => void;
 }) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   // 1-indexed schema page (P26 item 2) — the shared `Pagination` footer
   // convention. Reset to 1 whenever the filter changes so a narrowed
   // result set can't strand the view on a now-empty page.
   const [page, setPage] = useState(1);
-  const [notes, setNotes] = useState(table.notes ?? "");
-  const notesMutation = useUpdateMonitoredTableNotes({ mutation: { onError: () => {} } });
-  const notesSavingRef = useRef(false);
-
-  useEffect(() => {
-    setNotes(table.notes ?? "");
-  }, [table.notes]);
-
-  const saveNotes = useCallback(() => {
-    const next = notes.trim() || null;
-    const current = (table.notes ?? "").trim() || null;
-    if (next === current || notesSavingRef.current || notesMutation.isPending) return;
-    notesSavingRef.current = true;
-    notesMutation.mutate(
-      { bindingId: table.binding_id, data: { notes: next } },
-      {
-        onSuccess: () => {
-          toast.success(t("monitoredTables.toastNotesSaved"));
-          invalidateAfterMonitoredTableChange(queryClient, table.binding_id);
-        },
-        onError: (err) => {
-          toast.error(extractApiError(err, t("monitoredTables.toastNotesSaveFailed")), {
-            duration: 6000,
-          });
-        },
-        onSettled: () => {
-          notesSavingRef.current = false;
-        },
-      },
-    );
-  }, [notes, table.notes, table.binding_id, notesMutation, queryClient, t]);
 
   const parts = table.table_fqn.split(".");
   const [catalog, schema, tableName] = parts;
-
-  // Latest SUCCESS profile — join null%/distinct onto the UC schema table once
-  // a profiling run has finished (About stays UC-only until then).
-  const profileQuery = useGetMonitoredTableProfile(table.binding_id, {
-    // 404 = never profiled — leave schema UC-only until a SUCCESS run lands.
-    query: { retry: false },
-  });
-  const profile = profileQuery.data?.data;
-  const profileColumnStats = useMemo(
-    () => columnStatsFromSummary((profile?.summary ?? {}) as Record<string, unknown>),
-    [profile?.summary],
-  );
-  const hasProfileStats = Object.keys(profileColumnStats).length > 0;
 
   const columnsQuery = useGetTableColumns(catalog ?? "", schema ?? "", tableName ?? "", {
     query: { enabled: parts.length === 3 },
@@ -1468,9 +1440,7 @@ function AboutTab({
   const filteredColumns = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return columns;
-    return columns.filter(
-      (c) => c.name.toLowerCase().includes(q) || (c.comment ?? "").toLowerCase().includes(q),
-    );
+    return columns.filter((c) => c.name.toLowerCase().includes(q));
   }, [columns, filter]);
 
   const pagedColumns = useMemo(
@@ -1492,8 +1462,8 @@ function AboutTab({
   return (
     <div className="space-y-6 pt-4">
       {/* About (metadata) : Schema (columns table) — the schema table gets the
-          larger share so its Column/Type/Tags/Description columns + filter box
-          breathe; About's definition list is narrow by nature. */}
+          larger share so its Column/Type/Tags columns + filter box breathe;
+          About's definition list is narrow by nature. */}
       <div className="grid gap-6 lg:grid-cols-[5fr_7fr] items-start">
         <section className="space-y-3">
           <h2 className="text-sm font-semibold">{t("monitoredTables.aboutSectionTitle")}</h2>
@@ -1528,43 +1498,6 @@ function AboutTab({
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedAt")}</dt>
             <dd>{table.updated_at ? formatDateShort(table.updated_at) : t("monitoredTables.aboutUnknown")}</dd>
           </dl>
-          <div className="space-y-2 pt-2">
-            <div className="flex items-center gap-1.5">
-              <Label htmlFor="mt-notes" className="text-xs text-muted-foreground uppercase tracking-wide">
-                {t("monitoredTables.notesLabel")}
-              </Label>
-              <HelpTooltip text={t("monitoredTables.notesTooltip")} />
-            </div>
-            {canEdit ? (
-              <div className="space-y-2">
-                <Textarea
-                  id="mt-notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  onBlur={saveNotes}
-                  rows={3}
-                  className="text-sm"
-                  placeholder={t("monitoredTables.notesPlaceholder")}
-                  disabled={notesMutation.isPending}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={notesMutation.isPending || (notes.trim() || null) === ((table.notes ?? "").trim() || null)}
-                  onClick={saveNotes}
-                  className="gap-2"
-                >
-                  {notesMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  {t("monitoredTables.saveNotesButton")}
-                </Button>
-              </div>
-            ) : notes.trim() ? (
-              <p className="text-sm whitespace-pre-wrap">{notes}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground italic">{t("monitoredTables.aboutNoNotes")}</p>
-            )}
-          </div>
           {/* Deep link into the Unity Catalog explorer — mirrors dqlake's
               BindingAboutTab (label, external-link icon, placement after the
               definition list). Hidden when the host is unknown (local dev). */}
@@ -1581,17 +1514,19 @@ function AboutTab({
         </section>
 
         <section className="space-y-3">
-          <div className="space-y-0.5">
+          <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">
               {t("monitoredTables.aboutSchemaSectionTitle", { count: columns.length })}
             </h2>
-            {hasProfileStats && (
-              <p className="text-[11px] text-muted-foreground">
-                {t("monitoredTables.aboutSchemaProfileHint", {
-                  date: profile?.profiled_at ? formatDateShort(profile.profiled_at) : "—",
-                })}
-              </p>
-            )}
+            <Input
+              placeholder={t("monitoredTables.aboutFilterColumnsPlaceholder")}
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value);
+                setPage(1);
+              }}
+              className="w-40 h-7 text-xs"
+            />
           </div>
           <div>
             {columnsQuery.isError ? (
@@ -1604,61 +1539,24 @@ function AboutTab({
               <>
                 <div className="rounded-md border overflow-hidden">
                   {/* table-fixed + truncate keeps every row a single fixed-height
-                      line — long names/types/comments ellipsize and stay
-                      recoverable on hover (tooltip / title). */}
+                      line — long names/types ellipsize and stay recoverable on
+                      hover (tooltip / title). */}
                   <table className="w-full text-sm table-fixed">
                     <thead className="bg-muted/30">
                       <tr>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[22%]">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[40%]">
                           {t("monitoredTables.aboutColColumn")}
                         </th>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-16">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[20%]">
                           {t("monitoredTables.aboutColType")}
                         </th>
-                        {hasProfileStats && (
-                          <>
-                            <th
-                              className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wide px-2 py-2 w-16"
-                              title={t("monitoredTables.aboutColNullPctTooltip")}
-                            >
-                              {t("monitoredTables.aboutColNullPct")}
-                            </th>
-                            <th
-                              className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wide px-2 py-2 w-20"
-                              title={t("monitoredTables.aboutColDistinctTooltip")}
-                            >
-                              {t("monitoredTables.aboutColDistinct")}
-                            </th>
-                          </>
-                        )}
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[22%]">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2">
                           {t("monitoredTables.aboutColTags")}
-                        </th>
-                        <th className="px-3 py-1.5">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                              {t("monitoredTables.aboutColDescription")}
-                            </span>
-                            <Input
-                              placeholder={t("monitoredTables.aboutFilterColumnsPlaceholder")}
-                              value={filter}
-                              onChange={(e) => {
-                                setFilter(e.target.value);
-                                setPage(1);
-                              }}
-                              className="w-40 h-7 text-xs font-normal normal-case tracking-normal"
-                            />
-                          </div>
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {pagedColumns.map((c) => {
-                        const colStats = profileColumnStats[c.name];
-                        const pcts = hasProfileStats
-                          ? columnProfilePercents(colStats, profile?.rows_profiled)
-                          : null;
-                        return (
+                      {pagedColumns.map((c) => (
                         <tr
                           key={c.name}
                           className="border-t h-8 cursor-pointer hover:bg-muted"
@@ -1690,35 +1588,15 @@ function AboutTab({
                               <span className="truncate">{c.type_name}</span>
                             </Badge>
                           </td>
-                          {pcts && (
-                            <>
-                              <td className="px-2 py-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                                {pcts.nullPct}
-                              </td>
-                              <td className="px-2 py-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                                {pcts.distinctPct}
-                              </td>
-                            </>
-                          )}
                           <td className="px-3 py-1 overflow-hidden">
                             <ColumnTagsCell tags={columnTags[c.name] ?? []} />
                           </td>
-                          <td className="px-3 py-1 overflow-hidden">
-                            {c.comment ? (
-                              <span className="text-xs block truncate" title={c.comment}>
-                                {c.comment}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground text-xs">-</span>
-                            )}
-                          </td>
                         </tr>
-                        );
-                      })}
+                      ))}
                       {filteredColumns.length === 0 && (
                         <tr>
                           <td
-                            colSpan={hasProfileStats ? 6 : 4}
+                            colSpan={3}
                             className="text-center text-muted-foreground py-6 text-sm"
                           >
                             {t("monitoredTables.aboutNoMatchingColumns")}

@@ -753,12 +753,6 @@ class UpdateMonitoredTableOwnerIn(BaseModel):
     owner: str = Field(min_length=1, description="Owner's email/username")
 
 
-class UpdateMonitoredTableNotesIn(BaseModel):
-    """Request body for PATCH ``/monitored-tables/{id}/notes``."""
-
-    notes: str | None = Field(default=None, description="Sticky operational notes; null clears")
-
-
 class LifecycleRationaleIn(BaseModel):
     """Optional body for submit / approve / reject lifecycle endpoints."""
 
@@ -1005,7 +999,6 @@ class MonitoredTableOut(BaseModel):
         description="Newest terminal validation-run instant for this table (either trigger surface); "
         "drives the overview 'Last run' column.",
     )
-    notes: str | None = Field(default=None, description="Sticky operational notes")
     pending_rationale: str | None = Field(
         default=None, description="Author's change rationale while status is pending_approval"
     )
@@ -1031,7 +1024,6 @@ class MonitoredTableOut(BaseModel):
             schedule_kind=table.schedule_kind,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
             last_run_at=table.last_run_at.isoformat() if table.last_run_at else None,
-            notes=table.notes,
             pending_rationale=table.pending_rationale,
             last_decision_rationale=table.last_decision_rationale,
             created_by=table.created_by,
@@ -1230,8 +1222,8 @@ class SuggestRulesOut(BaseModel):
     """Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
 
     ``available=False`` (with a human-readable ``reason``) covers every
-    degraded path — Vector Search/embedding/AI not configured, retrieval or
-    judge failure — and is always returned with HTTP 200, never a 500.
+    degraded path — embedding/AI not configured, retrieval or judge
+    failure — and is always returned with HTTP 200, never a 500.
     """
 
     available: bool
@@ -1735,7 +1727,6 @@ class CreateDataProductIn(BaseModel):
 
     name: str
     description: str | None = None
-    notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
     owner: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
     owner_display_name: str | None = Field(
         default=None,
@@ -1754,7 +1745,6 @@ class UpdateDataProductIn(BaseModel):
 
     name: str | None = None
     description: str | None = None
-    notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
     owner: str | None = None
     owner_display_name: str | None = Field(
         default=None,
@@ -1841,7 +1831,6 @@ class DataProductOut(BaseModel):
     product_id: str
     name: str
     description: str | None = None
-    notes: str | None = Field(default=None, description="Sticky operational notes (separate from description)")
     owner: str | None = None
     owner_display_name: str | None = Field(
         default=None,
@@ -1884,7 +1873,6 @@ class DataProductOut(BaseModel):
             product_id=product.product_id,
             name=product.name,
             description=product.description,
-            notes=product.notes,
             owner=product.owner,
             owner_display_name=product.owner_display_name,
             schedule_cron=product.schedule_cron,

@@ -67,7 +67,6 @@ def _product_row(
     status: str = "draft",
     version: str = "0",
     schedule_kind: str | None = "profiling_and_dq",
-    notes: str | None = None,
     pending_rationale: str | None = None,
     last_decision_rationale: str | None = None,
     score: str | None = None,
@@ -77,11 +76,11 @@ def _product_row(
 ) -> list[str | None]:
     # ``schedule_kind`` (B2-52) at index 12;
     # ``owner_display_name`` at index 13;
-    # notes / pending_rationale / last_decision_rationale at 14..16;
+    # pending_rationale / last_decision_rationale at 14..15;
     # the trailing 4 cells are the dq_score_cache LEFT-JOIN
     # columns the list/get read paths select (P3.4) — all None when the
     # product has never been scored. The non-score read paths select only
-    # the first 17 columns; the extra cells are ignored by _row_to_product.
+    # the first 16 columns; the extra cells are ignored by _row_to_product.
     return [
         product_id,  # 0
         name,  # 1
@@ -97,13 +96,12 @@ def _product_row(
         "2026-07-07T00:00:00",  # 11 updated_at
         schedule_kind,  # 12
         owner_display_name,  # 13
-        notes,  # 14
-        pending_rationale,  # 15
-        last_decision_rationale,  # 16
-        score,  # 17
-        failed_tests,  # 18
-        total_tests,  # 19
-        score_computed_at,  # 20
+        pending_rationale,  # 14
+        last_decision_rationale,  # 15
+        score,  # 16
+        failed_tests,  # 17
+        total_tests,  # 18
+        score_computed_at,  # 19
     ]
 
 

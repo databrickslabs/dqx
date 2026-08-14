@@ -167,11 +167,7 @@ class TestBuildRuleEmbedText:
 
 @pytest.fixture
 def app_settings() -> create_autospec:
-    settings = create_autospec(AppSettingsService, instance=True)
-    # Vector Search settings default to unset; individual tests opt in.
-    settings.get_vs_endpoint_name.return_value = ""
-    settings.get_vs_index_name.return_value = ""
-    return settings
+    return create_autospec(AppSettingsService, instance=True)
 
 
 @pytest.fixture
@@ -212,6 +208,62 @@ class TestEmbedText:
         _, kwargs = sp_ws.serving_endpoints.query.call_args
         assert kwargs["name"] == "my-embedding-endpoint"
         assert kwargs["input"] == ["hello"]
+
+
+class TestEmbedTexts:
+    def test_batches_and_aligns_by_index(self, svc, app_settings, sp_ws):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(
+            data=[
+                SimpleNamespace(index=1, embedding=[0.0, 1.0]),
+                SimpleNamespace(index=0, embedding=[1.0, 0.0]),
+            ]
+        )
+
+        result = svc.embed_texts(["a", "b"])
+
+        assert result == [[1.0, 0.0], [0.0, 1.0]]
+        _, kwargs = sp_ws.serving_endpoints.query.call_args
+        assert kwargs["input"] == ["a", "b"]
+
+    def test_chunks_wide_batches(self, svc, app_settings, sp_ws):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+
+        def _respond(*, name, input):  # noqa: A002 — mirrors SDK kwarg
+            return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[float(i)]) for i in range(len(input))])
+
+        sp_ws.serving_endpoints.query.side_effect = _respond
+
+        result = svc.embed_texts(["t0", "t1", "t2"], batch_size=2)
+
+        assert result == [[0.0], [1.0], [0.0]]
+        assert sp_ws.serving_endpoints.query.call_count == 2
+        first_input = sp_ws.serving_endpoints.query.call_args_list[0].kwargs["input"]
+        second_input = sp_ws.serving_endpoints.query.call_args_list[1].kwargs["input"]
+        assert first_input == ["t0", "t1"]
+        assert second_input == ["t2"]
+
+    def test_query_path_prefers_obo_client(self, sql_executor_mock, app_settings, sp_ws):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        user_ws = create_autospec(WorkspaceClient, instance=True)
+        user_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[9.0])])
+        sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+        svc = RuleEmbeddingsService(sql=sql_executor_mock, sp_ws=sp_ws, app_settings=app_settings, user_ws=user_ws)
+
+        assert svc.embed_texts(["q"]) == [[9.0]]
+        user_ws.serving_endpoints.query.assert_called_once()
+        sp_ws.serving_endpoints.query.assert_not_called()
+
+    def test_embed_and_store_always_uses_sp_even_when_obo_present(self, sql_executor_mock, app_settings, sp_ws):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        user_ws = create_autospec(WorkspaceClient, instance=True)
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+        sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+        svc = RuleEmbeddingsService(sql=sql_executor_mock, sp_ws=sp_ws, app_settings=app_settings, user_ws=user_ws)
+
+        assert svc.embed_and_store(_rule(rule_id="r42")) is True
+        sp_ws.serving_endpoints.query.assert_called_once()
+        user_ws.serving_endpoints.query.assert_not_called()
 
 
 class TestEmbedAndStore:
@@ -255,52 +307,6 @@ class TestEmbedAndStore:
         sql_executor_mock.upsert.assert_not_called()
 
 
-class TestEmbedAndStoreVectorSearchUpsert:
-    """``embed_and_store`` also upserts into the Direct Access VS index (Phase 7F).
-
-    Rule embeddings live in the OLTP ``dq_rule_embeddings`` table, not a UC
-    Delta table a Delta-Sync index could read from — so the Direct Access
-    index the admin points ``vs_endpoint_name``/``vs_index_name`` at must be
-    kept in sync by the app itself, on the same publish/re-embed path that
-    writes the OLTP corpus row.
-    """
-
-    def test_upserts_into_vs_index_when_configured(self, svc, app_settings, sp_ws, sql_executor_mock):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        app_settings.get_vs_endpoint_name.return_value = "vs-endpoint"
-        app_settings.get_vs_index_name.return_value = "catalog.schema.vs_index"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
-
-        stored = svc.embed_and_store(_rule(rule_id="r42", version=3))
-
-        assert stored is True
-        sp_ws.vector_search_indexes.upsert_data_vector_index.assert_called_once()
-        _, kwargs = sp_ws.vector_search_indexes.upsert_data_vector_index.call_args
-        assert kwargs["index_name"] == "catalog.schema.vs_index"
-        payload = json.loads(kwargs["inputs_json"])
-        assert payload == [{"rule_id": "r42", "embed_text": payload[0]["embed_text"], "embedding": [1.0, 2.0]}]
-
-    def test_skips_vs_upsert_when_not_configured(self, svc, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
-
-        svc.embed_and_store(_rule())
-
-        sp_ws.vector_search_indexes.upsert_data_vector_index.assert_not_called()
-
-    def test_oltp_write_still_succeeds_when_vs_upsert_fails(self, svc, app_settings, sp_ws, sql_executor_mock):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        app_settings.get_vs_endpoint_name.return_value = "vs-endpoint"
-        app_settings.get_vs_index_name.return_value = "catalog.schema.vs_index"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
-        sp_ws.vector_search_indexes.upsert_data_vector_index.side_effect = RuntimeError("index not ready")
-
-        stored = svc.embed_and_store(_rule(rule_id="r1"))
-
-        assert stored is True
-        sql_executor_mock.upsert.assert_called_once()
-
-
 class TestBackfill:
     def test_counts_only_successful_embeds(self, svc, app_settings, sp_ws):
         app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
@@ -331,6 +337,36 @@ class TestIterEmbeddings:
         rows = svc.iter_embeddings()
 
         assert rows == [("r1", [0.1, 0.2, 0.3]), ("r2", [1.0, 0.0])]
+
+    def test_memoises_corpus_within_instance(self, svc, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = [
+            {"rule_id": "r1", "embedding": json.dumps([0.1])},
+        ]
+
+        first = svc.iter_embeddings()
+        second = svc.iter_embeddings()
+
+        assert first is second
+        assert sql_executor_mock.query_dicts.call_count == 1
+
+    def test_upsert_clears_memoised_corpus(self, svc, app_settings, sp_ws, sql_executor_mock):
+        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0])])
+        sql_executor_mock.query_dicts.return_value = [
+            {"rule_id": "r1", "embedding": json.dumps([0.1])},
+        ]
+
+        _ = svc.iter_embeddings()
+        assert svc.embed_and_store(_rule(rule_id="r2")) is True
+        sql_executor_mock.query_dicts.return_value = [
+            {"rule_id": "r1", "embedding": json.dumps([0.1])},
+            {"rule_id": "r2", "embedding": json.dumps([1.0])},
+        ]
+
+        rows = svc.iter_embeddings()
+
+        assert [rule_id for rule_id, _ in rows] == ["r1", "r2"]
+        assert sql_executor_mock.query_dicts.call_count == 2
 
     def test_skips_malformed_and_empty_vectors(self, svc, sql_executor_mock):
         sql_executor_mock.query_dicts.return_value = [

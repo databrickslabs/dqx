@@ -57,7 +57,7 @@ from .services.schedule_config_service import ScheduleConfigService
 from .services.tag_mapping_service import ColumnInfo
 from .services.tag_reconcile_service import TagReconcileService
 from .services.tag_suggestion_service import TagSuggestionService
-from .services.vector_store import VectorStoreProvisioner
+from .services.ai_bootstrap import AiBootstrap
 from .services.view_service import ViewService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -560,14 +560,21 @@ async def get_tag_suggestion_service(
 async def get_rule_embeddings_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> RuleEmbeddingsService:
-    """Create a RuleEmbeddingsService routed at the OLTP executor + SP credentials.
+    """Create a RuleEmbeddingsService with split serving-endpoint auth.
 
-    The SP client is used (not OBO) because embedding calls hit a serving
-    endpoint, mirroring the ``AIGateway`` split-auth rationale.
+    * **SP** (``sp_ws``): corpus writes / backfill via ``embed_and_store`` —
+      publish and startup have no end-user token to query the embedding
+      endpoint as.
+    * **OBO** (``obo_ws``): query-time ``embed_texts`` used by retrieval —
+      same user-scoped identity as ``AIGateway``'s judge calls, so endpoint
+      ACLs and the caller's permissions apply. (Kill-switch / rate-limit
+      still live on the AIGateway path for generation; embeddings are not
+      routed through AIGateway.)
     """
-    return RuleEmbeddingsService(sql=sql, sp_ws=sp_ws, app_settings=app_settings)
+    return RuleEmbeddingsService(sql=sql, sp_ws=sp_ws, user_ws=obo_ws, app_settings=app_settings)
 
 
 async def get_rule_retriever(
@@ -575,22 +582,21 @@ async def get_rule_retriever(
 ) -> RuleRetriever:
     """Create the production in-app cosine RuleRetriever (design spec §8 swappable seam).
 
-    Cosine-over-the-OLTP-corpus (mirroring dqlake) is the default: it has no
-    Vector Search index / provisioning-readiness dependency on the retrieval
-    path, so suggestions work as soon as rules are embedded. See
+    Cosine-over-the-OLTP-corpus (mirroring dqlake) is the default: suggestions
+    work as soon as rules are embedded. See
     ``services.rule_retriever.CosineRuleRetriever``.
     """
     return CosineRuleRetriever(embeddings=embeddings)
 
 
-async def get_vector_store_provisioner(
+async def get_ai_bootstrap(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
-) -> VectorStoreProvisioner:
-    """Create the idempotent, best-effort Vector Search endpoint/index provisioner."""
-    return VectorStoreProvisioner(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
+) -> AiBootstrap:
+    """Create the best-effort AI grants + embeddings backfill helper."""
+    return AiBootstrap(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
 
 
 async def get_discovery_service(
