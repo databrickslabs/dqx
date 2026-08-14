@@ -25,6 +25,7 @@ from tests.suggester_eval_support import (
     Metrics,
     Recordings,
     TableLabels,
+    build_suggester,
     load_corpus,
     load_labels,
     load_recordings,
@@ -134,6 +135,27 @@ class TestRetrievalCoverage:
             f"Retrieval did not put every labelled rule in front of the judge "
             f"({total.retrieved_expected}/{total.retrievable_expected}). Affected tables:\n"
             + "\n".join(f"  {line}" for line in missed)
+        )
+
+    def test_per_column_retrieval_costs_one_embedding_round_trip(self):
+        """Every column's query text must go out in a single batched call.
+
+        Retrieval builds one query per column, so before batching a seven-column
+        table cost seven embedding round trips. Asserting the HTTP call count at
+        the boundary is what keeps that from regressing quietly — the call count
+        is invisible from inside the retriever, and a per-column round trip is a
+        latency regression rather than a wrong answer, so no correctness test
+        would notice.
+        """
+        table = next(t for t in load_tables() if t.binding_id == "b-orders")
+        suggester, endpoints = build_suggester(table, load_corpus(), load_recordings())
+
+        asyncio.run(suggester.suggest(table.binding_id, "eval@example.com"))
+
+        assert endpoints.embedded_text_count == len(table.columns)
+        assert endpoints.embed_call_count == 1, (
+            f"{endpoints.embedded_text_count} column query texts went out in "
+            f"{endpoints.embed_call_count} calls; expected one batch."
         )
 
 
