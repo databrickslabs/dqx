@@ -1,0 +1,38 @@
+[
+  {
+    "binding_id": "b-customers",
+    "table_fqn": "eval.golden.customers",
+    "note": "Baseline shape: one obvious identity column, one obvious format column, and a decoy (secondary_contact) that a careless judge binds the email rule to.",
+    "columns": [
+      {"name": "customer_id", "type": "STRING", "comment": "Primary key, one row per customer"},
+      {"name": "email", "type": "STRING", "comment": "Customer contact email address"},
+      {"name": "secondary_contact", "type": "STRING", "comment": "Optional free-text note about how else to reach the customer"},
+      {"name": "country_code", "type": "STRING", "comment": "ISO 3166-1 alpha-2 country code"},
+      {"name": "created_at", "type": "TIMESTAMP", "comment": "Row creation timestamp"},
+      {"name": "lifetime_value", "type": "DECIMAL(18,2)", "comment": "Total revenue attributed to the customer to date"}
+    ]
+  },
+  {
+    "binding_id": "b-orders",
+    "table_fqn": "eval.golden.orders",
+    "note": "Carries the multi-slot case (ordered_at before shipped_at) and a foreign key that must NOT attract the uniqueness rule.",
+    "columns": [
+      {"name": "order_id", "type": "STRING", "comment": "Primary key of the order"},
+      {"name": "customer_id", "type": "STRING", "comment": "Foreign key to customers.customer_id; repeats across orders"},
+      {"name": "order_total", "type": "DECIMAL(18,2)", "comment": "Order gross total, expressed in order_currency"},
+      {"name": "order_currency", "type": "STRING", "comment": "ISO 4217 currency code for order_total"},
+      {"name": "ordered_at", "type": "TIMESTAMP", "comment": "When the order was placed"},
+      {"name": "shipped_at", "type": "TIMESTAMP", "comment": "When the order shipped; null until dispatch"},
+      {"name": "status", "type": "STRING", "comment": "Order state: one of NEW, PAID, SHIPPED, CANCELLED"}
+    ]
+  },
+  {
+    "binding_id": "b-raw-landing",
+    "table_fqn": "eval.golden.raw_landing",
+    "note": "The table whose correct answer is nothing. Both columns are documented as legitimately null, so even the universal not-null rule is wrong here.",
+    "columns": [
+      {"name": "payload", "type": "STRING", "comment": "Raw unparsed vendor payload; null is expected while a backfill is in flight"},
+      {"name": "ingest_batch", "type": "STRING", "comment": "Optional batch tag, left null for streaming arrivals"}
+    ]
+  }
+]

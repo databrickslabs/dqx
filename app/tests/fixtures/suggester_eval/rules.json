@@ -1,0 +1,265 @@
+[
+  {
+    "rule_id": "rr-not-null",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+      "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Not null check",
+      "description": "The column must always be populated; a null value fails the check.",
+      "dimension": "Completeness",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-not-null-not-empty",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_not_null_and_not_empty", "arguments": {"column": "{{column}}"}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Value is present",
+      "description": "The text column must be populated and must not be an empty or whitespace-only string.",
+      "dimension": "Completeness",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-unique",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_unique", "arguments": {"columns": ["{{column}}"]}},
+      "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one", "arg_key": "columns"}],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Key is unique",
+      "description": "Every value in the column must be distinct; the column identifies a single row, such as a primary key or a natural key.",
+      "dimension": "Uniqueness",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-email-format",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^[^@\\s]+@[^@\\s]+\\.[A-Za-z]{2,}$"}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "regex", "type": "regex", "value": "^[^@\\s]+@[^@\\s]+\\.[A-Za-z]{2,}$"}]
+    },
+    "user_metadata": {
+      "name": "Valid email address format",
+      "description": "The email column must contain a syntactically valid email address, with a local part, an @ sign and a domain.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-not-in-future",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_not_in_future", "arguments": {"column": "{{column}}"}},
+      "slots": [{"name": "column", "family": "temporal", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Timestamp is not in the future",
+      "description": "The date or timestamp column must not hold a value later than the current time; a future timestamp indicates a clock or ingestion fault.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-positive-amount",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_in_range", "arguments": {"column": "{{column}}", "min_limit": 0}},
+      "slots": [{"name": "column", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "min_limit", "type": "number", "value": 0}]
+    },
+    "user_metadata": {
+      "name": "Monetary amount is positive",
+      "description": "The monetary amount, total or price column must be zero or greater; a negative amount is not a valid value.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-value-in-list",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_in_list", "arguments": {"column": "{{column}}", "allowed": ["NEW", "PAID", "SHIPPED", "CANCELLED"]}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "allowed", "type": "list", "value": ["NEW", "PAID", "SHIPPED", "CANCELLED"]}]
+    },
+    "user_metadata": {
+      "name": "Status is in the allowed set",
+      "description": "The status or state column must hold one of the enumerated allowed values; anything else is an unrecognised status.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-start-before-end",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "polarity": "pass",
+    "definition": {
+      "body": {"predicate": "{{start_ts}} <= {{end_ts}}"},
+      "slots": [
+        {"name": "start_ts", "family": "temporal", "position": 0, "cardinality": "one"},
+        {"name": "end_ts", "family": "temporal", "position": 1, "cardinality": "one"}
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Start timestamp is before end timestamp",
+      "description": "Compares two timestamp columns and requires the earlier event to come first, for example an order placed before it was shipped.",
+      "dimension": "Consistency",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-iso-country",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^[A-Z]{2}$"}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "regex", "type": "regex", "value": "^[A-Z]{2}$"}]
+    },
+    "user_metadata": {
+      "name": "Valid ISO country code",
+      "description": "The country code column must be a two-letter uppercase ISO 3166-1 alpha-2 country code.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-currency-code",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^[A-Z]{3}$"}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "regex", "type": "regex", "value": "^[A-Z]{3}$"}]
+    },
+    "user_metadata": {
+      "name": "Valid ISO currency code",
+      "description": "The currency column must be a three-letter uppercase ISO 4217 currency code such as USD, EUR or GBP.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-phone-format",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^\\+?[0-9 ()-]{7,20}$"}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "regex", "type": "regex", "value": "^\\+?[0-9 ()-]{7,20}$"}]
+    },
+    "user_metadata": {
+      "name": "Valid phone number format",
+      "description": "The telephone or mobile number column must look like a dialable phone number, optionally with a leading country prefix.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-url-format",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^https?://"}},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "regex", "type": "regex", "value": "^https?://"}]
+    },
+    "user_metadata": {
+      "name": "Valid URL format",
+      "description": "The website, link or URL column must start with an http or https scheme.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-non-negative-count",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_in_range", "arguments": {"column": "{{column}}", "min_limit": 0}},
+      "slots": [{"name": "column", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [{"name": "min_limit", "type": "number", "value": 0}]
+    },
+    "user_metadata": {
+      "name": "Count is not negative",
+      "description": "The count or quantity column must be zero or greater; a negative count cannot occur.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-percentage-range",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {"function": "is_in_range", "arguments": {"column": "{{column}}", "min_limit": 0, "max_limit": 100}},
+      "slots": [{"name": "column", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "parameters": [
+        {"name": "min_limit", "type": "number", "value": 0},
+        {"name": "max_limit", "type": "number", "value": 100}
+      ]
+    },
+    "user_metadata": {
+      "name": "Percentage is between 0 and 100",
+      "description": "The percentage or rate column must fall between 0 and 100 inclusive.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-max-length",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "polarity": "pass",
+    "definition": {
+      "body": {"predicate": "length({{column}}) <= 255"},
+      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+      "parameters": [{"name": "max_length", "type": "number", "value": 255}]
+    },
+    "user_metadata": {
+      "name": "Text length within bound",
+      "description": "The text column must not exceed the agreed maximum character length.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  }
+]

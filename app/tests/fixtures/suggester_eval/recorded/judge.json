@@ -1,0 +1,118 @@
+{
+  "eval.golden.customers": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "customer_id"},
+      "explanation": "customer_id is the table's primary key, so every row must carry a value for it."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "customer_id"},
+      "explanation": "The comment states one row per customer, so customer_id values cannot repeat."
+    },
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "email"},
+      "explanation": "email is the documented contact channel for a customer, so a missing value breaks downstream comms."
+    },
+    {
+      "rule_id": "rr-email-format",
+      "mapping": {"column": "email"},
+      "explanation": "The column holds an email address, and this rule enforces local-part, @ and domain structure."
+    },
+    {
+      "rule_id": "rr-email-format",
+      "mapping": {"column": "secondary_contact"},
+      "explanation": "secondary_contact is another way to reach the customer, so it may hold an email."
+    },
+    {
+      "rule_id": "rr-iso-country",
+      "mapping": {"column": "country_code"},
+      "explanation": "The comment names ISO 3166-1 alpha-2 explicitly, which is what the two-letter pattern checks."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "created_at"},
+      "explanation": "A row cannot have been created after now, so a future created_at signals a clock fault."
+    },
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "email"},
+      "explanation": "Duplicate of an earlier entry; the pipeline must collapse it."
+    },
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "no_such_column"},
+      "explanation": "Names a column that does not exist on the table."
+    },
+    {
+      "rule_id": "rr-start-before-end",
+      "mapping": {"start_ts": "created_at"},
+      "explanation": "Leaves end_ts unfilled, so the mapping is incomplete."
+    }
+  ],
+  "eval.golden.orders": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "order_id"},
+      "explanation": "order_id is the order's primary key and is required on every row."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "order_id"},
+      "explanation": "A primary key identifies one row, so order_id values must be distinct."
+    },
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "customer_id"},
+      "explanation": "An order without an owning customer cannot be attributed, so the foreign key must be populated."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "customer_id"},
+      "explanation": "customer_id looks like a key column, so its values should be distinct."
+    },
+    {
+      "rule_id": "rr-positive-amount",
+      "mapping": {"column": "order_total"},
+      "explanation": "order_total is a gross monetary total, and a negative gross total is not a representable value."
+    },
+    {
+      "rule_id": "rr-currency-code",
+      "mapping": {"column": "order_currency"},
+      "explanation": "The comment names ISO 4217, which is the three-letter code this pattern enforces."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "ordered_at"},
+      "explanation": "An order cannot be placed later than now, so ordered_at must not lead the clock."
+    },
+    {
+      "rule_id": "rr-value-in-list",
+      "mapping": {"column": "status"},
+      "explanation": "The comment enumerates the four legal states, so any other value is unrecognised."
+    },
+    {
+      "rule_id": "rr-start-before-end",
+      "mapping": {"start_ts": "ordered_at", "end_ts": "shipped_at"},
+      "explanation": "Dispatch follows placement, so ordered_at must not be later than shipped_at."
+    },
+    {
+      "rule_id": "rr-start-before-end",
+      "mapping": {"start_ts": "ordered_at", "end_ts": "ordered_at"},
+      "explanation": "Binds both slots to one column, which can never fail and is always wrong."
+    },
+    {
+      "rule_id": "rr-does-not-exist",
+      "mapping": {"column": "order_id"},
+      "explanation": "Names a rule id that is not in the candidate set."
+    }
+  ],
+  "eval.golden.raw_landing": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "payload"},
+      "explanation": "payload carries the record body, so it should always be populated."
+    }
+  ]
+}

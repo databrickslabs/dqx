@@ -1,0 +1,39 @@
+{
+  "b-customers": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "customer_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "customer_id"}},
+      {"rule_id": "rr-not-null", "mapping": {"column": "email"}},
+      {"rule_id": "rr-email-format", "mapping": {"column": "email"}},
+      {"rule_id": "rr-iso-country", "mapping": {"column": "country_code"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "created_at"}}
+    ],
+    "must_not_suggest": [
+      {"rule_id": "rr-email-format", "mapping": {"column": "secondary_contact"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "country_code"}}
+    ]
+  },
+  "b-orders": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "order_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "order_id"}},
+      {"rule_id": "rr-not-null", "mapping": {"column": "customer_id"}},
+      {"rule_id": "rr-positive-amount", "mapping": {"column": "order_total"}},
+      {"rule_id": "rr-currency-code", "mapping": {"column": "order_currency"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "ordered_at"}},
+      {"rule_id": "rr-value-in-list", "mapping": {"column": "status"}},
+      {"rule_id": "rr-start-before-end", "mapping": {"start_ts": "ordered_at", "end_ts": "shipped_at"}}
+    ],
+    "must_not_suggest": [
+      {"rule_id": "rr-unique", "mapping": {"column": "customer_id"}},
+      {"rule_id": "rr-not-null", "mapping": {"column": "shipped_at"}}
+    ]
+  },
+  "b-raw-landing": {
+    "expected": [],
+    "must_not_suggest": [
+      {"rule_id": "rr-not-null"},
+      {"rule_id": "rr-not-null-not-empty"}
+    ]
+  }
+}
