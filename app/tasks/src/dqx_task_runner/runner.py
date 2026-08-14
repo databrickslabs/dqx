@@ -580,9 +580,18 @@ def _run_dryrun_sql_check(
         )
 
         # SQL checks treat each violation row as one error against a single
-        # logical "check" (criticality 'error' by convention).
+        # logical "check" (criticality 'error' by convention). ``status`` mirrors
+        # what ``DQMetricsObserver`` emits so both producers write one shape into
+        # the shared metrics table.
         synth_check_metrics = _json_dumps(
-            [{"check_name": str(check_name), "error_count": invalid_rows, "warning_count": 0}]
+            [
+                {
+                    "check_name": str(check_name),
+                    "error_count": invalid_rows,
+                    "warning_count": 0,
+                    "status": "error" if invalid_rows > 0 else "passed",
+                }
+            ]
         )
         observed = {
             "input_row_count": str(total_rows),

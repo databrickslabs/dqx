@@ -380,7 +380,9 @@ The `check_metrics` field in the summary table already contains a per-check brea
     LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint,status:string>>')) AS cm
     WHERE run_id = '<run_id>'
       AND metric_name = 'check_metrics'
-      AND cm.status != 'passed';
+      -- Count-based so the recipe also works on rows written before `status` was added,
+      -- where from_json yields status = NULL and `status != 'passed'` would drop the row.
+      AND (cm.error_count > 0 OR cm.warning_count > 0);
     ```
   </TabItem>
   <TabItem value="Python" label="Python">
@@ -400,7 +402,9 @@ The `check_metrics` field in the summary table already contains a per-check brea
       .filter((F.col("run_id") == "<run_id>") & (F.col("metric_name") == "check_metrics"))
       .select(F.explode(F.from_json(F.col("metric_value"), check_metrics_schema)).alias("cm"))
       .select("cm.*")
-      .filter(F.col("status") != "passed")
+      # Count-based so the recipe also works on rows written before `status` was added,
+      # where from_json yields status = None and a `!= "passed"` filter would drop the row.
+      .filter((F.col("error_count") > 0) | (F.col("warning_count") > 0))
     )
 
     display(failed_checks_df)
@@ -701,7 +705,7 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
       MIN(sm.run_time) AS first_failure_time,
       MIN_BY(sm.run_id, sm.run_time) AS first_failure_run_id
     FROM catalog.schema.summary_metrics sm
-    LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
+    LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint,status:string>>')) AS cm
     WHERE metric_name = 'check_metrics'
       AND cm.error_count > 0
     GROUP BY cm.check_name
@@ -717,6 +721,7 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
       StructField("check_name", StringType()),
       StructField("error_count", LongType()),
       StructField("warning_count", LongType()),
+      StructField("status", StringType()),
     ]))
 
     first_failures_df = (

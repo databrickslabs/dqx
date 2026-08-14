@@ -3059,6 +3059,48 @@ def test_observer_check_metrics_status(ws, spark, apply_checks_method):
     ]
 
 
+@pytest.mark.parametrize(
+    "check_name",
+    [
+        "plain_name",
+        "it's_valid",
+        'he said "hi"',
+        r"back\slash",
+        "mixed \"q\" and \\ and 's",
+    ],
+)
+def test_observer_check_metrics_name_round_trip(ws, spark, check_name):
+    """Test that check names survive the SQL literal round-trip into check_metrics.
+
+    ``check_metrics`` is assembled as a SQL string expression, so the check name is embedded in a
+    single-quoted literal twice over (once JSON-encoded, once as an exists() comparison). Spark's
+    parser honours backslash escapes there, which broke two name shapes:
+
+      * a single quote was dropped (``it's_valid`` reported as ``its_valid``) because ANSI ''
+        doubling is not honoured in this mode;
+      * a double quote produced malformed JSON, because the backslash json.dumps adds was consumed
+        by the parser, so json.loads on the metric raised.
+    """
+    checks = [
+        {
+            "name": check_name,
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        }
+    ]
+
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame([[1, "Alice", 30, 50000], [None, "Charlie", 35, 60000]], TEST_SCHEMA)
+    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, checks)
+    checked_df.count()  # Trigger an action to get the metrics
+
+    # json.loads must not raise, and the name must come back byte-for-byte.
+    check_metrics = json.loads(observation.get["check_metrics"])
+    assert check_metrics == [{"check_name": check_name, "error_count": 1, "warning_count": 0, "status": "error"}]
+
+
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
 def test_observer_check_metrics_status_error_takes_precedence(ws, spark, apply_checks_method):
     """Test that a check triggering both errors and warnings reports *error*.

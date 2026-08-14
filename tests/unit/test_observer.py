@@ -131,6 +131,35 @@ def test_check_metrics_expr_emits_status_derived_from_counts():
     assert expr == expected
 
 
+def test_check_metrics_expr_escapes_single_quotes_with_backslash():
+    """Single quotes must be escaped as \\' — ANSI '' doubling is not honoured by Spark.
+
+    Spark's parser runs with *spark.sql.parser.escapedStringLiterals* false, where a doubled ''
+    pair is dropped outright rather than unescaped: a check named "it's_valid" was reported as
+    "its_valid". The round-trip is covered by an integration test; this pins the emitted SQL.
+    """
+    expr = DQMetricsObserver().get_metrics(["it's_valid"])[-1]
+
+    # Every occurrence of the name — in the JSON literal and in each aggregate's exists()
+    # comparison — must use the backslash form, and no ANSI-doubled pair may remain anywhere.
+    assert "it\\'s_valid" in expr
+    assert "it''s_valid" not in expr
+    assert "''" not in expr
+
+
+def test_check_metrics_expr_escapes_backslashes():
+    """Backslashes must be doubled, or the parser consumes them.
+
+    Without this, the backslash JSON-encoding adds for an embedded double quote is eaten and the
+    emitted value is malformed JSON (``{"check_name":"he said "hi""}``).
+    """
+    expr = DQMetricsObserver().get_metrics(['he said "hi"'])[-1]
+
+    # json.dumps produces \" for the embedded quotes; the SQL literal must carry \\" so the parser
+    # leaves a single backslash behind for the JSON decoder.
+    assert '\\\\"hi\\\\"' in expr
+
+
 def test_get_metrics_idempotent():
     """Verifies that repeated calls with the same args return equal results."""
     observer = DQMetricsObserver()
