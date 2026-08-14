@@ -50,8 +50,8 @@ TEST_OBSERVER_NAME = "test_observer"
 # Expected check_metrics JSON value for TEST_CHECKS with standard 4-row test data
 # (row 3 has id=None → error, row 4 has name=None → warning)
 TEST_CHECK_METRICS_VALUE = (
-    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
-    '{"check_name":"name_is_not_null_and_not_empty","error_count":0,"warning_count":1}]'
+    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0,"status":"error"},'
+    '{"check_name":"name_is_not_null_and_not_empty","error_count":0,"warning_count":1,"status":"warn"}]'
 )
 
 
@@ -2999,9 +2999,114 @@ def test_observer_check_metrics(ws, spark, apply_checks_method):
     # Per-check metrics as compact JSON
     check_metrics = json.loads(actual_metrics["check_metrics"])
     assert check_metrics == [
-        {"check_name": "id_is_not_null", "error_count": 1, "warning_count": 0},
-        {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 1},
+        {"check_name": "id_is_not_null", "error_count": 1, "warning_count": 0, "status": "error"},
+        {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 1, "status": "warn"},
     ]
+
+
+@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
+def test_observer_check_metrics_status(ws, spark, apply_checks_method):
+    """Test that check_metrics reports a per-check status covering error, warn and passed outcomes.
+
+    The status of a check that never triggers must be *passed*: an entry with zero counts is
+    indistinguishable from a failing one without it, which is what makes the counts alone
+    insufficient for dashboarding.
+    """
+    checks = [
+        {
+            "name": "id_error",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        },
+        {
+            "name": "name_warn",
+            "criticality": "warn",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
+        },
+        {
+            "name": "age_passed",
+            "criticality": "error",
+            "check": {"function": "is_in_range", "arguments": {"column": "age", "min_limit": 0, "max_limit": 150}},
+        },
+    ]
+
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+
+    if apply_checks_method == DQEngine.apply_checks:
+        checked_df, observation = dq_engine.apply_checks(test_df, deserialize_checks(checks))
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
+        checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, checks)
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+
+    checked_df.count()  # Trigger an action to get the metrics
+    check_metrics = json.loads(observation.get["check_metrics"])
+
+    assert check_metrics == [
+        {"check_name": "id_error", "error_count": 1, "warning_count": 0, "status": "error"},
+        {"check_name": "name_warn", "error_count": 0, "warning_count": 1, "status": "warn"},
+        {"check_name": "age_passed", "error_count": 0, "warning_count": 0, "status": "passed"},
+    ]
+
+
+@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
+def test_observer_check_metrics_status_error_takes_precedence(ws, spark, apply_checks_method):
+    """Test that a check triggering both errors and warnings reports *error*.
+
+    A single check name can accumulate both when the same name is reused across criticalities, so the
+    status must be deterministic rather than dependent on which count is inspected first.
+    """
+    checks = [
+        {
+            "name": "shared_name",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        },
+        {
+            "name": "shared_name",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "name"}},
+        },
+    ]
+
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+
+    if apply_checks_method == DQEngine.apply_checks:
+        checked_df, observation = dq_engine.apply_checks(test_df, deserialize_checks(checks))
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
+        checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, checks)
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+
+    checked_df.count()  # Trigger an action to get the metrics
+    check_metrics = json.loads(observation.get["check_metrics"])
+
+    # Duplicate check names are preserved as separate entries, each carrying both counts.
+    for entry in check_metrics:
+        assert entry["check_name"] == "shared_name"
+        assert entry["error_count"] == 1
+        assert entry["warning_count"] == 1
+        assert entry["status"] == "error"
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])

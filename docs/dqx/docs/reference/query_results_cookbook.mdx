@@ -374,12 +374,13 @@ The `check_metrics` field in the summary table already contains a per-check brea
     SELECT
       cm.check_name,
       cm.error_count,
-      cm.warning_count
+      cm.warning_count,
+      cm.status
     FROM catalog.schema.summary_metrics
-    LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
+    LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint,status:string>>')) AS cm
     WHERE run_id = '<run_id>'
       AND metric_name = 'check_metrics'
-      AND (cm.error_count > 0 OR cm.warning_count > 0);
+      AND cm.status != 'passed';
     ```
   </TabItem>
   <TabItem value="Python" label="Python">
@@ -391,6 +392,7 @@ The `check_metrics` field in the summary table already contains a per-check brea
       StructField("check_name", StringType()),
       StructField("error_count", LongType()),
       StructField("warning_count", LongType()),
+      StructField("status", StringType()),
     ]))
 
     failed_checks_df = (
@@ -398,7 +400,7 @@ The `check_metrics` field in the summary table already contains a per-check brea
       .filter((F.col("run_id") == "<run_id>") & (F.col("metric_name") == "check_metrics"))
       .select(F.explode(F.from_json(F.col("metric_value"), check_metrics_schema)).alias("cm"))
       .select("cm.*")
-      .filter((F.col("error_count") > 0) | (F.col("warning_count") > 0))
+      .filter(F.col("status") != "passed")
     )
 
     display(failed_checks_df)

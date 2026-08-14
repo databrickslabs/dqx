@@ -103,6 +103,34 @@ def test_get_metrics_with_checks_empty_list():
     assert metrics == _default_metrics()
 
 
+def test_check_metrics_expr_emits_status_derived_from_counts():
+    """Asserts the generated SQL literally, independent of production code.
+
+    The *_check_metrics_expr* helper below derives its expectation from *get_metrics* itself, so it
+    cannot catch a change in the emitted JSON shape. This test pins the shape: *status* must be
+    present and derived from the same two aggregates, with errors taking precedence over warnings.
+    """
+    observer = DQMetricsObserver()
+    expr = observer.get_metrics(["c"])[-1]
+
+    error_count = "count(case when exists(_errors, x -> x.name = 'c') then 1 end)"
+    warning_count = "count(case when exists(_warnings, x -> x.name = 'c') then 1 end)"
+    expected = (
+        "concat('[', concat_ws(',', concat("
+        '\'{"check_name":"c","error_count":\','
+        f"cast({error_count} as string),"
+        '\',"warning_count":\','
+        f"cast({warning_count} as string),"
+        '\',"status":"\','
+        f"case when {error_count} > 0 then 'error' "
+        f"when {warning_count} > 0 then 'warn' "
+        "else 'passed' end,"
+        "'\"}')"
+        "), ']') as check_metrics"
+    )
+    assert expr == expected
+
+
 def test_get_metrics_idempotent():
     """Verifies that repeated calls with the same args return equal results."""
     observer = DQMetricsObserver()
