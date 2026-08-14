@@ -114,5 +114,205 @@
       "mapping": {"column": "payload"},
       "explanation": "payload carries the record body, so it should always be populated."
     }
+  ],
+  "eval.golden.invoices": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "invoice_id"},
+      "explanation": "invoice_id is the primary key and must be present on every row."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "invoice_id"},
+      "explanation": "One row per invoice means invoice_id values cannot repeat."
+    },
+    {
+      "rule_id": "rr-email-format",
+      "mapping": {"column": "vendor_email"},
+      "explanation": "The column is the vendor's billing email, so the address structure must hold for remittance to reach them."
+    },
+    {
+      "rule_id": "rr-positive-amount",
+      "mapping": {"column": "budget_amount"},
+      "explanation": "An approved budget is a monetary figure that cannot be negative."
+    },
+    {
+      "rule_id": "rr-positive-amount",
+      "mapping": {"column": "actual_spend"},
+      "explanation": "Spend against a budget is also a monetary figure, so the same non-negative floor applies to this second column."
+    },
+    {
+      "rule_id": "rr-currency-code",
+      "mapping": {"column": "invoice_currency"},
+      "explanation": "The comment names ISO 4217, which the three-letter pattern enforces."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "issued_at"},
+      "explanation": "An invoice cannot be issued later than now, so a future issue date is a clock or entry fault."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "due_at"},
+      "explanation": "due_at is a date on the invoice, so it should not be later than now."
+    },
+    {
+      "rule_id": "rr-start-before-end",
+      "mapping": {"start_ts": "issued_at", "end_ts": "due_at"},
+      "explanation": "Payment falls due after issue, so the issue timestamp must not follow the due timestamp."
+    }
+  ],
+  "eval.golden.shipments": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "shipment_id"},
+      "explanation": "shipment_id is the primary key and is required on every row."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "shipment_id"},
+      "explanation": "A shipment key identifies one consignment, so its values must be distinct."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "dispatched_at"},
+      "explanation": "A shipment cannot have left the warehouse later than now, so dispatch must not lead the clock."
+    },
+    {
+      "rule_id": "rr-start-before-end",
+      "mapping": {"start_ts": "dispatched_at", "end_ts": "delivered_at"},
+      "explanation": "Delivery follows dispatch, so the dispatch timestamp must not be later than the delivery timestamp."
+    },
+    {
+      "rule_id": "rr-start-before-end",
+      "mapping": {"start_ts": "delivered_at", "end_ts": "dispatched_at"},
+      "explanation": "Both columns are timestamps on the same consignment, so either ordering could be checked."
+    },
+    {
+      "rule_id": "rr-iso-country",
+      "mapping": {"column": "destination_country"},
+      "explanation": "The comment names ISO 3166-1 alpha-2, which the two-letter pattern enforces."
+    },
+    {
+      "rule_id": "rr-non-negative-count",
+      "mapping": {"column": "parcel_count"},
+      "explanation": "A consignment cannot contain a negative number of parcels, and the column is an integer count."
+    }
+  ],
+  "eval.golden.sensor_readings": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "reading_id"},
+      "explanation": "reading_id is the primary key and is required on every row."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "reading_id"},
+      "explanation": "One row per reading means the key's values cannot repeat."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "recorded_at"},
+      "explanation": "A sensor cannot record a sample later than now, so a future timestamp indicates a device clock fault."
+    },
+    {
+      "rule_id": "rr-percentage-range",
+      "mapping": {"column": "humidity_percent"},
+      "explanation": "Relative humidity is expressed as a percentage, so values outside nought to one hundred are impossible."
+    },
+    {
+      "rule_id": "rr-positive-amount",
+      "mapping": {"column": "humidity_percent"},
+      "explanation": "humidity_percent is numeric and should not go below zero."
+    },
+    {
+      "rule_id": "rr-non-negative-count",
+      "mapping": {"column": "error_count"},
+      "explanation": "A count of transmission errors cannot be negative."
+    },
+    {
+      "rule_id": "rr-url-format",
+      "mapping": {"column": "sensor_url"},
+      "explanation": "The column holds the device management URL, so it needs an http or https scheme to be reachable."
+    }
+  ],
+  "eval.golden.employees": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "employee_id"},
+      "explanation": "employee_id is the primary key of the record and is always required."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "employee_id"},
+      "explanation": "One row per employee means the key's values must be distinct."
+    },
+    {
+      "rule_id": "rr-not-null-not-empty",
+      "mapping": {"column": "work_email"},
+      "explanation": "A blank work email is as unusable as a null one, so emptiness has to be rejected too."
+    },
+    {
+      "rule_id": "rr-email-format",
+      "mapping": {"column": "work_email"},
+      "explanation": "The column is the primary work email address, so the local-part and domain structure must hold."
+    },
+    {
+      "rule_id": "rr-email-format",
+      "mapping": {"column": "manager_note"},
+      "explanation": "manager_note is text written by a manager and may contain an email address."
+    },
+    {
+      "rule_id": "rr-phone-format",
+      "mapping": {"column": "home_phone"},
+      "explanation": "The column holds a home telephone number, which must be dialable for contact to succeed."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "joined_on"},
+      "explanation": "Nobody can have joined later than today, so a future joining date is an entry fault."
+    }
+  ],
+  "eval.golden.wide_events": [
+    {
+      "rule_id": "rr-not-null",
+      "mapping": {"column": "event_id"},
+      "explanation": "event_id is the primary key of the event and is required on every row."
+    },
+    {
+      "rule_id": "rr-unique",
+      "mapping": {"column": "event_id"},
+      "explanation": "One row per event means the key's values cannot repeat."
+    },
+    {
+      "rule_id": "rr-not-in-future",
+      "mapping": {"column": "occurred_at"},
+      "explanation": "An event cannot have occurred later than now, so a future timestamp is a clock fault."
+    },
+    {
+      "rule_id": "rr-currency-code",
+      "mapping": {"column": "settlement_currency"},
+      "explanation": "The comment names ISO 4217, which the three-letter pattern enforces."
+    },
+    {
+      "rule_id": "rr-email-format",
+      "mapping": {"column": "contact_email"},
+      "explanation": "The column is the operator's contact email, so the address structure must hold."
+    },
+    {
+      "rule_id": "rr-iso-country",
+      "mapping": {"column": "origin_country"},
+      "explanation": "The comment names ISO 3166-1 alpha-2, which the two-letter pattern enforces."
+    },
+    {
+      "rule_id": "rr-positive-amount",
+      "mapping": {"column": "settlement_total"},
+      "explanation": "A settlement gross total is monetary and cannot be negative."
+    },
+    {
+      "rule_id": "rr-value-in-list",
+      "mapping": {"column": "status"},
+      "explanation": "The comment enumerates the four legal states, so anything else is unrecognised."
+    }
   ]
 }

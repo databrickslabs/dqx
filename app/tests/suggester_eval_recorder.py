@@ -115,11 +115,20 @@ def main() -> None:
     asyncio.run(_drive(tables, recordings))
 
     target = RECORDED / "embeddings.json"
-    target.write_text(
-        json.dumps(dict(sorted(recordings.embeddings.items())), indent=1) + "\n",
-        encoding="utf-8",
-    )
+    target.write_text(_dump_one_vector_per_line(recordings.embeddings), encoding="utf-8")
     print(f"Wrote {len(recordings.embeddings)} vector(s) to {target}")
+
+
+def _dump_one_vector_per_line(embeddings: dict[str, list[float]]) -> str:
+    """Serialise with each vector on a single line.
+
+    ``json.dumps(indent=...)`` puts every float on its own line, which turns a
+    couple of hundred vectors into an eighteen-thousand-line diff nobody can
+    review. One line per key keeps the file greppable by digest and keeps a
+    re-record to a diff you can actually read.
+    """
+    lines = [f'  "{digest}": {json.dumps(vector)}' for digest, vector in sorted(embeddings.items())]
+    return "{\n" + ",\n".join(lines) + "\n}\n"
 
 
 if __name__ == "__main__":

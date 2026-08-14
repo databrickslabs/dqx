@@ -5,8 +5,21 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
-      "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "body": {
+        "function": "is_not_null",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "any",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
       "parameters": []
     },
     "user_metadata": {
@@ -22,8 +35,21 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_not_null_and_not_empty", "arguments": {"column": "{{column}}"}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "body": {
+        "function": "is_not_null_and_not_empty",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
       "parameters": []
     },
     "user_metadata": {
@@ -39,8 +65,23 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_unique", "arguments": {"columns": ["{{column}}"]}},
-      "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one", "arg_key": "columns"}],
+      "body": {
+        "function": "is_unique",
+        "arguments": {
+          "columns": [
+            "{{column}}"
+          ]
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "any",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "columns"
+        }
+      ],
       "parameters": []
     },
     "user_metadata": {
@@ -56,9 +97,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^[^@\\s]+@[^@\\s]+\\.[A-Za-z]{2,}$"}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "regex", "type": "regex", "value": "^[^@\\s]+@[^@\\s]+\\.[A-Za-z]{2,}$"}]
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}",
+          "regex": "^[^@\\s]+@[^@\\s]+\\.[A-Za-z]{2,}$"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "regex",
+          "type": "regex",
+          "value": "^[^@\\s]+@[^@\\s]+\\.[A-Za-z]{2,}$"
+        }
+      ]
     },
     "user_metadata": {
       "name": "Valid email address format",
@@ -73,8 +134,21 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_not_in_future", "arguments": {"column": "{{column}}"}},
-      "slots": [{"name": "column", "family": "temporal", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "body": {
+        "function": "is_not_in_future",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
       "parameters": []
     },
     "user_metadata": {
@@ -90,9 +164,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_in_range", "arguments": {"column": "{{column}}", "min_limit": 0}},
-      "slots": [{"name": "column", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "min_limit", "type": "number", "value": 0}]
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}",
+          "min_limit": 0
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "min_limit",
+          "type": "number",
+          "value": 0
+        }
+      ]
     },
     "user_metadata": {
       "name": "Monetary amount is positive",
@@ -107,9 +201,39 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_in_list", "arguments": {"column": "{{column}}", "allowed": ["NEW", "PAID", "SHIPPED", "CANCELLED"]}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "allowed", "type": "list", "value": ["NEW", "PAID", "SHIPPED", "CANCELLED"]}]
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}",
+          "allowed": [
+            "NEW",
+            "PAID",
+            "SHIPPED",
+            "CANCELLED"
+          ]
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "allowed",
+          "type": "list",
+          "value": [
+            "NEW",
+            "PAID",
+            "SHIPPED",
+            "CANCELLED"
+          ]
+        }
+      ]
     },
     "user_metadata": {
       "name": "Status is in the allowed set",
@@ -125,10 +249,22 @@
     "version": 1,
     "polarity": "pass",
     "definition": {
-      "body": {"predicate": "{{start_ts}} <= {{end_ts}}"},
+      "body": {
+        "predicate": "{{start_ts}} <= {{end_ts}}"
+      },
       "slots": [
-        {"name": "start_ts", "family": "temporal", "position": 0, "cardinality": "one"},
-        {"name": "end_ts", "family": "temporal", "position": 1, "cardinality": "one"}
+        {
+          "name": "start_ts",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "end_ts",
+          "family": "temporal",
+          "position": 1,
+          "cardinality": "one"
+        }
       ],
       "parameters": []
     },
@@ -145,9 +281,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^[A-Z]{2}$"}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "regex", "type": "regex", "value": "^[A-Z]{2}$"}]
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}",
+          "regex": "^[A-Z]{2}$"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "regex",
+          "type": "regex",
+          "value": "^[A-Z]{2}$"
+        }
+      ]
     },
     "user_metadata": {
       "name": "Valid ISO country code",
@@ -162,9 +318,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^[A-Z]{3}$"}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "regex", "type": "regex", "value": "^[A-Z]{3}$"}]
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}",
+          "regex": "^[A-Z]{3}$"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "regex",
+          "type": "regex",
+          "value": "^[A-Z]{3}$"
+        }
+      ]
     },
     "user_metadata": {
       "name": "Valid ISO currency code",
@@ -179,9 +355,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^\\+?[0-9 ()-]{7,20}$"}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "regex", "type": "regex", "value": "^\\+?[0-9 ()-]{7,20}$"}]
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}",
+          "regex": "^\\+?[0-9 ()-]{7,20}$"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "regex",
+          "type": "regex",
+          "value": "^\\+?[0-9 ()-]{7,20}$"
+        }
+      ]
     },
     "user_metadata": {
       "name": "Valid phone number format",
@@ -196,9 +392,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "regex_match", "arguments": {"column": "{{column}}", "regex": "^https?://"}},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "regex", "type": "regex", "value": "^https?://"}]
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}",
+          "regex": "^https?://"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "regex",
+          "type": "regex",
+          "value": "^https?://"
+        }
+      ]
     },
     "user_metadata": {
       "name": "Valid URL format",
@@ -213,9 +429,29 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_in_range", "arguments": {"column": "{{column}}", "min_limit": 0}},
-      "slots": [{"name": "column", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": "column"}],
-      "parameters": [{"name": "min_limit", "type": "number", "value": 0}]
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}",
+          "min_limit": 0
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "min_limit",
+          "type": "number",
+          "value": 0
+        }
+      ]
     },
     "user_metadata": {
       "name": "Count is not negative",
@@ -230,11 +466,34 @@
     "status": "approved",
     "version": 1,
     "definition": {
-      "body": {"function": "is_in_range", "arguments": {"column": "{{column}}", "min_limit": 0, "max_limit": 100}},
-      "slots": [{"name": "column", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": "column"}],
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}",
+          "min_limit": 0,
+          "max_limit": 100
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
       "parameters": [
-        {"name": "min_limit", "type": "number", "value": 0},
-        {"name": "max_limit", "type": "number", "value": 100}
+        {
+          "name": "min_limit",
+          "type": "number",
+          "value": 0
+        },
+        {
+          "name": "max_limit",
+          "type": "number",
+          "value": 100
+        }
       ]
     },
     "user_metadata": {
@@ -251,15 +510,2064 @@
     "version": 1,
     "polarity": "pass",
     "definition": {
-      "body": {"predicate": "length({{column}}) <= 255"},
-      "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
-      "parameters": [{"name": "max_length", "type": "number", "value": 255}]
+      "body": {
+        "predicate": "length({{column}}) <= 255"
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "max_length",
+          "type": "number",
+          "value": 255
+        }
+      ]
     },
     "user_metadata": {
       "name": "Text length within bound",
       "description": "The text column must not exceed the agreed maximum character length.",
       "dimension": "Validity",
       "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-icd10",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid ICD-10 diagnosis code",
+      "description": "The diagnosis code column must match the ICD-10 alphanumeric coding pattern used for clinical classification.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-snomed",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid SNOMED CT concept identifier",
+      "description": "The clinical concept column must hold a numeric SNOMED CT identifier drawn from the published terminology.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-npi",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid national provider identifier",
+      "description": "The provider column must be a ten digit national provider identifier issued to a clinician or practice.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-dosage-positive",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Medication dosage is positive",
+      "description": "The dosage or strength column must be greater than zero; a non-positive dose cannot be dispensed.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-bmi-plausible",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Body mass index is physiologically plausible",
+      "description": "The body mass index column must sit inside a plausible human range rather than an arithmetic artefact.",
+      "dimension": "Accuracy",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-visit-sequence",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "temporal",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Discharge follows admission",
+      "description": "Compares the admission and discharge timestamps of an encounter and requires the discharge not to precede the admission.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-lab-units",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Laboratory result unit is recognised",
+      "description": "The unit of measure column must be one of the standard laboratory units agreed for the assay.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-iban",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid IBAN",
+      "description": "The bank account column must be a syntactically valid international bank account number including the country prefix and check digits.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-swift-bic",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid SWIFT BIC",
+      "description": "The bank identifier column must be an eight or eleven character SWIFT business identifier code.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-ledger-balances",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "numeric",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Debits equal credits",
+      "description": "Compares the debit and credit amount columns of a journal line and requires the two to reconcile.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-tax-rate-range",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Tax rate is within statutory bounds",
+      "description": "The tax rate column must sit between zero and the maximum statutory rate for the jurisdiction.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-fiscal-period",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Fiscal period label is well formed",
+      "description": "The fiscal period column must follow the year and period naming convention used by the finance close.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-settlement-after-trade",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "temporal",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Settlement date follows trade date",
+      "description": "Compares the trade and settlement date columns and requires settlement not to precede the trade.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-cost-centre",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Cost centre code is recognised",
+      "description": "The cost centre column must reference a code that exists in the chart of accounts.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-credit-score-range",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Credit score is in scale",
+      "description": "The credit score column must fall inside the issuing bureau's published scale.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-ean13",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid EAN-13 barcode",
+      "description": "The barcode column must be a thirteen digit EAN with a correct trailing check digit.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-sku-pattern",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Stock keeping unit follows the naming standard",
+      "description": "The SKU column must follow the agreed product coding standard for the catalogue.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-stock-non-negative",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "On-hand stock is not negative",
+      "description": "The on-hand inventory column must be zero or greater; negative stock indicates an unposted movement.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-discount-fraction",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Discount fraction is between zero and one",
+      "description": "The discount column must express a fraction between zero and one rather than a percentage.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-warehouse-code",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Warehouse code is recognised",
+      "description": "The warehouse or site column must reference a location present in the facility master.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-delivery-window",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "temporal",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Delivery date follows dispatch date",
+      "description": "Compares the dispatch and delivery date columns and requires delivery not to precede dispatch.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-weight-positive",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Shipment weight is positive",
+      "description": "The gross weight column must be greater than zero for a physical consignment.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-carrier-scac",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid carrier SCAC code",
+      "description": "The carrier column must be a two to four letter standard carrier alpha code.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-latitude-range",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Latitude is within range",
+      "description": "The latitude column must fall between minus ninety and ninety degrees.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-longitude-range",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Longitude is within range",
+      "description": "The longitude column must fall between minus one hundred and eighty and one hundred and eighty degrees.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-uk-postcode",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid UK postcode",
+      "description": "The postcode column must match the United Kingdom outward and inward code format.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-us-zip",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid US ZIP code",
+      "description": "The ZIP column must be a five digit code, optionally followed by a four digit extension.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-timezone-name",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Timezone name is recognised",
+      "description": "The timezone column must name an entry from the IANA timezone database.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-iso3-country",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid three-letter country code",
+      "description": "The country column must be a three letter uppercase ISO 3166-1 alpha-3 code.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-uuid-format",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid UUID",
+      "description": "The identifier column must be a canonical hyphen-separated universally unique identifier.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-nhs-number",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid NHS number",
+      "description": "The patient identifier column must be a ten digit NHS number with a valid modulus eleven check digit.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-dob-past",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_in_future",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Date of birth is in the past",
+      "description": "The date of birth column must not be later than today.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-age-plausible",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Age is plausible",
+      "description": "The age column must sit inside a plausible human lifespan.",
+      "dimension": "Accuracy",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-national-insurance",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid National Insurance number",
+      "description": "The National Insurance column must follow the two letter, six digit, one letter format.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-no-test-accounts",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Production data holds no test records",
+      "description": "The name column must not contain placeholder or test markers that indicate a non-production record.",
+      "dimension": "Accuracy",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-http-status",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "HTTP status code is recognised",
+      "description": "The response status column must be a valid HTTP status code.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-latency-non-negative",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Latency is not negative",
+      "description": "The latency or duration column must be zero or greater.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-semver",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid semantic version",
+      "description": "The version column must follow the major, minor and patch semantic versioning form.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-log-level",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Log level is recognised",
+      "description": "The severity column must be one of the standard logging levels.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-hostname-format",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid hostname",
+      "description": "The host column must be a syntactically valid DNS hostname.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-ipv4-format",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid IPv4 address",
+      "description": "The address column must be a dotted quad IPv4 address with each octet in range.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-mac-address",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid MAC address",
+      "description": "The hardware address column must be a colon or hyphen separated MAC address.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-json-parseable",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "text",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Payload parses as JSON",
+      "description": "The payload column must contain text that parses as a JSON document.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-checksum-present",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_null_and_not_empty",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Checksum is present",
+      "description": "The checksum column must be populated so the record's integrity can be verified downstream.",
+      "dimension": "Completeness",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-meter-reading-increasing",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "numeric",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Meter reading does not decrease",
+      "description": "Compares the previous and current cumulative meter readings and requires the newer reading not to fall.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-temperature-plausible",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Temperature reading is plausible",
+      "description": "The temperature column must sit inside the sensor's rated operating range.",
+      "dimension": "Accuracy",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-pressure-non-negative",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Pressure is not negative",
+      "description": "The pressure column must be zero or greater in absolute terms.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-batch-code",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Batch code follows the plant convention",
+      "description": "The batch or lot column must follow the plant's coding convention for traceability.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-shift-code",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Shift code is recognised",
+      "description": "The shift column must be one of the operating shifts defined for the site.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-yield-percentage",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Yield percentage is in range",
+      "description": "The yield column must express a percentage between zero and one hundred.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-calibration-recent",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_in_future",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Calibration date is not in the future",
+      "description": "The calibration date column must not be later than the current date.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-utm-source",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Campaign source is recognised",
+      "description": "The campaign source column must be one of the tracked acquisition channels.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-click-through-fraction",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Click-through rate is a fraction",
+      "description": "The click-through rate column must be a fraction between zero and one.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-session-duration-positive",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Session duration is positive",
+      "description": "The session duration column must be greater than zero for a recorded visit.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-consent-flag",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_null",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "boolean",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Marketing consent flag is set",
+      "description": "The consent column must be populated so lawful basis for contact can be demonstrated.",
+      "dimension": "Completeness",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-locale-tag",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Valid locale tag",
+      "description": "The locale column must be a language and region tag such as en-GB.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-bounce-rate-percentage",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Bounce rate is a percentage",
+      "description": "The bounce rate column must express a percentage between zero and one hundred.",
+      "dimension": "Validity",
+      "severity": "Low"
+    }
+  },
+  {
+    "rule_id": "rr-d-employment-window",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "temporal",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Leaving date follows joining date",
+      "description": "Compares the joining and leaving date columns and requires the leaving date not to precede the joining date.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-salary-positive",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Salary is positive",
+      "description": "The salary or compensation column must be greater than zero.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-fte-fraction",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_range",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "numeric",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Full time equivalent is a fraction",
+      "description": "The FTE column must express a fraction between zero and one.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-grade-band",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Grade band is recognised",
+      "description": "The grade column must be one of the job bands published by reward.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-manager-not-self",
+    "mode": "sql",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "predicate": "{{left}} <= {{right}}"
+      },
+      "slots": [
+        {
+          "name": "left",
+          "family": "any",
+          "position": 0,
+          "cardinality": "one"
+        },
+        {
+          "name": "right",
+          "family": "any",
+          "position": 1,
+          "cardinality": "one"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Employee is not their own manager",
+      "description": "Compares the employee and manager identifier columns and requires them to differ.",
+      "dimension": "Consistency",
+      "severity": "High"
+    },
+    "polarity": "pass"
+  },
+  {
+    "rule_id": "rr-d-retention-class",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_null_and_not_empty",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Retention class is assigned",
+      "description": "The retention class column must be populated so the record's disposal schedule is known.",
+      "dimension": "Completeness",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-classification-label",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Data classification is recognised",
+      "description": "The classification column must be one of the agreed sensitivity labels.",
+      "dimension": "Validity",
+      "severity": "High"
+    }
+  },
+  {
+    "rule_id": "rr-d-owner-populated",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_null_and_not_empty",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Data owner is recorded",
+      "description": "The owner column must name an accountable owner for the record.",
+      "dimension": "Completeness",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-source-system",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_in_list",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "text",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Source system is recognised",
+      "description": "The source system column must reference a registered upstream system.",
+      "dimension": "Validity",
+      "severity": "Medium"
+    }
+  },
+  {
+    "rule_id": "rr-d-ingested-not-future",
+    "mode": "dqx_native",
+    "status": "approved",
+    "version": 1,
+    "definition": {
+      "body": {
+        "function": "is_not_in_future",
+        "arguments": {
+          "column": "{{column}}"
+        }
+      },
+      "slots": [
+        {
+          "name": "column",
+          "family": "temporal",
+          "position": 0,
+          "cardinality": "one",
+          "arg_key": "column"
+        }
+      ],
+      "parameters": []
+    },
+    "user_metadata": {
+      "name": "Ingestion timestamp is not in the future",
+      "description": "The ingestion timestamp column must not be later than the current time.",
+      "dimension": "Validity",
+      "severity": "Medium"
     }
   }
 ]

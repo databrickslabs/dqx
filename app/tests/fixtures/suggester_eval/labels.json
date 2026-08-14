@@ -35,5 +35,76 @@
       {"rule_id": "rr-not-null"},
       {"rule_id": "rr-not-null-not-empty"}
     ]
+  },
+  "b-invoices": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "invoice_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "invoice_id"}},
+      {"rule_id": "rr-email-format", "mapping": {"column": "vendor_email"}},
+      {"rule_id": "rr-positive-amount", "mapping": {"column": "budget_amount"}},
+      {"rule_id": "rr-positive-amount", "mapping": {"column": "actual_spend"}},
+      {"rule_id": "rr-currency-code", "mapping": {"column": "invoice_currency"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "issued_at"}},
+      {"rule_id": "rr-start-before-end", "mapping": {"start_ts": "issued_at", "end_ts": "due_at"}}
+    ],
+    "must_not_suggest": [
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "due_at"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "invoice_currency"}}
+    ]
+  },
+  "b-shipments": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "shipment_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "shipment_id"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "dispatched_at"}},
+      {"rule_id": "rr-start-before-end", "mapping": {"start_ts": "dispatched_at", "end_ts": "delivered_at"}},
+      {"rule_id": "rr-iso-country", "mapping": {"column": "destination_country"}},
+      {"rule_id": "rr-non-negative-count", "mapping": {"column": "parcel_count"}}
+    ],
+    "must_not_suggest": [
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "estimated_delivery_at"}},
+      {"rule_id": "rr-start-before-end", "mapping": {"start_ts": "delivered_at", "end_ts": "dispatched_at"}}
+    ]
+  },
+  "b-sensors": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "reading_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "reading_id"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "recorded_at"}},
+      {"rule_id": "rr-percentage-range", "mapping": {"column": "humidity_percent"}},
+      {"rule_id": "rr-non-negative-count", "mapping": {"column": "error_count"}},
+      {"rule_id": "rr-url-format", "mapping": {"column": "sensor_url"}}
+    ],
+    "must_not_suggest": [
+      {"rule_id": "rr-percentage-range", "mapping": {"column": "error_count"}},
+      {"rule_id": "rr-positive-amount", "mapping": {"column": "humidity_percent"}}
+    ]
+  },
+  "b-employees": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "employee_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "employee_id"}},
+      {"rule_id": "rr-not-null-not-empty", "mapping": {"column": "work_email"}},
+      {"rule_id": "rr-email-format", "mapping": {"column": "work_email"}},
+      {"rule_id": "rr-phone-format", "mapping": {"column": "home_phone"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "joined_on"}}
+    ],
+    "must_not_suggest": [
+      {"rule_id": "rr-email-format", "mapping": {"column": "manager_note"}},
+      {"rule_id": "rr-phone-format", "mapping": {"column": "work_email"}}
+    ]
+  },
+  "b-wide-events": {
+    "expected": [
+      {"rule_id": "rr-not-null", "mapping": {"column": "event_id"}},
+      {"rule_id": "rr-unique", "mapping": {"column": "event_id"}},
+      {"rule_id": "rr-not-in-future", "mapping": {"column": "occurred_at"}},
+      {"rule_id": "rr-currency-code", "mapping": {"column": "settlement_currency"}},
+      {"rule_id": "rr-email-format", "mapping": {"column": "contact_email"}},
+      {"rule_id": "rr-iso-country", "mapping": {"column": "origin_country"}},
+      {"rule_id": "rr-positive-amount", "mapping": {"column": "settlement_total"}},
+      {"rule_id": "rr-value-in-list", "mapping": {"column": "status"}}
+    ],
+    "must_not_suggest": []
   }
 }

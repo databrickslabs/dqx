@@ -563,6 +563,12 @@ class Metrics:
     violations: tuple[str, ...] = ()
     retrieved_expected: int = 0
     retrievable_expected: int = 0
+    # Missed answers, split by *where* they were lost. A rule the judge never
+    # saw is a retrieval problem; one it saw and passed over is a judge or
+    # prompt problem. Merging the two into a single recall figure hides which
+    # half to go and fix, so both are carried through the aggregate.
+    missed_unretrieved: tuple[str, ...] = ()
+    missed_after_retrieval: tuple[str, ...] = ()
 
     def __add__(self, other: "Metrics") -> "Metrics":
         return Metrics(
@@ -576,6 +582,8 @@ class Metrics:
             violations=self.violations + other.violations,
             retrieved_expected=self.retrieved_expected + other.retrieved_expected,
             retrievable_expected=self.retrievable_expected + other.retrievable_expected,
+            missed_unretrieved=self.missed_unretrieved + other.missed_unretrieved,
+            missed_after_retrieval=self.missed_after_retrieval + other.missed_after_retrieval,
         )
 
     @staticmethod
@@ -617,6 +625,7 @@ class Metrics:
             f"precision={self.precision:.3f} recall={self.recall:.3f} f1={self.f1:.3f} "
             f"p@k={self.precision_at_k:.3f} retrieval_recall={self.retrieval_recall:.3f} "
             f"tp={self.true_positives} fp={self.false_positives} fn={self.false_negatives} "
+            f"(unretrieved={len(self.missed_unretrieved)} post-retrieval={len(self.missed_after_retrieval)}) "
             f"violations={len(self.violations)}"
         )
 
@@ -658,6 +667,16 @@ def score(
         offered.update(call.offered_rule_ids)
     expected_rule_ids = {label.rule_id for label in labels.expected}
 
+    # Attribute every miss to the stage that lost it, so a recall drop points at
+    # a stage rather than just at a number.
+    unretrieved: list[str] = []
+    after_retrieval: list[str] = []
+    for label in labels.expected:
+        if label.keys() in predicted_set:
+            continue
+        where = after_retrieval if label.rule_id in offered else unretrieved
+        where.append(f"{labels.binding_id}:{label.rule_id}->{label.mapping}")
+
     return Metrics(
         true_positives=len(predicted_set & expected_set),
         false_positives=len(predicted_set - expected_set),
@@ -669,6 +688,8 @@ def score(
         violations=violations,
         retrieved_expected=len(expected_rule_ids & offered),
         retrievable_expected=len(expected_rule_ids),
+        missed_unretrieved=tuple(unretrieved),
+        missed_after_retrieval=tuple(after_retrieval),
     )
 
 

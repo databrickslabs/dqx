@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import pytest
 
 from databricks_labs_dqx_app.backend.registry_models import ColumnMappingGroup, compute_mapping_hash
-from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion
+from databricks_labs_dqx_app.backend.services.rule_suggester import MAX_RETRIEVAL_COLUMNS, RuleSuggestion
 from tests.suggester_eval_support import (
     Label,
     Metrics,
@@ -51,11 +51,25 @@ from tests.suggester_eval_support import (
 # The absolute values are NOT a quality claim. The fixture tables are synthetic
 # and far cleaner than real customer data, and the oracle's mistakes are ones we
 # planted. Compare runs to each other, never to a marketing number.
-BASELINE_TRUE_POSITIVES = 14
-BASELINE_FALSE_POSITIVES = 3
-BASELINE_FALSE_NEGATIVES = 0
-BASELINE_PREDICTED = 17
-BASELINE_EXPECTED = 14
+BASELINE_TRUE_POSITIVES = 41
+BASELINE_FALSE_POSITIVES = 5
+BASELINE_FALSE_NEGATIVES = 7
+BASELINE_PREDICTED = 46
+BASELINE_EXPECTED = 48
+
+# Retrieval does NOT surface every correct rule, so this is a measured baseline
+# rather than an invariant. All seven current misses are rules the judge never
+# saw, and six of the seven are the universal not-null rule: it carries no
+# column-specific wording to match on, so against an 82-rule corpus with top-20
+# per-column retrieval it loses to eighty more specific rules on nearly every
+# table. The judge's prompt instructs it at length to apply not-null broadly,
+# which it cannot do for a rule that was never a candidate.
+#
+# Counted over distinct rule *ids*, not label rows: retrieval returns rule ids,
+# so a rule correctly wanted on two columns of the same table is one retrieval
+# opportunity, not two.
+BASELINE_RETRIEVED_EXPECTED = 40
+BASELINE_RETRIEVABLE_EXPECTED = 45
 
 # The oracle plants three plausible-but-wrong column bindings that every
 # structural gate in ``_post_process`` accepts, because each one is a real
@@ -64,8 +78,22 @@ BASELINE_EXPECTED = 14
 EXPECTED_VIOLATIONS = {
     "b-customers:rr-email-format",  # bound to secondary_contact, not email
     "b-orders:rr-unique",  # bound to a foreign key that legitimately repeats
-    "b-raw-landing:rr-not-null",  # a column documented as legitimately null
+    "b-invoices:rr-not-in-future",  # bound to due_at, which is meant to be future-dated
+    "b-shipments:rr-start-before-end",  # the two temporal slots bound the wrong way round
+    "b-employees:rr-email-format",  # bound to a free-text manager note
 }
+
+# Two further violations are planted in the oracle but are NOT currently
+# exercised, because retrieval never offers the rule for that table so the entry
+# is filtered out before post-process ever sees it:
+#
+#   b-raw-landing  rr-not-null on a column documented as legitimately null
+#   b-sensors      rr-positive-amount (a monetary rule) on a humidity reading
+#
+# Both are left in place rather than re-tuned. Bending the answer key so the
+# stand-in embedder happens to surface them would be fitting the fixture to the
+# artefact; when Tier 2 supplies real vectors these should start firing, and if
+# they do, this set is what needs updating.
 
 
 @pytest.fixture(scope="module")
@@ -113,10 +141,11 @@ class TestGoldenSetBaseline:
     def test_reports_readable_aggregate_metrics(self, evaluated):
         _, total = evaluated
         # Not a threshold assertion — this documents the shape of what the
-        # harness computes, so a scorer bug that zeroes a metric is caught.
-        assert 0.0 < total.precision <= 1.0
-        assert total.recall == 1.0
-        assert 0.0 < total.f1 <= 1.0
+        # harness computes, so a scorer bug that zeroes or saturates a metric is
+        # still caught while the baseline above is being deliberately re-based.
+        assert 0.0 < total.precision < 1.0
+        assert 0.0 < total.recall < 1.0
+        assert 0.0 < total.f1 < 1.0
         assert 0.0 < total.precision_at_k <= 1.0
 
 
@@ -129,12 +158,44 @@ class TestRetrievalCoverage:
         it distinct from recall is what makes the two failure modes
         distinguishable at a glance.
         """
-        results, total = evaluated
-        missed = [result.summary() for result in results if result.metrics.retrieval_recall < 1.0]
-        assert total.retrieval_recall == 1.0, (
-            f"Retrieval did not put every labelled rule in front of the judge "
-            f"({total.retrieved_expected}/{total.retrievable_expected}). Affected tables:\n"
-            + "\n".join(f"  {line}" for line in missed)
+        _, total = evaluated
+        assert (total.retrieved_expected, total.retrievable_expected) == (
+            BASELINE_RETRIEVED_EXPECTED,
+            BASELINE_RETRIEVABLE_EXPECTED,
+        ), (
+            f"Retrieval coverage moved: now {total.retrieved_expected}/"
+            f"{total.retrievable_expected}, baseline {BASELINE_RETRIEVED_EXPECTED}/"
+            f"{BASELINE_RETRIEVABLE_EXPECTED}.\nRules the judge never saw:\n"
+            + "\n".join(f"  {line}" for line in total.missed_unretrieved)
+        )
+
+    def test_every_miss_is_attributed_to_a_stage(self, evaluated):
+        """A recall miss must be pinned on retrieval or on the judge, never both.
+
+        Without the split, a recall drop says only that quality fell. With it,
+        the failure output names which half of the pipeline to go and look at.
+        """
+        _, total = evaluated
+        attributed = len(total.missed_unretrieved) + len(total.missed_after_retrieval)
+        assert attributed == total.false_negatives
+
+    def test_the_wide_table_exercises_the_retrieval_column_cap(self):
+        """Confirm the 64-column cap is actually engaged, and that we can see it.
+
+        Independent of how good the embeddings are: a 90-column table must
+        produce exactly ``MAX_RETRIEVAL_COLUMNS`` query texts. If the cap is
+        raised, removed, or applied to the wrong list, this count moves and the
+        wide-table numbers stop meaning what the fixture note claims.
+        """
+        table = next(t for t in load_tables() if t.binding_id == "b-wide-events")
+        assert len(table.columns) > MAX_RETRIEVAL_COLUMNS
+
+        suggester, endpoints = build_suggester(table, load_corpus(), load_recordings())
+        asyncio.run(suggester.suggest(table.binding_id, "eval@example.com"))
+
+        assert endpoints.embedded_text_count == MAX_RETRIEVAL_COLUMNS, (
+            f"A {len(table.columns)}-column table produced "
+            f"{endpoints.embedded_text_count} query texts; the cap is {MAX_RETRIEVAL_COLUMNS}."
         )
 
     def test_per_column_retrieval_costs_one_embedding_round_trip(self):
@@ -318,12 +379,27 @@ class TestHarnessSensitivity:
         )
 
     def test_dropping_a_correct_answer_lowers_recall(self):
+        """Remove a named correct answer, not an arbitrary index.
+
+        Dropping ``judge[table][0]`` looked equivalent and was not: the first
+        oracle entry is the not-null rule, which retrieval no longer surfaces, so
+        removing it changed nothing and the test passed while proving nothing.
+        Naming the rule — and asserting the baseline really did suggest it —
+        keeps the injection honest as the fixtures grow.
+        """
+        dropped = "rr-email-format"
         recordings = load_recordings()
-        recordings.judge["eval.golden.customers"] = recordings.judge["eval.golden.customers"][1:]
+        recordings.judge["eval.golden.customers"] = [
+            entry for entry in recordings.judge["eval.golden.customers"] if entry["rule_id"] != dropped
+        ]
 
         baseline = self._run("b-customers", load_recordings())
         broken = self._run("b-customers", recordings)
 
+        assert any(s.rule_id == dropped for s in baseline.suggestions), (
+            f"{dropped} is not in the baseline suggestions, so removing it cannot "
+            f"demonstrate anything. Pick a rule the baseline actually returns."
+        )
         assert broken.metrics.recall < baseline.metrics.recall
 
     def test_a_labelled_rule_missing_from_the_corpus_lowers_retrieval_recall(self):
