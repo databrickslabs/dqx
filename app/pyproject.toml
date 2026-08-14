@@ -8,8 +8,10 @@ dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
-    # Keep in lockstep with the pin in tasks/pyproject.toml.
-    "databricks-labs-dqx[llm,datacontract]==0.15.0",
+    # Resolved from the parent checkout via [tool.uv.sources] below (the app runs the
+    # vendored source, not a published release), so it is intentionally unpinned — the
+    # co-developed version comes from the checkout, not a version specifier here.
+    "databricks-labs-dqx[llm,datacontract]",
     "databricks-sdk~=0.120",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",
