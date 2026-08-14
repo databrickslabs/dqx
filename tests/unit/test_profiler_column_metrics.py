@@ -10,16 +10,16 @@ from databricks.labs.dqx.profiler.profiler_column_metrics import (
 )
 
 
-def test_register_profile_column_metric_registers_under_function_name():
-    @register_profile_column_metric()
+def test_register_profile_column_metric_registers_under_explicit_type():
+    @register_profile_column_metric("custom_metric_key")
     def _test_metric(_field, _column_label):
         return None
 
     try:
-        assert "_test_metric" in PROFILE_COLUMN_METRIC_REGISTRY
-        assert PROFILE_COLUMN_METRIC_REGISTRY["_test_metric"] is _test_metric
+        assert "custom_metric_key" in PROFILE_COLUMN_METRIC_REGISTRY
+        assert PROFILE_COLUMN_METRIC_REGISTRY["custom_metric_key"] is _test_metric
     finally:
-        PROFILE_COLUMN_METRIC_REGISTRY.pop("_test_metric", None)
+        PROFILE_COLUMN_METRIC_REGISTRY.pop("custom_metric_key", None)
 
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])

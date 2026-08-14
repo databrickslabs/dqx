@@ -720,7 +720,7 @@ with your desired profile accuracy. Manually review and tune rules generated fro
 
 Use `register_profile_column_metric` to add your own per-column metrics.
 Metrics are computed once per column before any profile builder runs, so they are available to every builder at no extra cost.
-The function name becomes the key under which the value is available inside profile builders.
+The *profile_column_metric_type* passed to the decorator becomes the key under which the value is available inside profile builders.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -730,7 +730,7 @@ The function name becomes the key under which the value is available inside prof
     from pyspark.sql import types as T
     from databricks.labs.dqx.profiler.profiler_column_metrics import register_profile_column_metric
 
-    @register_profile_column_metric()
+    @register_profile_column_metric("percentile_10")
     def percentile_10(field: T.StructField, column_label: str) -> Column | None:
         # Return None to skip for column types where the metric does not apply
         if not isinstance(field.dataType, T.NumericType):

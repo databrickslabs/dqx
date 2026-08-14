@@ -17,9 +17,9 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
-from databricks.labs.dqx.profiler.common import is_text
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_text
 from databricks.labs.dqx.profiler.profile import DQProfile
-from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES, validate_profile_options
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
     DEFAULT_PROFILE_OPTIONS,
     PROFILE_OPTION_FILTER,

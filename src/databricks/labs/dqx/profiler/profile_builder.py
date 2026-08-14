@@ -10,7 +10,7 @@ from pyspark.sql import types as T, functions as F
 
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.profiler.common import is_text
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_text
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
@@ -30,10 +30,6 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS,
     DEFAULT_PROFILE_OPTIONS,
 )
-
-# Type alias for annotations; use TEXT_TYPES for isinstance() checks.
-TextType = T.CharType | T.StringType | T.VarcharType
-TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
 
 # Matched pair for serializing timestamp min/max through the Spark fallback: Spark renders with six
 # fractional-second digits and Python parses them back. Kept together as constants so the two patterns
