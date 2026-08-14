@@ -120,7 +120,7 @@ class DQPattern(Enum):
     # UK National Insurance Number: two-letter prefix, six digits, and an A-D
     # suffix. Exclude prefixes that HMRC does not allocate.
     NINO_GB = (
-        r"\A(?!(?:BG|GB|KN|NK|NT|TN|ZZ))(?!(?:[DFIQUV]))[A-Z]" r"(?![DFIOQUV])[A-Z] ?\d{2} ?\d{2} ?\d{2} ?[ABCD]\z"
+        r"\A(?!(?:BG|GB|KN|NK|NT|TN|ZZ))(?!(?:[DFIQUV]))[A-Z](?![DFIOQUV])[A-Z] ?\d{2} ?\d{2} ?\d{2} ?[ABCD]\z"
     )
     # Indian Permanent Account Number (PAN): three letters, a holder-type letter,
     # another letter, four digits, and a final letter.
