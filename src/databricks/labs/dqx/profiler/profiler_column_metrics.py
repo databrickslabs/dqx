@@ -13,7 +13,9 @@ PROFILE_COLUMN_METRIC_REGISTRY: dict[str, DQProfileColumnMetricFunc] = {}
 logger = logging.getLogger(__name__)
 
 
-def register_profile_column_metric(profile_column_metric_type: str) -> Callable:
+def register_profile_column_metric(
+    profile_column_metric_type: str,
+) -> Callable[[DQProfileColumnMetricFunc], DQProfileColumnMetricFunc]:
     """
     Registers data quality profile column metric function. The function that may create a column metric depending on
     the column type of the input column or other internal logic. Result column is used in an aggregation function
