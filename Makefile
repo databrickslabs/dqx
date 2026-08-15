@@ -199,9 +199,34 @@ app-test-ui: ## Run app UI unit tests (bun test)
 # adding an ``all`` extra later "just works".
 app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
-	cd app && $(UV_RUN) --group test pytest tests/ \
+	cd app && $(UV_RUN) --group test pytest tests/ --ignore=tests/ai_eval \
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
+
+# Measures the QUALITY of the Studio's AI output against real serving endpoints:
+# scores the rule suggester's suggestions against a labelled golden set and reports
+# precision / recall / precision@k.
+#
+# Deliberately not called an integration suite. It touches no Unity Catalog, no
+# Spark, no Lakebase and no deployed app — every data source is still a double, and
+# what it needs is serving endpoints, not a workspace. What it produces is a
+# measurement against a statistical baseline rather than a wiring check, which is a
+# different kind of test and deserves a different name. ``tests/integration`` stays
+# free for a genuine Studio integration suite.
+#
+# Excluded from ``app-test`` (see the --ignore above; the app's pytest config sets
+# testpaths=["tests"]) because it costs tokens, and gated again on DQX_EVAL_LIVE=1.
+#
+# The deterministic half of the same eval (tests/test_rule_suggester_eval.py) runs in
+# ``app-test`` and in CI, and is where the pass/fail logic lives. This target gates on
+# recall against a per-endpoint baseline and reports precision, which is too noisy to
+# gate on.
+#
+# Override the endpoints with DQX_EVAL_EMBEDDING_ENDPOINT / DQX_EVAL_JUDGE_ENDPOINT;
+# they default to the ones a fresh Studio deploy uses. Report path: DQX_EVAL_REPORT.
+app-ai-eval: ## Measure Studio AI suggestion quality against live endpoints (costs tokens)
+	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
+	cd app && DQX_EVAL_LIVE=1 $(UV_RUN) --group test pytest tests/ai_eval/ -v -s --durations 10
 
 # Run the MCP server's unit-test suite (pytest, no Databricks/Spark dependencies).
 # Usage:  make mcp-test           # run everything
