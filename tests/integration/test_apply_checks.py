@@ -5283,7 +5283,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \"val%\""}},
+            "check": {"function": "sql_expression", "arguments": {"expression": 'col1 not like "val%"'}},
         },
         {
             "criticality": "error",
@@ -5327,7 +5327,7 @@ not
                 [
                     {
                         "name": "not_col1_not_like_val",
-                        "message": "Value is not matching expression: col1 not like \"val%\"",
+                        "message": 'Value is not matching expression: col1 not like "val%"',
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -5337,7 +5337,7 @@ not
                     },
                     {
                         "name": "not_col2_not_like_val",
-                        "message": "Value is not matching expression: col2 \nnot \n  like \"val%\"",
+                        "message": 'Value is not matching expression: col2 \nnot \n  like "val%"',
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -5383,7 +5383,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.sql_expression,
-            check_func_kwargs={"expression": "col1 not like \"val%\""},
+            check_func_kwargs={"expression": 'col1 not like "val%"'},
         ),
         DQRowRule(
             criticality="error",
@@ -5418,7 +5418,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                 [
                     {
                         "name": "not_col1_not_like_val",
-                        "message": "Value is not matching expression: col1 not like \"val%\"",
+                        "message": 'Value is not matching expression: col1 not like "val%"',
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -7256,6 +7256,17 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_in_distribution,
             column="col10",
             check_func_kwargs={"distribution": {2: 1.0}, "distance": 1.0},
+        ),
+        # Second is_in_distribution rule exercises non-trivial TVD math with a residual bucket
+        # (sum<1) and a listed key not present in the data (imputed as 0). distance=1.0 keeps
+        # it safely passing on both fixtures, but a regression that inverts the comparison
+        # (tvd <= distance) would flag every row and fail the test — the trivial {2: 1.0} rule
+        # above cannot catch that.
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_in_distribution,
+            column="col10",
+            check_func_kwargs={"distribution": {2: 0.5, 3: 0.3}, "distance": 1.0},
         ),
         # is_valid_json check
         DQRowRule(
@@ -9360,7 +9371,7 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
                                     "score": {"df": "26.7", "ref": "26.9"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": "id1 != 2",
@@ -9462,7 +9473,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": None,
@@ -9498,7 +9509,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "active": {"df": "true"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": None,
@@ -9535,7 +9546,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "active": {"ref": "true"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": None,
@@ -9683,7 +9694,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                                     "name": {"ref": "Marcin"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": filter_str,
@@ -9709,7 +9720,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                                     "name": {"df": "Marcin"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": filter_str,
@@ -10835,7 +10846,7 @@ def test_apply_checks_by_metadata_is_in_distribution_impute_false_missing_keys(w
 
     violation = build_quality_violation(
         name="value_is_not_in_distribution",
-        message='''Column 'value' distribution is missing expected keys ['C'] and impute=False.''',
+        message="""Column 'value' distribution is missing expected keys ['C'] and impute=False.""",
         columns=["value"],
         function="is_in_distribution",
     )

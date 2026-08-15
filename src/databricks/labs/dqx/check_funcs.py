@@ -5,7 +5,7 @@ import warnings
 import ipaddress
 import uuid
 from decimal import Decimal
-from functools import lru_cache
+from functools import lru_cache, reduce
 from importlib.resources import files
 from collections.abc import Callable, Sequence
 from enum import Enum
@@ -568,7 +568,8 @@ def is_in_distribution(
     message_col = f"__message_{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame) -> DataFrame:
-        column_type = df.schema[col_expr_str].dataType
+        # Resolve the type off the expression itself
+        column_type = df.select(col_expr).schema[0].dataType
         if not isinstance(column_type, _SUPPORTED_SPARK_TYPES):
             raise InvalidParameterError(
                 f"Column '{col_expr_str}' has unsupported type '{column_type.simpleString()}' for "
@@ -579,14 +580,24 @@ def is_in_distribution(
         filtered = df.filter(safe_filter_expr(row_filter)) if row_filter else df
 
         is_string_column = isinstance(column_type, (types.StringType, types.CharType))
+        group_expr = col_expr
+        normalized_distribution = distribution
         if is_string_column and not case_sensitive:
             group_expr = F.lower(col_expr)
             normalized_distribution: dict[Any, float] = {
                 k.lower() if isinstance(k, str) else k: v for k, v in distribution.items()
             }
-        else:
-            group_expr = col_expr
-            normalized_distribution = distribution
+
+        expected_keys_ordered = list(normalized_distribution.keys())
+        expected_values = [normalized_distribution[k] for k in expected_keys_ordered]
+        # fsum keeps residual precision stable across many keys.
+        expected_residual = 1.0 - math.fsum(expected_values)
+        per_key_aliases = [f"__cnt_{i}" for i in range(len(expected_keys_ordered))]
+
+        # Explicit cast pins the literal to the column type so byte/short/date keys don't rely
+        # on implicit Spark upcasting — a future type addition with different equality semantics
+        # would otherwise silently miscount into the residual bucket instead of erroring.
+        key_lits = [F.lit(k).cast(column_type) for k in expected_keys_ordered]
 
         # Single-pass conditional aggregation bounded by length of distribution:
         # one COUNT(when col == key) per expected key + one COUNT(col) for the total.
@@ -595,61 +606,71 @@ def is_in_distribution(
         # is NULL, so null rows contribute to neither the per-key nor the total counts.
         # This avoids groupBy(col).collect() which would pull an unbounded number of distinct
         # values to the driver on high-cardinality columns.
-        expected_keys_ordered = list(normalized_distribution.keys())
-        per_key_aliases = [f"__cnt_{i}" for i in range(len(expected_keys_ordered))]
         aggregations = [
-            F.count(F.when(group_expr == F.lit(key), F.lit(1))).alias(alias)
-            for key, alias in zip(expected_keys_ordered, per_key_aliases)
+            F.count(F.when(group_expr == key_lit, F.lit(1))).alias(alias)
+            for key_lit, alias in zip(key_lits, per_key_aliases)
         ]
         aggregations.append(F.count(group_expr).alias("__total"))
-        aggregate_row = filtered.agg(*aggregations).collect()[0]
-        total = aggregate_row["__total"]
 
-        actual_counts: dict[object, int] = {
-            key: aggregate_row[alias]
-            for key, alias in zip(expected_keys_ordered, per_key_aliases)
-            if aggregate_row[alias] > 0
-        }
+        # limit(1) mirrors _is_aggr_compare — the ungrouped agg already returns one row, but the
+        # limit is informational for the planner. Broadcasting via crossJoin keeps the whole
+        # pipeline lazy so apply_checks doesn't force an eager job or break streaming.
+        agg_df = filtered.agg(*aggregations).limit(1)
 
-        expected_keys: set[object] = set(normalized_distribution.keys())
-        actual_keys: set[object] = set(actual_counts.keys())
-        missing_keys = expected_keys - actual_keys
+        total_col = F.col("__total")
+        listed_count_col = reduce(py_operator.add, (F.col(alias) for alias in per_key_aliases))
+        residual_count_col = total_col - listed_count_col
+        actual_residual_col = residual_count_col / total_col
 
-        message_text: str
-        is_violation: bool
+        deviation_terms = [
+            F.abs(F.lit(expected_val) - F.col(alias) / total_col)
+            for expected_val, alias in zip(expected_values, per_key_aliases)
+        ]
+        deviation_terms.append(F.abs(F.lit(expected_residual) - actual_residual_col))
+        tvd_col = F.lit(0.5) * reduce(py_operator.add, deviation_terms)
 
-        if total == 0:
-            is_violation = False
-            message_text = ""
-        elif not impute and missing_keys:
-            is_violation = True
-            missing_display = sorted(repr(k) for k in missing_keys)
-            message_text = (
-                f"Column '{col_expr_str}' distribution is missing expected keys "
-                f"[{', '.join(missing_display)}] and impute=False."
-            )
+        # math.isclose (rel_tol=1e-09, abs_tol=0.0) as a Column expression: neutralises IEEE-754
+        # noise at the boundary so a "supposed to pass" case with tvd mathematically equal to
+        # distance can't trip when float rounding nudges the computed tvd just above distance
+        # (e.g. abs(0.15-0.2) == 0.05000000000000002). The docstring's "less than or equal to the
+        # given distance" already promises the boundary passes, so equality-within-precision must
+        # not fire the check.
+        distance_lit = F.lit(distance)
+        is_close_col = F.abs(tvd_col - distance_lit) <= F.lit(1e-9) * F.greatest(F.abs(tvd_col), F.abs(distance_lit))
+        tvd_violation_col = (tvd_col > distance_lit) & ~is_close_col
+
+        tvd_message_col = F.concat(
+            F.lit(f"Column '{col_expr_str}' actual distribution deviates from expected by TVD="),
+            F.format_string("%.6f", tvd_col),
+            F.lit(f", which exceeds the allowed distance={distance}."),
+        )
+
+        if impute:
+            is_violation_col = F.when(total_col == 0, F.lit(False)).otherwise(tvd_violation_col)
+            message_expr = F.when(total_col == 0, F.lit("")).otherwise(tvd_message_col)
         else:
-            listed_count = sum(actual_counts.values())
-            residual_count = total - listed_count
-            expected_residual = 1.0 - math.fsum(normalized_distribution.values())
-            actual_residual = residual_count / total
-
-            deviations = [abs(normalized_distribution[k] - actual_counts.get(k, 0) / total) for k in expected_keys]
-            deviations.append(abs(expected_residual - actual_residual))
-            tvd = 0.5 * math.fsum(deviations)
-
-            # math.isclose neutralises IEEE-754 noise at the boundary — otherwise a "supposed to
-            # pass" case with tvd mathematically equal to distance can trip when float rounding
-            # nudges the computed tvd just above distance (e.g. abs(0.15-0.2) == 0.05000000000000002).
-            # The docstring's "less than or equal to the given distance" already promises the
-            # boundary passes, so equality-within-precision must not fire the check.
-            is_violation = tvd > distance and not math.isclose(tvd, distance)
-            message_text = (
-                f"Column '{col_expr_str}' actual distribution deviates from expected by TVD={tvd:.6f}, "
-                f"which exceeds the allowed distance={distance}."
+            # Missing keys are those whose per-key count is zero; sort for stable output.
+            missing_key_names = [
+                F.when(F.col(alias) == 0, F.lit(repr(key)))
+                for key, alias in zip(expected_keys_ordered, per_key_aliases)
+            ]
+            missing_array = F.array_sort(F.filter(F.array(*missing_key_names), lambda x: x.isNotNull()))
+            has_missing_col = F.size(missing_array) > 0
+            missing_message_col = F.concat(
+                F.lit(f"Column '{col_expr_str}' distribution is missing expected keys ["),
+                F.array_join(missing_array, ", "),
+                F.lit("] and impute=False."),
+            )
+            is_violation_col = (
+                F.when(total_col == 0, F.lit(False)).when(has_missing_col, F.lit(True)).otherwise(tvd_violation_col)
+            )
+            message_expr = (
+                F.when(total_col == 0, F.lit("")).when(has_missing_col, missing_message_col).otherwise(tvd_message_col)
             )
 
-        return df.withColumn(condition_col, F.lit(is_violation)).withColumn(message_col, F.lit(message_text))
+        stats_df = agg_df.select(is_violation_col.alias(condition_col), message_expr.alias(message_col))
+
+        return df.crossJoin(stats_df)
 
     condition = make_condition(
         condition=F.col(condition_col),
@@ -693,8 +714,8 @@ def _validate_distribution(
 
 
 def _validate_distribution_values(
-    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
-):
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
     total = math.fsum(distribution.values())
     if total > 1:
         raise InvalidParameterError(f"'distribution' values sum ({total}) is greater than 1.")
@@ -703,7 +724,7 @@ def _validate_distribution_values(
 def _validate_distribution_keys_collision(
     case_sensitive: bool,
     distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
-):
+) -> None:
     if not case_sensitive:
         str_keys = [k for k in distribution.keys() if isinstance(k, str)]
         normalized_to_original: dict[str, list[str]] = {}
@@ -717,8 +738,8 @@ def _validate_distribution_keys_collision(
 
 
 def _validate_distribution_keys_types(
-    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
-):
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
     key_types = {type(k) for k in distribution.keys()}
     if len(key_types) > 1:
         type_names = sorted(t.__name__ for t in key_types)
@@ -735,8 +756,8 @@ def _validate_distribution_keys_types(
 
 
 def _validate_distribution_items(
-    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
-):
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
     for key, value in distribution.items():
         if key is None:
             raise InvalidParameterError("'distribution' must not contain None as a key.")
