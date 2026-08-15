@@ -17,10 +17,11 @@ tables stay in Delta:
   ``dq_metrics``.
 - **v2 — Delta OLTP fallback** (only applied when Lakebase is
   disabled, i.e. ``include_oltp_fallback=True``). Holds the
-  FastAPI-served tables: ``dq_app_settings``, ``dq_quality_rules``,
-  ``dq_quality_rules_history``, ``dq_role_mappings``, ``dq_comments``,
-  ``dq_schedule_configs``, ``dq_schedule_configs_history``,
-  ``dq_schedule_runs``.
+  FastAPI-served tables: app settings, the rules registry
+  (``dq_rules`` + versions/history/embeddings), monitored tables and
+  their frozen versions, data products and run sets, RBAC and object
+  grants, schedules, comments, review status, and the score
+  cache/history. :data:`OLTP_TABLE_NAMES` is the authoritative list.
 
 When Lakebase is enabled the same OLTP tables are created via
 :mod:`backend.migrations.postgres` against the Postgres schema and v2
@@ -101,29 +102,35 @@ Two status families intentionally use different casing:
 CHECK constraints enforce the agreed values per domain — see each
 table's ``chk_*_status`` constraint below.
 
-Adding a new table or schema change after baseline
---------------------------------------------------
-Append a new :class:`Migration` entry with the next monotonically
-increasing version number. **Never edit or reorder existing entries.**
-For column additions use ``ALTER TABLE ... ADD COLUMN`` (do *not* use
-``ADD COLUMN IF NOT EXISTS`` — it is not supported on all Databricks
-SQL warehouse versions; ``_apply`` instead catches and tolerates
-``COLUMN_ALREADY_EXISTS`` so re-running is safe).
+Changing the schema
+-------------------
+:data:`MIGRATIONS` holds only the two baselines above — the schema is
+expressed as ``CREATE TABLE`` at its final shape, not as a replayable
+chain of ``ALTER TABLE`` steps. The app has no external installs to
+upgrade yet, so a shape change is edited into the baseline in place
+(adding the column to the ``CREATE TABLE`` body). Mirror every OLTP
+change in :mod:`backend.migrations.postgres` so Lakebase and Delta
+deployments stay in sync.
 
-If the change touches an OLTP table, mirror it in
-:mod:`backend.migrations.postgres` so Lakebase deployments stay in
-sync.
+The only ``ALTER TABLE`` statements here are ``ADD CONSTRAINT``: Delta
+accepts just PRIMARY KEY / FOREIGN KEY inline in ``CREATE TABLE``, so
+every CHECK constraint has to follow its table as a separate statement.
 
-Upgrading an existing dev workspace
------------------------------------
-A workspace that previously ran the legacy migration sequence will have
-``dq_migrations`` rows for versions that no longer exist, and tables
-whose column types or constraints predate this baseline revision. The
-cleanest path is::
+**An existing deployment does not pick up an edited baseline.** Its
+``dq_migrations`` table already records v1/v2 as applied, so the runner
+skips them and the old columns stay. Re-provision such a workspace::
 
     DROP SCHEMA <catalog>.<schema> CASCADE;
 
-then redeploy — the consolidated baseline runs from scratch.
+then redeploy — the baselines run from scratch.
+
+Once the app ships externally this has to change: append a new
+:class:`Migration` with the next version number instead of editing a
+baseline, and never reorder existing entries. For column additions use
+``ALTER TABLE ... ADD COLUMN`` (do *not* use ``ADD COLUMN IF NOT
+EXISTS`` — it is not supported on all Databricks SQL warehouse
+versions; ``_apply`` instead catches and tolerates
+``COLUMN_ALREADY_EXISTS`` so re-running is safe).
 """
 
 import logging
@@ -244,13 +251,12 @@ class Migration:
     sql_template: str
 
 
-# Order is significant. Never change or remove existing entries — only
-# append new ones.
+# Order is significant: v1 before v2.
 #
-# v1 is the consolidated baseline. Each table is defined at its final
-# shape with liquid clustering, primary keys, and CHECK constraints
-# inlined. Revisions to the baseline are allowed (and encouraged) until
-# the app ships externally; existing dev workspaces upgrade by
+# Both entries are baselines — every table is defined at its final shape
+# with liquid clustering, primary keys, and CHECK constraints. Editing a
+# baseline in place is the intended way to change the schema until the
+# app ships externally; existing dev workspaces pick the change up by
 # ``DROP SCHEMA … CASCADE`` and re-running migrations from scratch.
 #
 # Notes on column choices:
@@ -520,15 +526,25 @@ _V2_OLTP_FALLBACK = (
     "  definition VARIANT NOT NULL,"
     "  user_metadata VARIANT,"
     "  fingerprint STRING,"
-    "  steward STRING,"
+    # Owning principal: ``owner`` is the workspace user/service-principal
+    # identity used for permission checks, ``owner_display_name`` the
+    # human-readable label the UI renders so list pages don't have to
+    # resolve identities per row.
+    "  owner STRING,"
+    "  owner_display_name STRING,"
     "  is_builtin BOOLEAN NOT NULL,"
     "  source STRING,"
+    # Change rationale: ``pending_rationale`` carries the note attached to the
+    # in-flight submit-for-review, ``last_decision_rationale`` the approver's
+    # or rejecter's note from the most recent decision.
+    "  pending_rationale STRING,"
+    "  last_decision_rationale STRING,"
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
     "  updated_by STRING,"
     "  updated_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_rules PRIMARY KEY (rule_id) RELY"
-    ") CLUSTER BY (status, fingerprint, steward);"
+    ") CLUSTER BY (status, fingerprint, owner);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_rules "
     f"  ADD CONSTRAINT chk_dq_rules_mode "
     f"  CHECK (mode IN ('dqx_native','lowcode','sql'));"
@@ -549,8 +565,7 @@ _V2_OLTP_FALLBACK = (
     "  version INT NOT NULL,"
     # ``mode`` is frozen at publish time alongside ``definition`` so an
     # in-place mode switch on the still-editable approved rule cannot corrupt
-    # how the served snapshot renders (nullable only for legacy rows written
-    # before the v11 converge added the column).
+    # how the served snapshot renders.
     "  mode STRING,"
     "  definition VARIANT NOT NULL,"
     "  polarity STRING,"
@@ -570,6 +585,9 @@ _V2_OLTP_FALLBACK = (
     "  action STRING NOT NULL,"
     "  prev_status STRING,"
     "  new_status STRING,"
+    # Free-text note the actor attached to this transition (submit / approve /
+    # reject), so the audit trail explains *why* not just what.
+    "  rationale STRING,"
     "  changed_by STRING,"
     "  changed_at TIMESTAMP"
     ") CLUSTER BY (rule_id, changed_at);"
@@ -577,7 +595,7 @@ _V2_OLTP_FALLBACK = (
     # dq_monitored_tables — Layer 2: thin binding recording that a table
     # is under active governance (design spec §3.1/§7). Profiling data
     # itself lives in the existing ``dq_profiling_results`` Delta table;
-    # this row just tracks the steward + submit-for-review lifecycle
+    # this row just tracks the owner + submit-for-review lifecycle
     # (draft -> pending_approval -> approved/rejected) of the binding,
     # mirroring the per-rule dq_quality_rules state machine. No UNIQUE
     # constraint on Delta (unsupported) — the
@@ -585,8 +603,13 @@ _V2_OLTP_FALLBACK = (
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_tables ("
     "  binding_id STRING NOT NULL,"
     "  table_fqn STRING NOT NULL,"
-    "  steward STRING,"
+    "  owner STRING,"
+    "  owner_display_name STRING,"
     "  status STRING NOT NULL,"
+    # Monotonic snapshot counter bumped on every publish; frozen copies live in
+    # ``dq_monitored_table_versions`` and data products pin a specific value
+    # per member.
+    "  version INT NOT NULL,"
     # Optional per-table schedule (P21 item 14) — a 5-field POSIX cron +
     # IANA timezone. Approved tables with a cron fire on the in-app
     # scheduler, mirroring ``dq_data_products``'s schedule columns below.
@@ -594,12 +617,10 @@ _V2_OLTP_FALLBACK = (
     "  schedule_tz STRING,"
     # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
     # run. Plain STRING (like schedule_cron) — the service writes a concrete
-    # value on insert; the CHECK below allows NULL (Delta CHECK passes on NULL)
-    # so legacy rows converged by v18 aren't rejected.
+    # value on insert and the CHECK below constrains it.
     "  schedule_kind STRING,"
-    # How much data a scheduled run reads: NULL or 0 = the whole table (what
-    # every schedule did before the column existed), N = sample N rows. v30
-    # converges Delta-OLTP databases deployed without it.
+    # How much data a scheduled run reads: NULL or 0 = the whole table,
+    # N = sample N rows.
     "  schedule_sample_size INT,"
     "  last_profiled_at TIMESTAMP,"
     # Denormalized last-run/last-profiled pointers written on run completion
@@ -609,6 +630,8 @@ _V2_OLTP_FALLBACK = (
     # (either trigger surface); ``last_profiled_at`` the newest SUCCESS
     # ``dq_profiling_results`` created_at. Both derive-on-complete/self-heal.
     "  last_run_at TIMESTAMP,"
+    "  pending_rationale STRING,"
+    "  last_decision_rationale STRING,"
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
     "  updated_by STRING,"
@@ -641,9 +664,8 @@ _V2_OLTP_FALLBACK = (
     "  rule_id STRING NOT NULL,"
     "  pinned_version INT,"
     "  severity_override STRING,"
-    # Per-application overrides (v22 converges Delta-OLTP DBs deployed before
-    # these columns existed): ``row_filter`` is an optional SQL WHERE predicate
-    # scoping which rows THIS rule's check validates (rendered into the DQX
+    # Per-application overrides: ``row_filter`` is an optional SQL WHERE
+    # predicate scoping which rows THIS rule's check validates (rendered into the DQX
     # check's native ``filter``); NULL/blank = every row. ``pass_threshold`` is
     # an optional percent (stored/surfaced now; enforcement wired later). Free
     # text row_filter — safety is enforced in the app layer.
@@ -655,224 +677,72 @@ _V2_OLTP_FALLBACK = (
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_applied_rules PRIMARY KEY (id) RELY"
-    ") CLUSTER BY (binding_id, rule_id)"
-)
-
-
-# Backfills ``warning_rows`` on workspaces deployed before v1 added it.
-# On fresh deploys ``_apply`` swallows the ``COLUMN_ALREADY_EXISTS`` error
-# per the column-addition rule documented at the top of this module.
-_V3_VALIDATION_RUNS_WARNING_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs   ADD COLUMN warning_rows INT"
-
-
-# Quarantine rows that fail only warning-level checks would otherwise
-# show an empty ``errors`` column in the UI. We mirror DQX's row-level
-# ``_warnings`` map into its own VARIANT so warnings can be rendered
-# alongside errors in the dry-run sample table.
-_V4_QUARANTINE_WARNINGS = f"ALTER TABLE {_PLACEHOLDER}.dq_quarantine_records   ADD COLUMN warnings VARIANT"
-
-
-# ``invalid_rows`` (set from ``invalid_df.count()``) conflated "rows that
-# failed any check" with "rows with errors" — and could over-count when
-# certain DQX checks fan out internally. ``error_rows`` is the
-# authoritative count from the DQX observer (``error_row_count``), so the
-# UI now surfaces it as the primary "Errors" stat. ``invalid_rows`` is
-# kept for backwards compatibility but no longer drives the UI.
-_V5_VALIDATION_RUNS_ERROR_ROWS = f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs   ADD COLUMN error_rows INT"
-
-
-# Run review status — per-run review label set by business / SA reviewers
-# from the Runs detail page. The allowed value list is admin-managed in
-# ``dq_app_settings.run_review_statuses`` so there's no CHECK constraint
-# on ``status``; the service validates against the live list before INSERT.
-#
-# Two tables intentionally:
-# - ``dq_run_review_status`` is mutable (one row per run that has been
-#   reviewed; absent rows surface the configured default virtually).
-# - ``dq_run_review_status_history`` is append-only so we can show
-#   "X changed status from Pending to Acknowledged on Tue" on the run
-#   detail page and answer compliance questions. Same shape as
-#   ``dq_quality_rules_history`` — no PK column on Delta (rows are
-#   ordered by ``changed_at`` for display).
-#
-# Marked ``oltp_fallback=True`` because both tables are OLTP-shaped
-# (single-key lookup, frequent mutation) and live in Lakebase when
-# enabled; this migration only runs against Delta when Lakebase is off.
-_V6_RUN_REVIEW_STATUS = (
-    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_review_status ("
-    "  run_id     STRING NOT NULL,"
-    "  status     STRING NOT NULL,"
-    "  updated_by STRING,"
-    "  updated_at TIMESTAMP,"
-    "  CONSTRAINT pk_dq_run_review_status PRIMARY KEY (run_id) RELY"
-    ") CLUSTER BY (run_id);"
-    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_review_status_history ("
-    "  run_id          STRING NOT NULL,"
-    "  status          STRING NOT NULL,"
-    "  previous_status STRING,"
-    "  changed_by      STRING NOT NULL,"
-    "  changed_at      TIMESTAMP NOT NULL"
-    ") CLUSTER BY (run_id, changed_at)"
-)
-
-
-# Append-only audit trail for role-to-group mapping changes. Mirrors
-# ``dq_quality_rules_history`` / ``dq_schedule_configs_history`` /
-# ``dq_run_review_status_history`` — the table only retains the *current*
-# set of (role, group) pairs in ``dq_role_mappings``, so without this
-# history table there is no way to answer "when was Approver→
-# dqx_app_approver added?" or "who removed Viewer→dqx_app_viewer last
-# Friday?".
-#
-# Same Delta shape conventions as the other history tables: no PK column
-# (BIGSERIAL is Postgres-only; Delta rows are ordered by ``changed_at``
-# for display), ``action`` is a free-form enum-by-convention ('create' |
-# 'delete' — there is no 'update' because the row has no mutable value
-# columns), and ``changed_by`` / ``changed_at`` carry the audit timestamp
-# pair.
-#
-# Marked ``oltp_fallback=True`` because the live mapping table is OLTP-
-# shaped (small, single-key lookups, frequent mutation) and lives on
-# Lakebase when enabled; this migration only runs against Delta when
-# Lakebase is off. The Postgres mirror lives in
-# :mod:`backend.migrations.postgres` (v3).
-_V7_ROLE_MAPPINGS_HISTORY = (
-    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_role_mappings_history ("
-    "  role       STRING NOT NULL,"
-    "  group_name STRING NOT NULL,"
-    "  action     STRING NOT NULL,"
-    "  changed_by STRING,"
-    "  changed_at TIMESTAMP NOT NULL"
-    ") CLUSTER BY (role, group_name, changed_at)"
-)
-
-
-# Rule embeddings corpus (Rules Registry Phase 4B) — one row per published
-# registry rule, holding the normalized embed text and its embedding
-# vector. Entirely optional infrastructure: the table always exists, but
-# stays empty on any deploy with no ``embedding_endpoint_name`` configured
-# (see ``AppSettingsService`` Phase 4B/4C settings + ``services.rule_embeddings``).
-# ``embedding`` is a JSON-encoded array of floats in a plain STRING column
-# (not VARIANT) so the same read/write path is portable to the Postgres
-# mirror (v4 in ``backend.migrations.postgres``), which stores it as TEXT.
-# OLTP-shaped (single-key upsert) — marked ``oltp_fallback=True`` so this
-# only runs against Delta when Lakebase is disabled.
-_V8_RULE_EMBEDDINGS = (
-    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_rule_embeddings ("
-    "  rule_id      STRING NOT NULL,"
-    "  rule_version INT,"
-    "  embed_text   STRING,"
-    "  embedding    STRING,"
-    "  model        STRING,"
-    "  updated_at   TIMESTAMP,"
-    "  CONSTRAINT pk_dq_rule_embeddings PRIMARY KEY (rule_id) RELY"
-    ") CLUSTER BY (rule_id)"
-)
-
-
-# Monitored-table status lifecycle converge (P16-H). The v2 OLTP-fallback
-# baseline above already declares the 4-state CHECK set on
-# ``dq_monitored_tables.status``
-# (``draft``/``pending_approval``/``approved``/``rejected``), so this migration
-# is a NO-OP on fresh installs. It exists solely to converge Delta-fallback
-# databases already deployed with the ORIGINAL 2-state constraint
-# (``('draft','published')``): those DBs skip v2 because it is already recorded
-# in ``dq_migrations``, so editing the v2 baseline in place can never reach
-# them — appending a new version is the only way the runner re-visits an
-# already-migrated DB.
-#
-# Order (drop -> rewrite legacy value -> re-add): drop the old constraint so a
-# legacy ``published`` row can be rewritten, rewrite it to ``approved`` (its
-# lifecycle equivalent — a published table's checks were live), then re-add the
-# final 4-state constraint. Every statement is individually re-runnable per the
-# Delta recovery contract at the top of this module: ``DROP CONSTRAINT IF
-# EXISTS`` no-ops when absent, ``UPDATE`` rewrites zero rows once converged, and
-# a re-added-identical constraint raises ``DELTA_CONSTRAINT_ALREADY_EXISTS``
-# which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
-#
-# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase when
-# enabled (the Postgres mirror is v5 in ``backend.migrations.postgres``), so
-# this only runs against Delta when Lakebase is disabled.
-_V9_MONITORED_TABLES_STATUS_CONVERGE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
-    f"  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status;"
-    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET status = 'approved' WHERE status = 'published';"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
-    f"  ADD CONSTRAINT chk_dq_monitored_tables_status "
-    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'))"
-)
-
-
-# Data Products (docs/superpowers/plans/2026-07-07-data-products.md Task 1;
-# design spec §3). Delta mirror of Postgres v6 in
-# :mod:`backend.migrations.postgres`. Marked ``oltp_fallback=True`` — all
-# five new tables plus the ``dq_monitored_tables.version`` column follow the
-# same placement as ``dq_monitored_tables`` itself, so this only runs
-# against Delta when Lakebase is disabled.
-#
-# ``dq_monitored_tables.version`` is added as a plain nullable
-# ``ADD COLUMN`` (not ``NOT NULL DEFAULT 0`` inline) because Delta's
-# ``ADD COLUMN ... DEFAULT`` requires the column-defaults table feature to
-# be explicitly enabled and isn't guaranteed available on every Databricks
-# SQL warehouse version this app targets — the same conservatism the module
-# docstring documents for ``ADD COLUMN IF NOT EXISTS``. The three-statement
-# sequence (add nullable -> backfill existing rows -> CHECK NOT NULL) is
-# idempotent-safe under this runner's per-statement error-swallowing:
-# a re-run's ``ADD COLUMN`` raises a already-exists fragment (swallowed),
-# the ``UPDATE`` matches zero rows once converged, and the ``ADD
-# CONSTRAINT`` raises the same already-exists fragment on a second run.
-#
-# No UNIQUE constraint support on Delta (as with every other OLTP-shaped
-# table in this baseline) — ``dq_monitored_table_versions(binding_id,
-# version)``, ``dq_data_products.name``, and
-# ``dq_data_product_members(product_id, binding_id)`` uniqueness is
-# service-enforced here, exactly like ``dq_applied_rules.mapping_hash``
-# above. ``"trigger"``/``trigger`` on ``dq_run_sets`` needs no backtick
-# quoting in Spark SQL (unlike Postgres) — it is not a reserved identifier
-# there.
-_V10_DATA_PRODUCTS = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN version INT;"
-    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET version = 0 WHERE version IS NULL;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
-    f"  ADD CONSTRAINT chk_dq_monitored_tables_version_not_null CHECK (version IS NOT NULL);"
+    ") CLUSTER BY (binding_id, rule_id);"
     #
-    # dq_monitored_table_versions — REFERENCE snapshot per binding version
-    # (design spec §3.2); see the Postgres v6 comment for the
-    # state_json/refrozen_at semantics. ``state_json.rule_refs`` stores
-    # references to the versioned registry rules that make up the approved
-    # set; the runner payload is reconstructed on demand from
-    # ``dq_rule_versions`` rather than logging a copy of the applied rule set.
+    # dq_pending_applications — registry-rule applications staged by an
+    # author and awaiting approval. On approve the row is promoted into
+    # ``dq_applied_rules`` and deleted here, so this table only ever holds
+    # in-flight requests. Uniqueness per (binding, rule) is service-enforced
+    # (no UNIQUE constraint on Delta).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_pending_applications ("
+    "  id STRING NOT NULL,"
+    "  binding_id STRING NOT NULL,"
+    "  rule_id STRING NOT NULL,"
+    "  column_mapping VARIANT,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_pending_applications PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (rule_id, binding_id);"
+    #
+    # dq_tag_auto_suppressions — tombstones for deliberate removals of rows
+    # that tag-auto-apply added. Without them the reconcile pass would keep
+    # re-adding a rule the user just detached.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_tag_auto_suppressions ("
+    "  binding_id STRING NOT NULL,"
+    "  rule_id STRING NOT NULL,"
+    "  mapping_hash STRING NOT NULL,"
+    "  suppressed_by STRING,"
+    "  suppressed_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_tag_auto_suppressions PRIMARY KEY (binding_id, rule_id, mapping_hash) RELY"
+    ") CLUSTER BY (binding_id);"
+    #
+    # dq_monitored_table_versions — immutable snapshot of a binding's full
+    # state (rules + mappings + schedule) taken on publish. ``state_json`` is
+    # the frozen payload a data product replays when a member pins
+    # ``pinned_version``.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_table_versions ("
-    "  id           STRING NOT NULL,"
-    "  binding_id   STRING NOT NULL,"
-    "  version      INT NOT NULL,"
-    "  state_json   VARIANT,"
-    "  created_by   STRING,"
-    "  created_at   TIMESTAMP,"
-    "  refrozen_at  TIMESTAMP,"
+    "  id STRING NOT NULL,"
+    "  binding_id STRING NOT NULL,"
+    "  version INT NOT NULL,"
+    "  state_json VARIANT,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  refrozen_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_monitored_table_versions PRIMARY KEY (id) RELY"
     ") CLUSTER BY (binding_id, version);"
     #
-    # dq_data_products — the grouping GUID (design spec §3.3).
+    # dq_data_products — a named grouping of monitored tables that is
+    # reviewed, scheduled, and run as one unit. Schedule columns mirror
+    # ``dq_monitored_tables`` so the scheduler treats both scopes identically.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_data_products ("
-    "  product_id     STRING NOT NULL,"
-    "  name           STRING NOT NULL,"
-    "  description    STRING,"
-    "  steward        STRING,"
-    "  schedule_cron  STRING,"
-    "  schedule_tz    STRING,"
-    # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
-    # Table Space run. Plain STRING; CHECK allows NULL for legacy rows (v18).
-    "  schedule_kind  STRING,"
-    # Scheduled fan-out scope per member table: NULL or 0 = whole table, N =
-    # sample N rows. v30 converges databases deployed without it.
+    "  product_id STRING NOT NULL,"
+    "  name STRING NOT NULL,"
+    "  description STRING,"
+    "  owner STRING,"
+    "  owner_display_name STRING,"
+    "  schedule_cron STRING,"
+    "  schedule_tz STRING,"
+    "  schedule_kind STRING,"
+    # NULL or 0 = the whole table, N = sample N rows per member.
     "  schedule_sample_size INT,"
-    "  status         STRING NOT NULL,"
-    "  version        INT NOT NULL,"
-    "  created_by     STRING,"
-    "  created_at     TIMESTAMP,"
-    "  updated_by     STRING,"
-    "  updated_at     TIMESTAMP,"
+    "  status STRING NOT NULL,"
+    "  version INT NOT NULL,"
+    "  pending_rationale STRING,"
+    "  last_decision_rationale STRING,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  updated_by STRING,"
+    "  updated_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_data_products PRIMARY KEY (product_id) RELY"
     ") CLUSTER BY (name);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
@@ -882,26 +752,28 @@ _V10_DATA_PRODUCTS = (
     f"  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
     f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
     #
-    # dq_data_product_members — table membership within a product (design
-    # spec §3.4).
+    # dq_data_product_members — membership edge. ``pinned_version`` NULL
+    # means "follow the binding's latest published version".
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_data_product_members ("
-    "  id              STRING NOT NULL,"
-    "  product_id      STRING NOT NULL,"
-    "  binding_id      STRING NOT NULL,"
-    "  pinned_version  INT,"
+    "  id STRING NOT NULL,"
+    "  product_id STRING NOT NULL,"
+    "  binding_id STRING NOT NULL,"
+    "  pinned_version INT,"
     "  CONSTRAINT pk_dq_data_product_members PRIMARY KEY (id) RELY"
     ") CLUSTER BY (product_id, binding_id);"
     #
-    # dq_run_sets / dq_run_set_members — every run submission mints a run
-    # set (design spec §3.5).
+    # dq_run_sets — one row per product-level run, grouping the per-binding
+    # runs it fanned out into (``dq_run_set_members``). ``product_id`` is
+    # nullable so an ad-hoc multi-table run can be grouped without belonging
+    # to a product.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_sets ("
-    "  run_set_id       STRING NOT NULL,"
-    "  product_id       STRING,"
-    "  product_version  INT,"
-    "  source           STRING NOT NULL,"
-    "  trigger          STRING NOT NULL,"
-    "  created_by       STRING,"
-    "  created_at       TIMESTAMP,"
+    "  run_set_id STRING NOT NULL,"
+    "  product_id STRING,"
+    "  product_version INT,"
+    "  source STRING NOT NULL,"
+    "  trigger STRING NOT NULL,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_run_sets PRIMARY KEY (run_set_id) RELY"
     ") CLUSTER BY (product_id, created_at);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_run_sets "
@@ -909,34 +781,67 @@ _V10_DATA_PRODUCTS = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_run_sets "
     f"  ADD CONSTRAINT chk_dq_run_sets_trigger CHECK (trigger IN ('manual','scheduled'));"
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_set_members ("
-    "  id                STRING NOT NULL,"
-    "  run_set_id        STRING NOT NULL,"
-    "  run_id            STRING NOT NULL,"
-    "  binding_id        STRING NOT NULL,"
-    "  binding_version   INT,"
+    "  id STRING NOT NULL,"
+    "  run_set_id STRING NOT NULL,"
+    "  run_id STRING NOT NULL,"
+    "  binding_id STRING NOT NULL,"
+    "  binding_version INT,"
     "  CONSTRAINT pk_dq_run_set_members PRIMARY KEY (id) RELY"
-    ") CLUSTER BY (run_set_id)"
-)
-
-
-# UC-style object permissions — Delta OLTP fallback for ``dq_object_grants``
-# (+ history). Mirrors the Postgres v10 migration; TEXT ``privileges`` and a
-# BOOLEAN ``inherit`` keep the DDL portable across both backends. Only present
-# on Delta when Lakebase is disabled (``oltp_fallback=True``). See the Postgres
-# v10 comment for the full column semantics.
-_V14_OBJECT_GRANTS = (
+    ") CLUSTER BY (run_set_id);"
+    #
+    # Run review status — per-run review label set by business / SA reviewers
+    # from the Runs detail page. The allowed value list is admin-managed in
+    # ``dq_app_settings.run_review_statuses`` so there's no CHECK constraint
+    # on ``status``; the service validates against the live list before INSERT.
+    #
+    # Two tables intentionally: ``dq_run_review_status`` is mutable (one row
+    # per reviewed run; absent rows surface the configured default
+    # virtually), while ``dq_run_review_status_history`` is append-only so
+    # the run detail page can show "X changed status from Pending to
+    # Acknowledged on Tue" and compliance questions stay answerable.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_review_status ("
+    "  run_id STRING NOT NULL,"
+    "  status STRING NOT NULL,"
+    "  updated_by STRING,"
+    "  updated_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_run_review_status PRIMARY KEY (run_id) RELY"
+    ") CLUSTER BY (run_id);"
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_review_status_history ("
+    "  run_id STRING NOT NULL,"
+    "  status STRING NOT NULL,"
+    "  previous_status STRING,"
+    "  changed_by STRING NOT NULL,"
+    "  changed_at TIMESTAMP NOT NULL"
+    ") CLUSTER BY (run_id, changed_at);"
+    #
+    # dq_role_mappings_history — append-only audit trail for RBAC edits, so
+    # "who granted this group admin, and when" is answerable after the
+    # mapping itself is gone. No PK column, like the other history tables.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_role_mappings_history ("
+    "  role STRING NOT NULL,"
+    "  group_name STRING NOT NULL,"
+    "  action STRING NOT NULL,"
+    "  changed_by STRING,"
+    "  changed_at TIMESTAMP NOT NULL"
+    ") CLUSTER BY (role, group_name, changed_at);"
+    #
+    # dq_object_grants — UC-style per-object permissions granting workspace
+    # principals privileges on a rule, monitored table, or data product.
+    # ``privileges`` is a comma-separated list rather than one row per
+    # privilege so a grant reads and writes atomically. ``inherit`` marks a
+    # grant that cascades to the object's children (product -> member tables).
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_object_grants ("
-    "  grant_id       STRING NOT NULL,"
-    "  object_type    STRING NOT NULL,"
-    "  object_id      STRING NOT NULL,"
-    "  principal_id   STRING NOT NULL,"
+    "  grant_id STRING NOT NULL,"
+    "  object_type STRING NOT NULL,"
+    "  object_id STRING NOT NULL,"
+    "  principal_id STRING NOT NULL,"
     "  principal_type STRING NOT NULL,"
     "  principal_name STRING,"
-    "  privileges     STRING NOT NULL,"
-    "  inherit        BOOLEAN NOT NULL,"
-    "  grantor        STRING,"
-    "  created_at     TIMESTAMP,"
-    "  updated_at     TIMESTAMP,"
+    "  privileges STRING NOT NULL,"
+    "  inherit BOOLEAN NOT NULL,"
+    "  grantor STRING,"
+    "  created_at TIMESTAMP,"
+    "  updated_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_object_grants PRIMARY KEY (grant_id) RELY"
     ") CLUSTER BY (object_type, object_id);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_object_grants "
@@ -946,450 +851,61 @@ _V14_OBJECT_GRANTS = (
     f"  ADD CONSTRAINT chk_dq_object_grants_principal_type "
     f"  CHECK (principal_type IN ('user','group','all'));"
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_object_grants_history ("
-    "  object_type    STRING NOT NULL,"
-    "  object_id      STRING NOT NULL,"
-    "  principal_id   STRING NOT NULL,"
+    "  object_type STRING NOT NULL,"
+    "  object_id STRING NOT NULL,"
+    "  principal_id STRING NOT NULL,"
     "  principal_name STRING,"
-    "  privileges     STRING,"
-    "  inherit        BOOLEAN,"
-    "  action         STRING NOT NULL,"
-    "  changed_by     STRING,"
-    "  changed_at     TIMESTAMP NOT NULL"
-    ") CLUSTER BY (object_type, object_id, changed_at)"
-)
-
-
-# Freeze ``mode`` into every ``dq_rule_versions`` snapshot (P20 major fix).
-# The v2 OLTP-fallback baseline above now declares the column, so this is a
-# no-op on fresh Delta-OLTP installs; it exists to converge databases already
-# deployed WITHOUT it (v2 is already recorded in ``dq_migrations`` there, so
-# editing v2 in place could never reach them). Marked ``oltp_fallback=True``
-# because ``dq_rule_versions`` only lives on Delta when Lakebase is disabled.
-#
-# ``ADD COLUMN`` (not ``ADD COLUMN IF NOT EXISTS`` — unsupported on some
-# warehouse versions) relies on the runner swallowing the
-# ``COLUMN_ALREADY_EXISTS`` fragment on re-run, per the module docstring.
-# The backfill uses ``MERGE`` (Delta has no ``UPDATE ... FROM``) to copy each
-# snapshot's mode from its live ``dq_rules`` row — a served vN was authored in
-# the rule's current mode, so this reconstructs the correct frozen value; once
-# converged the ``MERGE`` matches zero NULL rows.
-_V11_RULE_VERSIONS_MODE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rule_versions ADD COLUMN mode STRING;"
-    f"MERGE INTO {_PLACEHOLDER}.dq_rule_versions v "
-    f"  USING {_PLACEHOLDER}.dq_rules r ON v.rule_id = r.rule_id "
-    f"  WHEN MATCHED AND v.mode IS NULL THEN UPDATE SET v.mode = r.mode"
-)
-
-
-# Data-products status lifecycle converge (P21-D). The v10 baseline above
-# declares ``chk_dq_data_products_status`` as the 4-state CHECK set, but it
-# was edited IN PLACE from the ORIGINAL 2-state constraint
-# (``('draft','published')``) shipped when v10 first went out — exactly the
-# class of bug ``_V9_MONITORED_TABLES_STATUS_CONVERGE`` above fixed for
-# ``dq_monitored_tables``. A DB already migrated to v10 never re-runs it (the
-# runner skips versions recorded in ``dq_migrations``), so it is stuck on the
-# 2-state constraint with any ``published`` rows still at that legacy value —
-# submit/approve then errors on the CHECK violation, and the scheduler (which
-# now filters on ``status='approved'``) silently stops seeing them. Appending
-# a new version is the only way to reach those DBs.
-#
-# Order (drop -> rewrite legacy value -> re-add), per the same idempotent-safe
-# reasoning as v9: ``DROP CONSTRAINT IF EXISTS`` no-ops when absent, the
-# ``UPDATE`` rewrites zero rows once converged, and a re-added-identical
-# constraint raises ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which
-# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
-#
-# Marked ``oltp_fallback=True``: ``dq_data_products`` lives in Lakebase when
-# enabled (the Postgres mirror is v8 in ``backend.migrations.postgres``), so
-# this only runs against Delta when Lakebase is disabled.
-_V12_DATA_PRODUCTS_STATUS_CONVERGE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
-    f"  DROP CONSTRAINT IF EXISTS chk_dq_data_products_status;"
-    f"UPDATE {_PLACEHOLDER}.dq_data_products SET status = 'approved' WHERE status = 'published';"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
-    f"  ADD CONSTRAINT chk_dq_data_products_status "
-    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'))"
-)
-
-
-# Monitored tables become schedulable (P21 item 14). The v2 OLTP-fallback
-# baseline above now declares ``schedule_cron``/``schedule_tz`` on
-# ``dq_monitored_tables``, so this is a NO-OP on fresh installs; it exists
-# purely to converge Delta-OLTP databases already deployed WITHOUT the
-# columns (v2 is already recorded in ``dq_migrations`` there, so editing v2
-# in place could never reach them — the same edit-in-place trap corrected by
-# v9/v12). Two plain ``ADD COLUMN`` statements (not ``ADD COLUMN IF NOT
-# EXISTS`` — unsupported on some warehouse versions); on an already-converged
-# DB each raises ``COLUMN_ALREADY_EXISTS`` which
-# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
-#
-# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase
-# when enabled (the Postgres mirror is v9 in ``backend.migrations.postgres``),
-# so this only runs against Delta when Lakebase is disabled.
-_V13_MONITORED_TABLES_SCHEDULE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_cron STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_tz STRING"
-)
-
-
-# DQ score cache — Delta OLTP fallback for ``dq_score_cache`` (P3.4).
-# Mirrors the Postgres v11 migration: one row per scored scope, PK
-# (scope_type, scope_key). 'table' rows are recomputed from the
-# mv_dq_scores metric view (latest PUBLISHED run per table, one batched
-# warehouse query); 'product'/'global' rows derive from the cached
-# 'table' rows (unweighted means). The list endpoints LEFT JOIN this
-# table so the monitored-tables and table-spaces pages render scores
-# without touching the warehouse. Only present on Delta when Lakebase
-# is disabled (``oltp_fallback=True``) — see the Postgres v11 comment
-# for the full semantics.
-_V15_SCORE_CACHE = (
+    "  privileges STRING,"
+    "  inherit BOOLEAN,"
+    "  action STRING NOT NULL,"
+    "  changed_by STRING,"
+    "  changed_at TIMESTAMP NOT NULL"
+    ") CLUSTER BY (object_type, object_id, changed_at);"
+    #
+    # dq_score_cache — latest DQ score per scope, refreshed on run completion
+    # so list pages and the homepage read one small row instead of
+    # aggregating the warehouse. ``scope_key`` is the table FQN / product id,
+    # or ``'global'`` for the workspace roll-up.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_score_cache ("
-    "  scope_type    STRING NOT NULL,"
-    "  scope_key     STRING NOT NULL,"
-    "  score         DOUBLE,"
-    "  failed_tests  BIGINT,"
-    "  total_tests   BIGINT,"
+    "  scope_type STRING NOT NULL,"
+    "  scope_key STRING NOT NULL,"
+    "  score DOUBLE,"
+    "  failed_tests BIGINT,"
+    "  total_tests BIGINT,"
     "  latest_run_id STRING,"
-    "  run_time      TIMESTAMP,"
-    "  computed_at   TIMESTAMP,"
+    "  run_time TIMESTAMP,"
+    "  computed_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_score_cache PRIMARY KEY (scope_type, scope_key) RELY"
     ") CLUSTER BY (scope_type, scope_key);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_score_cache "
     f"  ADD CONSTRAINT chk_dq_score_cache_scope_type "
-    f"  CHECK (scope_type IN ('table','product','global'))"
-)
-
-
-# DQ score history — Delta OLTP fallback for ``dq_score_history`` (P3.5).
-# Mirrors the Postgres v12 migration: an append-only companion to
-# dq_score_cache — every scored recompute (non-NULL score) appends one
-# row so the homepage can chart the global score over time without a
-# warehouse query. Growth is capped by ScoreCacheService (count-trim to
-# the newest HISTORY_KEEP_ROWS rows per scope on every append). Only
-# present on Delta when Lakebase is disabled (``oltp_fallback=True``) —
-# see the Postgres v12 comment for the full semantics.
-_V16_SCORE_HISTORY = (
+    f"  CHECK (scope_type IN ('table','product','global'));"
+    #
+    # dq_score_history — append-only trend points behind the homepage chart.
+    # No PK: every run contributes a point per scope.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_score_history ("
-    "  scope_type    STRING NOT NULL,"
-    "  scope_key     STRING NOT NULL,"
-    "  score         DOUBLE NOT NULL,"
-    "  failed_tests  BIGINT,"
-    "  total_tests   BIGINT,"
-    "  run_time      TIMESTAMP,"
-    "  computed_at   TIMESTAMP NOT NULL"
-    ") CLUSTER BY (scope_type, scope_key, computed_at)"
-)
-
-
-# Monitored tables gain a denormalized ``last_run_at`` (T-perf / B2-15). The v2
-# OLTP-fallback baseline above now declares the column, so this is a NO-OP on
-# fresh installs; it exists purely to converge Delta-OLTP databases already
-# deployed WITHOUT it (v2 is already recorded in ``dq_migrations`` there, so
-# editing v2 in place could never reach them — the same edit-in-place trap
-# corrected by v9/v12/v13). One plain ``ADD COLUMN`` (not ``ADD COLUMN IF NOT
-# EXISTS`` — unsupported on some warehouse versions); on an already-converged
-# DB it raises ``COLUMN_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS``
-# swallows.
-#
-# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase when
-# enabled (the Postgres mirror is v13 in ``backend.migrations.postgres``), so
-# this only runs against Delta when Lakebase is disabled.
-_V17_MONITORED_TABLES_LAST_RUN_AT = f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_run_at TIMESTAMP"
-
-
-# Schedulable scope: add ``schedule_kind`` to monitored tables + data products
-# (B2-52). The v2 OLTP-fallback baseline above now declares the column (and its
-# CHECK) on both tables, so this is a NO-OP on fresh installs; it exists purely
-# to converge Delta-OLTP databases already deployed WITHOUT it (v2 is already
-# recorded in ``dq_migrations`` there, so editing v2 in place could never reach
-# them — the same edit-in-place trap corrected by v9/v12/v13/v17). Plain
-# ``ADD COLUMN`` / ``ADD CONSTRAINT`` (not ``IF NOT EXISTS`` — unsupported on
-# some warehouse versions); on an already-converged DB each raises
-# ``COLUMN_ALREADY_EXISTS`` / ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which
-# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows. The CHECK passes on the NULL
-# ``schedule_kind`` legacy rows carry until the service next writes them.
-#
-# Marked ``oltp_fallback=True``: both tables live in Lakebase when enabled (the
-# Postgres mirror is v14 in ``backend.migrations.postgres``), so this only runs
-# against Delta when Lakebase is disabled.
-_V18_SCHEDULE_KIND = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_kind STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
-    f"  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
-    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN schedule_kind STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
-    f"  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
-    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'))"
-)
-
-
-# dq_pending_applications — staged registry-rule applications waiting on
-# approval (Bulk Contract Import Phase 2). When a rule is created + submitted
-# but lands ``pending_approval`` (approval-enabled orgs), the intended
-# (binding, rule, column_mapping) is recorded here instead of being dropped.
-# On the rule's approval, ``_publish_registry_rule`` drains every pending row
-# for that rule into a real ``dq_applied_rules`` link (via
-# ``ApplyRulesService.apply_rule``) and deletes it. Rows are transient — the
-# service enforces one pending row per (binding_id, rule_id) (no UNIQUE on
-# Delta, matching every other OLTP-shaped table in this baseline).
-# ``column_mapping`` mirrors ``dq_applied_rules.column_mapping`` (VARIANT list
-# of slot->column groups). Marked ``oltp_fallback=True``: lives in Lakebase
-# when enabled (Postgres mirror is v15), else Delta.
-_V19_PENDING_APPLICATIONS = (
-    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_pending_applications ("
-    "  id             STRING NOT NULL,"
-    "  binding_id     STRING NOT NULL,"
-    "  rule_id        STRING NOT NULL,"
-    "  column_mapping VARIANT,"
-    "  created_by     STRING,"
-    "  created_at     TIMESTAMP,"
-    "  CONSTRAINT pk_dq_pending_applications PRIMARY KEY (id) RELY"
-    ") CLUSTER BY (rule_id, binding_id)"
-)
-
-
-# Monitored tables: add per-table ``pass_threshold`` (percent of rows that must
-# pass for a run to be healthy; NULL = inherit the global default). The v2
-# OLTP-fallback baseline above now declares the column + CHECK, so this is a
-# NO-OP on fresh installs; it exists purely to converge Delta-OLTP databases
-# already deployed WITHOUT it (the same edit-in-place trap corrected by
-# v9/v12/v13/v17/v18). Plain ``ADD COLUMN`` / ``ADD CONSTRAINT`` (not
-# ``IF NOT EXISTS`` — unsupported on some warehouse versions); on an
-# already-converged DB each raises ``COLUMN_ALREADY_EXISTS`` /
-# ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS``
-# swallows. Marked ``oltp_fallback=True``: the table lives in Lakebase when
-# enabled (Postgres mirror is v16), so this only runs against Delta.
-# Applied rules: add per-rule ``row_filter`` (optional SQL WHERE predicate scoping
-# which rows THIS rule's check validates — rendered into the DQX check's native
-# ``filter``) and ``pass_threshold`` (optional percent; stored/surfaced now,
-# enforcement wired later). The v2 OLTP-fallback baseline above now declares both
-# columns, so this is a NO-OP on fresh installs; it exists purely to converge
-# Delta-OLTP databases already deployed WITHOUT them. Plain ``ADD COLUMN`` (not
-# ``IF NOT EXISTS``); on an already-converged DB each raises ``COLUMN_ALREADY_EXISTS``
-# which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows. No CHECK — row_filter is free text
-# and its safety is enforced in the app layer. ``oltp_fallback=True``: only runs
-# against Delta (Postgres mirror is v18).
-_V22_APPLIED_RULES_ROW_FILTER_THRESHOLD = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_applied_rules ADD COLUMN row_filter STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_applied_rules ADD COLUMN pass_threshold INT"
-)
-
-
-# Backfill default object grants for pre-existing objects (objects created
-# before on-create seeding was added). The Delta engine has no
-# INSERT…SELECT…WHERE NOT EXISTS in a single statement (Delta SQL supports
-# the full INSERT…SELECT; ``NOT EXISTS`` sub-selects are supported since
-# DBR 10.4). Six INSERT…SELECT statements: users-group + owner grant for
-# each of registry_rule, monitored_table, data_product.
-#
-# Template-validator constraints (module docstring):
-# 1. No ``;`` inside single-quoted literals — the literal values here
-#    (object-type names, privilege string, principal name) contain no
-#    semicolons.
-# 2. No ``{catalog}``/``{schema}`` placeholder inside a literal — all
-#    occurrences appear as bare identifiers before ``.table_name``.
-#
-# Marked ``oltp_fallback=True``: ``dq_object_grants`` lives in Lakebase
-# when enabled (Postgres mirror is v20), so this only runs against Delta
-# when Lakebase is disabled.
-_V24_BACKFILL_DEFAULT_GRANTS = (
-    # users-group grant for registry rules
-    f"INSERT INTO {_PLACEHOLDER}.dq_object_grants "
-    "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-    "privileges, inherit, grantor, created_at, updated_at) "
-    f"SELECT uuid(), 'registry_rule', r.rule_id, 'users', 'group', 'users', "
-    "'SELECT,APPLY,EXECUTE', FALSE, NULL, current_timestamp(), current_timestamp() "
-    f"FROM {_PLACEHOLDER}.dq_rules r "
-    f"WHERE NOT EXISTS (SELECT 1 FROM {_PLACEHOLDER}.dq_object_grants g "
-    "WHERE g.object_type = 'registry_rule' AND g.object_id = r.rule_id AND g.principal_id = 'users');"
-    # owner grant for registry rules
-    f"INSERT INTO {_PLACEHOLDER}.dq_object_grants "
-    "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-    "privileges, inherit, grantor, created_at, updated_at) "
-    f"SELECT uuid(), 'registry_rule', r.rule_id, r.created_by, 'user', r.created_by, "
-    "'ALL_PRIVILEGES', FALSE, NULL, current_timestamp(), current_timestamp() "
-    f"FROM {_PLACEHOLDER}.dq_rules r "
-    "WHERE r.created_by IS NOT NULL "
-    f"AND NOT EXISTS (SELECT 1 FROM {_PLACEHOLDER}.dq_object_grants g "
-    "WHERE g.object_type = 'registry_rule' AND g.object_id = r.rule_id AND g.principal_id = r.created_by);"
-    # users-group grant for monitored tables
-    f"INSERT INTO {_PLACEHOLDER}.dq_object_grants "
-    "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-    "privileges, inherit, grantor, created_at, updated_at) "
-    f"SELECT uuid(), 'monitored_table', t.binding_id, 'users', 'group', 'users', "
-    "'SELECT,APPLY,EXECUTE', FALSE, NULL, current_timestamp(), current_timestamp() "
-    f"FROM {_PLACEHOLDER}.dq_monitored_tables t "
-    f"WHERE NOT EXISTS (SELECT 1 FROM {_PLACEHOLDER}.dq_object_grants g "
-    "WHERE g.object_type = 'monitored_table' AND g.object_id = t.binding_id AND g.principal_id = 'users');"
-    # owner grant for monitored tables
-    f"INSERT INTO {_PLACEHOLDER}.dq_object_grants "
-    "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-    "privileges, inherit, grantor, created_at, updated_at) "
-    f"SELECT uuid(), 'monitored_table', t.binding_id, t.created_by, 'user', t.created_by, "
-    "'ALL_PRIVILEGES', FALSE, NULL, current_timestamp(), current_timestamp() "
-    f"FROM {_PLACEHOLDER}.dq_monitored_tables t "
-    "WHERE t.created_by IS NOT NULL "
-    f"AND NOT EXISTS (SELECT 1 FROM {_PLACEHOLDER}.dq_object_grants g "
-    "WHERE g.object_type = 'monitored_table' AND g.object_id = t.binding_id AND g.principal_id = t.created_by);"
-    # users-group grant for data products
-    f"INSERT INTO {_PLACEHOLDER}.dq_object_grants "
-    "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-    "privileges, inherit, grantor, created_at, updated_at) "
-    f"SELECT uuid(), 'data_product', p.product_id, 'users', 'group', 'users', "
-    "'SELECT,APPLY,EXECUTE', FALSE, NULL, current_timestamp(), current_timestamp() "
-    f"FROM {_PLACEHOLDER}.dq_data_products p "
-    f"WHERE NOT EXISTS (SELECT 1 FROM {_PLACEHOLDER}.dq_object_grants g "
-    "WHERE g.object_type = 'data_product' AND g.object_id = p.product_id AND g.principal_id = 'users');"
-    # owner grant for data products
-    f"INSERT INTO {_PLACEHOLDER}.dq_object_grants "
-    "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-    "privileges, inherit, grantor, created_at, updated_at) "
-    f"SELECT uuid(), 'data_product', p.product_id, p.created_by, 'user', p.created_by, "
-    "'ALL_PRIVILEGES', FALSE, NULL, current_timestamp(), current_timestamp() "
-    f"FROM {_PLACEHOLDER}.dq_data_products p "
-    "WHERE p.created_by IS NOT NULL "
-    f"AND NOT EXISTS (SELECT 1 FROM {_PLACEHOLDER}.dq_object_grants g "
-    "WHERE g.object_type = 'data_product' AND g.object_id = p.product_id AND g.principal_id = p.created_by)"
-)
-
-
-# dq_tag_auto_suppressions — the "tombstone" that records a DELIBERATE
-# removal of a tag-auto-applied row so the periodic reconcile sweep does
-# NOT re-add it. Keyed by the same natural key as ``dq_applied_rules``
-# (``binding_id``/``rule_id``/``mapping_hash``) so a suppression maps 1:1
-# to the auto attachment it blocks. ``ApplyRulesService.remove_applied``
-# writes a row here when it removes an auto-origin application, and
-# ``attach_auto_mapping`` skips any key present here. OLTP-shaped
-# (``oltp_fallback=True``) so it lives on Delta only when Lakebase is
-# disabled; the Postgres mirror is v19 in ``backend.migrations.postgres``.
-# Strip EXECUTE from existing ``registry_rule`` users-group grant rows (bug fix).
-# ``EXECUTE`` is meaningless on a rule (the privilege means "run
-# profiling/validation on a table or collection"; rules are not run directly).
-# New rules are seeded without EXECUTE from this version onwards; this migration
-# backfills rows already stored with it. Only touches ``dq_object_grants`` rows
-# where ``object_type = 'registry_rule'`` AND the stored ``privileges`` string
-# contains the literal token ``EXECUTE`` AND the stored form is NOT
-# ``ALL_PRIVILEGES`` (owner rows — those are left alone; ALL_PRIVILEGES on a
-# rule is acceptable and expands to the concrete set only at check-time).
-# Idempotent: once stripped, re-running finds no ``EXECUTE`` token in the
-# remaining rows, so the UPDATE matches zero rows on a second run.
-#
-# Template validator constraints (module docstring):
-# 1. No ``;`` inside single-quoted literals — the literal values here
-#    (object-type name, privilege string) contain no semicolons.
-# 2. No ``{catalog}``/``{schema}`` placeholder inside a literal — all
-#    occurrences appear as identifiers before ``.table_name``.
-#
-# Spark SQL ``array_remove(split(...), ...)`` + ``array_join`` strips a single
-# element from a comma-joined privilege string cleanly without regex.
-#
-# Marked ``oltp_fallback=True``: ``dq_object_grants`` lives in Lakebase when
-# enabled (Postgres mirror is v21), so this only runs against Delta when
-# Lakebase is disabled.
-_V25_STRIP_EXECUTE_FROM_REGISTRY_RULE_GRANTS = (
-    f"UPDATE {_PLACEHOLDER}.dq_object_grants "
-    "SET privileges = array_join(array_remove(split(privileges, ','), 'EXECUTE'), ',') "
-    "WHERE object_type = 'registry_rule' "
-    "AND privileges LIKE '%EXECUTE%' "
-    "AND privileges <> 'ALL_PRIVILEGES'"
-)
-
-
-# Add ``steward_display_name`` to the three OLTP tables that carry a steward
-# column (``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``).  The
-# column is populated at write-time (the entity services resolve the steward
-# email -> display name via SCIM on every steward write, defaulting to the
-# principal picker's ``display_name`` when supplied). There is no startup
-# backfill; the list pages fall back to the raw email when
-# ``steward_display_name`` is NULL (pre-existing rows until the steward is
-# next touched).
-#
-# ``ADD COLUMN`` (not ``ADD COLUMN IF NOT EXISTS`` — unsupported on some
-# warehouse versions); on an already-converged DB each raises
-# ``COLUMN_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
-#
-# Marked ``oltp_fallback=True``: all three tables live in Lakebase when
-# enabled (the Postgres mirror is v22 in ``backend.migrations.postgres``), so
-# this only runs against Delta when Lakebase is disabled.
-_V26_STEWARD_DISPLAY_NAME = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN steward_display_name STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN steward_display_name STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN steward_display_name STRING"
-)
-
-_V27_NOTES_AND_RATIONALE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN notes STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN pending_rationale STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_decision_rationale STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN notes STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN pending_rationale STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN last_decision_rationale STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN pending_rationale STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN last_decision_rationale STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rules_history ADD COLUMN rationale STRING"
-)
-
-# Drop sticky object notes columns (rationale columns stay). Re-runs after a
-# half-applied attempt raise COLUMN_NOT_FOUND / DELTA_COLUMN_NOT_FOUND which
-# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
-_V29_DROP_NOTES = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables DROP COLUMN notes;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products DROP COLUMN notes"
-)
-
-# Per-schedule run scope. The v2 OLTP-fallback baseline above now declares the
-# column on both tables, so this is a NO-OP on fresh installs; it converges
-# Delta-OLTP databases already deployed without it (their v2 row is recorded,
-# so editing v2 in place could never reach them). A re-run raises
-# ``COLUMN_ALREADY_EXISTS``, which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
-# NULL means "whole table" — exactly what existing schedules already did.
-_V30_SCHEDULE_SAMPLE_SIZE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_sample_size INT;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN schedule_sample_size INT"
-)
-
-
-# Rename ownership columns steward → owner (and steward_display_name →
-# owner_display_name) on the three OLTP tables. Delta has no reliable
-# ``RENAME COLUMN`` recovery story under this runner's idempotent-error
-# fragments, so we ADD the new columns and copy values from the legacy
-# steward columns when present. On a re-run, ADD COLUMN raises
-# ``COLUMN_ALREADY_EXISTS`` (swallowed) and the UPDATEs match zero rows
-# once owner is already populated. Legacy steward columns are left in
-# place (including for liquid clustering on dq_rules).
-#
-# Marked ``oltp_fallback=True``: all three tables live in Lakebase when
-# enabled (Postgres mirror is v24), so this only runs against Delta when
-# Lakebase is disabled.
-_V28_OWNER_RENAME = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN owner STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN owner_display_name STRING;"
-    f"UPDATE {_PLACEHOLDER}.dq_rules SET owner = steward WHERE owner IS NULL;"
-    f"UPDATE {_PLACEHOLDER}.dq_rules SET owner_display_name = steward_display_name "
-    f"WHERE owner_display_name IS NULL;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN owner STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN owner_display_name STRING;"
-    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET owner = steward WHERE owner IS NULL;"
-    f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET owner_display_name = steward_display_name "
-    f"WHERE owner_display_name IS NULL;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN owner STRING;"
-    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN owner_display_name STRING;"
-    f"UPDATE {_PLACEHOLDER}.dq_data_products SET owner = steward WHERE owner IS NULL;"
-    f"UPDATE {_PLACEHOLDER}.dq_data_products SET owner_display_name = steward_display_name "
-    f"WHERE owner_display_name IS NULL"
-)
-
-
-_V19_TAG_AUTO_SUPPRESSIONS = (
-    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_tag_auto_suppressions ("
-    "  binding_id STRING NOT NULL,"
+    "  scope_type STRING NOT NULL,"
+    "  scope_key STRING NOT NULL,"
+    "  score DOUBLE NOT NULL,"
+    "  failed_tests BIGINT,"
+    "  total_tests BIGINT,"
+    "  run_time TIMESTAMP,"
+    "  computed_at TIMESTAMP NOT NULL"
+    ") CLUSTER BY (scope_type, scope_key, computed_at);"
+    #
+    # dq_rule_embeddings — semantic-search corpus for the registry (Rules
+    # Registry Phase 4B). One row per rule, refreshed when the rule's text
+    # changes; ``embedding`` is a JSON float array stored as STRING so the
+    # app stays portable across backends.
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_rule_embeddings ("
     "  rule_id STRING NOT NULL,"
-    "  mapping_hash STRING NOT NULL,"
-    "  suppressed_by STRING,"
-    "  suppressed_at TIMESTAMP,"
-    "  CONSTRAINT pk_dq_tag_auto_suppressions PRIMARY KEY (binding_id, rule_id, mapping_hash) RELY"
-    ") CLUSTER BY (binding_id)"
+    "  rule_version INT,"
+    "  embed_text STRING,"
+    "  embedding STRING,"
+    "  model STRING,"
+    "  updated_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_rule_embeddings PRIMARY KEY (rule_id) RELY"
+    ") CLUSTER BY (rule_id)"
 )
 
 
@@ -1419,186 +935,11 @@ MIGRATIONS: list[Migration] = [
     ),
     DeltaMigration(
         version=2,
-        description="Delta OLTP fallback (rules, app settings, RBAC, schedules) — used only when Lakebase is disabled",
-        sql_template=_V2_OLTP_FALLBACK,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=3,
-        description="Add warning_rows column to dq_validation_runs (backfill for pre-v3 deploys)",
-        sql_template=_V3_VALIDATION_RUNS_WARNING_ROWS,
-        oltp_fallback=False,
-    ),
-    DeltaMigration(
-        version=4,
-        description="Add warnings VARIANT column to dq_quarantine_records (mirror DQX _warnings map)",
-        sql_template=_V4_QUARANTINE_WARNINGS,
-        oltp_fallback=False,
-    ),
-    DeltaMigration(
-        version=5,
-        description="Add error_rows column to dq_validation_runs (DQX error_row_count, replaces invalid_rows for UI)",
-        sql_template=_V5_VALIDATION_RUNS_ERROR_ROWS,
-        oltp_fallback=False,
-    ),
-    DeltaMigration(
-        version=6,
-        description="Run review status (per-run review label + audit history) — used only when Lakebase is disabled",
-        sql_template=_V6_RUN_REVIEW_STATUS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=7,
-        description="Role mappings audit history (dq_role_mappings_history) — used only when Lakebase is disabled",
-        sql_template=_V7_ROLE_MAPPINGS_HISTORY,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=8,
-        description="Rule embeddings corpus (dq_rule_embeddings) — Rules Registry Phase 4B, "
-        "used only when Lakebase is disabled",
-        sql_template=_V8_RULE_EMBEDDINGS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=9,
-        description="Converge dq_monitored_tables status to the 4-state review set "
-        "(draft/pending_approval/approved/rejected) — used only when Lakebase is disabled",
-        sql_template=_V9_MONITORED_TABLES_STATUS_CONVERGE,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=10,
         description=(
-            "Data Products: versioned monitored-table snapshots, product groupings, and run "
-            "sets (docs/superpowers/plans/2026-07-07-data-products.md Task 1) — "
-            "used only when Lakebase is disabled"
+            "Delta OLTP fallback (app settings, rules registry, monitored tables, data products, "
+            "RBAC, object grants, scores) — used only when Lakebase is disabled"
         ),
-        sql_template=_V10_DATA_PRODUCTS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=11,
-        description="Freeze mode on dq_rule_versions (add column + backfill from the live rule's mode) "
-        "— used only when Lakebase is disabled",
-        sql_template=_V11_RULE_VERSIONS_MODE,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=12,
-        description="Converge dq_data_products status to the 4-state review set "
-        "(draft/pending_approval/approved/rejected) — used only when Lakebase is disabled",
-        sql_template=_V12_DATA_PRODUCTS_STATUS_CONVERGE,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=13,
-        description="Monitored tables become schedulable: add schedule_cron/schedule_tz (P21 item 14) "
-        "— used only when Lakebase is disabled",
-        sql_template=_V13_MONITORED_TABLES_SCHEDULE,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=14,
-        description="UC-style object permissions (dq_object_grants + history) — P22-D item 10, "
-        "used only when Lakebase is disabled",
-        sql_template=_V14_OBJECT_GRANTS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=15,
-        description="DQ score cache (dq_score_cache) — list-page score columns (P3.4), "
-        "used only when Lakebase is disabled",
-        sql_template=_V15_SCORE_CACHE,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=16,
-        description="DQ score history (dq_score_history) — append-only trend points for the "
-        "homepage chart (P3.5), used only when Lakebase is disabled",
-        sql_template=_V16_SCORE_HISTORY,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=17,
-        description="Monitored tables: add last_run_at (write-on-complete list-page pointer, T-perf/B2-15) "
-        "— used only when Lakebase is disabled",
-        sql_template=_V17_MONITORED_TABLES_LAST_RUN_AT,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=18,
-        description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52) "
-        "— used only when Lakebase is disabled",
-        sql_template=_V18_SCHEDULE_KIND,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=19,
-        description="Staged registry-rule applications awaiting approval (dq_pending_applications) — "
-        "Bulk Contract Import Phase 2, used only when Lakebase is disabled",
-        sql_template=_V19_PENDING_APPLICATIONS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=22,
-        description="Applied rules: add per-rule row_filter (SQL WHERE predicate) + pass_threshold (percent) "
-        "— used only when Lakebase is disabled",
-        sql_template=_V22_APPLIED_RULES_ROW_FILTER_THRESHOLD,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=23,
-        description="Tag-auto suppressions (dq_tag_auto_suppressions): tombstone deliberate removals of "
-        "tag-auto-applied rows so reconcile doesn't re-add them — used only when Lakebase is disabled",
-        sql_template=_V19_TAG_AUTO_SUPPRESSIONS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=24,
-        description="Backfill default object grants (users-group SELECT/APPLY/EXECUTE + owner ALL_PRIVILEGES) "
-        "for existing registry_rules, monitored_tables, and data_products that predate on-create seeding "
-        "— used only when Lakebase is disabled",
-        sql_template=_V24_BACKFILL_DEFAULT_GRANTS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=25,
-        description="Strip EXECUTE from registry_rule users-group grant rows (EXECUTE is meaningless on a rule) "
-        "— used only when Lakebase is disabled",
-        sql_template=_V25_STRIP_EXECUTE_FROM_REGISTRY_RULE_GRANTS,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=26,
-        description="Add steward_display_name to dq_rules, dq_monitored_tables, dq_data_products "
-        "— used only when Lakebase is disabled",
-        sql_template=_V26_STEWARD_DISPLAY_NAME,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=27,
-        description="Add notes + change-rationale columns " "— used only when Lakebase is disabled",
-        sql_template=_V27_NOTES_AND_RATIONALE,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=28,
-        description="Add owner/owner_display_name (copy from steward columns) " "— used only when Lakebase is disabled",
-        sql_template=_V28_OWNER_RENAME,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=29,
-        description="Drop sticky object notes columns " "— used only when Lakebase is disabled",
-        sql_template=_V29_DROP_NOTES,
-        oltp_fallback=True,
-    ),
-    DeltaMigration(
-        version=30,
-        description="Add schedule_sample_size to monitored tables + data products "
-        "— used only when Lakebase is disabled",
-        sql_template=_V30_SCHEDULE_SAMPLE_SIZE,
+        sql_template=_V2_OLTP_FALLBACK,
         oltp_fallback=True,
     ),
 ]
@@ -1846,11 +1187,6 @@ class MigrationRunner:
         # plain English wording at different times.
         "DELTA_CONSTRAINT_ALREADY_EXISTS",
         "constraint already exists",
-        # DROP COLUMN re-runs after a half-applied attempt (or on a DB that
-        # never had the column) surface these — safe because the desired
-        # state is "column gone".
-        "DELTA_COLUMN_NOT_FOUND",
-        "COLUMN_NOT_FOUND",
     )
 
     def _apply(self, migration: Migration) -> None:

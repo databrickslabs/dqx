@@ -58,9 +58,9 @@ class RoleService:
     full timeline of who-changed-what-when survives even after a mapping
     is removed. The mutable :attr:`_table` only ever holds the *current*
     set of (role, group) pairs; the history table is the source of truth
-    for compliance / "what changed last week" questions. See the docstring
-    on :data:`backend.migrations._V7_ROLE_MAPPINGS_HISTORY` for the table
-    schema and the rationale for the ``action`` vocabulary.
+    for compliance / "what changed last week" questions. Both tables are
+    declared in the OLTP baseline of :mod:`backend.migrations` (Delta) and
+    :mod:`backend.migrations.postgres` (Lakebase).
     """
 
     # Action vocabulary written into ``dq_role_mappings_history.action``.

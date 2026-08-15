@@ -134,205 +134,106 @@ class TestLiveMigrationsAreTemplateSafe:
                 )
 
 
-class TestScheduleKindDeltaMigration:
-    """B2-52: schedule_kind is declared on the Delta baseline + converged by v18."""
-
-    def test_v18_adds_schedule_kind_to_both_tables(self) -> None:
-        v18 = next(m for m in MIGRATIONS if m.version == 18)
-        assert "dq_monitored_tables ADD COLUMN schedule_kind STRING" in v18.sql_template
-        assert "dq_data_products ADD COLUMN schedule_kind STRING" in v18.sql_template
-        assert "chk_dq_monitored_tables_schedule_kind" in v18.sql_template
-        assert "chk_dq_data_products_schedule_kind" in v18.sql_template
-
-    def test_delta_baselines_declare_schedule_kind(self) -> None:
-        # v2 = Delta OLTP-fallback baseline (dq_monitored_tables);
-        # v10 = Data Products baseline (dq_data_products).
-        v2 = next(m for m in MIGRATIONS if m.version == 2)
-        v10 = next(m for m in MIGRATIONS if m.version == 10)
-        assert "schedule_kind" in v2.sql_template
-        assert "chk_dq_monitored_tables_schedule_kind" in v2.sql_template
-        assert "schedule_kind" in v10.sql_template
-        assert "chk_dq_data_products_schedule_kind" in v10.sql_template
+# ---------------------------------------------------------------------------
+# Baseline shape — the schema is CREATE-only
+# ---------------------------------------------------------------------------
 
 
-class TestPendingApplicationsMigration:
-    """Bulk Contract Import Phase 2: dq_pending_applications (v19, OLTP fallback)."""
+def _statements(template: str) -> list[str]:
+    """Split a migration template the way ``_apply`` does, whitespace-normalized."""
+    return [" ".join(stmt.split()) for stmt in template.split(";") if stmt.strip()]
 
-    def test_v19_creates_pending_applications_table(self) -> None:
-        v19 = next(m for m in MIGRATIONS if m.version == 19)
-        assert "CREATE TABLE IF NOT EXISTS {catalog}.{schema}.dq_pending_applications" in v19.sql_template
-        assert "binding_id" in v19.sql_template
-        assert "rule_id" in v19.sql_template
-        assert "column_mapping" in v19.sql_template
-        # Must be an OLTP-fallback table so it's skipped when Lakebase owns it.
-        assert v19.oltp_fallback is True
 
-    def test_pending_applications_is_an_oltp_table(self) -> None:
+def _oltp_baseline() -> str:
+    return " ".join(next(m for m in MIGRATIONS if m.oltp_fallback).sql_template.split())
+
+
+class TestBaselineOnlyCatalogue:
+    """The catalogue is two baselines and the schema is expressed as CREATE TABLE.
+
+    There are no external installs to upgrade yet, so a shape change is
+    edited into the baseline rather than appended as an ALTER. These tests
+    pin that decision: an ``ADD COLUMN``, ``DROP COLUMN``, or backfill
+    ``UPDATE`` creeping back in would mean the schema is once again split
+    across a replay chain — and ``DROP COLUMN`` in particular is rejected
+    outright by Delta tables without the column-mapping feature, which is
+    how the previous chain broke in CI.
+    """
+
+    def test_catalogue_is_exactly_the_two_baselines(self) -> None:
+        assert [(m.version, m.oltp_fallback) for m in MIGRATIONS] == [(1, False), (2, True)]
+
+    def test_every_statement_creates_a_table_or_adds_a_constraint(self) -> None:
+        # ADD CONSTRAINT is the one unavoidable ALTER: Delta accepts only
+        # PK/FK inline in CREATE TABLE, so CHECKs follow their table.
+        for migration in MIGRATIONS:
+            for stmt in _statements(migration.sql_template):
+                creates = stmt.startswith("CREATE TABLE IF NOT EXISTS")
+                constrains = stmt.startswith("ALTER TABLE") and "ADD CONSTRAINT" in stmt
+                assert creates or constrains, f"v{migration.version} statement is neither: {stmt[:120]}"
+
+    def test_no_table_is_created_by_both_baselines(self) -> None:
+        assert not set(ANALYTICAL_TABLE_NAMES) & set(OLTP_TABLE_NAMES)
+
+    def test_analytical_baseline_owns_the_spark_written_tables(self) -> None:
+        assert ANALYTICAL_TABLE_NAMES == (
+            "dq_profiling_results",
+            "dq_validation_runs",
+            "dq_quarantine_records",
+            "dq_metrics",
+        )
+
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "dq_rules",
+            "dq_monitored_tables",
+            "dq_data_products",
+            "dq_pending_applications",
+            "dq_tag_auto_suppressions",
+            "dq_object_grants",
+            "dq_score_cache",
+            "dq_rule_embeddings",
+        ],
+    )
+    def test_oltp_tables_come_from_the_fallback_baseline(self, table: str) -> None:
         # The reset feature and physical routing derive the table set from the
-        # CREATE statements — the new table must land in the OLTP bucket only.
-        assert "dq_pending_applications" in OLTP_TABLE_NAMES
-        assert "dq_pending_applications" not in ANALYTICAL_TABLE_NAMES
+        # CREATE statements, so every OLTP table must land in that bucket only.
+        assert table in OLTP_TABLE_NAMES
 
 
-class TestBackfillDefaultGrantsMigration:
-    """v24: backfill default object grants for pre-existing objects (OLTP fallback)."""
+class TestOltpBaselineShape:
+    """Columns that earlier revisions bolted on by ALTER now ship on CREATE.
 
-    def test_v24_covers_all_object_types(self) -> None:
-        v24 = next(m for m in MIGRATIONS if m.version == 24)
-        for obj_type in ("registry_rule", "monitored_table", "data_product"):
-            assert obj_type in v24.sql_template, f"v24 must cover object type '{obj_type}'"
-        assert "SELECT,APPLY,EXECUTE" in v24.sql_template, "users-group privileges must be present"
-        assert "ALL_PRIVILEGES" in v24.sql_template, "owner ALL_PRIVILEGES must be present"
-        assert "NOT EXISTS" in v24.sql_template, "backfill must be idempotent via NOT EXISTS"
-        assert "dq_object_grants" in v24.sql_template
+    Counts are asserted per column so a table dropping one is caught, not
+    just a global "the word appears somewhere" check. Three owner-bearing
+    tables: ``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``.
+    """
 
-    def test_v24_is_oltp_fallback(self) -> None:
-        v24 = next(m for m in MIGRATIONS if m.version == 24)
-        assert v24.oltp_fallback is True
+    def test_owner_columns_replace_steward(self) -> None:
+        sql = _oltp_baseline()
+        assert "steward" not in sql
+        assert sql.count("owner STRING,") == 3
+        assert sql.count("owner_display_name STRING,") == 3
+        # dq_rules clusters on owner now that steward is gone.
+        assert "CLUSTER BY (status, fingerprint, owner)" in sql
 
+    def test_rationale_columns_ship_on_create(self) -> None:
+        sql = _oltp_baseline()
+        assert sql.count("pending_rationale STRING,") == 3
+        assert sql.count("last_decision_rationale STRING,") == 3
+        # dq_rules_history keeps the per-transition note under a bare name.
+        assert sql.count(" rationale STRING,") == 1
 
-class TestStewardDisplayNameMigration:
-    """v26: add steward_display_name to dq_rules, dq_monitored_tables, dq_data_products (OLTP fallback)."""
+    def test_sticky_object_notes_are_gone(self) -> None:
+        assert "notes" not in _oltp_baseline()
 
-    def test_v26_adds_steward_display_name_to_three_tables(self) -> None:
-        v26 = next(m for m in MIGRATIONS if m.version == 26)
-        sql = v26.sql_template
-        assert "dq_rules" in sql, "v26 must touch dq_rules"
-        assert "dq_monitored_tables" in sql, "v26 must touch dq_monitored_tables"
-        assert "dq_data_products" in sql, "v26 must touch dq_data_products"
-        assert "steward_display_name" in sql, "v26 must add steward_display_name"
-        assert sql.count("ADD COLUMN") == 3, "v26 must have exactly 3 ADD COLUMN statements"
-
-    def test_v26_is_oltp_fallback(self) -> None:
-        v26 = next(m for m in MIGRATIONS if m.version == 26)
-        assert v26.oltp_fallback is True
-
-    def test_v26_version_follows_v25(self) -> None:
-        versions = [m.version for m in MIGRATIONS]
-        idx25 = versions.index(25)
-        idx26 = versions.index(26)
-        assert idx26 == idx25 + 1, "v26 must immediately follow v25 in MIGRATIONS"
-
-
-class TestOwnerRenameMigration:
-    """v28: add owner/owner_display_name (copy from steward) on OLTP fallback tables."""
-
-    def test_v28_adds_owner_columns_and_copies(self) -> None:
-        v28 = next(m for m in MIGRATIONS if m.version == 28)
-        sql = v28.sql_template
-        assert "dq_rules" in sql
-        assert "dq_monitored_tables" in sql
-        assert "dq_data_products" in sql
-        assert "ADD COLUMN owner" in sql
-        assert "ADD COLUMN owner_display_name" in sql
-        assert "SET owner = steward" in sql
-        assert "SET owner_display_name = steward_display_name" in sql
-
-    def test_v28_is_oltp_fallback(self) -> None:
-        v28 = next(m for m in MIGRATIONS if m.version == 28)
-        assert v28.oltp_fallback is True
-
-    def test_v28_version_follows_v27(self) -> None:
-        versions = [m.version for m in MIGRATIONS]
-        idx27 = versions.index(27)
-        idx28 = versions.index(28)
-        assert idx28 == idx27 + 1, "v28 must immediately follow v27 in MIGRATIONS"
-
-
-class TestNotesAndRationaleMigration:
-    """v27: notes + change-rationale columns (OLTP fallback)."""
-
-    def test_v27_adds_notes_and_rationale_columns(self) -> None:
-        v27 = next(m for m in MIGRATIONS if m.version == 27)
-        sql = v27.sql_template
-        assert "dq_monitored_tables" in sql
-        assert "dq_data_products" in sql
-        assert "dq_rules" in sql
-        assert "dq_rules_history" in sql
-        assert "notes" in sql
-        assert "pending_rationale" in sql
-        assert "last_decision_rationale" in sql
-        assert "rationale" in sql
-        # Rule notes stay in user_metadata — no notes column on dq_rules.
-        assert "dq_rules ADD COLUMN notes" not in sql.replace("\n", " ")
-
-    def test_v27_is_oltp_fallback(self) -> None:
-        v27 = next(m for m in MIGRATIONS if m.version == 27)
-        assert v27.oltp_fallback is True
-
-    def test_v27_version_follows_v26(self) -> None:
-        versions = [m.version for m in MIGRATIONS]
-        idx26 = versions.index(26)
-        idx27 = versions.index(27)
-        assert idx27 == idx26 + 1, "v27 must immediately follow v26 in MIGRATIONS"
-
-
-class TestDropNotesMigration:
-    """v29: drop sticky object notes columns (OLTP fallback)."""
-
-    def test_v29_drops_notes_columns(self) -> None:
-        v29 = next(m for m in MIGRATIONS if m.version == 29)
-        sql = v29.sql_template
-        assert "dq_monitored_tables" in sql
-        assert "dq_data_products" in sql
-        assert "DROP COLUMN notes" in sql
-        assert "pending_rationale" not in sql
-        assert "last_decision_rationale" not in sql
-
-    def test_v29_is_oltp_fallback(self) -> None:
-        v29 = next(m for m in MIGRATIONS if m.version == 29)
-        assert v29.oltp_fallback is True
-
-    def test_v29_version_follows_v28(self) -> None:
-        versions = [m.version for m in MIGRATIONS]
-        idx28 = versions.index(28)
-        idx29 = versions.index(29)
-        assert idx29 == idx28 + 1, "v29 must immediately follow v28 in MIGRATIONS"
-
-
-class TestScheduleSampleSizeMigration:
-    """v30: per-schedule run scope on both scheduled entities (OLTP fallback)."""
-
-    def test_v30_adds_the_column_to_both_tables(self) -> None:
-        v30 = next(m for m in MIGRATIONS if m.version == 30)
-        sql = v30.sql_template
-        assert "dq_monitored_tables ADD COLUMN schedule_sample_size INT" in sql
-        assert "dq_data_products ADD COLUMN schedule_sample_size INT" in sql
-
-    def test_v30_is_oltp_fallback(self) -> None:
-        v30 = next(m for m in MIGRATIONS if m.version == 30)
-        assert v30.oltp_fallback is True
-
-    def test_v30_version_follows_v29(self) -> None:
-        versions = [m.version for m in MIGRATIONS]
-        assert versions.index(30) == versions.index(29) + 1, "v30 must immediately follow v29 in MIGRATIONS"
-
-    def test_column_already_exists_is_idempotent(self) -> None:
-        """A re-run against a converged DB must be swallowed, not fatal."""
-        assert "COLUMN_ALREADY_EXISTS" in MigrationRunner._IDEMPOTENT_ERROR_FRAGMENTS
-
-
-class TestStripExecuteFromRegistryRuleGrantsMigration:
-    """v25: strip EXECUTE from registry_rule users-group grant rows (OLTP fallback)."""
-
-    def test_v25_targets_registry_rule_execute_rows(self) -> None:
-        v25 = next(m for m in MIGRATIONS if m.version == 25)
-        sql = v25.sql_template
-        assert "UPDATE" in sql, "v25 must be an UPDATE statement"
-        assert "dq_object_grants" in sql
-        assert "registry_rule" in sql, "must target registry_rule rows"
-        assert "EXECUTE" in sql, "must reference the EXECUTE token to strip it"
-        # Spark SQL array helpers used to strip the token
-        assert "array_remove" in sql, "must use array_remove to strip EXECUTE"
-        assert "split" in sql
-        assert "array_join" in sql
-        # Must NOT touch ALL_PRIVILEGES rows (owner rows)
-        assert "ALL_PRIVILEGES" in sql, "must guard against touching ALL_PRIVILEGES rows"
-        assert "<> 'ALL_PRIVILEGES'" in sql, "must explicitly exclude ALL_PRIVILEGES rows"
-
-    def test_v25_is_oltp_fallback(self) -> None:
-        v25 = next(m for m in MIGRATIONS if m.version == 25)
-        assert v25.oltp_fallback is True
+    def test_both_schedulable_scopes_carry_the_schedule_columns(self) -> None:
+        sql = _oltp_baseline()
+        assert sql.count("schedule_sample_size INT,") == 2
+        assert sql.count("schedule_kind STRING,") == 2
+        assert "chk_dq_monitored_tables_schedule_kind" in sql
+        assert "chk_dq_data_products_schedule_kind" in sql
 
 
 # ---------------------------------------------------------------------------

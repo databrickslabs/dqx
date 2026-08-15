@@ -34,10 +34,12 @@ Why the helpers look the way they do
 """
 
 import dataclasses
+import re
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
+from databricks_labs_dqx_app.backend.migrations import OLTP_TABLE_NAMES
 from databricks_labs_dqx_app.backend.migrations.postgres import (
     PG_MIGRATIONS,
     PgMigration,
@@ -120,6 +122,23 @@ def _insert_meta_versions(cursor_mock: MagicMock) -> list[object]:
     return [params[0] for _, params in _insert_meta_calls(cursor_mock) if params]
 
 
+_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+
+
+def _baseline() -> str:
+    """The v1 baseline SQL, whitespace-normalized so column alignment doesn't matter."""
+    return " ".join(PG_MIGRATIONS[0].sql.split())
+
+
+def _statements(sql: str) -> list[str]:
+    """Split a migration the way ``_apply`` does."""
+    return [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+
+
+def _created_tables(sql: str) -> list[str]:
+    return _CREATE_TABLE_RE.findall(sql)
+
+
 # ---------------------------------------------------------------------------
 # PG_MIGRATIONS catalogue invariants
 # ---------------------------------------------------------------------------
@@ -139,144 +158,68 @@ class TestPgMigrationsCatalogue:
         for m in PG_MIGRATIONS:
             assert m.description.strip(), f"v{m.version} migration has an empty description"
 
-    def test_schedule_kind_baseline_declares_column_on_both_tables(self):
-        # Fresh installs must carry schedule_kind on both tables (B2-52).
-        # Whitespace between column name and type varies (alignment), so
-        # assert the identifier, default, and CHECK name independently.
-        by_version = {m.version: m for m in PG_MIGRATIONS}
-        baseline_sql = by_version[1].sql  # dq_monitored_tables baseline
-        products_sql = by_version[6].sql  # dq_data_products CREATE
-        assert "schedule_kind" in baseline_sql
-        assert "schedule_kind" in products_sql
-        assert baseline_sql.count("'profiling_and_dq'") >= 1
-        assert products_sql.count("'profiling_and_dq'") >= 1
-        assert "chk_dq_monitored_tables_schedule_kind" in baseline_sql
-        assert "chk_dq_data_products_schedule_kind" in products_sql
 
-    def test_v14_converges_schedule_kind_on_deployed_dbs(self):
-        # Already-deployed DBs get schedule_kind via the v14 converge migration.
-        v14 = next(m for m in PG_MIGRATIONS if m.version == 14)
-        assert "ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'dq_only'" in v14.sql
-        assert "dq_monitored_tables" in v14.sql
-        assert "dq_data_products" in v14.sql
-        assert "chk_dq_monitored_tables_schedule_kind" in v14.sql
-        assert "chk_dq_data_products_schedule_kind" in v14.sql
+class TestBaselineOnlyCatalogue:
+    """The catalogue is one baseline and the schema is expressed as CREATE TABLE.
 
-    def test_v15_creates_pending_applications_table(self):
-        # Bulk Contract Import Phase 2: staged applications awaiting approval.
-        v15 = next(m for m in PG_MIGRATIONS if m.version == 15)
-        assert "CREATE TABLE IF NOT EXISTS" in v15.sql
-        assert "dq_pending_applications" in v15.sql
-        assert "column_mapping JSONB" in v15.sql
-        # One pending row per (binding, rule) — enforced by a UNIQUE constraint.
-        assert "UNIQUE (binding_id, rule_id)" in v15.sql
+    There are no external installs to upgrade yet, so a shape change is
+    edited into v1 rather than appended as an ALTER. These tests pin that
+    decision — an ``ALTER TABLE`` or backfill ``UPDATE`` creeping back in
+    would mean the schema is once again split across a replay chain.
+    """
 
-    def test_v20_backfills_default_grants_for_all_object_types(self):
-        """v20 must INSERT…SELECT default grants for all three object types
-        (registry_rule, monitored_table, data_product), each with a users-group
-        row and an owner row, all guarded by WHERE NOT EXISTS."""
-        v20 = next(m for m in PG_MIGRATIONS if m.version == 20)
-        sql = v20.sql
-        for obj_type in ("registry_rule", "monitored_table", "data_product"):
-            assert obj_type in sql, f"v20 must cover object type '{obj_type}'"
-        assert "SELECT,APPLY,EXECUTE" in sql, "users-group privileges must be present"
-        assert "ALL_PRIVILEGES" in sql, "owner privileges must be present"
-        assert "NOT EXISTS" in sql, "backfill must be idempotent via WHERE NOT EXISTS"
-        assert "dq_object_grants" in sql
+    def test_catalogue_is_exactly_the_baseline(self):
+        assert [m.version for m in PG_MIGRATIONS] == [1]
 
-    def test_v22_adds_steward_display_name_to_three_tables(self):
-        """v22 adds steward_display_name to dq_rules, dq_monitored_tables, dq_data_products."""
-        v22 = next(m for m in PG_MIGRATIONS if m.version == 22)
-        sql = v22.sql
-        assert "steward_display_name" in sql, "v22 must add steward_display_name"
-        assert "dq_rules" in sql, "v22 must touch dq_rules"
-        assert "dq_monitored_tables" in sql, "v22 must touch dq_monitored_tables"
-        assert "dq_data_products" in sql, "v22 must touch dq_data_products"
-        # Postgres uses IF NOT EXISTS, so re-running is a no-op.
-        assert "IF NOT EXISTS" in sql, "v22 must use ADD COLUMN IF NOT EXISTS for idempotency"
+    def test_every_statement_creates_a_table_or_an_index(self):
+        for stmt in _statements(_baseline()):
+            assert stmt.startswith(
+                ("CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")
+            ), f"baseline statement is neither a CREATE TABLE nor a CREATE INDEX: {stmt[:120]}"
 
-    def test_v24_renames_steward_columns_to_owner(self):
-        """v24 renames steward/steward_display_name → owner/owner_display_name."""
-        v24 = next(m for m in PG_MIGRATIONS if m.version == 24)
-        sql = v24.sql
-        assert "RENAME COLUMN steward TO owner" in sql
-        assert "RENAME COLUMN steward_display_name TO owner_display_name" in sql
-        assert "dq_rules" in sql
-        assert "dq_monitored_tables" in sql
-        assert "dq_data_products" in sql
+    def test_no_table_is_created_twice(self):
+        created = _created_tables(_baseline())
+        assert len(created) == len(set(created))
+
+    def test_oltp_table_set_matches_the_delta_fallback_baseline(self):
+        # Lakebase and Delta-fallback deploys must serve the same tables: the
+        # app picks a backend at startup and the services are backend-agnostic,
+        # so a table present in only one baseline breaks that deploy shape.
+        assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+
+
+class TestBaselineShape:
+    """Columns that earlier revisions bolted on by ALTER now ship on CREATE.
+
+    Counts are asserted per column so a table dropping one is caught, not
+    just a global "the word appears somewhere" check. Three owner-bearing
+    tables: ``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``.
+    """
+
+    def test_owner_columns_replace_steward(self):
+        sql = _baseline()
+        assert "steward" not in sql
+        assert sql.count("owner TEXT,") == 3
+        assert sql.count("owner_display_name TEXT,") == 3
         assert "idx_dq_rules_owner" in sql
-        assert "idx_dq_rules_steward" in sql
+        assert "idx_dq_rules_steward" not in sql
 
-    def test_v23_adds_notes_and_rationale_columns(self):
-        """v23 adds notes + pending/last_decision_rationale (+ history rationale)."""
-        v23 = next(m for m in PG_MIGRATIONS if m.version == 23)
-        sql = v23.sql
-        assert "dq_monitored_tables" in sql
-        assert "dq_data_products" in sql
-        assert "dq_rules" in sql
-        assert "dq_rules_history" in sql
-        assert "notes" in sql
-        assert "pending_rationale" in sql
-        assert "last_decision_rationale" in sql
-        assert "rationale" in sql
-        # Rule notes stay in user_metadata — v23 must NOT add notes on dq_rules.
-        assert "dq_rules ADD COLUMN IF NOT EXISTS notes" not in sql
-        assert "IF NOT EXISTS" in sql
+    def test_rationale_columns_ship_on_create(self):
+        sql = _baseline()
+        assert sql.count("pending_rationale TEXT,") == 3
+        assert sql.count("last_decision_rationale TEXT,") == 3
+        # dq_rules_history keeps the per-transition note under a bare name.
+        assert sql.count(" rationale TEXT,") == 1
 
-    def test_v25_drops_notes_columns(self):
-        """v25 drops sticky object notes; rationale columns stay."""
-        v25 = next(m for m in PG_MIGRATIONS if m.version == 25)
-        sql = v25.sql
-        assert "DROP COLUMN IF EXISTS notes" in sql
-        assert "dq_monitored_tables" in sql
-        assert "dq_data_products" in sql
-        assert "pending_rationale" not in sql
-        assert "last_decision_rationale" not in sql
+    def test_sticky_object_notes_are_gone(self):
+        assert "notes" not in _baseline()
 
-    def test_v26_adds_schedule_sample_size_columns(self):
-        """v26 adds a nullable run scope to both scheduled entities.
-
-        Nullable with no default so every existing schedule keeps scanning
-        whole tables, and ``IF NOT EXISTS`` so it no-ops on a fresh install
-        whose CREATE already declares the column.
-        """
-        v26 = next(m for m in PG_MIGRATIONS if m.version == 26)
-        sql = v26.sql
-        assert "dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_sample_size INTEGER" in sql
-        assert "dq_data_products ADD COLUMN IF NOT EXISTS schedule_sample_size INTEGER" in sql
-        assert "NOT NULL" not in sql
-        assert "DEFAULT" not in sql
-
-    def test_fresh_schema_declares_schedule_sample_size(self):
-        """The baseline CREATEs carry the column, making v26 a no-op there."""
-        v1 = next(m for m in PG_MIGRATIONS if m.version == 1)
-        assert v1.sql.count("schedule_sample_size INTEGER") == 1
-        v6 = next(m for m in PG_MIGRATIONS if m.version == 6)
-        assert "schedule_sample_size INTEGER" in v6.sql
-
-    def test_v21_strips_execute_from_registry_rule_grants(self):
-        """v21 must UPDATE dq_object_grants to remove EXECUTE from
-        registry_rule rows, leaving ALL_PRIVILEGES (owner) rows untouched."""
-        v21 = next(m for m in PG_MIGRATIONS if m.version == 21)
-        sql = v21.sql
-        assert "UPDATE" in sql, "v21 must be an UPDATE statement"
-        assert "dq_object_grants" in sql
-        assert "registry_rule" in sql, "must target registry_rule rows"
-        assert "EXECUTE" in sql, "must reference the EXECUTE token to strip it"
-        # Postgres array helpers used to strip the token
-        assert "array_remove" in sql, "must use array_remove to strip EXECUTE"
-        assert "string_to_array" in sql
-        assert "array_to_string" in sql
-        # Must NOT touch ALL_PRIVILEGES rows (owner rows)
-        assert "ALL_PRIVILEGES" in sql, "must guard against touching ALL_PRIVILEGES rows"
-        assert (
-            "<> 'ALL_PRIVILEGES'" in sql or "!= 'ALL_PRIVILEGES'" in sql
-        ), "must explicitly exclude ALL_PRIVILEGES rows from the UPDATE"
-
-
-# ---------------------------------------------------------------------------
-# PgMigration dataclass behaviour
-# ---------------------------------------------------------------------------
+    def test_both_schedulable_scopes_carry_the_schedule_columns(self):
+        sql = _baseline()
+        assert sql.count("schedule_sample_size INTEGER,") == 2
+        assert sql.count("schedule_kind TEXT NOT NULL DEFAULT 'dq_only',") == 2
+        assert "chk_dq_monitored_tables_schedule_kind" in sql
+        assert "chk_dq_data_products_schedule_kind" in sql
 
 
 class TestPgMigrationDataclass:

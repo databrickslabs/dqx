@@ -1,17 +1,13 @@
 """Schema tests for the tag-auto suppressions table (apply-on-tag).
 
-``dq_tag_auto_suppressions`` is added as a new Postgres migration (v19) and
-the matching Delta OLTP-fallback template (v23). Both must declare the same
-logical columns and the ``(binding_id, rule_id, mapping_hash)`` primary key so
+``dq_tag_auto_suppressions`` ships on both baselines — the Postgres v1
+baseline and the Delta OLTP fallback. Both must declare the same logical
+columns and the ``(binding_id, rule_id, mapping_hash)`` primary key so
 ``ApplyRulesService._is_suppressed`` / ``_record_suppression`` are portable
 across backends.
 """
 
-from databricks_labs_dqx_app.backend.migrations import (
-    _V19_TAG_AUTO_SUPPRESSIONS,
-    MIGRATIONS,
-    DeltaMigration,
-)
+from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 _SUPPRESSION_COLS = (
@@ -22,52 +18,50 @@ _SUPPRESSION_COLS = (
     "suppressed_at",
 )
 
-_PG_VERSION = 19
-_DELTA_VERSION = 23
+_PG_BASELINE = PG_MIGRATIONS[0].sql
+
+_TABLE = "dq_tag_auto_suppressions"
+
+
+def _create_stmt(sql: str, table: str) -> str:
+    """The one CREATE TABLE statement for ``table``, whitespace-normalized.
+
+    Scoping assertions to a single statement keeps them meaningful: a bare
+    substring check against the whole baseline would pass on a column that
+    happens to exist on some unrelated table.
+    """
+    stmts = [" ".join(s.split()) for s in sql.split(";")]
+    matches = [s for s in stmts if s.startswith("CREATE TABLE") and f".{table} (" in s]
+    assert len(matches) == 1, f"expected one CREATE TABLE for {table}, found {len(matches)}"
+    return matches[0]
 
 
 class TestTagAutoSuppressionsPostgres:
-    def test_added_as_new_migration(self):
-        migration = next(m for m in PG_MIGRATIONS if m.version == _PG_VERSION)
-        assert "dq_tag_auto_suppressions" in migration.sql
-
     def test_columns(self):
-        migration = next(m for m in PG_MIGRATIONS if m.version == _PG_VERSION)
+        ddl = _create_stmt(_PG_BASELINE, _TABLE)
         for col in _SUPPRESSION_COLS:
-            assert col in migration.sql
+            assert col in ddl
 
     def test_primary_key_is_natural_key(self):
-        migration = next(m for m in PG_MIGRATIONS if m.version == _PG_VERSION)
-        assert "PRIMARY KEY (binding_id, rule_id, mapping_hash)" in migration.sql
+        ddl = _create_stmt(_PG_BASELINE, _TABLE)
+        assert "PRIMARY KEY (binding_id, rule_id, mapping_hash)" in ddl
 
     def test_binding_id_index(self):
-        migration = next(m for m in PG_MIGRATIONS if m.version == _PG_VERSION)
-        assert "idx_dq_tag_auto_suppressions_binding_id" in migration.sql
-
-    def test_versions_monotonic(self):
-        versions = [m.version for m in PG_MIGRATIONS]
-        assert versions == sorted(versions)
-        assert len(versions) == len(set(versions))
+        assert "idx_dq_tag_auto_suppressions_binding_id" in _PG_BASELINE
 
 
 class TestTagAutoSuppressionsDelta:
-    def test_delta_fallback_declares_table(self):
-        assert "dq_tag_auto_suppressions" in _V19_TAG_AUTO_SUPPRESSIONS
-
-    def test_delta_columns(self):
+    def test_columns(self):
+        ddl = _create_stmt(_V2_OLTP_FALLBACK, _TABLE)
         for col in _SUPPRESSION_COLS:
-            assert col in _V19_TAG_AUTO_SUPPRESSIONS
+            assert col in ddl
 
-    def test_delta_primary_key(self):
-        assert "PRIMARY KEY (binding_id, rule_id, mapping_hash)" in _V19_TAG_AUTO_SUPPRESSIONS
+    def test_primary_key_is_natural_key(self):
+        ddl = _create_stmt(_V2_OLTP_FALLBACK, _TABLE)
+        assert "PRIMARY KEY (binding_id, rule_id, mapping_hash)" in ddl
 
-    def test_registered_as_oltp_fallback_migration(self):
-        migration = next(m for m in MIGRATIONS if m.version == _DELTA_VERSION)
-        assert isinstance(migration, DeltaMigration)
-        assert migration.oltp_fallback is True
-        assert migration.sql_template == _V19_TAG_AUTO_SUPPRESSIONS
-
-    def test_versions_monotonic(self):
-        versions = [m.version for m in MIGRATIONS]
-        assert versions == sorted(versions)
-        assert len(versions) == len(set(versions))
+    def test_clustered_by_binding_id(self):
+        # Delta has no secondary indexes; clustering covers the per-binding
+        # read that the Postgres index serves.
+        ddl = _create_stmt(_V2_OLTP_FALLBACK, _TABLE)
+        assert "CLUSTER BY (binding_id)" in ddl
