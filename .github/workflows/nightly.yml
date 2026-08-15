@@ -342,8 +342,15 @@ jobs:
   # MCP server integration tests. Mirrors the mcp.yml PR job, but runs on the nightly schedule so
   # the suite is exercised even when no PR touches mcp-server/. Deploys an isolated MCP app from the
   # bundle, drives it as an agent would, and tears it down (see tests/integration_mcp/conftest.py).
-  # No coverage upload on purpose: the MCP server and runner execute remotely (Databricks App + job),
-  # so nothing under `coverage` runs locally — an upload would only report those modules at 0%.
+  #
+  # Deploys the dev-coverage bundle target (DQX_MCP_COVERAGE_DIR below), exactly like mcp.yml. That is
+  # what sets the app's DQX_SWEEP_INTERVAL_SECONDS=0 so the temp-view sweep runs on every job
+  # submission — the stale-view sweeper assertion plants an orphan and expects the very next submit to
+  # reap it, which only holds at interval 0. The production `dev` target keeps the 600s throttle, so a
+  # bare `dev` deploy here left that assertion failing deterministically while every PR (dev-coverage)
+  # passed. Coverage is still NOT uploaded on purpose: this job has no merge/upload steps, so the
+  # remotely collected data is simply discarded at teardown — reusing the target is only about the
+  # sweep interval, not about reporting coverage from the nightly run.
   mcp-tests:
     environment: tool
     runs-on:
@@ -382,6 +389,12 @@ jobs:
           # No runner-SP env var is needed: ci_deploy.sh leaves the runner job's run_as at the
           # deploying identity (resolved via `databricks current-user me`), so run_as == the job's
           # creator and needs no servicePrincipal.user grant.
+          #
+          # Selects the dev-coverage bundle target (ci_deploy.sh), which sets the app's
+          # DQX_SWEEP_INTERVAL_SECONDS=0 so the stale-view sweeper assertion is deterministic (see the
+          # job comment above). "1" means "enabled, derive the directory". Unlike mcp.yml, this job has
+          # no coverage merge/upload steps, so the collected data is discarded at teardown.
+          DQX_MCP_COVERAGE_DIR: "1"
 
   # Performance benchmarks:
   # 1. run tests and generate a new perf baseline

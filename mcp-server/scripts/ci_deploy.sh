@@ -24,7 +24,13 @@
 set -euo pipefail
 
 NAME_PREFIX="${NAME_PREFIX:-mcp-dqx-ci}"
-BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
+# Coverage-enabled test deploys use the dev-coverage bundle target (adds `coverage` to the runner
+# job env — production/user deploys never ship it). An explicit BUNDLE_TARGET always wins.
+if [ -n "${DQX_MCP_COVERAGE_DIR:-}" ]; then
+  BUNDLE_TARGET="${BUNDLE_TARGET:-dev-coverage}"
+else
+  BUNDLE_TARGET="${BUNDLE_TARGET:-dev}"
+fi
 # Required config (CI: provided by the acceptance harness env + the deploy fixture).
 : "${DATABRICKS_HOST:?DATABRICKS_HOST is not set (workspace URL)}"
 : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is not set (workspace auth)}"
@@ -46,7 +52,7 @@ PROFILE_ARG=()
 # a message that names the fix.
 RUNNER_SP="${DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID:-}"
 if [ -z "$RUNNER_SP" ]; then
-  RUNNER_SP="$(databricks current-user me "${PROFILE_ARG[@]}" -o json \
+  RUNNER_SP="$(databricks current-user me ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json \
     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("userName",""))')"
   echo "runner_service_principal_id unset; defaulting run_as to the deploying identity: ${RUNNER_SP}"
   case "$RUNNER_SP" in
@@ -73,6 +79,41 @@ VARS=(--var "name_prefix=${NAME_PREFIX}"
 
 cd "$(dirname "$0")/.."  # mcp-server/
 
+# Coverage-enabled deploys only (DQX_MCP_COVERAGE_DIR set): install the TEST-ONLY coverage
+# bootstrap wheel into the app. Its .pth starts a coverage tracer at interpreter start, so no
+# production module is coverage-aware — see tests/integration_mcp/coverage_bootstrap. The wheel is
+# deliberately NOT in the committed requirements.txt (users must not ship test instrumentation):
+# append it for the duration of the deploy — the bundle snapshots source files at sync time — and
+# always restore the original afterwards so local working trees stay clean (CI checkouts are
+# throwaway either way). The runner job gets the same wheel via the dev-coverage bundle target.
+if [ -n "${DQX_MCP_COVERAGE_DIR:-}" ]; then
+  cp requirements.txt requirements.txt.orig
+  trap 'mv requirements.txt.orig requirements.txt' EXIT
+  # Built into ./.build, which sync.include ships with the app source, so the relative path
+  # resolves in the app container. Resolve the glob here: requirements.txt has no glob support.
+  uv build ../tests/integration_mcp/coverage_bootstrap --wheel --out-dir ./.build
+  BOOTSTRAP_WHEEL="$(ls -t ./.build/dqx_mcp_coverage_bootstrap-*.whl | head -1)"
+  printf './%s\n' "${BOOTSTRAP_WHEEL#./}" >> requirements.txt
+
+  # Build DQX from THIS repo's source so the runner job tests the code in the PR rather than the last
+  # published release (see the dev-coverage runner_environment_dependencies). Production deploys keep
+  # the PyPI pin and never reach this branch. The app publishes the wheel to the wheels volume at
+  # startup; the runner installs it from there by absolute /Volumes path.
+  echo "building the in-repo DQX wheel for the CI runner"
+  uv build .. --wheel --out-dir ./.build
+  DQX_WHEEL="$(ls -t ./.build/databricks_labs_dqx-*.whl | head -1)"
+  echo "built $(basename "${DQX_WHEEL}")"
+  # Fail loudly on drift: the bundle names this file in a job dependency list, and a missing wheel
+  # surfaces as an opaque pip error inside the job rather than a deploy failure.
+  EXPECTED_DQX_WHEEL="$(databricks bundle validate -t "${BUNDLE_TARGET}" "${PROFILE_ARG[@]+${PROFILE_ARG[@]}}" -o json 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin)["variables"]["dqx_wheel_filename"]["value"])' 2>/dev/null || echo "")"
+  if [ -n "${EXPECTED_DQX_WHEEL}" ] && [ "$(basename "${DQX_WHEEL}")" != "${EXPECTED_DQX_WHEEL}" ]; then
+    echo "ERROR: built $(basename "${DQX_WHEEL}") but the bundle expects ${EXPECTED_DQX_WHEEL}." >&2
+    echo "Update var.dqx_wheel_filename in mcp-server/databricks.yml to match the repo version." >&2
+    exit 1
+  fi
+fi
+
 echo "::group::one-time catalog grants (users + runner SP)"
 # The bundle applies every grant on the objects it owns natively. Catalog-level grants are the
 # exception — the catalog pre-exists and is not bundle-managed — so apply them here. The app SP's
@@ -84,7 +125,7 @@ echo "::endgroup::"
 echo "::group::bundle deploy (${NAME_PREFIX}, target ${BUNDLE_TARGET})"
 # Creates the schema, both volumes, the runner job and the app, and applies their native grants.
 # The bundle uses `engine: direct` (no Terraform), so this does not download a provider.
-databricks bundle deploy -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
+databricks bundle deploy -t "${BUNDLE_TARGET}" "${VARS[@]}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"}
 echo "::endgroup::"
 
 echo "::group::grant the app SP USE CATALOG (only resolvable after the app exists)"
@@ -106,7 +147,7 @@ echo "::group::deploy + start app"
 # command + env, incl. DQX_CATALOG — comes from the bundle's inline `config:` block (there is no
 # app.yaml). This matches `make mcp-deploy`; raw `apps deploy` reads app.yaml from the source and
 # would fail with "No command to run" now that the config lives in databricks.yml.
-databricks bundle run mcp-dqx -t "${BUNDLE_TARGET}" "${VARS[@]}" "${PROFILE_ARG[@]}"
+databricks bundle run mcp-dqx -t "${BUNDLE_TARGET}" "${VARS[@]}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"}
 echo "::endgroup::"
 
 echo "::group::wait for the app to publish the runner wheel"
@@ -137,12 +178,27 @@ echo "::endgroup::"
 # Emit the app URL and the app's service principal (application id). The SP is the identity
 # the runner job runs as, so tests that exercise the writing tools (save_checks /
 # apply_checks_and_save_to_table) grant it write access on their throwaway schema.
-read -r APP_URL APP_SP < <(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
+read -r APP_URL APP_SP < <(databricks apps get "${NAME_PREFIX}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["url"], d.get("service_principal_client_id",""))')
 echo "DQX_MCP_SERVER_URL=${APP_URL}"
 echo "DQX_MCP_APP_SERVICE_PRINCIPAL=${APP_SP}"
 # The runner job's resolved run_as SP — tests grant it READ on the seed contract volume.
 echo "DQX_MCP_RUNNER_SERVICE_PRINCIPAL=${RUNNER_SP}"
+# The deployed app's name — a coverage-enabled run stops the app via the Apps API before teardown
+# so its graceful shutdown flushes the final coverage data (see conftest.collect_remote_coverage).
+echo "DQX_MCP_APP_NAME=${NAME_PREFIX}"
+# The runner job id, so a failing test can print a clickable job/run URL. The acceptance harness
+# truncates tracebacks to one line, so these identifiers are often the only way to RCA a CI failure.
+RUNNER_JOB_ID="$(databricks jobs list --name "${NAME_PREFIX}-runner" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json 2>/dev/null \
+  | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+jobs=d if isinstance(d,list) else d.get("jobs",[])
+print(jobs[0]["job_id"] if jobs else "")' 2>/dev/null || true)"
+echo "DQX_MCP_RUNNER_JOB_ID=${RUNNER_JOB_ID}"
+echo "DQX_MCP_WORKSPACE_HOST=${DATABRICKS_HOST%/}"
+# The per-run temp schema. Tests that verify the sweepers need it: they plant an already-stale
+# temp view directly, which the tool interface cannot do.
+echo "DQX_MCP_TMP_SCHEMA=${TMP_SCHEMA}"
 # Use if-blocks (not `[ ] && echo`): the latter returns non-zero when the var is unset (local
 # runs), which would make this script exit 1 on an otherwise successful deploy.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "server_url=${APP_URL}" >> "$GITHUB_OUTPUT"; fi
