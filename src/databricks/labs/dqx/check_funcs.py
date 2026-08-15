@@ -16,6 +16,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql.types import DataType
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
@@ -80,6 +81,18 @@ WINDOW_INCOMPATIBLE_AGGREGATES = {
     "count_distinct",  # DISTINCT_WINDOW_FUNCTION_UNSUPPORTED error
     # Future: Add other aggregates that don't work with windows (e.g., collect_set with DISTINCT)
 }
+
+_IS_IN_DISTRIBUTION_SUPPORTED_KEY_TYPES: tuple[type, ...] = (bool, str, int, datetime.date)
+_IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES: tuple[type, ...] = (
+    types.BooleanType,
+    types.StringType,
+    types.CharType,
+    types.ByteType,
+    types.ShortType,
+    types.IntegerType,
+    types.LongType,
+    types.DateType,
+)
 
 
 class DQPattern(Enum):
@@ -532,6 +545,11 @@ def is_in_distribution(
     the given *distribution* before the check runs, so both sides are compared consistently. If two distribution keys
     collide after normalisation a validation error is raised.
 
+    Note:
+        This check is not supported for streaming DataFrames. It performs an ungrouped aggregation over the whole
+        dataset to compute the actual distribution, which Structured Streaming does not allow on unbounded sources
+        without a watermark and a compatible output mode. Use it on batch DataFrames only.
+
     Args:
         column: column to check; can be a string column name or a column expression.
         distribution: expected distribution of literal values to compare with. The dict must be homogeneous — all
@@ -558,8 +576,8 @@ def is_in_distribution(
             types; if the distribution dict is not homogeneous (contains keys of more than one type); or if two keys
             in the given distribution collide after case normalisation when *case_sensitive* is *False*.
     """
-    _validate_distribution(distribution, case_sensitive)
-    _validate_distance(distance)
+    _is_in_distribution_validate_distribution(distribution, case_sensitive)
+    _is_in_distribution_validate_distance(distance)
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
@@ -569,29 +587,18 @@ def is_in_distribution(
 
     def apply(df: DataFrame) -> DataFrame:
         # Resolve the type off the expression itself
-        column_type = df.select(col_expr).schema[0].dataType
-        if not isinstance(column_type, _SUPPORTED_SPARK_TYPES):
-            raise InvalidParameterError(
-                f"Column '{col_expr_str}' has unsupported type '{column_type.simpleString()}' for "
-                f"'is_in_distribution'; expected one of: boolean, string, char, byte, short, integer, "
-                f"long, date."
-            )
+        column_type = _is_in_distribution_get_data_type(df, col_expr, col_expr_str)
 
         filtered = df.filter(safe_filter_expr(row_filter)) if row_filter else df
 
         is_string_column = isinstance(column_type, (types.StringType, types.CharType))
         group_expr = col_expr
-        normalized_distribution = distribution
+        normalized_distribution: dict[Any, float] = distribution
         if is_string_column and not case_sensitive:
             group_expr = F.lower(col_expr)
-            normalized_distribution: dict[Any, float] = {
-                k.lower() if isinstance(k, str) else k: v for k, v in distribution.items()
-            }
+            normalized_distribution = {k.lower() if isinstance(k, str) else k: v for k, v in distribution.items()}
 
         expected_keys_ordered = list(normalized_distribution.keys())
-        expected_values = [normalized_distribution[k] for k in expected_keys_ordered]
-        # fsum keeps residual precision stable across many keys.
-        expected_residual = 1.0 - math.fsum(expected_values)
         per_key_aliases = [f"__cnt_{i}" for i in range(len(expected_keys_ordered))]
 
         # Explicit cast pins the literal to the column type so byte/short/date keys don't rely
@@ -614,19 +621,15 @@ def is_in_distribution(
 
         # limit(1) mirrors _is_aggr_compare — the ungrouped agg already returns one row, but the
         # limit is informational for the planner. Broadcasting via crossJoin keeps the whole
-        # pipeline lazy so apply_checks doesn't force an eager job or break streaming.
+        # pipeline lazy so apply_checks doesn't force an eager job.
         agg_df = filtered.agg(*aggregations).limit(1)
 
         total_col = F.col("__total")
-        listed_count_col = reduce(py_operator.add, (F.col(alias) for alias in per_key_aliases))
-        residual_count_col = total_col - listed_count_col
-        actual_residual_col = residual_count_col / total_col
-
-        deviation_terms = [
-            F.abs(F.lit(expected_val) - F.col(alias) / total_col)
-            for expected_val, alias in zip(expected_values, per_key_aliases)
-        ]
-        deviation_terms.append(F.abs(F.lit(expected_residual) - actual_residual_col))
+        deviation_terms = _is_in_distribution_get_deviation_terms(
+            normalized_distribution,
+            per_key_aliases,
+            total_col,
+        )
         tvd_col = F.lit(0.5) * reduce(py_operator.add, deviation_terms)
 
         # math.isclose (rel_tol=1e-09, abs_tol=0.0) as a Column expression: neutralises IEEE-754
@@ -645,30 +648,18 @@ def is_in_distribution(
             F.lit(f", which exceeds the allowed distance={distance}."),
         )
 
-        if impute:
-            is_violation_col = F.when(total_col == 0, F.lit(False)).otherwise(tvd_violation_col)
-            message_expr = F.when(total_col == 0, F.lit("")).otherwise(tvd_message_col)
-        else:
-            # Missing keys are those whose per-key count is zero; sort for stable output.
-            missing_key_names = [
-                F.when(F.col(alias) == 0, F.lit(repr(key)))
-                for key, alias in zip(expected_keys_ordered, per_key_aliases)
-            ]
-            missing_array = F.array_sort(F.filter(F.array(*missing_key_names), lambda x: x.isNotNull()))
-            has_missing_col = F.size(missing_array) > 0
-            missing_message_col = F.concat(
-                F.lit(f"Column '{col_expr_str}' distribution is missing expected keys ["),
-                F.array_join(missing_array, ", "),
-                F.lit("] and impute=False."),
-            )
-            is_violation_col = (
-                F.when(total_col == 0, F.lit(False)).when(has_missing_col, F.lit(True)).otherwise(tvd_violation_col)
-            )
-            message_expr = (
-                F.when(total_col == 0, F.lit("")).when(has_missing_col, missing_message_col).otherwise(tvd_message_col)
-            )
-
-        stats_df = agg_df.select(is_violation_col.alias(condition_col), message_expr.alias(message_col))
+        stats_df = _is_in_distribution_get_stats_df(
+            agg_df,
+            impute,
+            total_col,
+            tvd_violation_col,
+            tvd_message_col,
+            expected_keys_ordered,
+            per_key_aliases,
+            col_expr_str,
+            condition_col,
+            message_col,
+        )
 
         return df.crossJoin(stats_df)
 
@@ -681,21 +672,83 @@ def is_in_distribution(
     return condition, apply
 
 
-_SUPPORTED_DISTRIBUTION_KEY_TYPES: tuple[type, ...] = (bool, str, int, datetime.date)
-
-_SUPPORTED_SPARK_TYPES: tuple[type, ...] = (
-    types.BooleanType,
-    types.StringType,
-    types.CharType,
-    types.ByteType,
-    types.ShortType,
-    types.IntegerType,
-    types.LongType,
-    types.DateType,
-)
+def _is_in_distribution_get_data_type(df: DataFrame, column: Column, column_expression: str) -> DataType:
+    column_type = df.select(column).schema[0].dataType
+    if not isinstance(column_type, _IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES):
+        raise InvalidParameterError(
+            f"Column '{column_expression}' has unsupported type '{column_type.simpleString()}' for "
+            f"'is_in_distribution'; expected one of: boolean, string, char, byte, short, integer, "
+            f"long, date."
+        )
+    return column_type
 
 
-def _validate_distribution(
+def _is_in_distribution_get_deviation_terms(
+    distribution: dict[Any, float],
+    per_key_aliases: list[str],
+    total_column: Column,
+) -> list[Column]:
+    expected_values = list(distribution.values())
+    # fsum keeps residual precision stable across many keys.
+    expected_residual = 1.0 - math.fsum(expected_values)
+
+    listed_count_column = reduce(py_operator.add, (F.col(alias) for alias in per_key_aliases))
+    residual_count_column = total_column - listed_count_column
+    actual_residual_column = residual_count_column / total_column
+
+    deviation_terms = [
+        F.abs(F.lit(expected_value) - F.col(alias) / total_column)
+        for expected_value, alias in zip(expected_values, per_key_aliases)
+    ]
+    deviation_terms.append(F.abs(F.lit(expected_residual) - actual_residual_column))
+    return deviation_terms
+
+
+def _is_in_distribution_get_stats_df(
+    aggregate_df: DataFrame,
+    impute: bool,
+    total_column: Column,
+    tvd_violation_column: Column,
+    tvd_message_column: Column,
+    expected_keys: list[Any],
+    per_key_aliases: list[str],
+    column_expression: str,
+    condition_column_name: str,
+    message_column_name: str,
+) -> DataFrame:
+    if impute:
+        is_violation_column = F.when(total_column == 0, F.lit(False)).otherwise(tvd_violation_column)
+        message_expression = F.when(total_column == 0, F.lit("")).otherwise(tvd_message_column)
+    else:
+        # Missing keys are those whose per-key count is zero; sort for stable output.
+        missing_key_names = [
+            F.when(F.col(alias) == 0, F.lit(repr(key))) for key, alias in zip(expected_keys, per_key_aliases)
+        ]
+        missing_array = F.array_sort(F.filter(F.array(*missing_key_names), lambda value: value.isNotNull()))
+        has_missing_column = F.size(missing_array) > 0
+        missing_message_column = F.concat(
+            F.lit(f"Column '{column_expression}' distribution is missing expected keys ["),
+            F.array_join(missing_array, ", "),
+            F.lit("] and impute=False."),
+        )
+        is_violation_column = (
+            F.when(total_column == 0, F.lit(False))
+            .when(has_missing_column, F.lit(True))
+            .otherwise(tvd_violation_column)
+        )
+        message_expression = (
+            F.when(total_column == 0, F.lit(""))
+            .when(has_missing_column, missing_message_column)
+            .otherwise(tvd_message_column)
+        )
+
+    return aggregate_df.select(
+        is_violation_column.alias(condition_column_name),
+        message_expression.alias(message_column_name),
+    )
+
+
+def _is_in_distribution_validate_distribution(
     distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
     case_sensitive: bool,
 ) -> None:
@@ -707,13 +760,13 @@ def _validate_distribution(
     if not distribution:
         raise InvalidParameterError("'distribution' must not be empty.")
 
-    _validate_distribution_items(distribution)
-    _validate_distribution_values(distribution)
-    _validate_distribution_keys_types(distribution)
-    _validate_distribution_keys_collision(case_sensitive, distribution)
+    _is_in_distribution_validate_items(distribution)
+    _is_in_distribution_validate_values(distribution)
+    _is_in_distribution_validate_key_types(distribution)
+    _is_in_distribution_validate_key_collisions(case_sensitive, distribution)
 
 
-def _validate_distribution_values(
+def _is_in_distribution_validate_values(
     distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
 ) -> None:
     total = math.fsum(distribution.values())
@@ -721,7 +774,7 @@ def _validate_distribution_values(
         raise InvalidParameterError(f"'distribution' values sum ({total}) is greater than 1.")
 
 
-def _validate_distribution_keys_collision(
+def _is_in_distribution_validate_key_collisions(
     case_sensitive: bool,
     distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
 ) -> None:
@@ -737,7 +790,7 @@ def _validate_distribution_keys_collision(
             )
 
 
-def _validate_distribution_keys_types(
+def _is_in_distribution_validate_key_types(
     distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
 ) -> None:
     key_types = {type(k) for k in distribution.keys()}
@@ -748,14 +801,14 @@ def _validate_distribution_keys_types(
         )
 
     key_type = next(iter(key_types))
-    if not issubclass(key_type, _SUPPORTED_DISTRIBUTION_KEY_TYPES):
+    if not issubclass(key_type, _IS_IN_DISTRIBUTION_SUPPORTED_KEY_TYPES):
         raise InvalidParameterError(
             f"'distribution' keys of type {key_type.__name__!r} are not supported; "
             f"expected one of: bool, str, int, datetime.date."
         )
 
 
-def _validate_distribution_items(
+def _is_in_distribution_validate_items(
     distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
 ) -> None:
     for key, value in distribution.items():
@@ -763,7 +816,7 @@ def _validate_distribution_items(
             raise InvalidParameterError("'distribution' must not contain None as a key.")
         if value is None:
             raise InvalidParameterError(f"'distribution' must not contain None as a value (key={key!r}).")
-        if not _is_numeric(value):
+        if not _is_in_distribution_value_is_numeric(value):
             raise InvalidParameterError(
                 f"'distribution' value for key {key!r} must be a number, got {type(value).__name__} instead."
             )
@@ -775,17 +828,17 @@ def _validate_distribution_items(
             raise InvalidParameterError(f"'distribution' value {value} for key {key!r} must be non-negative.")
 
 
-def _validate_distance(distance: float) -> None:
+def _is_in_distribution_validate_distance(distance: float) -> None:
     """Validate the *distance* argument of *is_in_distribution*."""
     if distance is None:
         raise MissingParameterError("'distance' is not provided.")
-    if not _is_numeric(distance):
+    if not _is_in_distribution_value_is_numeric(distance):
         raise InvalidParameterError(f"'distance' must be a number, got {type(distance).__name__} instead.")
     if not 0 <= distance <= 1:
         raise InvalidParameterError(f"'distance' must be between 0 and 1 (inclusive), got {distance}.")
 
 
-def _is_numeric(value: object) -> bool:
+def _is_in_distribution_value_is_numeric(value: object) -> bool:
     """True for numeric arguments accepted by *is_in_distribution*.
 
     Rejects bool explicitly so that ``True``/``False`` (which are valid distribution *keys*

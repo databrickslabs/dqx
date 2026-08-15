@@ -4553,25 +4553,6 @@ def test_is_in_distribution_accepts_wrapped_column_expression(spark: SparkSessio
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_is_in_distribution_lazy_apply_on_streaming_dataframe(spark: SparkSession, tmp_path):
-    """The check's closure must be fully lazy so it can participate in a streaming plan without
-    forcing an eager .collect() (which raises AnalysisException on a streaming source).
-
-    We assert only that constructing the streaming plan succeeds and that closure_func(df) does
-    not force an eager job — end-to-end streaming execution is exercised elsewhere.
-    """
-    source_dir = tmp_path / "src"
-    source_dir.mkdir()
-    (source_dir / "seed.json").write_text('{"value": "A"}\n{"value": "B"}\n')
-
-    streaming_df = spark.readStream.schema(StructType([StructField("value", StringType(), True)])).json(str(source_dir))
-    assert streaming_df.isStreaming
-
-    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.25}, distance=0.5)
-    checked = apply_method(streaming_df).select("value", condition.alias("violation"))
-    assert checked.isStreaming
-
-
 def test_is_in_distribution_flags_via_metadata_api(ws, spark):
     """End-to-end dict/metadata → apply_checks_by_metadata path must catch a real distribution
     mismatch, not just verify the check runs (the shared 'apply every check' YAML fixture uses
