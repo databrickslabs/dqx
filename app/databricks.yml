@@ -206,6 +206,20 @@ resources:
           job:
             id: ${resources.jobs.dqx_task_runner.id}
             permission: "CAN_MANAGE"
+        # Binding the wheels volume as a UC securable makes Databricks Apps auto-grant
+        # USE CATALOG + USE SCHEMA on the parents to the app SP (see the docs' note on
+        # app.resources.uc_securable). That's the missing piece the bundle cannot grant
+        # itself when it doesn't manage the catalog — without this binding the app SP
+        # can't reach anything inside ``${var.catalog_name}`` even though its
+        # schema/volume grants are ALL_PRIVILEGES. WRITE_VOLUME matches what the app
+        # actually does at startup (publishing the DQX wheel), and is a subset of the
+        # ALL_PRIVILEGES the volume's own ``grants:`` block already gives the app SP.
+        - name: "dqx-wheels-volume"
+          description: "UC volume for DQX wheels — bound so USE CATALOG / USE SCHEMA are auto-granted"
+          uc_securable:
+            securable_full_name: ${var.catalog_name}.${var.schema_name}.${var.wheels_volume_name}
+            securable_type: VOLUME
+            permission: WRITE_VOLUME
         # No ``database:`` binding — the app connects via DQX_LAKEBASE_ENDPOINT and
         # gets connect/create rights from postgres_roles.app_sp (below).
 
@@ -239,8 +253,11 @@ resources:
   # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
   # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
   # the flag, ``bundle deployment unbind <key>``, then destroy.
-  # Grants are native. USE CATALOG on the pre-existing catalog can't be granted here
-  # (the bundle doesn't manage the catalog) — grant it once per catalog (see DEPLOYMENT.md).
+  # Grants are native. USE CATALOG on the pre-existing catalog can't be declared on
+  # a catalog the bundle doesn't manage — for the **app SP** this is handled by
+  # binding the wheels volume as an app ``uc_securable`` above (Databricks Apps
+  # auto-grants USE CATALOG + USE SCHEMA on the parents). The **task-runner SP** and
+  # OBO end users (``account users``) still need one manual GRANT — see DEPLOYMENT.md.
   schemas:
     main_schema:
       catalog_name: ${var.catalog_name}
