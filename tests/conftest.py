@@ -22,7 +22,7 @@ from databricks.labs.blueprint.installation import Installation, MockInstallatio
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.install import InstallationService, WorkspaceInstaller

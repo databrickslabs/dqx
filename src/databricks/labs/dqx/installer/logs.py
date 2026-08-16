@@ -15,7 +15,7 @@ from databricks.labs.blueprint.logger import install_logger
 
 from databricks.sdk.retries import retried
 
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 
 logger = logging.getLogger(__name__)
 

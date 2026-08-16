@@ -5,7 +5,7 @@ from typing import final
 
 from pyspark.sql import DataFrame, Observation
 
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.utils import VariableValue
