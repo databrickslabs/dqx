@@ -681,14 +681,16 @@ class TestSetPin:
         applied = svc.set_pin("ar1", 3)
         assert applied.pinned_version == 3
         update_sql = sql.execute.call_args[0][0]
-        assert "pinned_version = 3" in update_sql
+        # The CRUD-builder shortcuts identifier-quote every column, so a bare
+        # ``pinned_version = 3`` never appears in the emitted SQL any more.
+        assert "`pinned_version` = 3" in update_sql
 
     def test_clears_pinned_version(self, svc, sql):
         sql.query.return_value = [_applied_row(id_="ar1", pinned_version="2")]
         applied = svc.set_pin("ar1", None)
         assert applied.pinned_version is None
         update_sql = sql.execute.call_args[0][0]
-        assert "pinned_version = NULL" in update_sql
+        assert "`pinned_version` = NULL" in update_sql
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []
@@ -702,14 +704,14 @@ class TestSetSeverityOverride:
         applied = svc.set_severity_override("ar1", "Critical")
         assert applied.severity_override == "Critical"
         update_sql = sql.execute.call_args[0][0]
-        assert "severity_override = 'Critical'" in update_sql
+        assert "`severity_override` = 'Critical'" in update_sql
 
     def test_clears_severity_override(self, svc, sql):
         sql.query.return_value = [_applied_row(id_="ar1", severity_override="High")]
         applied = svc.set_severity_override("ar1", None)
         assert applied.severity_override is None
         update_sql = sql.execute.call_args[0][0]
-        assert "severity_override = NULL" in update_sql
+        assert "`severity_override` = NULL" in update_sql
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []

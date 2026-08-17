@@ -100,12 +100,18 @@ class TestAiGatewaySettings:
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_ai_enabled() is True
 
-    def test_ai_endpoint_name_defaults_to_databricks_gpt_5_4_nano(self, settings_service):
+    def test_ai_endpoint_name_defaults_to_claude_sonnet(self, settings_service):
+        # The fresh-deploy default moved from ``databricks-gpt-5-4-nano`` to
+        # ``databricks-claude-sonnet-4-5`` after a live golden-set eval showed
+        # nano returning zero suggestions on wide tables (blew max_tokens
+        # mid-JSON) and taking three of seven planted wrong-column bindings
+        # structural post-processing cannot catch. See the constant's docstring
+        # for the measured tradeoff.
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert svc.get_ai_endpoint_name() == "databricks-gpt-5-4-nano"
-        assert svc.AI_ENDPOINT_NAME_DEFAULT == "databricks-gpt-5-4-nano"
+        assert svc.get_ai_endpoint_name() == "databricks-claude-sonnet-4-5"
+        assert svc.AI_ENDPOINT_NAME_DEFAULT == "databricks-claude-sonnet-4-5"
 
     def test_ai_endpoint_name_respects_explicit_empty_value(self, settings_service):
         """An admin who explicitly clears the endpoint gets '', not the default."""

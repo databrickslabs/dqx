@@ -39,6 +39,7 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from tests.conftest import wire_crud_builder_methods
 
 _PRODUCTS = "dqx_test.dqx_app_test.dq_data_products"
 _MEMBERS = "dqx_test.dqx_app_test.dq_data_product_members"
@@ -53,6 +54,11 @@ def _mock_sql() -> SqlExecutor:
     mock.q.side_effect = lambda i: f"`{i}`"
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     mock.query.return_value = []
+    # The service now goes through the shared CRUD-builder shortcuts
+    # (``insert``/``update``/``delete``/``count``/``select_rows``); route
+    # them back through ``execute``/``query`` so existing call-history
+    # assertions keep working after the migration.
+    wire_crud_builder_methods(mock)
     return mock
 
 
@@ -700,7 +706,7 @@ class TestUpdate:
         assert updated.version == 3  # unchanged
         assert updated.description == "new desc"
         update_sql = sql.execute.call_args[0][0]
-        assert "status = 'draft'" in update_sql
+        assert "`status` = 'draft'" in update_sql
         assert "version =" not in update_sql  # PATCH never bumps version
 
     def test_update_missing_raises_lookup_error(self, service, sql):
@@ -732,13 +738,13 @@ class TestUpdate:
         sql.query.side_effect = [[_product_row(product_id="p1", schedule_cron="0 0 * * *")]]
         service.update("p1", {"schedule_cron": None}, "bob@x")
         update_sql = sql.execute.call_args[0][0]
-        assert "schedule_cron = NULL" in update_sql
+        assert "`schedule_cron` = NULL" in update_sql
 
     def test_update_persists_schedule_kind(self, service, sql):
         sql.query.side_effect = [[_product_row(product_id="p1")]]
         updated = service.update("p1", {"schedule_kind": "profiling_only"}, "bob@x")
         assert updated.schedule_kind == "profiling_only"
-        assert "schedule_kind = 'profiling_only'" in sql.execute.call_args[0][0]
+        assert "`schedule_kind` = 'profiling_only'" in sql.execute.call_args[0][0]
 
     def test_update_never_writes_null_schedule_kind(self, service, sql):
         # schedule_kind is NOT NULL on Postgres — an explicit None must be
@@ -751,13 +757,13 @@ class TestUpdate:
         sql.query.side_effect = [[_product_row(product_id="p1")]]
         updated = service.update("p1", {"schedule_sample_size": 5000}, "bob@x")
         assert updated.schedule_sample_size == 5000
-        assert "schedule_sample_size = 5000" in sql.execute.call_args[0][0]
+        assert "`schedule_sample_size` = 5000" in sql.execute.call_args[0][0]
 
     def test_update_treats_zero_sample_size_as_full_table(self, service, sql):
         sql.query.side_effect = [[_product_row(product_id="p1")]]
         updated = service.update("p1", {"schedule_sample_size": 0}, "bob@x")
         assert updated.schedule_sample_size is None
-        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
+        assert "`schedule_sample_size` = NULL" in sql.execute.call_args[0][0]
 
     def test_update_leaves_sample_size_alone_when_omitted(self, service, sql):
         sql.query.side_effect = [[_product_row(product_id="p1", schedule_sample_size="5000")]]
@@ -770,7 +776,7 @@ class TestUpdate:
         ]
         updated = service.update("p1", {"schedule_cron": None}, "bob@x")
         assert updated.schedule_sample_size is None
-        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
+        assert "`schedule_sample_size` = NULL" in sql.execute.call_args[0][0]
 
 
 class TestMemberTableFqns:
@@ -823,7 +829,7 @@ class TestMembers:
         assert member.pinned_version == 2
         calls = [c[0][0] for c in sql.execute.call_args_list]
         assert any(f"INSERT INTO {_MEMBERS}" in c for c in calls)
-        assert any("status = 'draft'" in c for c in calls)
+        assert any("`status` = 'draft'" in c for c in calls)
 
     def test_add_member_updates_pin_in_place_for_existing_binding(self, service, sql):
         sql.query.side_effect = [
@@ -833,7 +839,7 @@ class TestMembers:
         member = service.add_member("p1", "b1", 5, "bob@x")
         assert member.id == "m-existing"
         calls = [c[0][0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_MEMBERS}" in c and "pinned_version = 5" in c for c in calls)
+        assert any(f"UPDATE {_MEMBERS}" in c and "`pinned_version` = 5" in c for c in calls)
         assert not any(f"INSERT INTO {_MEMBERS}" in c for c in calls)
 
     def test_add_member_missing_product_raises(self, service, sql):
@@ -889,7 +895,7 @@ class TestMembers:
         monitored_tables.get.assert_not_called()
         app_settings.resolve_pinned_version_for_new_attachment.assert_not_called()
         update_sql = next(c[0][0] for c in sql.execute.call_args_list if f"UPDATE {_MEMBERS}" in c[0][0])
-        assert "pinned_version = NULL" in update_sql
+        assert "`pinned_version` = NULL" in update_sql
 
     def test_add_member_invalid_binding_id_raises(self, service, sql, monitored_tables):
         sql.query.side_effect = [
@@ -976,7 +982,7 @@ class TestMembers:
         assert member.id == "m-existing"
         monitored_tables.get.assert_not_called()
         calls = [c[0][0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_MEMBERS}" in c and "pinned_version = 4" in c for c in calls)
+        assert any(f"UPDATE {_MEMBERS}" in c and "`pinned_version` = 4" in c for c in calls)
 
     def test_remove_member_success_flips_to_draft(self, service, sql):
         sql.query.side_effect = [
@@ -986,7 +992,7 @@ class TestMembers:
         service.remove_member("p1", "m1", "bob@x")
         calls = [c[0][0] for c in sql.execute.call_args_list]
         assert any(f"DELETE FROM {_MEMBERS}" in c for c in calls)
-        assert any("status = 'draft'" in c for c in calls)
+        assert any("`status` = 'draft'" in c for c in calls)
 
     def test_remove_member_missing_raises(self, service, sql):
         sql.query.side_effect = [
@@ -1004,7 +1010,7 @@ class TestSubmit:
         assert product.status == "pending_approval"
         assert product.version == 1  # unchanged — only approve bumps
         update_sql = sql.execute.call_args[0][0]
-        assert "status = 'pending_approval'" in update_sql
+        assert "`status` = 'pending_approval'" in update_sql
         assert "version =" not in update_sql
 
     def test_submit_missing_raises(self, service, sql):
@@ -1040,8 +1046,8 @@ class TestApprove:
         assert product.status == "approved"
         assert product.version == 2
         update_sql = sql.execute.call_args[0][0]
-        assert "version = 2" in update_sql
-        assert "status = 'approved'" in update_sql
+        assert "`version` = 2" in update_sql
+        assert "`status` = 'approved'" in update_sql
 
     def test_approve_non_pending_raises_409(self, service, sql):
         sql.query.return_value = [_product_row(product_id="p1", status="draft", version="0")]
@@ -1061,7 +1067,7 @@ class TestReject:
         assert product.status == "rejected"
         assert product.version == 2
         update_sql = sql.execute.call_args[0][0]
-        assert "status = 'rejected'" in update_sql
+        assert "`status` = 'rejected'" in update_sql
         assert "version =" not in update_sql
 
     def test_reject_non_pending_raises_409(self, service, sql):
@@ -1082,7 +1088,7 @@ class TestRevert:
         assert product.status == "draft"
         assert product.version == 2  # unchanged — revert only withdraws
         update_sql = sql.execute.call_args[0][0]
-        assert "status = 'draft'" in update_sql
+        assert "`status` = 'draft'" in update_sql
         assert "version =" not in update_sql
 
     def test_revert_non_pending_raises_409(self, service, sql):

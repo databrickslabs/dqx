@@ -81,6 +81,19 @@ class AIResponseParseError(Exception):
     """Raised when model output cannot be parsed into the expected JSON shape. Maps to HTTP 502."""
 
 
+# Explanatory message reused when the model ran out of output budget mid-
+# response. Held as a module constant so both the ``finish_reason="length"``
+# path and the mid-JSON truncation heuristic (which fires for endpoints that
+# do NOT set ``finish_reason``, notably ``databricks-gpt-*-nano``) name the
+# same cause. Tests match on the ``"output-token budget"`` substring.
+_BUDGET_EXHAUSTED_MESSAGE = (
+    "The AI model hit its output-token budget before finishing its answer "
+    "(reasoning models spend part of the budget thinking, and wide tables "
+    "produce large mapping responses). Please try again — the caller now "
+    "scales the budget with column count, so a retry should succeed."
+)
+
+
 class AIGateway:
     """Serving-endpoint transport with kill-switch, per-user rate limiting, and audit logging.
 
@@ -200,13 +213,12 @@ class AIGateway:
         """Query the serving endpoint, retrying once without ``temperature`` if it's rejected.
 
         Several Databricks Foundation Model endpoints (notably the GPT-5
-        family, including the default ``databricks-gpt-5-4-nano``) only accept the
-        default sampling temperature and return a ``BadRequest`` for any
-        explicit ``temperature`` — including ``0``, which callers pass for
-        determinism. Rather than couple every caller to each endpoint's
-        capabilities, drop the optional ``temperature`` and retry once when
-        (and only when) the endpoint rejects that specific parameter. Any
-        other ``BadRequest`` propagates unchanged.
+        family) only accept the default sampling temperature and return a
+        ``BadRequest`` for any explicit ``temperature`` — including ``0``,
+        which callers pass for determinism. Rather than couple every caller
+        to each endpoint's capabilities, drop the optional ``temperature``
+        and retry once when (and only when) the endpoint rejects that
+        specific parameter. Any other ``BadRequest`` propagates unchanged.
         """
         try:
             return await asyncio.to_thread(self._user_ws.serving_endpoints.query, **query_kwargs)
@@ -220,23 +232,49 @@ class AIGateway:
     @staticmethod
     def _extract_content(response: Any) -> str:
         choices = getattr(response, "choices", None) or []
+        # Budget-exhaustion detection runs BEFORE the "return the first non-empty
+        # content" fast path: several endpoints (notably the Claude family) DO
+        # emit visible content while hitting ``max_tokens``, so a check that only
+        # fires on empty content misses those cases and the caller sees a
+        # generic parse error later. If ANY choice ran to the budget cap, prefer
+        # the named cause — a truncated response is worse than a labelled retry.
+        finish_reasons = [str(getattr(choice, "finish_reason", None)) for choice in choices]
+        if "length" in finish_reasons:
+            logger.warning(f"ai_gateway_budget_exhausted finish_reasons={finish_reasons}")
+            raise AIResponseParseError(_BUDGET_EXHAUSTED_MESSAGE)
         for choice in choices:
             message = getattr(choice, "message", None)
             content = getattr(message, "content", None) if message is not None else None
             if content:
                 return str(content)
-        # Reasoning endpoints (e.g. the GPT-5 family) spend hidden reasoning
-        # tokens against max_tokens; exhausting the budget mid-thought yields a
-        # "length" finish with empty visible content. Name that case explicitly
-        # so callers/users aren't left guessing.
-        finish_reasons = [str(getattr(choice, "finish_reason", None)) for choice in choices]
         logger.warning(f"ai_gateway_empty_content finish_reasons={finish_reasons}")
-        if "length" in finish_reasons:
-            raise AIResponseParseError(
-                "The AI model hit its output-token budget before finishing its answer "
-                "(reasoning models spend part of the budget thinking). Please try again."
-            )
         raise AIResponseParseError("AI serving endpoint returned no message content.")
+
+    @staticmethod
+    def _looks_truncated_json(content: str) -> bool:
+        """Heuristic: does *content* look like a JSON object cut off mid-emission?
+
+        ``databricks-gpt-*-nano`` endpoints hit ``max_tokens`` on wide tables
+        and return non-empty, mid-JSON output with ``finish_reason`` unset —
+        the ``length`` check in :meth:`_extract_content` cannot see them, so
+        the caller previously fell through to the generic "unparsable"
+        message. This heuristic re-attributes those responses to the same
+        budget cause so the reported reason points at the real fix (a larger
+        budget), not at a phantom bug in the JSON path.
+
+        A ``{`` prefix without a matching close is the strongest signal: the
+        model started a JSON object, emitted keys/values, then stopped mid-
+        string or mid-value. Non-JSON prose (which parses cleanly anyway) is
+        conservatively treated as NOT truncated so a legitimately malformed
+        response still surfaces as a plain parse error.
+        """
+        stripped = content.lstrip()
+        if not stripped.startswith("{"):
+            return False
+        # Brace imbalance survives inside string literals: a truncated string
+        # still leaves an open ``{`` unmatched. Simple counts are enough — we
+        # only need to distinguish "cleanly closed" from "stopped mid-way".
+        return content.count("{") > content.count("}")
 
     def _audit(self, *, user_email: str, endpoint: str, purpose: str, output_size: int) -> None:
         """Log one audit line per call. Never logs prompt content or row/user data (CWE-117 guard)."""
@@ -274,4 +312,10 @@ class AIGateway:
             if isinstance(parsed, dict):
                 return parsed
 
+        # Non-parseable JSON that *starts* like a JSON object is almost always
+        # a mid-emission truncation on an endpoint that does not set
+        # ``finish_reason="length"`` (nano). Surface the real cause so the
+        # user is not sent chasing a phantom bug in the parse path.
+        if AIGateway._looks_truncated_json(content):
+            raise AIResponseParseError(_BUDGET_EXHAUSTED_MESSAGE)
         raise AIResponseParseError("Could not parse a JSON object from the AI response.")

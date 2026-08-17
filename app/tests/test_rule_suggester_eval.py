@@ -51,15 +51,23 @@ from tests.suggester_eval_support import (
 # The absolute values are NOT a quality claim. The fixture tables are synthetic
 # and far cleaner than real customer data, and the oracle's mistakes are ones we
 # planted. Compare runs to each other, never to a marketing number.
-BASELINE_TRUE_POSITIVES = 41
+#
+# Re-baselined when ``MAX_RETRIEVAL_COLUMNS`` was raised from 64 to 512 (see
+# ``rule_suggester.py``). On the 90-column ``b-wide-events`` fixture the cap
+# used to drop the five distinctive columns sitting past position 64 from
+# retrieval; raising it puts them back in play and lifts both retrieval
+# coverage (40→41 of 45) and end-to-end true positives (41→42 of 48). Precision
+# held at 0.894 through the change, so the extra tp is a real recall gain
+# rather than paid-for over-suggestion.
+BASELINE_TRUE_POSITIVES = 42
 BASELINE_FALSE_POSITIVES = 5
-BASELINE_FALSE_NEGATIVES = 7
-BASELINE_PREDICTED = 46
+BASELINE_FALSE_NEGATIVES = 6
+BASELINE_PREDICTED = 47
 BASELINE_EXPECTED = 48
 
 # Retrieval does NOT surface every correct rule, so this is a measured baseline
-# rather than an invariant. All seven current misses are rules the judge never
-# saw, and six of the seven are the universal not-null rule: it carries no
+# rather than an invariant. All six current misses are rules the judge never
+# saw, and every one of them is the universal not-null rule: it carries no
 # column-specific wording to match on, so against an 82-rule corpus with top-20
 # per-column retrieval it loses to eighty more specific rules on nearly every
 # table. The judge's prompt instructs it at length to apply not-null broadly,
@@ -68,7 +76,7 @@ BASELINE_EXPECTED = 48
 # Counted over distinct rule *ids*, not label rows: retrieval returns rule ids,
 # so a rule correctly wanted on two columns of the same table is one retrieval
 # opportunity, not two.
-BASELINE_RETRIEVED_EXPECTED = 40
+BASELINE_RETRIEVED_EXPECTED = 41
 BASELINE_RETRIEVABLE_EXPECTED = 45
 
 # The oracle plants three plausible-but-wrong column bindings that every
@@ -182,23 +190,31 @@ class TestRetrievalCoverage:
         # can't-attribute bucket that exists for the live tier.
         assert total.missed_unattributed == ()
 
-    def test_the_wide_table_exercises_the_retrieval_column_cap(self):
-        """Confirm the 64-column cap is actually engaged, and that we can see it.
+    def test_the_wide_table_retrieves_on_every_column(self):
+        """A realistically-wide table must reach retrieval on every column.
 
-        Independent of how good the embeddings are: a 90-column table must
-        produce exactly ``MAX_RETRIEVAL_COLUMNS`` query texts. If the cap is
-        raised, removed, or applied to the wrong list, this count moves and the
-        wide-table numbers stop meaning what the fixture note claims.
+        The previous ``MAX_RETRIEVAL_COLUMNS = 64`` cap dropped the last 26
+        columns of the 90-column ``b-wide-events`` fixture — including the
+        five labelled distinctive columns sitting past position 64, which
+        was the whole reason the wide table exists — and cost 25% recall
+        live against Claude (0.750 → 1.000 measured on field-eng). The cap
+        was raised to a runaway-table guard (512), so the invariant this
+        test protects flipped: the fixture must now emit one query text per
+        column, and the number of columns must stay below the new cap so a
+        future regression that reintroduces truncation would fail this
+        test rather than pass silently.
         """
         table = next(t for t in load_tables() if t.binding_id == "b-wide-events")
-        assert len(table.columns) > MAX_RETRIEVAL_COLUMNS
+        # If a fixture edit ever grows this table past the cap, we want a
+        # loud failure here rather than a quiet drop back to the old shape.
+        assert len(table.columns) <= MAX_RETRIEVAL_COLUMNS
 
         suggester, endpoints = build_suggester(table, load_corpus(), load_recordings())
         asyncio.run(suggester.suggest(table.binding_id, "eval@example.com"))
 
-        assert endpoints.embedded_text_count == MAX_RETRIEVAL_COLUMNS, (
+        assert endpoints.embedded_text_count == len(table.columns), (
             f"A {len(table.columns)}-column table produced "
-            f"{endpoints.embedded_text_count} query texts; the cap is {MAX_RETRIEVAL_COLUMNS}."
+            f"{endpoints.embedded_text_count} query texts; expected one per column."
         )
 
     def test_per_column_retrieval_costs_one_embedding_round_trip(self):

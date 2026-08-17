@@ -26,7 +26,7 @@ from typing import Any
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import ColumnMappingGroup
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,10 @@ class PendingApplicationService:
         if existing is not None:
             existing.column_mapping = column_mapping
             mapping_expr = self._sql.json_literal_expr(json.dumps(column_mapping))
-            self._sql.execute(
-                f"UPDATE {self._table} SET column_mapping = {mapping_expr} "  # noqa: S608
-                f"WHERE id = '{escape_sql_string(existing.id or '')}'"
+            self._sql.update(
+                self._table,
+                updates={"column_mapping": RawSql(mapping_expr)},
+                where={"id": existing.id or ""},
             )
             logger.info("Updated pending application for binding %s rule %s", binding_id, rule_id)
             return existing
@@ -95,18 +96,23 @@ class PendingApplicationService:
             created_at=datetime.now(timezone.utc),
         )
         mapping_expr = self._sql.json_literal_expr(json.dumps(pending.column_mapping))
-        self._sql.execute(
-            f"INSERT INTO {self._table} "  # noqa: S608
-            "(id, binding_id, rule_id, column_mapping, created_by, created_at) VALUES "
-            f"('{escape_sql_string(pending.id or '')}', '{escape_sql_string(binding_id)}', "
-            f"'{escape_sql_string(rule_id)}', {mapping_expr}, {self._opt_str(user_email)}, now())"
+        self._sql.insert(
+            self._table,
+            values={
+                "id": pending.id or "",
+                "binding_id": binding_id,
+                "rule_id": rule_id,
+                "column_mapping": RawSql(mapping_expr),
+                "created_by": user_email,
+                "created_at": RawSql("now()"),
+            },
         )
         logger.info("Recorded pending application for binding %s rule %s", binding_id, rule_id)
         return pending
 
     def delete(self, pending_id: str) -> None:
         """Delete one pending application by id (no-op if already gone)."""
-        self._sql.execute(f"DELETE FROM {self._table} WHERE id = '{escape_sql_string(pending_id)}'")  # noqa: S608
+        self._sql.delete(self._table, where={"id": pending_id})
 
     # ------------------------------------------------------------------
     # Read

@@ -70,7 +70,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_versions import Mo
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
 
 logger = logging.getLogger(__name__)
@@ -237,8 +237,7 @@ class DataProductService:
 
     def count(self) -> int:
         """Total table spaces (data products), any status (homepage stat card)."""
-        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._products_table}")  # noqa: S608
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return self._sql.count(self._products_table)
 
     def list_products(self) -> list[DataProductDetail]:
         """List every data product, newest-updated first, with resolved members.
@@ -389,17 +388,21 @@ class DataProductService:
                 "owner_display_name": resolve_owner_display_name(updates.get("owner"), self._sp_ws),
             }
 
-        set_clauses = ["status = 'draft'", f"updated_by = {self._opt_str(updated_by)}", "updated_at = now()"]
+        update_cols: dict[str, Any] = {
+            "status": "draft",
+            "updated_by": updated_by,
+            "updated_at": RawSql("now()"),
+        }
         for col in _UPDATABLE_FIELDS:
             if col in updates:
-                set_clauses.append(f"{col} = {self._opt_str(updates[col])}")
+                update_cols[col] = updates[col]
         # schedule_kind (B2-52) is handled separately from _UPDATABLE_FIELDS
         # because its column is NOT NULL on Postgres: only a concrete, valid
         # kind is ever written, so an omitted/None value leaves the stored
         # value untouched rather than violating the constraint.
         apply_kind = updates.get("schedule_kind") in get_args(ScheduleKind)
         if apply_kind:
-            set_clauses.append(f"schedule_kind = {self._opt_str(updates['schedule_kind'])}")
+            update_cols["schedule_kind"] = updates["schedule_kind"]
         # schedule_sample_size is numeric, so it also sits outside
         # _UPDATABLE_FIELDS: ``_opt_str`` would quote it, and an INT column
         # takes a bare literal on both backends. Clearing the cron clears the
@@ -411,9 +414,8 @@ class DataProductService:
             else None
         )
         if apply_sample:
-            set_clauses.append(f"schedule_sample_size = {self._opt_int(sample_size)}")
-        e = escape_sql_string(product_id)
-        self._sql.execute(f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'")
+            update_cols["schedule_sample_size"] = sample_size
+        self._sql.update(self._products_table, updates=update_cols, where={"product_id": product_id})
 
         applied = {k: v for k, v in updates.items() if k in _UPDATABLE_FIELDS}
         if apply_kind:
@@ -434,24 +436,35 @@ class DataProductService:
         Raises:
             LookupError: *product_id* does not exist.
         """
-        e = escape_sql_string(product_id)
-        rows = self._sql.query(f"SELECT product_id FROM {self._products_table} WHERE product_id = '{e}'")  # noqa: S608
+        rows = self._sql.select_rows(self._products_table, ["product_id"], where={"product_id": product_id})
         if not rows:
             raise LookupError(f"Data product not found: {product_id}")
-        delete_members = f"DELETE FROM {self._members_table} WHERE product_id = '{e}'"  # noqa: S608
-        delete_product = f"DELETE FROM {self._products_table} WHERE product_id = '{e}'"  # noqa: S608
         connection = getattr(self._sql, "connection", None)
         if connection is not None and self._sql.dialect == "postgres":
+            # Transactional path: both deletes MUST land atomically so a
+            # mid-flight crash cannot leave orphan member rows behind. The
+            # CRUD-builder helpers commit per-call (via ``PgExecutor.execute``),
+            # so we compose the SQL through the same shared builder used by
+            # :meth:`OltpExecutorProtocol.delete` and drive the cursor
+            # ourselves inside one transaction.
             from databricks_labs_dqx_app.backend.pg_cursor_helpers import run_trusted_sql
+            from databricks_labs_dqx_app.backend.pg_executor import _pg_render_value
+            from databricks_labs_dqx_app.backend.sql_executor import _build_delete
 
+            delete_members = _build_delete(
+                self._members_table, {"product_id": product_id}, self._sql.q, _pg_render_value
+            )
+            delete_product = _build_delete(
+                self._products_table, {"product_id": product_id}, self._sql.q, _pg_render_value
+            )
             with connection() as conn:
                 with conn.cursor() as cur:
                     run_trusted_sql(cur, delete_members)
                     run_trusted_sql(cur, delete_product)
                 conn.commit()
         else:
-            self._sql.execute(delete_members)
-            self._sql.execute(delete_product)
+            self._sql.delete(self._members_table, where={"product_id": product_id})
+            self._sql.delete(self._products_table, where={"product_id": product_id})
         logger.info("Deleted data product %s", product_id)
 
     # ------------------------------------------------------------------
@@ -494,17 +507,17 @@ class DataProductService:
         """
         if self._fetch_product(product_id) is None:
             raise LookupError(f"Data product not found: {product_id}")
-        e_pid = escape_sql_string(product_id)
-        e_bid = escape_sql_string(binding_id)
-        rows = self._sql.query(
-            f"SELECT id FROM {self._members_table} "  # noqa: S608
-            f"WHERE product_id = '{e_pid}' AND binding_id = '{e_bid}'"
+        rows = self._sql.select_rows(
+            self._members_table,
+            ["id"],
+            where={"product_id": product_id, "binding_id": binding_id},
         )
         if rows:
             member_id = rows[0][0]
-            self._sql.execute(
-                f"UPDATE {self._members_table} SET pinned_version = {self._opt_int(pinned_version)} "
-                f"WHERE id = '{escape_sql_string(member_id)}'"
+            self._sql.update(
+                self._members_table,
+                updates={"pinned_version": pinned_version},
+                where={"id": member_id},
             )
         else:
             # New member: the binding must exist AND be approved before it can
@@ -516,9 +529,14 @@ class DataProductService:
             if pinned_version is None:
                 pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
             try:
-                self._sql.execute(
-                    f"INSERT INTO {self._members_table} (id, product_id, binding_id, pinned_version) VALUES "
-                    f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
+                self._sql.insert(
+                    self._members_table,
+                    values={
+                        "id": member_id,
+                        "product_id": product_id,
+                        "binding_id": binding_id,
+                        "pinned_version": pinned_version,
+                    },
                 )
             except Exception as exc:
                 # Postgres UNIQUE (product_id, binding_id) — concurrent add_member
@@ -526,16 +544,18 @@ class DataProductService:
                 msg = str(exc).lower()
                 if "unique" not in msg and "duplicate" not in msg:
                     raise
-                rows = self._sql.query(
-                    f"SELECT id FROM {self._members_table} "  # noqa: S608
-                    f"WHERE product_id = '{e_pid}' AND binding_id = '{e_bid}'"
+                rows = self._sql.select_rows(
+                    self._members_table,
+                    ["id"],
+                    where={"product_id": product_id, "binding_id": binding_id},
                 )
                 if not rows:
                     raise
                 member_id = rows[0][0]
-                self._sql.execute(
-                    f"UPDATE {self._members_table} SET pinned_version = {self._opt_int(pinned_version)} "
-                    f"WHERE id = '{escape_sql_string(member_id)}'"
+                self._sql.update(
+                    self._members_table,
+                    updates={"pinned_version": pinned_version},
+                    where={"id": member_id},
                 )
         self._flip_to_draft(product_id, updated_by)
         return DataProductMember(
@@ -551,14 +571,14 @@ class DataProductService:
         """
         if self._fetch_product(product_id) is None:
             raise LookupError(f"Data product not found: {product_id}")
-        e_pid = escape_sql_string(product_id)
-        e_mid = escape_sql_string(member_id)
-        rows = self._sql.query(
-            f"SELECT id FROM {self._members_table} WHERE id = '{e_mid}' AND product_id = '{e_pid}'"  # noqa: S608
+        rows = self._sql.select_rows(
+            self._members_table,
+            ["id"],
+            where={"id": member_id, "product_id": product_id},
         )
         if not rows:
             raise LookupError(f"Data product member not found: {member_id}")
-        self._sql.execute(f"DELETE FROM {self._members_table} WHERE id = '{e_mid}'")  # noqa: S608
+        self._sql.delete(self._members_table, where={"id": member_id})
         self._flip_to_draft(product_id, updated_by)
 
     # ------------------------------------------------------------------
@@ -621,11 +641,17 @@ class DataProductService:
                 f"Cannot approve Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
             )
         new_version = product.version + 1
-        e = escape_sql_string(product_id)
-        self._sql.execute(
-            f"UPDATE {self._products_table} SET status = 'approved', version = {new_version}, "
-            f"pending_rationale = NULL, last_decision_rationale = {self._opt_str(rationale)}, "
-            f"updated_by = {self._opt_str(updated_by)}, updated_at = now() WHERE product_id = '{e}'"
+        self._sql.update(
+            self._products_table,
+            updates={
+                "status": "approved",
+                "version": new_version,
+                "pending_rationale": None,
+                "last_decision_rationale": rationale,
+                "updated_by": updated_by,
+                "updated_at": RawSql("now()"),
+            },
+            where={"product_id": product_id},
         )
         logger.info("Approved data product %s at version %d", product_id, new_version)
         return product.model_copy(
@@ -709,26 +735,25 @@ class DataProductService:
         product = _prefetched or self._fetch_product(product_id)
         if product is None:
             raise LookupError(f"Data product not found: {product_id}")
-        e = escape_sql_string(product_id)
-        set_clauses = [
-            f"status = '{status}'",
-            f"updated_by = {self._opt_str(updated_by)}",
-            "updated_at = now()",
-        ]
-        updates: dict[str, Any] = {
+        sql_updates: dict[str, Any] = {
+            "status": status,
+            "updated_by": updated_by,
+            "updated_at": RawSql("now()"),
+        }
+        model_updates: dict[str, Any] = {
             "status": status,
             "updated_by": updated_by,
             "updated_at": datetime.now(timezone.utc),
         }
         if set_pending_rationale:
-            set_clauses.append(f"pending_rationale = {self._opt_str(pending_rationale)}")
-            updates["pending_rationale"] = pending_rationale
+            sql_updates["pending_rationale"] = pending_rationale
+            model_updates["pending_rationale"] = pending_rationale
         if set_last_decision_rationale:
-            set_clauses.append(f"last_decision_rationale = {self._opt_str(last_decision_rationale)}")
-            updates["last_decision_rationale"] = last_decision_rationale
-        self._sql.execute(f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'")
+            sql_updates["last_decision_rationale"] = last_decision_rationale
+            model_updates["last_decision_rationale"] = last_decision_rationale
+        self._sql.update(self._products_table, updates=sql_updates, where={"product_id": product_id})
         logger.info("Set data product %s status to %s", product_id, status)
-        return product.model_copy(update=updates)
+        return product.model_copy(update=model_updates)
 
     # ------------------------------------------------------------------
     # Run fan-out (design spec §4.2)
@@ -1046,6 +1071,11 @@ class DataProductService:
         return {s.table.binding_id: s for s in summaries}
 
     def _assert_name_available(self, name: str, exclude_product_id: str | None) -> None:
+        # NOTE: :meth:`select_rows` would route ``name`` through :func:`_render_value`,
+        # which uses :func:`escape_sql_string` (single-quote doubling only). Product
+        # names are user-supplied and untrusted, so we route through the STRICT variant
+        # (also escapes backslashes) to close a Delta string-literal escape hatch —
+        # see the docstring of :func:`escape_sql_string_strict` for the details.
         e = escape_sql_string_strict(name)
         rows = self._sql.query(f"SELECT product_id FROM {self._products_table} WHERE name = '{e}'")  # noqa: S608
         for row in rows:
@@ -1053,16 +1083,17 @@ class DataProductService:
                 raise DuplicateDataProductNameError(f"A data product named '{name}' already exists.")
 
     def _flip_to_draft(self, product_id: str, updated_by: str) -> None:
-        e = escape_sql_string(product_id)
-        self._sql.execute(
-            f"UPDATE {self._products_table} SET status = 'draft', "
-            f"updated_by = {self._opt_str(updated_by)}, updated_at = now() WHERE product_id = '{e}'"
+        self._sql.update(
+            self._products_table,
+            updates={"status": "draft", "updated_by": updated_by, "updated_at": RawSql("now()")},
+            where={"product_id": product_id},
         )
 
     def _fetch_members(self, product_id: str) -> list[_MemberRow]:
-        e = escape_sql_string(product_id)
-        rows = self._sql.query(
-            f"SELECT id, binding_id, pinned_version FROM {self._members_table} WHERE product_id = '{e}'"  # noqa: S608
+        rows = self._sql.select_rows(
+            self._members_table,
+            ["id", "binding_id", "pinned_version"],
+            where={"product_id": product_id},
         )
         return [_MemberRow(id=row[0], binding_id=row[1], pinned_version=self._parse_int(row[2])) for row in rows]
 

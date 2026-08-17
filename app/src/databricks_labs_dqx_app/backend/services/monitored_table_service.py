@@ -49,7 +49,7 @@ from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
 logger = logging.getLogger(__name__)
@@ -402,8 +402,7 @@ class MonitoredTableService:
 
     def count(self) -> int:
         """Total monitored table bindings, any status (homepage stat card)."""
-        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._table}")  # noqa: S608
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return self._sql.count(self._table)
 
     def list_monitored_tables(
         self,
@@ -910,26 +909,25 @@ class MonitoredTableService:
         table = self._get(binding_id)
         if table is None:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
-        e = escape_sql_string(binding_id)
-        set_clauses = [
-            f"status = '{escape_sql_string(status)}'",
-            f"updated_by = {self._opt_str(user_email)}",
-            "updated_at = now()",
-        ]
+        updates: dict[str, Any] = {
+            "status": status,
+            "updated_by": user_email,
+            "updated_at": RawSql("now()"),
+        }
         if set_rationale:
             if status == "pending_approval":
-                set_clauses.append(f"pending_rationale = {self._opt_str(rationale)}")
+                updates["pending_rationale"] = rationale
                 table.pending_rationale = rationale
             elif status in ("approved", "rejected"):
-                set_clauses.append("pending_rationale = NULL")
-                set_clauses.append(f"last_decision_rationale = {self._opt_str(rationale)}")
+                updates["pending_rationale"] = None
+                updates["last_decision_rationale"] = rationale
                 table.pending_rationale = None
                 table.last_decision_rationale = rationale
             elif status == "draft":
                 # Author revoke — drop the pending banner without recording a decision.
-                set_clauses.append("pending_rationale = NULL")
+                updates["pending_rationale"] = None
                 table.pending_rationale = None
-        self._sql.execute(f"UPDATE {self._table} SET {', '.join(set_clauses)} WHERE binding_id = '{e}'")
+        self._sql.update(self._table, updates=updates, where={"binding_id": binding_id})
         table.status = cast(MonitoredTableStatus, status)
         table.updated_by = user_email
         logger.info(
@@ -1122,9 +1120,8 @@ class MonitoredTableService:
         binding = self._get(binding_id)
         if binding is None:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
-        e = escape_sql_string(binding_id)
-        self._sql.execute(f"DELETE FROM {self._applied_table} WHERE binding_id = '{e}'")
-        self._sql.execute(f"DELETE FROM {self._table} WHERE binding_id = '{e}'")
+        self._sql.delete(self._applied_table, where={"binding_id": binding_id})
+        self._sql.delete(self._table, where={"binding_id": binding_id})
         logger.info("Deleted monitored table %s (binding_id=%s, by %s)", binding.table_fqn, binding_id, user_email)
 
     # ------------------------------------------------------------------

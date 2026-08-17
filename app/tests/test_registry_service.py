@@ -788,7 +788,8 @@ class TestDeleteBuiltinRules:
         rules_delete = next(
             c for c in calls if c.startswith("DELETE FROM") and "dq_rules " in c and "dq_rule_versions" not in c
         )
-        assert "is_builtin = TRUE" in rules_delete
+        # CRUD-builder shortcut identifier-quotes the column.
+        assert "`is_builtin` = TRUE" in rules_delete
 
     def test_no_builtins_is_noop(self, svc, sql):
         sql.query.return_value = []

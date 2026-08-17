@@ -130,6 +130,41 @@ class TestHappyPath:
         with pytest.raises(AIResponseParseError, match="output-token budget"):
             await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
 
+    async def test_budget_exhausted_with_nonempty_truncated_content_still_names_the_cause(self):
+        # Claude-family endpoints DO emit visible content while hitting
+        # max_tokens — the previous "empty content only" check missed those,
+        # letting them fall through to a generic parse error downstream. The
+        # gateway must catch the finish_reason regardless of content shape.
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.serving_endpoints.query.return_value = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"suggestions": [{"rule_id": "rr-'),
+                    finish_reason="length",
+                )
+            ]
+        )
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        with pytest.raises(AIResponseParseError, match="output-token budget"):
+            await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
+
+    async def test_scales_max_tokens_kwarg_through_to_the_endpoint(self):
+        # The rule-suggester scales max_tokens with column count; a fixed
+        # value at the gateway would silently defeat that. Confirm the
+        # kwarg is propagated end-to-end.
+        ws = _ws_with_response("ok")
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        await gateway.query(
+            user_email="a@x",
+            purpose="p",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=9200,
+        )
+
+        assert ws.serving_endpoints.query.call_args.kwargs["max_tokens"] == 9200
+
 
 class TestTemperatureFallback:
     """The GPT-5 family (incl. the default endpoint) rejects an explicit
@@ -192,3 +227,20 @@ class TestParseJsonObject:
     def test_raises_clean_error_on_non_object_json(self):
         with pytest.raises(AIResponseParseError):
             AIGateway.parse_json_object("[1, 2, 3]")
+
+    def test_truncated_json_reports_budget_exhaustion_not_generic_parse_error(self):
+        # The gpt-*-nano family hits max_tokens on wide tables and returns
+        # non-empty JSON with finish_reason UNSET, so the finish-reason path
+        # in _extract_content can't see it. parse_json_object must recognise
+        # the imbalance-brace signal and name the real cause so users aren't
+        # sent chasing a phantom bug in the parse path.
+        truncated = '{"suggestions": [{"rule_id": "rr-not-null", "mapping": {"column": "id"}, "expla'
+        with pytest.raises(AIResponseParseError, match="output-token budget"):
+            AIGateway.parse_json_object(truncated)
+
+    def test_generic_parse_error_when_content_is_prose_rather_than_truncated_json(self):
+        # A model that returned prose instead of JSON is genuinely
+        # unparsable — not a budget problem — and must not be mis-attributed
+        # to truncation.
+        with pytest.raises(AIResponseParseError, match="Could not parse"):
+            AIGateway.parse_json_object("I'm sorry, I can't help with that request.")

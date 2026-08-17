@@ -279,8 +279,7 @@ class RuleEmbeddingsService:
 
     def _load_embeddings(self) -> list[tuple[str, list[float]]]:
         try:
-            # Table name comes from sql.fqn (internal), never user input.
-            rows = self._sql.query_dicts(f"SELECT rule_id, embedding FROM {self._table}")  # noqa: S608
+            rows = self._sql.select_dicts(self._table, ["rule_id", "embedding"])
         except Exception:
             logger.warning("Failed to read rule embeddings corpus %s (non-fatal)", self._table, exc_info=True)
             return []

@@ -29,7 +29,7 @@ import logging
 import os
 import random
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -51,7 +51,15 @@ from databricks_labs_dqx_app.backend.pg_cursor_helpers import (
     run_parameterized_sql,
     run_trusted_sql,
 )
-from databricks_labs_dqx_app.backend.sql_executor import RawSql, _render_value
+from databricks_labs_dqx_app.backend.sql_executor import (
+    RawSql,
+    _build_count,
+    _build_delete,
+    _build_insert,
+    _build_select,
+    _build_update,
+    _render_value,
+)
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -488,6 +496,109 @@ class PgExecutor:
                 rows = cur.fetchall()
                 cols = [d.name for d in (cur.description or [])]
         return [{col: _to_text(cell) for col, cell in zip(cols, row)} for row in rows]
+
+    # ------------------------------------------------------------------
+    # CRUD-builder shortcuts (Protocol contract)
+    # ------------------------------------------------------------------
+
+    def insert(
+        self,
+        table: str,
+        *,
+        values: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Postgres ``INSERT INTO <table> (<cols>) VALUES (<vals>)``.
+
+        See :meth:`OltpExecutorProtocol.insert` for the contract.
+        Values are rendered via :func:`_pg_render_value` so
+        ``RawSql("current_timestamp()")`` is translated to Postgres'
+        ``CURRENT_TIMESTAMP``.
+        """
+        self.execute(
+            _build_insert(table, values, self.q, _pg_render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def update(
+        self,
+        table: str,
+        *,
+        updates: dict[str, Any],
+        where: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Postgres ``UPDATE <table> SET <updates> WHERE <where>``.
+
+        See :meth:`OltpExecutorProtocol.update` for the contract.
+        """
+        self.execute(
+            _build_update(table, updates, where, self.q, _pg_render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def delete(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Postgres ``DELETE FROM <table> WHERE <where>``.
+
+        See :meth:`OltpExecutorProtocol.delete` for the contract.
+        """
+        self.execute(
+            _build_delete(table, where, self.q, _pg_render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def count(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> int:
+        """Postgres ``SELECT COUNT(*) FROM <table> [WHERE <where>]``.
+
+        See :meth:`OltpExecutorProtocol.count` for the contract.
+        """
+        rows = self.query(
+            _build_count(table, where, self.q, _pg_render_value),
+            timeout_seconds=timeout_seconds,
+        )
+        if rows and rows[0] and rows[0][0] is not None:
+            return int(rows[0][0])
+        return 0
+
+    def select_rows(
+        self,
+        table: str,
+        columns: Sequence[str],
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[list[str]]:
+        """Postgres simple SELECT — see :meth:`OltpExecutorProtocol.select_rows`."""
+        return self.query(
+            _build_select(table, columns, where, self.q, _pg_render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def select_dicts(
+        self,
+        table: str,
+        columns: Sequence[str],
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[dict[str, str | None]]:
+        """Postgres simple SELECT — see :meth:`OltpExecutorProtocol.select_dicts`."""
+        return self.query_dicts(
+            _build_select(table, columns, where, self.q, _pg_render_value),
+            timeout_seconds=timeout_seconds,
+        )
 
     def upsert(
         self,

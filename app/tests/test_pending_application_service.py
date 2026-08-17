@@ -73,8 +73,8 @@ def test_record_updates_existing_row(svc, sql):
     updates = [s for s in executed if s.strip().startswith("UPDATE")]
     assert len(updates) == 1
     update = updates[0]
-    assert "SET column_mapping" in update
-    assert "WHERE id = 'pa1'" in update
+    assert "SET `column_mapping`" in update
+    assert "WHERE `id` = 'pa1'" in update
     assert "parse_json('[{\"column\": \"new_col\"}]')" in update
 
 
@@ -109,7 +109,10 @@ def test_delete_emits_delete_by_id(svc, sql):
     svc.delete("pa1")
     deletes = [s for s in _executed_sql(sql) if s.strip().startswith("DELETE FROM")]
     assert len(deletes) == 1
-    assert "WHERE id = 'pa1'" in deletes[0]
+    # Identifier is quoted via :meth:`OltpExecutorProtocol.q` (backticks on Delta) —
+    # the CRUD-builder shortcuts route every column name through it so reserved
+    # words survive; historic hand-rolled SQL didn't.
+    assert "WHERE `id` = 'pa1'" in deletes[0]
 
 
 def test_parse_column_mapping_ignores_non_dict_and_bad_json():

@@ -42,7 +42,7 @@ from databricks_labs_dqx_app.backend.pg_executor import (
     _TokenHolder,
     build_pg_executor,
 )
-from databricks_labs_dqx_app.backend.sql_executor import RawSql
+from databricks_labs_dqx_app.backend.sql_executor import RawSql, WhereIn
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -455,6 +455,132 @@ class TestUpsertSqlShape:
         assert '("check", "order")' in sql
         assert 'ON CONFLICT ("check")' in sql
         assert '"order" = EXCLUDED."order"' in sql
+
+
+# ===========================================================================
+# CRUD-builder shortcuts — Postgres flavouring
+# ===========================================================================
+#
+# The dialect-agnostic behaviour of :func:`_build_insert` /
+# :func:`_build_update` / :func:`_build_delete` / :func:`_build_count`
+# is covered by ``test_sql_executor.py::TestBuild*``. These tests
+# lock in the Postgres-specific plumbing: ANSI double-quote
+# identifier quoting, and the ``current_timestamp()`` → ``CURRENT_TIMESTAMP``
+# translation that :func:`_pg_render_value` performs.
+
+
+class TestPgCrudBuilders:
+    """Ensures Postgres identifier quoting + value translation on the CRUD helpers."""
+
+    def _capture(self, executor: PgExecutor) -> list[str]:
+        captured: list[str] = []
+        executor.execute = lambda sql, **_: captured.append(sql)  # type: ignore[method-assign]
+        return captured
+
+    def test_insert_uses_ansi_quotes(self) -> None:
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.insert('"dq"."settings"', values={"key": "flag", "value": "on"})
+        assert captured == ['INSERT INTO "dq"."settings" ("key", "value") VALUES (\'flag\', \'on\')']
+
+    def test_insert_translates_current_timestamp_via_pg_render(self) -> None:
+        """The Spark idiom ``current_timestamp()`` must not appear in Postgres output."""
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.insert(
+            '"dq"."t"',
+            values={"id": "abc", "created_at": RawSql("current_timestamp()")},
+        )
+        sql = captured[0]
+        assert "current_timestamp()" not in sql
+        assert "CURRENT_TIMESTAMP" in sql
+
+    def test_update_uses_ansi_quotes(self) -> None:
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.update(
+            '"dq"."t"',
+            updates={"status": "approved"},
+            where={"id": "row-1"},
+        )
+        assert captured == ['UPDATE "dq"."t" SET "status" = \'approved\' WHERE "id" = \'row-1\'']
+
+    def test_update_reserved_word_column_is_quoted(self) -> None:
+        """Reserved words like ``check`` survive because we route through :meth:`q`."""
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.update(
+            '"dq"."t"',
+            updates={"check": "1"},
+            where={"order": "asc"},
+        )
+        sql = captured[0]
+        assert '"check" = \'1\'' in sql
+        assert '"order" = \'asc\'' in sql
+
+    def test_update_translates_current_timestamp(self) -> None:
+        """UPDATE ... SET updated_at = current_timestamp() → CURRENT_TIMESTAMP."""
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.update(
+            '"dq"."t"',
+            updates={"updated_at": RawSql("current_timestamp()")},
+            where={"id": "row-1"},
+        )
+        sql = captured[0]
+        assert "current_timestamp()" not in sql
+        assert '"updated_at" = CURRENT_TIMESTAMP' in sql
+
+    def test_delete_uses_ansi_quotes(self) -> None:
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.delete('"dq"."t"', where={"id": "row-1"})
+        assert captured == ['DELETE FROM "dq"."t" WHERE "id" = \'row-1\'']
+
+    def test_delete_wherein_bulk(self) -> None:
+        executor = _make_pg_executor()
+        captured = self._capture(executor)
+        executor.delete('"dq"."t"', where={"rule_id": WhereIn(["r1", "r2", "r3"])})
+        assert captured == ['DELETE FROM "dq"."t" WHERE "rule_id" IN (\'r1\', \'r2\', \'r3\')']
+
+    def test_count_no_where(self) -> None:
+        executor = _make_pg_executor()
+        executor.query = MagicMock(return_value=[["7"]])  # type: ignore[method-assign]
+        assert executor.count('"dq"."t"') == 7
+        assert executor.query.call_args.args[0] == 'SELECT COUNT(*) FROM "dq"."t"'
+
+    def test_count_with_where(self) -> None:
+        executor = _make_pg_executor()
+        executor.query = MagicMock(return_value=[["3"]])  # type: ignore[method-assign]
+        assert executor.count('"dq"."t"', where={"status": "active"}) == 3
+        assert executor.query.call_args.args[0] == 'SELECT COUNT(*) FROM "dq"."t" WHERE "status" = \'active\''
+
+    def test_select_rows_uses_ansi_quotes(self) -> None:
+        executor = _make_pg_executor()
+        executor.query = MagicMock(return_value=[["r1"]])  # type: ignore[method-assign]
+        rows = executor.select_rows('"dq"."t"', ["rule_id"], where={"is_builtin": True})
+        assert rows == [["r1"]]
+        assert executor.query.call_args.args[0] == 'SELECT "rule_id" FROM "dq"."t" WHERE "is_builtin" = TRUE'
+
+    def test_select_dicts_delegates_to_query_dicts(self) -> None:
+        executor = _make_pg_executor()
+        executor.query_dicts = MagicMock(return_value=[{"rule_id": "r1"}])  # type: ignore[method-assign]
+        rows = executor.select_dicts('"dq"."t"', ["rule_id", "embedding"])
+        assert rows == [{"rule_id": "r1"}]
+        assert executor.query_dicts.call_args.args[0] == 'SELECT "rule_id", "embedding" FROM "dq"."t"'
+
+    def test_update_refuses_empty_where(self) -> None:
+        """Full-table UPDATE is refused on Postgres too — the guard is dialect-agnostic."""
+        executor = _make_pg_executor()
+        self._capture(executor)
+        with pytest.raises(ValueError, match="WHERE clause required"):
+            executor.update('"dq"."t"', updates={"status": "done"}, where={})
+
+    def test_delete_refuses_empty_where(self) -> None:
+        executor = _make_pg_executor()
+        self._capture(executor)
+        with pytest.raises(ValueError, match="WHERE clause required"):
+            executor.delete('"dq"."t"', where={})
 
 
 # ===========================================================================

@@ -58,7 +58,7 @@ from databricks_labs_dqx_app.backend.registry_models import AppliedRule, Monitor
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -121,16 +121,25 @@ class MonitoredTableVersionService:
         new_version = self._current_version(binding_id) + 1
         state = self._current_approved_snapshot(detail)
 
-        e = escape_sql_string(binding_id)
-        self._sql.execute(f"UPDATE {self._tables} SET version = {new_version} WHERE binding_id = '{e}'")
+        self._sql.update(
+            self._tables,
+            updates={"version": new_version},
+            where={"binding_id": binding_id},
+        )
 
         row_id = uuid4().hex
         state_expr = self._sql.json_literal_expr(json.dumps(state))
-        self._sql.execute(
-            f"INSERT INTO {self._versions_table} "
-            "(id, binding_id, version, state_json, created_by, created_at, refrozen_at) "
-            f"VALUES ('{escape_sql_string(row_id)}', '{e}', {new_version}, {state_expr}, "
-            f"{self._opt_str(user_email)}, now(), NULL)"
+        self._sql.insert(
+            self._versions_table,
+            values={
+                "id": row_id,
+                "binding_id": binding_id,
+                "version": new_version,
+                "state_json": RawSql(state_expr),
+                "created_by": user_email,
+                "created_at": RawSql("now()"),
+                "refrozen_at": None,
+            },
         )
         logger.info(
             "Froze monitored-table %s version %d (%d rule refs)",
@@ -176,12 +185,14 @@ class MonitoredTableVersionService:
                 current,
             )
             return
-        e = escape_sql_string(binding_id)
         state_expr = self._sql.json_literal_expr(json.dumps(state))
-        self._sql.execute(
-            f"UPDATE {self._versions_table} SET "
-            f"state_json = {state_expr}, refrozen_at = now() "
-            f"WHERE binding_id = '{e}' AND version = {current}"
+        self._sql.update(
+            self._versions_table,
+            updates={
+                "state_json": RawSql(state_expr),
+                "refrozen_at": RawSql("now()"),
+            },
+            where={"binding_id": binding_id, "version": current},
         )
         logger.info(
             "Re-froze monitored-table %s version %d in place (%d rule refs)",
@@ -323,11 +334,15 @@ class MonitoredTableVersionService:
         stored references directly (no re-render) so the guard doesn't depend
         on the registry being resolvable at the moment of re-freeze.
         """
-        e = escape_sql_string(binding_id)
         state_text = self._sql.select_json_text("state_json")
+        # ``state_json`` needs a dialect-specific projection wrapper
+        # (``to_json`` on Delta, bare column on Postgres) so it can't
+        # go through :meth:`select_rows`; fall back to :meth:`query`
+        # with a manual projection but route the WHERE values through
+        # the CRUD-safe render (via :func:`_build_where` idioms).
         rows = self._sql.query(
             f"SELECT {state_text} FROM {self._versions_table} "  # noqa: S608
-            f"WHERE binding_id = '{e}' AND version = {int(version)}"
+            f"WHERE binding_id = '{escape_sql_string(binding_id)}' AND version = {int(version)}"
         )
         if not rows:
             return False
@@ -335,8 +350,7 @@ class MonitoredTableVersionService:
         return isinstance(refs, list) and len(refs) > 0
 
     def _binding_table_fqn(self, binding_id: str) -> str | None:
-        e = escape_sql_string(binding_id)
-        rows = self._sql.query(f"SELECT table_fqn FROM {self._tables} WHERE binding_id = '{e}'")  # noqa: S608
+        rows = self._sql.select_rows(self._tables, ["table_fqn"], where={"binding_id": binding_id})
         if not rows or not rows[0] or not rows[0][0]:
             return None
         return rows[0][0]
@@ -374,8 +388,7 @@ class MonitoredTableVersionService:
         )
 
     def _current_version(self, binding_id: str) -> int:
-        e = escape_sql_string(binding_id)
-        rows = self._sql.query(f"SELECT version FROM {self._tables} WHERE binding_id = '{e}'")  # noqa: S608
+        rows = self._sql.select_rows(self._tables, ["version"], where={"binding_id": binding_id})
         if not rows:
             raise LookupError(f"Monitored table not found: {binding_id}")
         value = rows[0][0]
@@ -461,17 +474,13 @@ class MonitoredTableVersionService:
         return {"applied_rules": applied, "rule_refs": rule_refs, "check_count": check_count}
 
     def _resolve_applied_rule_id(self, rule_id: str) -> str | None:
-        e = escape_sql_string(rule_id)
-        rows = self._sql.query(
-            f"SELECT applied_rule_id FROM {self._quality_rules_table} WHERE rule_id = '{e}'"  # noqa: S608
-        )
+        rows = self._sql.select_rows(self._quality_rules_table, ["applied_rule_id"], where={"rule_id": rule_id})
         if not rows or not rows[0] or not rows[0][0]:
             return None
         return rows[0][0]
 
     def _resolve_binding_id(self, applied_rule_id: str) -> str | None:
-        e = escape_sql_string(applied_rule_id)
-        rows = self._sql.query(f"SELECT binding_id FROM {self._applied_table} WHERE id = '{e}'")  # noqa: S608
+        rows = self._sql.select_rows(self._applied_table, ["binding_id"], where={"id": applied_rule_id})
         if not rows or not rows[0] or not rows[0][0]:
             return None
         return rows[0][0]

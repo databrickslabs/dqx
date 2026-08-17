@@ -483,7 +483,12 @@ def corpus_executor(corpus: Sequence[RegistryRule], vector_for: Callable[[str], 
     ]
     executor = create_autospec(SqlExecutor, instance=True)
     executor.fqn.return_value = "eval.dqx_studio.dq_rule_embeddings"
+    # ``RuleEmbeddingsService._load_embeddings`` now delegates to the shared
+    # ``select_dicts`` CRUD builder — return the same rows there as we do for
+    # the underlying ``query_dicts`` call so the fake stays behaviourally
+    # equivalent under both paths.
     executor.query_dicts.return_value = rows
+    executor.select_dicts.return_value = rows
     return executor
 
 

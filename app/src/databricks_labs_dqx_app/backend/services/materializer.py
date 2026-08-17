@@ -857,8 +857,7 @@ class Materializer:
         for row in rows:
             existing_id = row[0]
             if existing_id not in expected_ids:
-                e_id = escape_sql_string(existing_id)
-                self._sql.execute(f"DELETE FROM {self._quality_rules_table} WHERE rule_id = '{e_id}'")
+                self._sql.delete(self._quality_rules_table, where={"rule_id": existing_id})
 
     def _cleanup_orphans(self, *, applied_ids: set[str], written_ids: set[str]) -> None:
         """Delete materialized rows whose owning applied rule no longer exists under this binding."""
@@ -873,8 +872,7 @@ class Materializer:
         for row in rows:
             existing_id = row[0]
             if existing_id not in written_ids:
-                e_id = escape_sql_string(existing_id)
-                self._sql.execute(f"DELETE FROM {self._quality_rules_table} WHERE rule_id = '{e_id}'")
+                self._sql.delete(self._quality_rules_table, where={"rule_id": existing_id})
 
     @staticmethod
     def _opt_str(value: str | None) -> str:

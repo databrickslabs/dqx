@@ -152,8 +152,7 @@ class RunSetService:
         callers must only invoke this for a run set they just minted and
         know has no members.
         """
-        e = escape_sql_string(run_set_id)
-        self._sql.execute(f"DELETE FROM {self._run_sets_table} WHERE run_set_id = '{e}'")  # noqa: S608
+        self._sql.delete(self._run_sets_table, where={"run_set_id": run_set_id})
 
     # ------------------------------------------------------------------
     # Read

@@ -42,7 +42,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, WhereIn
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
@@ -146,8 +146,7 @@ class RegistryService:
 
     def count(self) -> int:
         """Total registry rules, any status (homepage stat card)."""
-        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._table}")  # noqa: S608
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return self._sql.count(self._table)
 
     def list_rules(
         self,
@@ -1012,8 +1011,7 @@ class RegistryService:
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
-        e_rule_id = escape_sql_string(rule_id)
-        self._sql.execute(f"DELETE FROM {self._table} WHERE rule_id = '{e_rule_id}'")
+        self._sql.delete(self._table, where={"rule_id": rule_id})
         self._record_history(rule_id, rule.definition, rule.version, "delete", rule.status, None, user_email)
         logger.info("Deleted registry rule %s (by %s)", rule_id, user_email)
 
@@ -1031,13 +1029,12 @@ class RegistryService:
         the number of ``dq_rules`` rows deleted; a no-op (returns 0) once
         run against a registry with no built-in rules left.
         """
-        rows = self._sql.query(f"SELECT rule_id FROM {self._table} WHERE is_builtin = TRUE")  # noqa: S608
+        rows = self._sql.select_rows(self._table, ["rule_id"], where={"is_builtin": True})
         rule_ids = [row[0] for row in rows]
         if not rule_ids:
             return 0
-        id_list = ", ".join(f"'{escape_sql_string(rule_id)}'" for rule_id in rule_ids)
-        self._sql.execute(f"DELETE FROM {self._versions_table} WHERE rule_id IN ({id_list})")
-        self._sql.execute(f"DELETE FROM {self._table} WHERE is_builtin = TRUE")
+        self._sql.delete(self._versions_table, where={"rule_id": WhereIn(rule_ids)})
+        self._sql.delete(self._table, where={"is_builtin": True})
         logger.info("Purged %d built-in registry rule(s)", len(rule_ids))
         return len(rule_ids)
 

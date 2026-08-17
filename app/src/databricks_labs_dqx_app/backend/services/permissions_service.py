@@ -57,7 +57,7 @@ from databricks_labs_dqx_app.backend.common.permissions import (
     serialize_privileges,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_object_id
 
 logger = logging.getLogger(__name__)
@@ -618,18 +618,22 @@ class PermissionsService:
         # unique (object_type, object_id, principal_id) invariant.
         self._delete_row(object_type, object_id, principal_id)
         grant_id = uuid.uuid4().hex
-        cols = (
-            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
-            "privileges, inherit, grantor, created_at, updated_at)"
+        self._sql.insert(
+            self._table,
+            values={
+                "grant_id": grant_id,
+                "object_type": object_type,
+                "object_id": object_id,
+                "principal_id": principal_id,
+                "principal_type": principal_type,
+                "principal_name": principal_name,
+                "privileges": priv_str,
+                "inherit": inherit,
+                "grantor": grantor,
+                "created_at": RawSql("now()"),
+                "updated_at": RawSql("now()"),
+            },
         )
-        vals = (
-            f"('{escape_sql_string(grant_id)}', '{escape_sql_string(object_type)}', "
-            f"'{escape_sql_string(object_id)}', '{escape_sql_string(principal_id)}', "
-            f"'{escape_sql_string(principal_type)}', {self._opt(principal_name)}, "
-            f"'{escape_sql_string(priv_str)}', {'TRUE' if inherit else 'FALSE'}, "
-            f"{self._opt(grantor)}, now(), now())"
-        )
-        self._sql.execute(f"INSERT INTO {self._table} {cols} VALUES {vals}")  # noqa: S608
         self._record_history(
             object_type, object_id, principal_id, principal_name, priv_str, inherit, self._ACTION_SET, grantor
         )
@@ -653,12 +657,14 @@ class PermissionsService:
         logger.info("Removed object grant on %s/%s", object_type, object_id)
 
     def _delete_row(self, object_type: str, object_id: str, principal_id: str) -> None:
-        sql = (
-            f"DELETE FROM {self._table} WHERE object_type = '{escape_sql_string(object_type)}' "  # noqa: S608
-            f"AND object_id = '{escape_sql_string(object_id)}' "
-            f"AND principal_id = '{escape_sql_string(principal_id)}'"
+        self._sql.delete(
+            self._table,
+            where={
+                "object_type": object_type,
+                "object_id": object_id,
+                "principal_id": principal_id,
+            },
         )
-        self._sql.execute(sql)
 
     def _reject_reserved_principal(self, principal_id: str) -> None:
         """Reject the legacy all-principals sentinel from the write path.

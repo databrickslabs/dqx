@@ -360,6 +360,57 @@ class TestHappyPath:
 
         assert gateway.query.call_args.kwargs["temperature"] == 0
 
+    async def test_judge_max_tokens_scales_with_column_count(self, monitored_tables, registry, apply_rules):
+        """A wide table's judge response scales with column count.
+
+        The default fixed budget (2048) truncated mid-JSON at ~50 columns on
+        nano, so ``_judge`` now scales the budget linearly with column count
+        (base + per-column). Confirm the scaling shows up at the gateway
+        boundary — a fixed value here would silently reintroduce the
+        wide-table failure.
+        """
+        monitored_tables.get.return_value = _binding_detail()
+        # Narrow: base budget; wide: base + per_col * columns.
+        narrow_profile = _profile({f"c{i}": {} for i in range(5)})
+        wide_profile = _profile({f"c{i}": {} for i in range(90)})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+
+        monitored_tables.get_latest_profile.return_value = narrow_profile
+        narrow_gateway = _gateway({"suggestions": []})
+        await _suggester(monitored_tables, registry, apply_rules, retriever, narrow_gateway).suggest("b1", "user@x")
+        narrow_budget = narrow_gateway.query.call_args.kwargs["max_tokens"]
+
+        monitored_tables.get_latest_profile.return_value = wide_profile
+        wide_gateway = _gateway({"suggestions": []})
+        await _suggester(monitored_tables, registry, apply_rules, retriever, wide_gateway).suggest("b1", "user@x")
+        wide_budget = wide_gateway.query.call_args.kwargs["max_tokens"]
+
+        assert wide_budget > narrow_budget, (
+            f"Wide table (90 cols) got the same or smaller budget ({wide_budget}) as narrow (5 cols, "
+            f"{narrow_budget}); the scaling formula in ``_judge`` isn't reaching the gateway."
+        )
+        # A 100-col table should get materially more than the old fixed 2048.
+        assert wide_budget >= 8000
+
+    async def test_judge_max_tokens_is_capped_for_pathological_tables(self, monitored_tables, registry, apply_rules):
+        """A 10,000-column table must not request an unbounded endpoint budget."""
+        monitored_tables.get.return_value = _binding_detail()
+        # Use a fake discovery to avoid enormous profile dicts.
+        wide_columns = [_column(f"c{i}") for i in range(10_000)]
+        monitored_tables.get_latest_profile.return_value = None
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(
+            monitored_tables, registry, apply_rules, retriever, gateway, discovery=_discovery(wide_columns)
+        )
+
+        await suggester.suggest("b1", "user@x")
+
+        # Match the hard cap from ``rule_suggester._JUDGE_BUDGET_MAX_TOKENS``.
+        assert gateway.query.call_args.kwargs["max_tokens"] <= 16384
+
     async def test_no_candidates_from_retriever(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
         monitored_tables.get_latest_profile.return_value = None

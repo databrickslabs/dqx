@@ -66,9 +66,12 @@ class _FakeOltp:
 
     def _apply_delete(self, sql: str) -> None:
         """Remove the matching principal row from the in-memory store."""
-        ot_m = re.search(r"object_type = '([^']*)'", sql)
-        oid_m = re.search(r"object_id = '([^']*)'", sql)
-        pid_m = re.search(r"principal_id = '([^']*)'", sql)
+        # CRUD-builder shortcuts wrap columns in backticks on Delta, but the
+        # legacy escape_sql_string path emitted them bare — accept both so the
+        # fake stays behaviourally equivalent to either dialect.
+        ot_m = re.search(r"`?object_type`? = '([^']*)'", sql)
+        oid_m = re.search(r"`?object_id`? = '([^']*)'", sql)
+        pid_m = re.search(r"`?principal_id`? = '([^']*)'", sql)
         if not (ot_m and oid_m and pid_m):
             return
         key = (ot_m.group(1), oid_m.group(1))
@@ -148,6 +151,30 @@ class _FakeOltp:
         oid = re.search(r"object_id = '([^']*)'", sql)
         key = (ot.group(1) if ot else "", oid.group(1) if oid else "")
         return list(self.grants.get(key, []))
+
+    # CRUD-builder shortcuts — the service now calls these instead of raw
+    # ``execute``. Each shortcut builds Delta-flavoured SQL through the same
+    # free-function builders the production executor uses and forwards to
+    # :meth:`execute`, which already parses the INSERT/DELETE shapes above.
+    # This keeps the fake in lockstep with the production surface without
+    # duplicating the mutation-parsing logic on the new methods.
+    def q(self, identifier: str) -> str:
+        return "`" + identifier.replace("`", "``") + "`"
+
+    def insert(self, table, *, values, timeout_seconds: int = 120) -> None:
+        from databricks_labs_dqx_app.backend.sql_executor import _build_insert, _render_value
+
+        self.execute(_build_insert(table, values, self.q, _render_value))
+
+    def update(self, table, *, updates, where, timeout_seconds: int = 120) -> None:
+        from databricks_labs_dqx_app.backend.sql_executor import _build_update, _render_value
+
+        self.execute(_build_update(table, updates, where, self.q, _render_value))
+
+    def delete(self, table, *, where, timeout_seconds: int = 120) -> None:
+        from databricks_labs_dqx_app.backend.sql_executor import _build_delete, _render_value
+
+        self.execute(_build_delete(table, where, self.q, _render_value))
 
     def add_grant(
         self,
@@ -664,10 +691,16 @@ def test_manage_privilege_confers_can_manage_grants(svc, fake):
 
 @pytest.fixture
 def mock_sql() -> MagicMock:
+    from tests.conftest import wire_crud_builder_methods
+
     m = create_autospec(SqlExecutor, instance=True)
     m.fqn.side_effect = lambda t: t
     m.ts_text.side_effect = lambda c: c
+    m.q.side_effect = lambda i: f"`{i}`"
     m.query.return_value = []
+    # The service's DELETE + INSERT for grants now go through the CRUD
+    # builder shortcuts; wire them through to the mocked ``execute``.
+    wire_crud_builder_methods(m)
     return m
 
 

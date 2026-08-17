@@ -35,20 +35,29 @@ not perfectly reproducible across model versions, so treat one run as one
 sample: report a range over a few runs, and keep all pass/fail logic in Tier 1
 where it is deterministic.
 
-Measured on field-eng, both against ``databricks-gte-large-en``
-----------------------------------------------------------------
+Measured on field-eng, all against ``databricks-gte-large-en``
+--------------------------------------------------------------
 
-======================  ===========  =========  =====  ======  ==========  ========
-judge                   precision    recall     f1     p@10    violations  golden
-======================  ===========  =========  =====  ======  ==========  ========
-databricks-gpt-5-4-nano       0.456      0.854  0.594   0.500           3     45s
-databricks-claude-opus-4-7    0.469      0.938  0.625   0.500           0     87s
-======================  ===========  =========  =====  ======  ==========  ========
+=============================  ===========  =========  =====  ======  ==========  ========
+judge                          precision    recall     f1     p@10    violations  golden
+=============================  ===========  =========  =====  ======  ==========  ========
+databricks-gpt-5-4-nano *              0.456      0.854  0.594   0.500           3     45s
+databricks-claude-haiku-4-5            0.618      0.875  0.724   0.500           2     45s
+databricks-claude-sonnet-4-5 *N*       0.595      0.917  0.721   0.500           1     81s
+databricks-claude-opus-4-7             0.469      0.938  0.625   0.500           0     87s
+=============================  ===========  =========  =====  ======  ==========  ========
 
-``gpt-5-4-nano`` is the shipped default. Claude finds more of the right answers
-and, notably, fell for **none** of the seven planted wrong-column bindings that
-``_post_process`` cannot catch, where nano fell for three. It costs about twice
-the wall clock.
+``*``  ``gpt-5-4-nano`` (and ``gpt-5-4-mini``) fail wide-table runs entirely on
+the fixed ``max_tokens=2048`` — see the output-budget note below. Recorded
+before the scaling fix; a re-run with the scaled budget should complete them.
+
+``*N*``  ``databricks-claude-sonnet-4-5`` is the current shipped default. Chosen
+over the previous ``gpt-5-4-nano`` because it survives wide tables, holds
+recall at 0.917, and took only one of seven planted wrong-column bindings that
+``_post_process`` cannot catch (nano took three). Haiku has better precision
+and half the latency but took two of the seven decoys, and shipping a default
+twice as likely to produce a plausible-but-wrong suggestion is not the right
+tradeoff — a reviewer might well approve those.
 
 **Read the precision figure with care — it understates real quality**, and the
 reason is this fixture, not the model. The answer key labels the rules a table
@@ -61,10 +70,14 @@ human judgement over the actual output. Recall is the figure to trust as-is.
 
 Some genuine over-suggestion is in there too: ``rr-d-weight-positive`` (a
 shipment *weight* rule) bound to ``parcel_count``, and ``rr-not-null-not-empty``
-emitted alongside ``rr-not-null`` on the same column.
+emitted alongside ``rr-not-null`` on the same column. And notably, a *more*
+capable model over-suggests *more* not less — opus returned 96 suggestions for
+48 correct answers, the most of any model, because it follows the "apply
+universal checks broadly" instruction more thoroughly. Over-suggestion is a
+prompt problem, not one a bigger model fixes.
 
-The retrieval column cap, priced
---------------------------------
+The retrieval column cap, priced (historical — the cap has been raised)
+-----------------------------------------------------------------------
 ``MAX_RETRIEVAL_COLUMNS = 64`` on the 90-column fixture, reproduced across two
 runs with Claude:
 
@@ -72,14 +85,18 @@ runs with Claude:
     raised to 90:  recall 1.000   precision 0.471
     recall delta: +0.250
 
-So the cap costs a quarter of the recall on a wide table and does not buy
-precision back. The two answers it loses are the labelled columns sitting past
-position 64.
+So the cap cost a quarter of the recall on a wide table and did not buy
+precision back. The two answers it lost were the labelled columns sitting past
+position 64. **The cap has since been raised to 512** — a runaway-table guard
+rather than a moderate-width cap, kept because embedding calls are batched now
+and the original per-column round-trip cost is gone.
 
-Output-budget exhaustion on wide tables (nano only)
----------------------------------------------------
-With ``gpt-5-4-nano`` the cap could not be priced at all, because the judge blows
-the fixed ``max_tokens=2048`` mid-JSON and the user gets **no suggestions**:
+Output-budget exhaustion on wide tables (was nano/mini only, now fixed)
+-----------------------------------------------------------------------
+With the previous fixed ``max_tokens=2048`` the judge blew the budget on wide
+tables — measured on ``gpt-5-4-nano`` where it returned NON-EMPTY truncated
+JSON with ``finish_reason`` unset, so the caller saw the generic "unparsable
+response" rather than the real budget cause:
 
     columns   completion_tokens   available   suggestions
          10                1174         yes            20
@@ -89,13 +106,17 @@ the fixed ``max_tokens=2048`` mid-JSON and the user gets **no suggestions**:
          64          2048 (cap)          NO             0
          90          2048 (cap)          NO             0
 
-Output size scales with column count; the budget does not. The failure is also
-mis-reported: ``AIGateway._extract_content`` raises its budget-specific error
-only when content is *empty* and ``finish_reason`` is ``length``, but this
-endpoint returns non-empty truncated JSON with ``finish_reason`` unset, so the
-caller sees the generic "AI judge returned an unparsable response". And
-``MAX_RETRIEVAL_COLUMNS`` does not mitigate it — that bounds the *retrieval*
-queries, while the judge prompt still receives every column.
+Output size scales with column count; the budget did not. Now fixed in two
+places at once:
+
+* ``RuleSuggester._judge`` scales ``max_tokens`` linearly with column count
+  (``2048 + 80 * columns``, hard-capped at 16384), so a realistic 100-200
+  column event/feature table stays within budget on any judge.
+* ``AIGateway`` now names the budget-exhaustion cause for both signal shapes:
+  a ``finish_reason="length"`` finish (Claude family) *and* mid-JSON
+  truncation with ``finish_reason`` unset (nano). The caller previously saw
+  the generic "unparsable" wording for the second shape and was sent chasing
+  a phantom parse bug.
 """
 
 import asyncio
@@ -139,6 +160,8 @@ from tests.suggester_eval_support import (
 # flaky nightly and no signal. Recall held at 1.000 on six of eight tables.
 LIVE_BASELINE_RECALL: dict[tuple[str, str], float] = {
     ("databricks-gte-large-en", "databricks-gpt-5-4-nano"): 0.854,
+    ("databricks-gte-large-en", "databricks-claude-haiku-4-5"): 0.875,
+    ("databricks-gte-large-en", "databricks-claude-sonnet-4-5"): 0.917,
     ("databricks-gte-large-en", "databricks-claude-opus-4-7"): 0.938,
 }
 
@@ -345,47 +368,57 @@ class TestLiveSafetyGates:
 
 
 class TestRetrievalColumnCap:
-    def test_prices_the_column_cap_on_a_wide_table(
+    def test_prices_a_forcibly_lower_column_cap_on_a_wide_table(
         self, live_client, live_vector_for, corpus, tables, labels, embed_endpoint, judge_endpoint, monkeypatch
     ):
-        """Measure what MAX_RETRIEVAL_COLUMNS costs, by raising it and re-running.
+        """Confirm the cap is a real recall lever, by lowering it on a wide table.
+
+        ``MAX_RETRIEVAL_COLUMNS`` was raised to a runaway-table guard (512),
+        so the ``b-wide-events`` fixture no longer exercises it in practice.
+        This test forces the cap back to 64 for one run so the recall delta a
+        future regression would introduce stays measurable — if someone lowers
+        the cap because "it feels safer", this test says what it costs.
 
         ``MAX_RETRIEVAL_COLUMNS`` is a module-level constant, which is the one
-        case AGENTS.md permits patching — there is no injectable seam for it, and
-        the alternative would be adding one to production code purely for a test.
+        case AGENTS.md permits patching — there is no injectable seam for it,
+        and the alternative would be adding one to production code purely for
+        a test. Reported rather than asserted: the answer is the number, and
+        hard-coding an expected delta would freeze today's model behaviour
+        into the suite.
 
-        Reported rather than asserted: the answer is the number, and hard-coding
-        an expected delta would freeze today's model behaviour into the suite.
-
-        **Currently blocked, and the block is itself the finding.** On a
-        90-column table the judge exhausts ``max_tokens`` and returns truncated
-        JSON, so both arms degrade to zero suggestions and the cap cannot be
-        priced at all. Availability is asserted rather than quietly scored: the
-        first version of this test read a degraded result as "recall 0.000" and
-        printed a meaningless ``+0.000`` delta, which is precisely the sort of
-        false green this harness exists to prevent. Measured threshold is in the
-        module docstring.
+        Wide-table judge runs used to blow ``max_tokens`` on the ``gpt-*-nano``
+        family and degrade to zero suggestions; ``_judge`` now scales the
+        budget with column count, so both arms should complete on any current
+        endpoint. Availability is asserted rather than quietly scored: the
+        first version of this test read a degraded result as "recall 0.000"
+        and printed a meaningless ``+0.000`` delta, which is precisely the
+        false-green this harness exists to prevent.
         """
         table = next(t for t in tables if t.binding_id == "b-wide-events")
         table_labels = labels[table.binding_id]
-        assert len(table.columns) > MAX_RETRIEVAL_COLUMNS
+        # The current cap (512) is a runaway-table guard, not something the
+        # 90-column fixture is meant to trip. Confirm the assumption so a
+        # cap-lowering regression fails here instead of silently changing
+        # what this test measures.
+        assert len(table.columns) < MAX_RETRIEVAL_COLUMNS
 
-        capped, _ = asyncio.run(_suggest(table, corpus, live_client, live_vector_for, embed_endpoint, judge_endpoint))
-        assert capped.available, (
-            f"Cannot price the retrieval cap: the suggester degraded on a "
-            f"{len(table.columns)}-column table with {capped.reason!r}. The measured cause is "
-            f"output-budget exhaustion in the judge, not the retrieval cap — see the module docstring."
-        )
-        capped_metrics = score(capped.suggestions, table_labels)
-
-        monkeypatch.setattr(rule_suggester_module, "MAX_RETRIEVAL_COLUMNS", len(table.columns))
         uncapped, _ = asyncio.run(_suggest(table, corpus, live_client, live_vector_for, embed_endpoint, judge_endpoint))
-        assert uncapped.available, f"Uncapped arm degraded: {uncapped.reason!r}"
+        assert uncapped.available, (
+            f"Wide-table run degraded: {uncapped.reason!r}. If the reason names an output-token budget, "
+            f"the scaling formula in ``_judge`` needs another 20% headroom on this judge."
+        )
         uncapped_metrics = score(uncapped.suggestions, table_labels)
+
+        # Force the old cap so we can price it against the current default.
+        old_cap = 64
+        monkeypatch.setattr(rule_suggester_module, "MAX_RETRIEVAL_COLUMNS", old_cap)
+        capped, _ = asyncio.run(_suggest(table, corpus, live_client, live_vector_for, embed_endpoint, judge_endpoint))
+        assert capped.available, f"Forcibly-capped arm degraded: {capped.reason!r}"
+        capped_metrics = score(capped.suggestions, table_labels)
 
         print(
             f"\nMAX_RETRIEVAL_COLUMNS on a {len(table.columns)}-column table:\n"
-            f"  capped at {MAX_RETRIEVAL_COLUMNS}: {capped_metrics.summary()}\n"
-            f"  raised to {len(table.columns)}: {uncapped_metrics.summary()}\n"
+            f"  forced back to {old_cap}: {capped_metrics.summary()}\n"
+            f"  current cap ({MAX_RETRIEVAL_COLUMNS}): {uncapped_metrics.summary()}\n"
             f"  recall delta: {uncapped_metrics.recall - capped_metrics.recall:+.3f}"
         )

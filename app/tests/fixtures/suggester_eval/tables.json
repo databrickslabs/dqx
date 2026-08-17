@@ -246,7 +246,7 @@
   {
     "binding_id": "b-wide-events",
     "table_fqn": "eval.golden.wide_events",
-    "note": "Prices MAX_RETRIEVAL_COLUMNS = 64. The five distinctive columns start at position 64, behind 62 featureless padding columns, so retrieval builds no query for them and the recall loss is the cap's cost rather than a ranking artefact.",
+    "note": "Wide-table (>64 col) exercise. Five distinctive columns start at position 64 behind 62 featureless padding columns; retrieval used to cap at 64 which cost recall on these five (measured 0.750 vs 1.000 on Claude). The cap is now 512 so this table hits every distinctive column and reaches full recall — kept in the fixture as the width-regression canary.",
     "columns": [
       {
         "name": "event_id",

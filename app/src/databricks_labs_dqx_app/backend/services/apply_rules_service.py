@@ -781,9 +781,8 @@ class ApplyRulesService:
         existing = self.get_applied(applied_rule_id)
         if existing is None:
             raise RuntimeError(f"Applied rule not found: {applied_rule_id}")
-        e = escape_sql_string(applied_rule_id)
-        self._sql.execute(f"DELETE FROM {self._quality_rules_table} WHERE applied_rule_id = '{e}'")
-        self._sql.execute(f"DELETE FROM {self._table} WHERE id = '{e}'")
+        self._sql.delete(self._quality_rules_table, where={"applied_rule_id": applied_rule_id})
+        self._sql.delete(self._table, where={"id": applied_rule_id})
         if existing.user_metadata.get(ORIGIN_KEY) == ORIGIN_TAG_AUTO and existing.mapping_hash:
             self._record_suppression(existing.binding_id, existing.rule_id, existing.mapping_hash, user_email)
         logger.info(
@@ -799,9 +798,11 @@ class ApplyRulesService:
         existing = self.get_applied(applied_rule_id)
         if existing is None:
             raise RuntimeError(f"Applied rule not found: {applied_rule_id}")
-        e = escape_sql_string(applied_rule_id)
-        value = pinned_version if pinned_version is not None else "NULL"
-        self._sql.execute(f"UPDATE {self._table} SET pinned_version = {value} WHERE id = '{e}'")
+        self._sql.update(
+            self._table,
+            updates={"pinned_version": pinned_version},
+            where={"id": applied_rule_id},
+        )
         existing.pinned_version = pinned_version
         logger.info("Set pin for applied rule %s to %s", applied_rule_id, pinned_version)
         return existing
@@ -811,9 +812,11 @@ class ApplyRulesService:
         existing = self.get_applied(applied_rule_id)
         if existing is None:
             raise RuntimeError(f"Applied rule not found: {applied_rule_id}")
-        e = escape_sql_string(applied_rule_id)
-        value = self._opt_str(severity)
-        self._sql.execute(f"UPDATE {self._table} SET severity_override = {value} WHERE id = '{e}'")
+        self._sql.update(
+            self._table,
+            updates={"severity_override": severity},
+            where={"id": applied_rule_id},
+        )
         existing.severity_override = severity
         logger.info("Set severity override for applied rule %s to %s", applied_rule_id, severity)
         return existing

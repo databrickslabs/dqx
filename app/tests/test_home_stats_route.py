@@ -191,6 +191,8 @@ class TestCountMethods:
 
     @staticmethod
     def _executor(count_cell: str | None) -> MagicMock:
+        from tests.conftest import wire_crud_builder_methods
+
         mock = create_autospec(SqlExecutor, instance=True)
         mock.dialect = "delta"
         mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
@@ -198,6 +200,9 @@ class TestCountMethods:
         mock.ts_text.side_effect = lambda col: f"CAST({col} AS STRING)"
         mock.select_json_text.side_effect = lambda col: f"CAST({col} AS STRING)"
         mock.query.return_value = [[count_cell]] if count_cell is not None else []
+        # The homepage COUNT queries now go through :meth:`SqlExecutor.count`,
+        # so wire the CRUD-builder shortcut to forward to the mocked ``query``.
+        wire_crud_builder_methods(mock)
         return mock
 
     def test_registry_service_counts_all_rules(self):

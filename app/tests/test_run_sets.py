@@ -15,6 +15,8 @@ import pytest
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
+from tests.conftest import wire_crud_builder_methods
+
 _RUN_SETS = "dqx_test.dqx_app_test.dq_run_sets"
 _MEMBERS = "dqx_test.dqx_app_test.dq_run_set_members"
 _RUNS = "dqx_test.dqx_app_test.dq_validation_runs"
@@ -28,6 +30,10 @@ def _mock_sql(fqn_map: dict[str, str] | None = None) -> SqlExecutor:
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     mock.query.return_value = []
     mock.query_dicts.return_value = []
+    # Wire the CRUD-builder shortcuts so tests that assert on
+    # ``execute.call_args`` see the SQL emitted by the new
+    # :meth:`SqlExecutor.delete` / ``insert`` / ``update`` helpers.
+    wire_crud_builder_methods(mock)
     return mock
 
 

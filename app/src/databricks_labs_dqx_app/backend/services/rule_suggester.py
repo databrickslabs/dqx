@@ -56,11 +56,27 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20  # Per-column retrieval unions per column; cap = max(top_k, top_k*3) in _retrieve_per_column
 
-# Bound how many columns get their own retrieval query. Embedding round trips
-# (even batched) and prompt size still grow with width; beyond this we keep
-# UC order and drop the rest from retrieval only — the judge still sees the
-# full column list for mapping.
-MAX_RETRIEVAL_COLUMNS = 64
+# Bound how many columns get their own retrieval query. Embedding calls are
+# batched via :meth:`RuleRetriever.retrieve_many` since P4C, so the original
+# per-column round-trip cost is gone; what remains is a safety cap for
+# pathologically wide tables (thousands of columns) to keep the union set
+# bounded. Set generously so realistic 100-200 column event/feature tables
+# retrieve on every column and reach full recall — measured live on the
+# 90-column eval fixture, raising the cap from 64 to 90 took recall from
+# 0.750 to 1.000 without moving precision.
+MAX_RETRIEVAL_COLUMNS = 512
+
+# Judge output-budget scaling: the mapping response includes one JSON
+# suggestion entry per (rule, column) pair the judge accepts, so response
+# size grows with column count. The previous fixed budget (2048 tokens)
+# truncated mid-JSON at ~50 columns on nano — the failure mode reported by
+# field-eng. Base + per-column linear scaling covers realistic widths and
+# the hard cap protects the endpoint against a runaway table. See
+# ``AIGateway._extract_content`` / ``_looks_truncated_json`` for the
+# matching error path when a caller still trips the cap.
+_JUDGE_BUDGET_BASE_TOKENS = 2048
+_JUDGE_BUDGET_PER_COLUMN_TOKENS = 80
+_JUDGE_BUDGET_MAX_TOKENS = 16384
 
 # NL "describe a rule" match path: retrieve against the user prompt (not
 # column-built queries), then run the same mapping judge for staging.
@@ -279,9 +295,15 @@ class RuleSuggester:
                     f" ({endpoint}). Ask an admin to grant you EXECUTE on the serving endpoint."
                 ),
             )
-        except AIResponseParseError:
+        except AIResponseParseError as e:
+            # ``AIResponseParseError`` now distinguishes the two shapes: a
+            # budget-exhausted response (finish_reason=length OR mid-JSON
+            # truncation) reports the real cause, while a genuinely
+            # malformed response keeps the generic reason. Propagate
+            # ``str(e)`` so the UI can differentiate the two — the previous
+            # blanket "unparsable" wording pointed users at the wrong fix.
             logger.warning("AI judge returned an unparsable response for binding %s", binding_id, exc_info=True)
-            return SuggestRulesResult(available=False, reason="AI judge returned an unparsable response.")
+            return SuggestRulesResult(available=False, reason=str(e))
         except Exception:
             logger.warning("AI judge failed for binding %s", binding_id, exc_info=True)
             return SuggestRulesResult(available=False, reason="AI judge failed to produce suggestions.")
@@ -389,9 +411,9 @@ class RuleSuggester:
                     f" ({endpoint}). Ask an admin to grant you EXECUTE on the serving endpoint."
                 ),
             )
-        except AIResponseParseError:
+        except AIResponseParseError as e:
             logger.warning("AI judge returned an unparsable response for NL match on %s", binding_id, exc_info=True)
-            return MatchRulesResult(available=False, reason="AI judge returned an unparsable response.")
+            return MatchRulesResult(available=False, reason=str(e))
         except Exception:
             logger.warning("AI judge failed for NL match on binding %s", binding_id, exc_info=True)
             return MatchRulesResult(available=False, reason="AI judge failed to produce suggestions.")
@@ -603,6 +625,14 @@ class RuleSuggester:
             {"table": table_fqn, "columns": columns_payload, "candidate_rules": candidates_payload},
             sort_keys=True,
         )
+        # Response size grows with column count (one entry per accepted
+        # column mapping); scale the budget accordingly so a 90-column table
+        # doesn't blow the fixed cap mid-JSON. Bounded at the top end so a
+        # pathological table can't request an unreasonable endpoint budget.
+        max_tokens = min(
+            _JUDGE_BUDGET_MAX_TOKENS,
+            _JUDGE_BUDGET_BASE_TOKENS + _JUDGE_BUDGET_PER_COLUMN_TOKENS * len(columns),
+        )
         content = await self._ai_gateway.query(
             user_email=user_email,
             purpose="suggest-rules",
@@ -610,6 +640,7 @@ class RuleSuggester:
                 {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
+            max_tokens=max_tokens,
             temperature=0,
         )
         parsed = self._ai_gateway.parse_json_object(content)

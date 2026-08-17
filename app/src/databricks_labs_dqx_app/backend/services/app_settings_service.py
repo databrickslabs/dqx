@@ -779,7 +779,18 @@ class AppSettingsService:
     # pre-selected. An admin who explicitly saves an empty value gets that
     # empty value back (see the ``raw is None`` check below) rather than being
     # forced back to the default on every read.
-    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-4-nano"
+    #
+    # Chosen over the previous ``databricks-gpt-5-4-nano`` default because a
+    # live golden-set eval against field-eng (see
+    # ``tests/ai_eval/test_rule_suggester_live.py``) showed nano returning
+    # NO suggestions on tables past ~50 columns (blew the fixed max_tokens
+    # budget mid-JSON), and taking three of seven planted wrong-column
+    # bindings that structural post-processing cannot catch. Sonnet held
+    # recall at 0.917, took only one wrong-column binding, and completed
+    # wide tables successfully. Admins can still switch to nano/mini/haiku
+    # via the AI settings dropdown, but the fresh-deploy default now points
+    # at a model that works on realistic (wide) tables out of the box.
+    AI_ENDPOINT_NAME_DEFAULT = "databricks-claude-sonnet-4-5"
 
     def get_ai_enabled(self) -> bool:
         """Return whether the AI kill-switch is on; defaults to ``True`` (on) when unset.

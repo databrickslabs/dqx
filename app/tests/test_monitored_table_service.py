@@ -767,13 +767,14 @@ class TestSetStatus:
         assert table.status == "pending_approval"
         update_sql = sql.execute.call_args[0][0]
         assert "UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in update_sql
-        assert "status = 'pending_approval'" in update_sql
+        # CRUD-builder shortcuts identifier-quote every column.
+        assert "`status` = 'pending_approval'" in update_sql
 
     def test_flips_binding_to_approved(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="pending_approval")]
         table = svc.set_status("b1", "approved", "alice@x")
         assert table.status == "approved"
-        assert "status = 'approved'" in sql.execute.call_args[0][0]
+        assert "`status` = 'approved'" in sql.execute.call_args[0][0]
 
     def test_rejects_invalid_status(self, svc, sql):
         with pytest.raises(ValueError):
@@ -941,7 +942,7 @@ class TestRollupStatus:
         table = svc.rollup_status("b1", "alice@x")
         assert table is not None
         assert table.status == "pending_approval"
-        assert any("status = 'pending_approval'" in c.args[0] for c in sql.execute.call_args_list)
+        assert any("`status` = 'pending_approval'" in c.args[0] for c in sql.execute.call_args_list)
 
     def test_all_approved_is_idempotent_noop(self, svc, sql):
         _rollup_dispatch(

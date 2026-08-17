@@ -129,13 +129,17 @@ class TestFreezeNewVersion:
             _check("ar2", "name"),
             _check(None, "hand_authored"),  # direct rule, no applied_rule_id
         ]
-        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["1"]]})
+        # The dispatch keys used to spell out the exact projection — but the
+        # ``version`` column is now identifier-quoted (\`version\` on Delta) by
+        # the CRUD-builder shortcuts. Match on the FROM clause instead so
+        # dialect-specific quoting doesn't leak into the test contract.
+        _dispatch(sql, {f"FROM {_TABLES}": [["1"]]})
 
         new_version = service.freeze_new_version("b1", "alice@x")
 
         assert new_version == 2
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_TABLES} SET version = 2" in s for s in exec_sqls)
+        assert any(f"UPDATE {_TABLES} SET" in s and "= 2" in s and "`version`" in s for s in exec_sqls)
         assert any(f"INSERT INTO {_VERSIONS}" in s and "checks_json" not in s for s in exec_sqls)
         # frozen state carries references to ONLY the binding's own applied rules
         state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
@@ -154,7 +158,7 @@ class TestFreezeNewVersion:
         detail.applied_rules[0].applied_rule.pass_threshold = 0
         monitored_tables.get.return_value = detail
         rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
-        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["0"]]})
+        _dispatch(sql, {f"FROM {_TABLES}": [["0"]]})
 
         service.freeze_new_version("b1", "alice@x")
 
@@ -164,7 +168,7 @@ class TestFreezeNewVersion:
     def test_state_json_carries_applied_rule_display_metadata(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1"])
         rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
-        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["0"]]})
+        _dispatch(sql, {f"FROM {_TABLES}": [["0"]]})
 
         service.freeze_new_version("b1", "alice@x")
 
@@ -180,7 +184,7 @@ class TestFreezeNewVersion:
     def test_first_approval_freezes_v1(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1"])
         rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
-        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["0"]]})
+        _dispatch(sql, {f"FROM {_TABLES}": [["0"]]})
         assert service.freeze_new_version("b1", "alice@x") == 1
 
     def test_missing_binding_raises_lookup_error(self, service, monitored_tables):
@@ -198,20 +202,22 @@ class TestRefreezeCurrent:
     def test_rewrites_in_place_and_stamps_refrozen_at(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1"])
         rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
-        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["3"]]})
+        _dispatch(sql, {f"FROM {_TABLES}": [["3"]]})
 
         service.refreeze_current("b1")
 
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        # version stays 3, refrozen_at stamped, no INSERT / no version bump on the table
+        # version stays 3, refrozen_at stamped, no INSERT / no version bump on the table.
+        # The identifier is now backtick-quoted by the CRUD-builder helpers, so we
+        # match on the FROM/SET structure instead of a bare column reference.
         assert any(
-            f"UPDATE {_VERSIONS} SET" in s and "refrozen_at = now()" in s and "version = 3" in s for s in exec_sqls
+            f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s and "`version` = 3" in s for s in exec_sqls
         )
         assert not any(f"INSERT INTO {_VERSIONS}" in s for s in exec_sqls)
-        assert not any(f"UPDATE {_TABLES} SET version" in s for s in exec_sqls)
+        assert not any(f"UPDATE {_TABLES} SET" in s and "`version`" in s for s in exec_sqls)
 
     def test_version_zero_is_a_noop(self, service, sql, monitored_tables):
-        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["0"]]})
+        _dispatch(sql, {f"FROM {_TABLES}": [["0"]]})
         service.refreeze_current("b1")
         sql.execute.assert_not_called()
         monitored_tables.get.assert_not_called()
@@ -226,7 +232,7 @@ class TestRefreezeCurrent:
         _dispatch(
             sql,
             {
-                f"SELECT version FROM {_TABLES}": [["3"]],
+                f"FROM {_TABLES}": [["3"]],
                 # previous snapshot has NON-empty references
                 f"FROM {_VERSIONS}": [[json.dumps({"rule_refs": [{"applied_rule_id": "ar1"}]})]],
             },
@@ -245,7 +251,7 @@ class TestRefreezeCurrent:
         _dispatch(
             sql,
             {
-                f"SELECT version FROM {_TABLES}": [["3"]],
+                f"FROM {_TABLES}": [["3"]],
                 f"FROM {_VERSIONS}": [[json.dumps({"rule_refs": []})]],  # previous snapshot already empty
             },
         )
@@ -253,7 +259,7 @@ class TestRefreezeCurrent:
         service.refreeze_current("b1")
 
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_VERSIONS} SET" in s and "refrozen_at = now()" in s for s in exec_sqls)
+        assert any(f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s for s in exec_sqls)
 
 
 # ---------------------------------------------------------------------------
@@ -268,18 +274,18 @@ class TestRefreezeForQualityRule:
         _dispatch(
             sql,
             {
-                f"SELECT applied_rule_id FROM {_QUALITY}": [["ar1"]],
-                f"SELECT binding_id FROM {_APPLIED}": [["b1"]],
-                f"SELECT version FROM {_TABLES}": [["2"]],
+                f"FROM {_QUALITY}": [["ar1"]],
+                f"FROM {_APPLIED}": [["b1"]],
+                f"FROM {_TABLES}": [["2"]],
             },
         )
 
         assert service.refreeze_for_quality_rule("ar1-0") == "b1"
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_VERSIONS} SET" in s and "refrozen_at = now()" in s for s in exec_sqls)
+        assert any(f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s for s in exec_sqls)
 
     def test_direct_rule_without_applied_id_is_skipped(self, service, sql):
-        _dispatch(sql, {f"SELECT applied_rule_id FROM {_QUALITY}": [[None]]})
+        _dispatch(sql, {f"FROM {_QUALITY}": [[None]]})
         assert service.refreeze_for_quality_rule("hand-authored") is None
         sql.execute.assert_not_called()
 
@@ -287,8 +293,8 @@ class TestRefreezeForQualityRule:
         _dispatch(
             sql,
             {
-                f"SELECT applied_rule_id FROM {_QUALITY}": [["ar1"]],
-                f"SELECT binding_id FROM {_APPLIED}": [],
+                f"FROM {_QUALITY}": [["ar1"]],
+                f"FROM {_APPLIED}": [],
             },
         )
         assert service.refreeze_for_quality_rule("ar1-0") is None
@@ -317,7 +323,7 @@ class TestGetChecks:
             sql,
             {
                 f"FROM {_VERSIONS}": [[json.dumps(state)]],
-                f"SELECT table_fqn FROM {_TABLES}": [["cat.schema.customers"]],
+                f"FROM {_TABLES}": [["cat.schema.customers"]],
             },
         )
         rendered = [_check("ar1", "id", registry_version="2")]
@@ -356,7 +362,7 @@ class TestGetChecks:
             sql,
             {
                 f"FROM {_VERSIONS}": [[json.dumps(state)]],
-                f"SELECT table_fqn FROM {_TABLES}": [["cat.schema.customers"]],
+                f"FROM {_TABLES}": [["cat.schema.customers"]],
             },
         )
         materializer.render_applied_checks.return_value = []
@@ -384,7 +390,7 @@ class TestGetChecks:
             sql,
             {
                 f"FROM {_VERSIONS}": [[json.dumps(state)]],
-                f"SELECT table_fqn FROM {_TABLES}": [["cat.schema.customers"]],
+                f"FROM {_TABLES}": [["cat.schema.customers"]],
             },
         )
         materializer.render_applied_checks.return_value = []
