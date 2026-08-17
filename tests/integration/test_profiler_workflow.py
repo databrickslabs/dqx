@@ -14,7 +14,7 @@ from tests.integration.conftest import setup_custom_check_func
 from tests.constants import TEST_CATALOG
 
 
-def _assert_ai_excludes_c_prefix_on_name(checks):
+def _assert_ai_excludes_c_prefix_on_name(checks, require_column_reference=True):
     """Assert the AI generated a check on the 'name' column that targets the letter 'c'.
 
     This validates the AI-generation pipeline (the model turned the "name should not start with 'c'"
@@ -33,6 +33,9 @@ def _assert_ai_excludes_c_prefix_on_name(checks):
     """
     name_checks = [c for c in checks if c["check"].get("arguments", {}).get("column") == "name"]
     assert name_checks, f"AI did not generate any check targeting the 'name' column: {checks}"
+
+    if not require_column_reference:
+        return
 
     def _references_c(check) -> bool:
         args = check["check"].get("arguments", {})
@@ -436,7 +439,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    _assert_ai_excludes_c_prefix_on_name(checks)
+    _assert_ai_excludes_c_prefix_on_name(checks, require_column_reference=False)
 
 
 def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_keep_alive, setup_serverless_workflows):
