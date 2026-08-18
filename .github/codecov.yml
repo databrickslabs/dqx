@@ -20,10 +20,9 @@ component_management:
       - type: project
         target: auto
         threshold: 0.5%
-      - patch:
-          default:
-            target: auto
-            threshold: 0.5% # The minimum coverage threshold for the patch
+      - type: patch
+        target: auto
+        threshold: 0.5% # The minimum coverage threshold for the patch
 
   individual_components:
     - component_id: core
