@@ -196,7 +196,7 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 # to the lock from here, so inject it ephemerally with ``uv run --with pytest``
 # over the synced runtime env (anyio's pytest plugin handles the async tests).
 mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
-	cd mcp-server && uv run --with pytest pytest tests/ \
+	cd mcp-server && uv run --with pytest pytest tests/ --timeout=60 \
 	  $(if $(K),-k "$(K)")
 
 # Static type-check the MCP server (parity with app-check). basedpyright is not in mcp-server's
