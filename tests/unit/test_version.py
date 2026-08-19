@@ -3,9 +3,9 @@ import importlib
 import importlib.util
 from pathlib import Path
 
+import pytest
 from databricks.labs import dqx
 from databricks.labs.dqx.__version__ import __version__
-import pytest
 
 _OPTIONAL_SUBPACKAGES = {
     "databricks.labs.dqx.pii": "presidio_analyzer",
