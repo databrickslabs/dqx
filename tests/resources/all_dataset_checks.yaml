@@ -265,3 +265,32 @@
       aggr_type: avg
       lookback_num_intervals: 2
       warmup_num_intervals: 2
+
+# is_in_distribution check — validates that the actual value distribution of a categorical
+# column stays within a Total Variation Distance of an expected distribution.
+# Uses col10 (int) which is constant (all 2s) in the integration fixture — matches {2: 1.0}
+# exactly (TVD=0). distance=1.0 keeps the check safely passing on the perf fixture too,
+# where col10 carries arbitrary integer values.
+- criticality: error
+  check:
+    function: is_in_distribution
+    arguments:
+      column: col10
+      distribution:
+        2: 1.0
+      distance: 1.0
+# Second entry exercises non-trivial TVD math with a residual bucket (sum<1) and a listed key
+# not present in the actual data (impute defaults to True → counted as 0). For col10 all 2s in
+# the integration fixture: actual 2=1.0, residual=0, expected 2=0.5, 3=0.3, residual=0.2 →
+# TVD = 0.5*(0.5 + 0.3 + 0.2) = 0.5. distance=1.0 keeps this safely passing on both fixtures,
+# but any regression that inverts the comparison (tvd <= distance) would flag every row and
+# fail the test — the {2: 1.0}/distance=1.0 entry above cannot catch that.
+- criticality: error
+  check:
+    function: is_in_distribution
+    arguments:
+      column: col10
+      distribution:
+        2: 0.5
+        3: 0.3
+      distance: 1.0

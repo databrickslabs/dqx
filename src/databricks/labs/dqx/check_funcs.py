@@ -1,10 +1,11 @@
 import datetime
+import math
 import re
 import warnings
 import ipaddress
 import uuid
 from decimal import Decimal
-from functools import lru_cache
+from functools import lru_cache, reduce
 from importlib.resources import files
 from collections.abc import Callable, Sequence
 from enum import Enum
@@ -15,6 +16,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql.types import DataType
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
@@ -82,6 +84,18 @@ WINDOW_INCOMPATIBLE_AGGREGATES = {
     "count_distinct",  # DISTINCT_WINDOW_FUNCTION_UNSUPPORTED error
     # Future: Add other aggregates that don't work with windows (e.g., collect_set with DISTINCT)
 }
+
+_IS_IN_DISTRIBUTION_SUPPORTED_KEY_TYPES: tuple[type, ...] = (bool, str, int, datetime.date)
+_IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES: tuple[type, ...] = (
+    types.BooleanType,
+    types.StringType,
+    types.CharType,
+    types.ByteType,
+    types.ShortType,
+    types.IntegerType,
+    types.LongType,
+    types.DateType,
+)
 
 
 class DQPattern(Enum):
@@ -500,6 +514,374 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
         ),
         f"{col_str_norm}_is_not_in_the_list",
     )
+
+
+@register_rule("dataset")
+def is_in_distribution(
+    column: str | Column,
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+    distance: float,
+    case_sensitive: bool = True,
+    impute: bool = True,
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Check whether the discrete value distribution of the column is within a distance less than or equal to the given
+    distance, compared to the given values distribution. The distance is calculated using the
+    [Total variation distance of probability measures](https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures)
+    method.
+
+    This check aims to supplement *is_in_list* at the dataset level by verifying that the column not only stays within
+    the boundaries of enumerated values, but also that these values follow the expected distribution.
+
+    Supported column types: Boolean, Char, String, Byte, Short, Integer, Long, and Date. These types have been chosen
+    because they are the most suitable for representing categorical data and produce stable, well-defined distributions
+    when aggregated. Floating-point types (Float, Double) are excluded because equality-based grouping is unstable due
+    to precision issues; complex types (Array, Struct, Variant) are excluded because they lack a natural
+    equality-based grouping semantics; and potentially large types (Binary) are excluded because they can lead to
+    performance and correctness issues when used as grouping keys. For any other column type a validation error is
+    raised.
+
+    The sum of the supplied distribution values must be less than or equal to 1. The distance must also be between 0
+    and 1 (inclusive).
+    The distribution is not allowed to contain *None* — neither as a key nor as a value; please consider using the
+    corresponding completeness functions for that purpose.
+    The distribution dict is not allowed to contain *inf*, *-inf*, or *nan* among its values, nor negative values.
+    The distribution dict must be homogeneous: all keys must be of the same supported primitive type (matching the
+    column type). Mixing key types (e.g., a dict containing both string and integer keys) raises a validation error.
+    The values distribution has no size limitation, but it is highly recommended to keep it reasonably small as the
+    check is intended to be used for enumerated data.
+
+    The actual distribution is calculated over all non-null values in the column (equivalent to
+    *df.groupBy(col).count()*). *NULL* values in the checked column are skipped, so the distribution is computed over
+    non-null values only.
+
+    A sum strictly less than 1 is allowed when the intent is to check only a subset of the possible values (e.g.,
+    some enumerated values are intentionally omitted from the expected distribution). To calculate the TVD properly in
+    this case, the function creates an internal *residual* bucket in the expected distribution to hold the missing
+    mass (1 - sum), and the actual distribution is computed with the same bucketing: all non-null column values not
+    listed as explicit keys in the given distribution are aggregated into the *residual* bucket. For example, given a
+    distribution of {A: 0.5, B: 0.3}, an internal *residual* bucket holds the remaining 0.2; the actual distribution
+    is then calculated over *A*, *B*, and *residual*, where *residual* counts every non-null column value other than
+    *A* and *B*. When the sum equals 1, the expected *residual* mass is 0 and any actual values not listed in the
+    given distribution will contribute to the distance.
+
+    Handling of keys present in the given distribution but missing from the actual distribution depends on the
+    *impute* boolean parameter.
+    If it is *True*, such keys are imputed with a value of 0 in the actual distribution, so that the distance can be
+    calculated across the union of keys.
+    If it is *False*, the check fails with an error specifying which keys from the given distribution are missing in
+    the actual distribution. Dataset-level checks apply to the whole dataset (not per-row), so the failure applies to
+    all rows.
+    *NOTE*: values present in the actual distribution but not listed as explicit keys in the given distribution are
+    aggregated into the *residual* bucket rather than compared individually. Consider using *is_in_list* at the row
+    level for checking individual values.
+
+    Case normalisation is applied when *case_sensitive* is *False*. The same normalisation is applied to the keys of
+    the given *distribution* before the check runs, so both sides are compared consistently. If two distribution keys
+    collide after normalisation a validation error is raised.
+
+    Note:
+        This check is not supported for streaming DataFrames. It performs an ungrouped aggregation over the whole
+        dataset to compute the actual distribution, which Structured Streaming does not allow on unbounded sources
+        without a watermark and a compatible output mode. Use it on batch DataFrames only.
+
+    Args:
+        column: column to check; can be a string column name or a column expression.
+        distribution: expected distribution of literal values to compare with. The dict must be homogeneous — all
+            keys must be of the same supported primitive type matching the column type; values must be non-negative
+            and sum to 1 or less.
+        distance: max distance between the actual and given values distribution; must be between 0 and 1 (inclusive).
+        case_sensitive: whether to perform a case-sensitive comparison (default: True).
+        impute: whether to substitute keys missing from the actual distribution with 0 (True) or fail the check
+            (False).
+        row_filter: Optional SQL expression for filtering rows before the distribution is computed. Auto-injected
+            from the check filter.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for distribution violations.
+            - A closure that applies the distribution check and adds the necessary condition/count columns.
+
+    Raises:
+        MissingParameterError: If the distribution or distance is not provided.
+        InvalidParameterError: If the distribution parameter is not a dict or is empty; if the distribution dict
+            contains a *None* key or *None* value; if the distribution values contain *inf*, *-inf*, or *nan*; if any distribution
+            value is negative; if the sum of the distribution values is greater than 1; if the distance parameter
+            value is not between 0 and 1 (inclusive); if the column type is not one of the supported primitive
+            types; if the distribution dict is not homogeneous (contains keys of more than one type); or if two keys
+            in the given distribution collide after case normalisation when *case_sensitive* is *False*.
+    """
+    _is_in_distribution_validate_distribution(distribution, case_sensitive)
+    _is_in_distribution_validate_distance(distance)
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__condition_{col_str_norm}_{unique_str}"
+    message_col = f"__message_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        # Resolve the type off the expression itself
+        column_type = _is_in_distribution_get_data_type(df, col_expr, col_expr_str)
+
+        filtered = df.filter(safe_filter_expr(row_filter)) if row_filter else df
+
+        is_string_column = isinstance(column_type, (types.StringType, types.CharType))
+        group_expr = col_expr
+        normalized_distribution: dict[Any, float] = distribution
+        if is_string_column and not case_sensitive:
+            group_expr = F.lower(col_expr)
+            normalized_distribution = {k.lower() if isinstance(k, str) else k: v for k, v in distribution.items()}
+
+        expected_keys_ordered = list(normalized_distribution.keys())
+        per_key_aliases = [f"__cnt_{i}" for i in range(len(expected_keys_ordered))]
+
+        # Explicit cast pins the literal to the column type so byte/short/date keys don't rely
+        # on implicit Spark upcasting — a future type addition with different equality semantics
+        # would otherwise silently miscount into the residual bucket instead of erroring.
+        key_lits = [F.lit(k).cast(column_type) for k in expected_keys_ordered]
+
+        # Single-pass conditional aggregation bounded by length of distribution:
+        # one COUNT(when col == key) per expected key + one COUNT(col) for the total.
+        # F.count(group_expr) natively skips nulls, matching the docstring's contract that NULLs are
+        # excluded from the actual distribution. F.when(col == key, 1) also returns NULL when col
+        # is NULL, so null rows contribute to neither the per-key nor the total counts.
+        # This avoids groupBy(col).collect() which would pull an unbounded number of distinct
+        # values to the driver on high-cardinality columns.
+        aggregations = [
+            F.count(F.when(group_expr == key_lit, F.lit(1))).alias(alias)
+            for key_lit, alias in zip(key_lits, per_key_aliases)
+        ]
+        aggregations.append(F.count(group_expr).alias("__total"))
+
+        # limit(1) mirrors _is_aggr_compare — the ungrouped agg already returns one row, but the
+        # limit is informational for the planner. Broadcasting via crossJoin keeps the whole
+        # pipeline lazy so apply_checks doesn't force an eager job.
+        agg_df = filtered.agg(*aggregations).limit(1)
+
+        total_col = F.col("__total")
+        deviation_terms = _is_in_distribution_get_deviation_terms(
+            normalized_distribution,
+            per_key_aliases,
+            total_col,
+        )
+        tvd_col = F.lit(0.5) * reduce(py_operator.add, deviation_terms)
+
+        # math.isclose (rel_tol=1e-09, abs_tol=0.0) as a Column expression: neutralises IEEE-754
+        # noise at the boundary so a "supposed to pass" case with tvd mathematically equal to
+        # distance can't trip when float rounding nudges the computed tvd just above distance
+        # (e.g. abs(0.15-0.2) == 0.05000000000000002). The docstring's "less than or equal to the
+        # given distance" already promises the boundary passes, so equality-within-precision must
+        # not fire the check.
+        distance_lit = F.lit(distance)
+        is_close_col = F.abs(tvd_col - distance_lit) <= F.lit(1e-9) * F.greatest(F.abs(tvd_col), F.abs(distance_lit))
+        tvd_violation_col = (tvd_col > distance_lit) & ~is_close_col
+
+        tvd_message_col = F.concat(
+            F.lit(f"Column '{col_expr_str}' actual distribution deviates from expected by TVD="),
+            F.format_string("%.6f", tvd_col),
+            F.lit(f", which exceeds the allowed distance={distance}."),
+        )
+
+        stats_df = _is_in_distribution_get_stats_df(
+            agg_df,
+            impute,
+            total_col,
+            tvd_violation_col,
+            tvd_message_col,
+            expected_keys_ordered,
+            per_key_aliases,
+            col_expr_str,
+            condition_col,
+            message_col,
+        )
+
+        return df.crossJoin(stats_df)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.col(message_col),
+        alias=f"{col_str_norm}_is_not_in_distribution",
+    )
+
+    return condition, apply
+
+
+def _is_in_distribution_get_data_type(df: DataFrame, column: Column, column_expression: str) -> DataType:
+    column_type = df.select(column).schema[0].dataType
+    if not isinstance(column_type, _IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES):
+        raise InvalidParameterError(
+            f"Column '{column_expression}' has unsupported type '{column_type.simpleString()}' for "
+            f"'is_in_distribution'; expected one of: boolean, string, char, byte, short, integer, "
+            f"long, date."
+        )
+    return column_type
+
+
+def _is_in_distribution_get_deviation_terms(
+    distribution: dict[Any, float],
+    per_key_aliases: list[str],
+    total_column: Column,
+) -> list[Column]:
+    expected_values = list(distribution.values())
+    # fsum keeps residual precision stable across many keys.
+    expected_residual = 1.0 - math.fsum(expected_values)
+
+    listed_count_column = reduce(py_operator.add, (F.col(alias) for alias in per_key_aliases))
+    residual_count_column = total_column - listed_count_column
+    actual_residual_column = residual_count_column / total_column
+
+    deviation_terms = [
+        F.abs(F.lit(expected_value) - F.col(alias) / total_column)
+        for expected_value, alias in zip(expected_values, per_key_aliases)
+    ]
+    deviation_terms.append(F.abs(F.lit(expected_residual) - actual_residual_column))
+    return deviation_terms
+
+
+def _is_in_distribution_get_stats_df(
+    aggregate_df: DataFrame,
+    impute: bool,
+    total_column: Column,
+    tvd_violation_column: Column,
+    tvd_message_column: Column,
+    expected_keys: list[Any],
+    per_key_aliases: list[str],
+    column_expression: str,
+    condition_column_name: str,
+    message_column_name: str,
+) -> DataFrame:
+    if impute:
+        is_violation_column = F.when(total_column == 0, F.lit(False)).otherwise(tvd_violation_column)
+        message_expression = F.when(total_column == 0, F.lit("")).otherwise(tvd_message_column)
+    else:
+        # Missing keys are those whose per-key count is zero; sort for stable output.
+        missing_key_names = [
+            F.when(F.col(alias) == 0, F.lit(repr(key))) for key, alias in zip(expected_keys, per_key_aliases)
+        ]
+        missing_array = F.array_sort(F.filter(F.array(*missing_key_names), lambda value: value.isNotNull()))
+        has_missing_column = F.size(missing_array) > 0
+        missing_message_column = F.concat(
+            F.lit(f"Column '{column_expression}' distribution is missing expected keys ["),
+            F.array_join(missing_array, ", "),
+            F.lit("] and impute=False."),
+        )
+        is_violation_column = (
+            F.when(total_column == 0, F.lit(False))
+            .when(has_missing_column, F.lit(True))
+            .otherwise(tvd_violation_column)
+        )
+        message_expression = (
+            F.when(total_column == 0, F.lit(""))
+            .when(has_missing_column, missing_message_column)
+            .otherwise(tvd_message_column)
+        )
+
+    return aggregate_df.select(
+        is_violation_column.alias(condition_column_name),
+        message_expression.alias(message_column_name),
+    )
+
+
+def _is_in_distribution_validate_distribution(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+    case_sensitive: bool,
+) -> None:
+    """Validate the *distribution* argument of *is_in_distribution*."""
+    if distribution is None:
+        raise MissingParameterError("'distribution' is not provided.")
+    if not isinstance(distribution, dict):
+        raise InvalidParameterError(f"'distribution' must be a dict, got {type(distribution).__name__} instead.")
+    if not distribution:
+        raise InvalidParameterError("'distribution' must not be empty.")
+
+    _is_in_distribution_validate_items(distribution)
+    _is_in_distribution_validate_values(distribution)
+    _is_in_distribution_validate_key_types(distribution)
+    _is_in_distribution_validate_key_collisions(case_sensitive, distribution)
+
+
+def _is_in_distribution_validate_values(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
+    total = math.fsum(distribution.values())
+    if total > 1:
+        raise InvalidParameterError(f"'distribution' values sum ({total}) is greater than 1.")
+
+
+def _is_in_distribution_validate_key_collisions(
+    case_sensitive: bool,
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
+    if not case_sensitive:
+        str_keys = [k for k in distribution.keys() if isinstance(k, str)]
+        normalized_to_original: dict[str, list[str]] = {}
+        for key in str_keys:
+            normalized_to_original.setdefault(key.lower(), []).append(key)
+        colliding = {norm: originals for norm, originals in normalized_to_original.items() if len(originals) > 1}
+        if colliding:
+            raise InvalidParameterError(
+                f"'distribution' keys collide after case-insensitive normalisation: {colliding}."
+            )
+
+
+def _is_in_distribution_validate_key_types(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
+    key_types = {type(k) for k in distribution.keys()}
+    if len(key_types) > 1:
+        type_names = sorted(t.__name__ for t in key_types)
+        raise InvalidParameterError(
+            f"'distribution' keys must be homogeneous (all of the same type), got mixed types: {type_names}."
+        )
+
+    key_type = next(iter(key_types))
+    if not issubclass(key_type, _IS_IN_DISTRIBUTION_SUPPORTED_KEY_TYPES):
+        raise InvalidParameterError(
+            f"'distribution' keys of type {key_type.__name__!r} are not supported; "
+            f"expected one of: bool, str, int, datetime.date."
+        )
+
+
+def _is_in_distribution_validate_items(
+    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+) -> None:
+    for key, value in distribution.items():
+        if key is None:
+            raise InvalidParameterError("'distribution' must not contain None as a key.")
+        if value is None:
+            raise InvalidParameterError(f"'distribution' must not contain None as a value (key={key!r}).")
+        if not _is_in_distribution_value_is_numeric(value):
+            raise InvalidParameterError(
+                f"'distribution' value for key {key!r} must be a number, got {type(value).__name__} instead."
+            )
+        if not math.isfinite(value):
+            raise InvalidParameterError(
+                f"'distribution' value {value} for key {key!r} must be finite (no inf, -inf, or nan)."
+            )
+        if value < 0:
+            raise InvalidParameterError(f"'distribution' value {value} for key {key!r} must be non-negative.")
+
+
+def _is_in_distribution_validate_distance(distance: float) -> None:
+    """Validate the *distance* argument of *is_in_distribution*."""
+    if distance is None:
+        raise MissingParameterError("'distance' is not provided.")
+    if not _is_in_distribution_value_is_numeric(distance):
+        raise InvalidParameterError(f"'distance' must be a number, got {type(distance).__name__} instead.")
+    if not 0 <= distance <= 1:
+        raise InvalidParameterError(f"'distance' must be between 0 and 1 (inclusive), got {distance}.")
+
+
+def _is_in_distribution_value_is_numeric(value: object) -> bool:
+    """True for numeric arguments accepted by *is_in_distribution*.
+
+    Rejects bool explicitly so that ``True``/``False`` (which are valid distribution *keys*
+    and would silently coerce to 1/0 elsewhere) never slip through as probabilities or as a
+    TVD threshold.
+    """
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 @register_rule("row")
