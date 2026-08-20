@@ -16,6 +16,25 @@ OBSERVATION_TABLE_SCHEMA = (
 )
 
 
+def _sql_literal_escape(value: str) -> str:
+    """Escape a string for inclusion in a single-quoted Spark SQL literal.
+
+    Spark's parser honours backslash escapes inside string literals by default
+    (*spark.sql.parser.escapedStringLiterals* is false), which drives both replacements:
+
+      * The backslash must be doubled, or the parser consumes it — collapsing a JSON-encoded
+        ``\\"`` back to a bare ``"`` and yielding malformed JSON for a check name containing a
+        double quote.
+      * The single quote must be escaped as ``\\'``, not doubled as ``''``. ANSI doubling is *not*
+        honoured in this mode: Spark drops the pair outright, so a check named ``it's_valid`` is
+        reported as ``its_valid``.
+
+    Both behaviours are verified by the round-trip integration test in
+    *tests/integration/test_summary_metrics.py*.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 @dataclass(frozen=True)
 class DQMetricsObservation:
     """
@@ -130,19 +149,31 @@ class DQMetricsObserver:
         """
         fragments: list[str] = []
         for check_name in check_names:
-            check_name_escaped = check_name.replace("'", "''")
+            check_name_escaped = _sql_literal_escape(check_name)
             # JSON-encode the check name (handles embedded quotes, backslashes, control chars),
-            # then SQL-escape any single quotes for safe inclusion in a literal.
-            json_check_name_sql_esc = json.dumps(check_name).replace("'", "''")
+            # then escape it again for safe inclusion in a SQL string literal.
+            json_check_name_sql_esc = _sql_literal_escape(json.dumps(check_name))
             err = self._error_column_name
             warn = self._warning_column_name
+            error_count = f"count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end)"
+            warning_count = f"count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end)"
+            # *status* is derived from the same two aggregates rather than emitted as a separate
+            # metric: consumers (dashboard, Studio, Genie) need a pass/fail signal per check, and
+            # counts alone do not provide one. Errors take precedence over warnings.
+            status = (
+                f"case when {error_count} > 0 then 'error' "
+                f"when {warning_count} > 0 then 'warn' "
+                f"else 'passed' end"
+            )
             fragments.append(
                 f"concat("
                 f"'{{\"check_name\":{json_check_name_sql_esc},\"error_count\":',"
-                f"cast(count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end) as string),"
+                f"cast({error_count} as string),"
                 f"',\"warning_count\":',"
-                f"cast(count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end) as string),"
-                f"'}}')"
+                f"cast({warning_count} as string),"
+                f"',\"status\":\"',"
+                f"{status},"
+                f"'\"}}')"
             )
         return f"concat('[', concat_ws(',', {', '.join(fragments)}), ']') as check_metrics"
 

@@ -103,6 +103,63 @@ def test_get_metrics_with_checks_empty_list():
     assert metrics == _default_metrics()
 
 
+def test_check_metrics_expr_emits_status_derived_from_counts():
+    """Asserts the generated SQL literally, independent of production code.
+
+    The *_check_metrics_expr* helper below derives its expectation from *get_metrics* itself, so it
+    cannot catch a change in the emitted JSON shape. This test pins the shape: *status* must be
+    present and derived from the same two aggregates, with errors taking precedence over warnings.
+    """
+    observer = DQMetricsObserver()
+    expr = observer.get_metrics(["c"])[-1]
+
+    error_count = "count(case when exists(_errors, x -> x.name = 'c') then 1 end)"
+    warning_count = "count(case when exists(_warnings, x -> x.name = 'c') then 1 end)"
+    expected = (
+        "concat('[', concat_ws(',', concat("
+        '\'{"check_name":"c","error_count":\','
+        f"cast({error_count} as string),"
+        '\',"warning_count":\','
+        f"cast({warning_count} as string),"
+        '\',"status":"\','
+        f"case when {error_count} > 0 then 'error' "
+        f"when {warning_count} > 0 then 'warn' "
+        "else 'passed' end,"
+        "'\"}')"
+        "), ']') as check_metrics"
+    )
+    assert expr == expected
+
+
+def test_check_metrics_expr_escapes_single_quotes_with_backslash():
+    """Single quotes must be escaped as \\' — ANSI '' doubling is not honoured by Spark.
+
+    Spark's parser runs with *spark.sql.parser.escapedStringLiterals* false, where a doubled ''
+    pair is dropped outright rather than unescaped: a check named "it's_valid" was reported as
+    "its_valid". The round-trip is covered by an integration test; this pins the emitted SQL.
+    """
+    expr = DQMetricsObserver().get_metrics(["it's_valid"])[-1]
+
+    # Every occurrence of the name — in the JSON literal and in each aggregate's exists()
+    # comparison — must use the backslash form, and no ANSI-doubled pair may remain anywhere.
+    assert "it\\'s_valid" in expr
+    assert "it''s_valid" not in expr
+    assert "''" not in expr
+
+
+def test_check_metrics_expr_escapes_backslashes():
+    """Backslashes must be doubled, or the parser consumes them.
+
+    Without this, the backslash JSON-encoding adds for an embedded double quote is eaten and the
+    emitted value is malformed JSON (``{"check_name":"he said "hi""}``).
+    """
+    expr = DQMetricsObserver().get_metrics(['he said "hi"'])[-1]
+
+    # json.dumps produces \" for the embedded quotes; the SQL literal must carry \\" so the parser
+    # leaves a single backslash behind for the JSON decoder.
+    assert '\\\\"hi\\\\"' in expr
+
+
 def test_get_metrics_idempotent():
     """Verifies that repeated calls with the same args return equal results."""
     observer = DQMetricsObserver()
