@@ -4,7 +4,7 @@ import warnings
 
 import databricks.sdk.useragent as ua
 from databricks.labs.blueprint.logger import install_logger
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 
 # Suppress Databricks notebook LSP warning
 warnings.filterwarnings(
