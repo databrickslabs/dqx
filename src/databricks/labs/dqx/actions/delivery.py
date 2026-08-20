@@ -26,7 +26,7 @@ from email.utils import parsedate_to_datetime
 from http.client import HTTPMessage
 from typing import IO, Protocol
 
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.errors import AlertDeliveryError, UnsafeWebhookUrlError
 
 # User-Agent sent on webhook requests. urllib's default ("Python-urllib/X.Y") is rejected with HTTP
