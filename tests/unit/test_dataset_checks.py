@@ -2,7 +2,12 @@ import pytest
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window, has_no_gaps_per_time_window
+from databricks.labs.dqx.check_funcs import (
+    sql_query,
+    is_data_fresh_per_time_window,
+    has_no_gaps_per_time_window,
+    has_no_sequence_gaps,
+)
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError, MissingParameterError
 
@@ -250,6 +255,17 @@ def test_has_no_gaps_per_time_window_curr_timestamp_without_trailing_gap():
             window_minutes=1440,
             curr_timestamp=F.current_timestamp(),
         )
+
+
+@pytest.mark.parametrize("step", [0, -1, -0.5, None, True, False, "1"])
+def test_has_no_sequence_gaps_exceptions(step):
+    with pytest.raises(InvalidParameterError, match="step must be a positive number"):
+        has_no_sequence_gaps(column="invoice_no", step=step)
+
+
+def test_has_no_sequence_gaps_invalid_group_by():
+    with pytest.raises(InvalidParameterError, match="group_by must be a list"):
+        has_no_sequence_gaps(column="invoice_no", group_by="customer_id")
 
 
 @pytest.mark.parametrize(

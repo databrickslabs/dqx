@@ -136,6 +136,7 @@ EXPECTED_PARAMETER_ORDER = {
         "curr_timestamp",
     ),
     "has_no_gaps_per_time_window": ("column", "window_minutes", "group_by", "trailing_gap", "curr_timestamp"),
+    "has_no_sequence_gaps": ("column", "step", "group_by"),
     "has_valid_schema": ("expected_schema", "ref_df_name", "ref_table", "columns", "strict", "exclude_columns"),
     "is_valid_json": ("column",),
     "has_json_keys": ("column", "keys", "require_all"),

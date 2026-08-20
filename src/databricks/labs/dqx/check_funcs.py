@@ -3309,6 +3309,120 @@ def has_no_gaps_per_time_window(
     return condition, apply
 
 
+@register_rule("dataset")
+def has_no_sequence_gaps(
+    column: str | Column,
+    step: float = 1,
+    group_by: list[str | Column] | None = None,
+) -> tuple[Column, Callable]:
+    """Checks whether a numeric sequence column has gaps, i.e. expected values that are missing between
+    values that are present (for example no invoice numbered 1002 while 1001 and 1003 are present).
+
+    This is the numeric counterpart of *has_no_gaps_per_time_window*. A missing value has no row to
+    attach a violation to, so the gap is reported on every row holding the last present value before
+    the gap. Distinct values of *column* are bucketed onto a fixed grid of *step* aligned to zero, so
+    with the default *step* of 1 the grid is the integers and detection is exact sequence-gap
+    detection. A gap is flagged whenever the next present bucket starts more than one step after the
+    current one, measured against that fixed grid rather than the distance between consecutive values.
+
+    Only interior gaps are detected: the bounds of the sequence are its own lowest and highest present
+    values, so missing values beyond either end are not reported because there is no row to anchor them
+    to. When *group_by* is provided, gaps are detected independently within each group (for example per
+    customer or per ledger), each group is bounded by its own lowest and highest present value, and the
+    work partitions by the group key. When it is omitted, the whole column is treated as a single
+    global sequence. Null values are ignored and pass with no violation reported.
+
+    A fractional *step* is bucketed in double precision, so values that are not exactly representable
+    in binary floating point (for example a *step* of 0.1) may bucket to a neighbouring grid position;
+    prefer an integer *step*, or scale the column, when exactness matters.
+
+    In streaming, gaps are detected within individual micro-batches only.
+
+    Args:
+        column: numeric column to check; can be a string column name or a column expression
+        step: spacing of the expected sequence, i.e. the size of one bucket on the fixed grid
+            (for example 1 for consecutive integers, or 10 for values expected every 10); must be a
+            positive number; defaults to 1
+        group_by: optional list of column names or Column expressions to detect gaps independently
+            within each group; when omitted, the whole column is treated as a single global sequence
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the gap condition.
+            - A closure that applies the gap detection and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: if *step* is not a positive number, or if *group_by* is not a list.
+    """
+    if isinstance(step, bool) or not isinstance(step, (int, float)) or step <= 0:
+        raise InvalidParameterError("step must be a positive number")
+    if group_by is not None and not isinstance(group_by, list):
+        raise InvalidParameterError("group_by must be a list of column names or column expressions")
+
+    col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
+    # Resolve group_by to plain column-name strings so a Column expression (e.g. F.col("region")) is
+    # used consistently for partitioning, selection, and the join below; get_column_name_or_alias would
+    # otherwise yield a rendered expression string that is not a real column and breaks the join.
+    group_by_names = get_columns_as_strings(group_by, allow_simple_expressions_only=True) if group_by else []
+
+    unique_str = uuid.uuid4().hex
+    bucket_col = f"__seq_gap_bucket_{col_str_norm}_{unique_str}"
+    next_bucket_col = f"__seq_gap_next_bucket_{col_str_norm}_{unique_str}"
+    condition_col = f"__seq_gap_condition_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """Bucket rows onto the fixed sequence grid and flag the boundary row before each gap."""
+        input_columns = df.columns
+
+        # Bucket each row onto the fixed grid aligned to zero. Nulls stay null and are excluded from gap
+        # detection below (distinct_buckets filters them out); they never match a gap bucket, so they
+        # pass through with no violation reported and are not dropped from the output.
+        numeric_col_expr = col_expr.cast("double")
+        df = df.withColumn(bucket_col, F.floor(numeric_col_expr / F.lit(step)) * F.lit(step))
+
+        # For each present bucket (within each group) find the next present bucket over the ordered
+        # buckets. Partitioning by the group key keeps per-group detection independent and lets the work
+        # scale across partitions. When group_by is omitted there is no partitionBy, so the sort runs in
+        # a single partition, but distinct() has already collapsed rows to the occupied-bucket count, so
+        # the sort scales with that count rather than with row count.
+        distinct_buckets = df.filter(numeric_col_expr.isNotNull()).select(*group_by_names, bucket_col).distinct()
+        ordered_buckets = (
+            Window.partitionBy(*group_by_names).orderBy(bucket_col) if group_by_names else Window.orderBy(bucket_col)
+        )
+        gaps = distinct_buckets.withColumn(next_bucket_col, F.lead(bucket_col).over(ordered_buckets))
+
+        # A gap exists when the next present bucket starts more than one step after the current one.
+        # lead() is null for the highest bucket in each group, which leaves that boundary unflagged and
+        # keeps detection to interior gaps.
+        gaps = gaps.withColumn(
+            condition_col,
+            F.col(next_bucket_col).isNotNull() & ((F.col(next_bucket_col) - F.col(bucket_col)) > F.lit(step)),
+        )
+
+        # Attach the per-bucket gap flag back to every row of the boundary bucket, keeping column order.
+        joined = _join_results_on_null_safe_columns(
+            df,
+            gaps,
+            [*group_by_names, bucket_col],
+            [next_bucket_col, condition_col],
+        )
+        return joined.select(*input_columns, bucket_col, next_bucket_col, condition_col)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Gap in sequence: no data between the value at "),
+            F.col(bucket_col).cast("string"),
+            F.lit(" and the next present value at "),
+            F.col(next_bucket_col).cast("string"),
+        ),
+        alias=f"{col_str_norm}_has_no_sequence_gaps",
+    )
+
+    return condition, apply
+
+
 @register_for_original_columns_preselection()
 @register_rule("dataset")
 def has_valid_schema(

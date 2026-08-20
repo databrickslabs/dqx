@@ -21,6 +21,7 @@ from databricks.labs.dqx.check_funcs import (
     compare_datasets,
     is_data_fresh_per_time_window,
     has_no_gaps_per_time_window,
+    has_no_sequence_gaps,
     has_valid_schema,
     sql_query,
     aggr_matches_dataset,
@@ -3916,6 +3917,319 @@ def test_has_no_gaps_per_time_window_trailing_gap_group_by(spark: SparkSession, 
             {"device": "B", "event_date": date(2025, 7, 20), "val": 2, condition_column: None},
         ],
         expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def _sequence_gap_violation_message(bucket: str, next_bucket: str) -> str:
+    return f"Gap in sequence: no data between the value at {bucket} and the next present value at {next_bucket}"
+
+
+def test_has_no_sequence_gaps(spark: SparkSession):
+    schema = "invoice_no int, val int"
+    data = [
+        (1001, 1),
+        (1001, 2),  # duplicate of the first value -> same bucket, no gap between them
+        (1003, 3),  # 1002 is missing -> gap after 1001
+        (1004, 4),  # consecutive with 1003 -> no gap
+        (None, 5),  # null passes with no violation
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("invoice_no", "val", condition)
+
+    expected_schema = f"invoice_no int, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {"invoice_no": 1001, "val": 1, condition_column: _sequence_gap_violation_message("1001.0", "1003.0")},
+            {"invoice_no": 1001, "val": 2, condition_column: _sequence_gap_violation_message("1001.0", "1003.0")},
+            {"invoice_no": 1003, "val": 3, condition_column: None},
+            {"invoice_no": 1004, "val": 4, condition_column: None},
+            {"invoice_no": None, "val": 5, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_no_gaps(spark: SparkSession):
+    schema = "invoice_no int, val int"
+    df = spark.createDataFrame([(1, 1), (2, 2), (3, 3)], schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("invoice_no", "val", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"invoice_no": 1, "val": 1, condition_column: None},
+            {"invoice_no": 2, "val": 2, condition_column: None},
+            {"invoice_no": 3, "val": 3, condition_column: None},
+        ],
+        f"invoice_no int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_multiple_gaps(spark: SparkSession):
+    schema = "invoice_no int, val int"
+    data = [
+        (1, 1),  # 2 missing -> gap to 3
+        (3, 2),  # 4..6 missing -> multi-value gap to 7
+        (7, 3),  # highest value -> nothing beyond it is reported
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("invoice_no", "val", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"invoice_no": 1, "val": 1, condition_column: _sequence_gap_violation_message("1.0", "3.0")},
+            {"invoice_no": 3, "val": 2, condition_column: _sequence_gap_violation_message("3.0", "7.0")},
+            {"invoice_no": 7, "val": 3, condition_column: None},
+        ],
+        f"invoice_no int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_custom_step(spark: SparkSession):
+    # Values are expected every 10, so 100 -> 110 is consecutive on the grid while 110 -> 130 skips
+    # the 120 bucket. Values inside a bucket (115) collapse onto that bucket's start.
+    schema = "reading int, val int"
+    data = [
+        (100, 1),
+        (110, 2),
+        (115, 3),  # same bucket as 110
+        (130, 4),  # 120 bucket missing -> gap after the 110 bucket
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="reading", step=10)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("reading", "val", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"reading": 100, "val": 1, condition_column: None},
+            {"reading": 110, "val": 2, condition_column: _sequence_gap_violation_message("110.0", "130.0")},
+            {"reading": 115, "val": 3, condition_column: _sequence_gap_violation_message("110.0", "130.0")},
+            {"reading": 130, "val": 4, condition_column: None},
+        ],
+        f"reading int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_negative_values(spark: SparkSession):
+    # The grid is aligned to zero and extends below it, so gaps are detected across the sign boundary.
+    schema = "offset int, val int"
+    data = [
+        (-3, 1),  # -2 missing -> gap to -1
+        (-1, 2),
+        (0, 3),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="offset")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("offset", "val", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"offset": -3, "val": 1, condition_column: _sequence_gap_violation_message("-3.0", "-1.0")},
+            {"offset": -1, "val": 2, condition_column: None},
+            {"offset": 0, "val": 3, condition_column: None},
+        ],
+        f"offset int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_single_row(spark: SparkSession):
+    schema = "invoice_no int, val int"
+    df = spark.createDataFrame([(1001, 1)], schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("invoice_no", "val", condition)
+
+    expected = spark.createDataFrame(
+        [{"invoice_no": 1001, "val": 1, condition_column: None}],
+        f"invoice_no int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_empty_dataframe(spark: SparkSession):
+    schema = "invoice_no int, val int"
+    df = spark.createDataFrame([], schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("invoice_no", "val", condition)
+
+    expected = spark.createDataFrame([], f"invoice_no int, val int, {condition_column} string")
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_all_null(spark: SparkSession):
+    schema = "invoice_no int, val int"
+    df = spark.createDataFrame([(None, 1), (None, 2)], schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no")
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("invoice_no", "val", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"invoice_no": None, "val": 1, condition_column: None},
+            {"invoice_no": None, "val": 2, condition_column: None},
+        ],
+        f"invoice_no int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_group_by(spark: SparkSession):
+    schema = "customer string, invoice_no int, val int"
+    data = [
+        ("A", 1, 1),  # customer A: 2 missing -> gap on this boundary row
+        ("A", 3, 2),
+        ("B", 1, 3),  # customer B: consecutive, no gaps
+        ("B", 2, 4),
+        ("B", 3, 5),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no", group_by=["customer"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("customer", "invoice_no", "val", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "customer": "A",
+                "invoice_no": 1,
+                "val": 1,
+                condition_column: _sequence_gap_violation_message("1.0", "3.0"),
+            },
+            {"customer": "A", "invoice_no": 3, "val": 2, condition_column: None},
+            {"customer": "B", "invoice_no": 1, "val": 3, condition_column: None},
+            {"customer": "B", "invoice_no": 2, "val": 4, condition_column: None},
+            {"customer": "B", "invoice_no": 3, "val": 5, condition_column: None},
+        ],
+        f"customer string, invoice_no int, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_group_by_bounded_independently(spark: SparkSession):
+    # Each group is bounded by its own highest present value, so a group whose sequence simply stops
+    # earlier than another group's is not a gap - only interior gaps are reported.
+    schema = "customer string, invoice_no int"
+    data = [
+        ("A", 1),  # customer A ends at 2 while customer B runs to 9: not a gap
+        ("A", 2),
+        ("B", 1),
+        ("B", 2),
+        ("B", 9),  # interior gap within customer B -> flagged on the boundary row
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no", group_by=["customer"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("customer", "invoice_no", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"customer": "A", "invoice_no": 1, condition_column: None},
+            {"customer": "A", "invoice_no": 2, condition_column: None},
+            {"customer": "B", "invoice_no": 1, condition_column: None},
+            {"customer": "B", "invoice_no": 2, condition_column: _sequence_gap_violation_message("2.0", "9.0")},
+            {"customer": "B", "invoice_no": 9, condition_column: None},
+        ],
+        f"customer string, invoice_no int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_group_by_null_key(spark: SparkSession):
+    schema = "customer string, invoice_no int"
+    df = spark.createDataFrame([(None, 1), (None, 3)], schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no", group_by=["customer"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("customer", "invoice_no", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"customer": None, "invoice_no": 1, condition_column: _sequence_gap_violation_message("1.0", "3.0")},
+            {"customer": None, "invoice_no": 3, condition_column: None},
+        ],
+        f"customer string, invoice_no int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_group_by_mixed_null_and_named_keys(spark: SparkSession):
+    # A batch mixing a NULL-key group with named groups: the null-safe join must keep each group's gaps
+    # isolated (NULL rows must not match a named group's buckets, and vice versa).
+    schema = "customer string, invoice_no int"
+    data = [
+        (None, 1),  # NULL group: 2 missing -> gap on this boundary row
+        (None, 3),
+        ("A", 10),  # customer A: 11 missing -> gap on this boundary row
+        ("A", 12),
+        ("B", 1),  # customer B: consecutive, no gaps
+        ("B", 2),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column="invoice_no", group_by=["customer"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("customer", "invoice_no", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"customer": None, "invoice_no": 1, condition_column: _sequence_gap_violation_message("1.0", "3.0")},
+            {"customer": None, "invoice_no": 3, condition_column: None},
+            {"customer": "A", "invoice_no": 10, condition_column: _sequence_gap_violation_message("10.0", "12.0")},
+            {"customer": "A", "invoice_no": 12, condition_column: None},
+            {"customer": "B", "invoice_no": 1, condition_column: None},
+            {"customer": "B", "invoice_no": 2, condition_column: None},
+        ],
+        f"customer string, invoice_no int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_sequence_gaps_group_by_column_expression(spark: SparkSession):
+    schema = "customer string, invoice_no int"
+    data = [
+        ("A", 1),
+        ("A", 3),  # 2 missing -> gap on the 1 boundary row
+        ("B", 1),
+        ("B", 2),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_sequence_gaps(column=F.col("invoice_no"), group_by=[F.col("customer")])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("customer", "invoice_no", condition)
+
+    expected = spark.createDataFrame(
+        [
+            {"customer": "A", "invoice_no": 1, condition_column: _sequence_gap_violation_message("1.0", "3.0")},
+            {"customer": "A", "invoice_no": 3, condition_column: None},
+            {"customer": "B", "invoice_no": 1, condition_column: None},
+            {"customer": "B", "invoice_no": 2, condition_column: None},
+        ],
+        f"customer string, invoice_no int, {condition_column} string",
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 

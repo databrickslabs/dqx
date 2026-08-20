@@ -1415,6 +1415,21 @@ def test_benchmark_has_no_gaps_per_time_window(benchmark, ws, generated_df):
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_has_no_sequence_gaps(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_sequence_gaps,
+            column="col2",
+            check_func_kwargs={"step": 1},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "generated_timestamp_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
