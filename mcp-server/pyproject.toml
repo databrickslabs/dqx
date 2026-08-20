@@ -35,11 +35,10 @@ packages = ["server"]
 # Declaring it here removes the cause instead of suppressing the warning.
 pythonpath = [".", "runner/src"]
 
-# Per-test hang guard via the standard-library faulthandler (no extra dependency): if any test —
-# including fixture setup/teardown — runs longer than this, pytest dumps the tracebacks of all
-# threads (pinpointing where it is stuck) and aborts. These are fast unit tests (the whole suite
-# runs in ~1 minute), so 60s only ever trips on a genuine hang, e.g. an async/HTTP server fixture
-# that never tears down.
+# Per-test hang guard: if any test —including fixture setup/teardown — runs longer than this, pytest
+# dumps the tracebacks of all threads (pinpointing where it is stuck) and aborts. Unit tests are
+# typically fast, so 60s only ever trips on a genuine hang, e.g. an async/HTTP server fixture that
+# never tears down.
 faulthandler_timeout = 60
 
 [tool.basedpyright]
