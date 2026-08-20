@@ -33,6 +33,10 @@ component_management:
       name: dqx-mcp-server
       paths:
         - mcp-server/**
+      statuses:
+        - type: project
+          target: auto
+          threshold: 2.0%
     - component_id: app
       name: dqx-app
       paths:

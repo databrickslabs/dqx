@@ -37,7 +37,7 @@ class TestRunnerWheelVersionPin:
 
     # The runner job's DQX pin tracking this repo's version is guarded by
     # test_bundle_targets.py::TestCoverageTargetMirrorsBase — the pin now derives from the single
-    # ${var.dqx_version} variable (default asserted equal to __about__.py there), so there is no
+    # ${var.dqx_version} variable (default asserted equal to __version__.py there), so there is no
     # literal version here for this file to check. See those tests for the version-drift guards.
 
     def test_runner_job_installs_the_pinned_filename(self):
