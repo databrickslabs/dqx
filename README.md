@@ -30,6 +30,7 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
 - **Actions and alerting** — automatically send Slack, Microsoft Teams, or generic webhook alerts and/or fail the pipeline when summary metrics cross a threshold.
 - **Flexible checks storage** — save and load quality rules from YAML/JSON files, Unity Catalog tables, Volumes, or Lakebase (PostgreSQL).
 - **DQX Studio** — browser-based no-code UI for authoring, reviewing, running, and monitoring quality rules, deployed as a Databricks App.
+- **MCP server** — Model Context Protocol server that exposes DQX as tools for AI agents (Claude, Genie, Cursor, and others), deployed as a Databricks App with on-behalf-of authentication so data access follows Unity Catalog permissions.
 - **Data format agnostic & streaming support** — works with PySpark DataFrames and applies checks to both batch and Spark Structured Streaming (including Lakeflow Pipelines / DLT) using the same API.
 
 # 📖 Documentation

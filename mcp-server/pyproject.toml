@@ -35,6 +35,12 @@ packages = ["server"]
 # Declaring it here removes the cause instead of suppressing the warning.
 pythonpath = [".", "runner/src"]
 
+# Per-test hang guard: if any test —including fixture setup/teardown — runs longer than this, pytest
+# dumps the tracebacks of all threads (pinpointing where it is stuck) and aborts. Unit tests are
+# typically fast, so 60s only ever trips on a genuine hang, e.g. an async/HTTP server fixture that
+# never tears down.
+faulthandler_timeout = 60
+
 [tool.basedpyright]
 # ``make mcp-check`` runs basedpyright over the synced runtime env (server deps only — no pytest,
 # no pyspark). Exclude tests (already type-checked at pytest collection) and the runner sub-project

@@ -91,6 +91,8 @@ combine-coverage: ## Combine xdist worker coverage data into coverage-combined.x
 	# Tolerate that — the single .coverage file is still usable for the XML
 	# conversion. Leading `-` makes `make` ignore combine's non-zero exit.
 	-$(UV_RUN) coverage combine
+	# Fail loudly if the test run produced no coverage data.
+	@test -f .coverage || { echo "ERROR: no .coverage data found after test run"; exit 1; }
 	$(UV_RUN) coverage xml -o coverage-combined.xml
 	$(UV_RUN) coverage erase
 

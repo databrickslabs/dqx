@@ -1,3 +1,8 @@
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
 coverage:
   status:
     project:
@@ -8,3 +13,31 @@ coverage:
       default:
         target: auto
         threshold: 0.5% # The minimum coverage threshold for the patch
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 0.5%
+      - type: patch
+        target: auto
+        threshold: 0.5% # The minimum coverage threshold for the patch
+
+  individual_components:
+    - component_id: core
+      name: dqx-core
+      paths:
+        - src/**
+    - component_id: mcp_server
+      name: dqx-mcp-server
+      paths:
+        - mcp-server/**
+      statuses:
+        - type: project
+          target: auto
+          threshold: 2.0%
+    - component_id: app
+      name: dqx-app
+      paths:
+        - app/src/**

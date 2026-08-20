@@ -11,7 +11,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
 
 from databricks.labs.dqx import engine as engine_module
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.checks_storage import (
     BaseChecksStorageHandlerFactory,
