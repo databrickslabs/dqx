@@ -10,6 +10,7 @@ from pyspark.sql import types as T, functions as F
 
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_text
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
@@ -29,10 +30,6 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS,
     DEFAULT_PROFILE_OPTIONS,
 )
-
-# Type alias for annotations; use TEXT_TYPES for isinstance() checks.
-TextType = T.CharType | T.StringType | T.VarcharType
-TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
 
 # Matched pair for serializing timestamp min/max through the Spark fallback: Spark renders with six
 # fractional-second digits and Python parses them back. Kept together as constants so the two patterns
@@ -74,7 +71,7 @@ def make_null_or_empty_profile(
     Returns:
         A DQProfile if the correct conditions are met, otherwise None
     """
-    if _is_text(column_type):
+    if is_text(column_type):
         return _make_null_or_empty_profile(column_name, profiler_metrics, profiler_options)
 
     return _make_null_profile(column_name, profiler_metrics, profiler_options)
@@ -167,19 +164,6 @@ def make_min_max_profile(
     return _make_min_max_profile_without_outlier_removal(
         df, column_name, column_type, profiler_metrics, profiler_options
     )
-
-
-def _is_text(column_type: T.DataType) -> bool:
-    """
-    Validates that the input column type is a Spark text type.
-
-    Args:
-        column_type: Input column type
-
-    Returns:
-        True if the column is a Spark text type, otherwise False
-    """
-    return isinstance(column_type, TEXT_TYPES)
 
 
 def _make_null_or_empty_profile(
