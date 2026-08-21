@@ -30,7 +30,7 @@ from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workspace_context import WorkspaceContext
 

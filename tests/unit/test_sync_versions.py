@@ -1,6 +1,6 @@
 """Unit tests for the release version-sync script (``docs/dqx/sync_versions.py``).
 
-The script propagates the DQX version from ``__about__.py`` to the places that must track it on every
+The script propagates the DQX version from ``__version__.py`` to the places that must track it on every
 release: versioned GitHub URLs in the docs, and the single ``dqx_version`` bundle variable in the MCP
 server's and the DQX Studio app's ``databricks.yml`` that the ``==`` pin and the in-repo wheel filename
 both DERIVE from via ``${var.dqx_version}``. A regression here silently ships a stale version to a
@@ -80,15 +80,15 @@ def repo(tmp_path, monkeypatch):
 
 class TestGetDqxVersion:
     def test_reads_the_version_literal(self, tmp_path):
-        about = tmp_path / "__about__.py"
-        about.write_text('__version__ = "1.2.3"\n')
-        assert sync_versions.get_dqx_version(about) == "1.2.3"
+        version_file = tmp_path / "__version__.py"
+        version_file.write_text('__version__ = "1.2.3"\n')
+        assert sync_versions.get_dqx_version(version_file) == "1.2.3"
 
     def test_raises_when_absent(self, tmp_path):
-        about = tmp_path / "__about__.py"
-        about.write_text("# no version here\n")
+        version_file = tmp_path / "__version__.py"
+        version_file.write_text("# no version here\n")
         with pytest.raises(ValueError):
-            sync_versions.get_dqx_version(about)
+            sync_versions.get_dqx_version(version_file)
 
 
 class TestUpdateDqxPins:

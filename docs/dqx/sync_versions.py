@@ -1,9 +1,9 @@
-"""Propagate the DQX version (source of truth: ``src/databricks/labs/dqx/__about__.py``) to the
+"""Propagate the DQX version (source of truth: ``src/databricks/labs/dqx/__version__.py``) to the
 places that must track it: versioned GitHub source URLs in the docs, and the ``dqx_version`` bundle
 variable in the DQX Studio app's and the MCP server's ``databricks.yml`` (the derived
 ``databricks-labs-dqx==${{var.dqx_version}}`` pin and in-repo wheel filename follow from it).
 
-Runs as part of ``make fmt`` — bump ``__about__.py``, run ``make fmt``, and the new version
+Runs as part of ``make fmt`` — bump ``__version__.py``, run ``make fmt``, and the new version
 propagates everywhere. Idempotent: re-running with an unchanged version rewrites nothing.
 """
 
@@ -11,12 +11,12 @@ import re
 from pathlib import Path
 
 
-def get_dqx_version(about_path: Path) -> str:
-    """Extract the version string from the __about__.py file."""
-    content = about_path.read_text(encoding="utf-8")
+def get_dqx_version(version_path: Path) -> str:
+    """Extract the version string from the __version__.py file."""
+    content = version_path.read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"(?P<version>[\d.]+)"', content)
     if not match:
-        raise ValueError(f"Version not found in {about_path}")
+        raise ValueError(f"Version not found in {version_path}")
     return match.group("version")
 
 
@@ -43,8 +43,8 @@ def update_mdx_files(mdx_dir: Path, version: str):
 def update_dqx_pins(version: str):
     """Bump the pinned ``databricks-labs-dqx`` version in the bundle files that track it.
 
-    Running this as part of ``make fmt`` keeps those references in lockstep with __about__.py: bump
-    __about__.py, run ``make fmt``, and the new version propagates. Any extras (e.g.
+    Running this as part of ``make fmt`` keeps those references in lockstep with __version__.py: bump
+    __version__.py, run ``make fmt``, and the new version propagates. Any extras (e.g.
     ``[llm,datacontract]``) are preserved.
 
     The MCP server's and the DQX Studio app's ``databricks.yml`` both express the version through a
@@ -90,10 +90,10 @@ def update_dqx_pins(version: str):
 
 
 def main():
-    about_file = Path("src/databricks/labs/dqx/__about__.py")
+    version_file = Path("src/databricks/labs/dqx/__version__.py")
     mdx_dir = Path("docs/dqx/docs")
 
-    version = get_dqx_version(about_file)
+    version = get_dqx_version(version_file)
     update_mdx_files(mdx_dir, version)
     update_dqx_pins(version)
 

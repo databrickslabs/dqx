@@ -184,6 +184,7 @@ jobs:
       labels: linux-ubuntu-latest
     permissions:
       id-token: write
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
