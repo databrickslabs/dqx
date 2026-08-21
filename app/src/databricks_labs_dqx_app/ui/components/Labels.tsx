@@ -40,8 +40,9 @@ import type { LabelDefinition } from "@/lib/api-custom";
 //      entry pattern), then pick/type a value the same way.
 //   2. Free-form — fallback two-text-input UI when no definitions exist.
 //
-// Boolean labels (a definition with no values) commit ``"true"`` on save so
-// the resulting map stays string→string.
+// Boolean labels (empty catalog AND custom values disallowed) commit
+// ``"true"`` on save so the resulting map stays string→string. Free-text
+// labels (empty catalog + ``allow_custom_values``) keep the typed string.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface LabelsEditorProps {
@@ -66,6 +67,16 @@ interface Row {
   value: string;
 }
 
+/** Empty catalog + custom disallowed → true/false presence toggle. */
+function isBooleanDefinition(def: LabelDefinition): boolean {
+  return def.values.length === 0 && !def.allow_custom_values;
+}
+
+/** Empty catalog + custom allowed → free-text value (e.g. Business_Term). */
+function isFreeTextDefinition(def: LabelDefinition): boolean {
+  return def.values.length === 0 && !!def.allow_custom_values;
+}
+
 function recordToRows(rec: Record<string, string>): Row[] {
   return Object.entries(rec).map(([key, value]) => ({
     id: crypto.randomUUID(),
@@ -74,13 +85,26 @@ function recordToRows(rec: Record<string, string>): Row[] {
   }));
 }
 
-function rowsToRecord(rows: Row[]): Record<string, string> {
+function rowsToRecord(
+  rows: Row[],
+  definitionsMap?: Map<string, LabelDefinition>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const r of rows) {
     const key = r.key.trim();
     const value = r.value.trim();
     if (!key) continue;
-    out[key] = value || "true";
+    const def = definitionsMap?.get(key);
+    // Blank → "true" only for free-form keys and real boolean tags. Catalog
+    // picks and free-text tags keep an empty string until the author types /
+    // picks a value (otherwise Business_Term would silently become "true").
+    if (value) {
+      out[key] = value;
+    } else if (!def || isBooleanDefinition(def)) {
+      out[key] = "true";
+    } else {
+      out[key] = "";
+    }
   }
   return out;
 }
@@ -145,7 +169,7 @@ export function LabelsEditor({
   const constrained = definitionsMap.size > 0;
 
   const commit = (next: Row[]) => {
-    const record = rowsToRecord(next);
+    const record = rowsToRecord(next, definitionsMap);
     syncedSignature.current = recordSignature(record);
     setRows(next);
     onChange(record);
@@ -156,9 +180,10 @@ export function LabelsEditor({
 
   const addDefinedRow = (key: string) => {
     const def = definitionsMap.get(key);
-    // Boolean tag: prefill "true". Otherwise leave blank so the value picker
-    // immediately opens.
-    const initialValue = def && def.values.length === 0 ? "true" : "";
+    // Boolean tag (empty catalog, custom values disallowed): prefill "true".
+    // Free-text tags (empty catalog + allow_custom_values) and catalog picks
+    // leave blank so the author can type / open the value picker.
+    const initialValue = def && isBooleanDefinition(def) ? "true" : "";
     commit([...rows, { id: crypto.randomUUID(), key, value: initialValue }]);
   };
 
@@ -535,10 +560,14 @@ function KeyPickerButton({
                 <span className="text-[10px] text-muted-foreground">{t("labelsEditor.inUse")}</span>
               )}
               <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                {d.values.length === 0
-                  ? t("labelsEditor.boolean")
-                  : t("labelsEditor.valueCount", { count: d.values.length })}
-                {d.allow_custom_values ? t("labelsEditor.plusCustom") : ""}
+                {isFreeTextDefinition(d)
+                  ? t("labelsEditor.freeText")
+                  : d.values.length === 0
+                    ? t("labelsEditor.boolean")
+                    : t("labelsEditor.valueCount", { count: d.values.length })}
+                {d.values.length > 0 && d.allow_custom_values
+                  ? t("labelsEditor.plusCustom")
+                  : ""}
               </span>
             </div>
             {d.description && (
@@ -579,8 +608,22 @@ function ValuePickerButton({
     return definition.values.filter((v) => v.toLowerCase().includes(q));
   }, [definition.values, query]);
 
-  // Boolean-style definition (no allowed values) — render a simple toggle.
+  // Empty catalog: free-text input when custom values are allowed; otherwise
+  // a boolean presence toggle. (Previously any empty catalog was treated as
+  // boolean, so tags like Business_Term with "Allow custom values" showed
+  // true/false instead of a text field.)
   if (definition.values.length === 0) {
+    if (isFreeTextDefinition(definition)) {
+      return (
+        <Input
+          placeholder={t("labelsEditor.customPlaceholder")}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className="h-7 text-xs flex-1 min-w-0 max-w-40"
+        />
+      );
+    }
     const isTrue = value === "true" || value === "" || value === undefined;
     return (
       <button

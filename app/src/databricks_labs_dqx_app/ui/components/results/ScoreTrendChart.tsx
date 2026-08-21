@@ -28,6 +28,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatDateTimeCompact } from "@/lib/format-utils";
 import { scoreColor } from "./ScoreBox";
 import { CollapseRegion } from "./CollapseRegion";
 
@@ -240,14 +241,8 @@ export function niceTimeTicks(
 }
 
 export function formatTs(value: string | number): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const formatted = formatDateTimeCompact(value);
+  return formatted === "—" ? String(value) : formatted;
 }
 
 /** Fraction (0–1, clamped) of the plot height a cursor pixel-y sits ABOVE the

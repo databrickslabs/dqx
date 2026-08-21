@@ -100,6 +100,29 @@ export function formatDateTime(iso: string | null | undefined): string {
   }
 }
 
+/**
+ * Compact absolute timestamp used by Results history (run picker + trend
+ * chart tooltips/axis), e.g. ``19 Aug, 16:28``. Honors the admin Display
+ * timezone (same as ``formatDateTime``); accepts either a server ISO string
+ * or an epoch-ms number (chart ticks).
+ */
+export function formatDateTimeCompact(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "—";
+  try {
+    const d = typeof value === "number" ? new Date(value) : parseServerDate(String(value));
+    if (!d || Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: _displayTimezone,
+    });
+  } catch {
+    return "—";
+  }
+}
+
 export type RelativeTimeParts =
   | { key: "justNow" }
   | { key: "minutesAgo" | "hoursAgo" | "daysAgo"; count: number };

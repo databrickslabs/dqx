@@ -2029,9 +2029,16 @@ export type LabelDefinitionValueCriticality = LabelDefinitionValueCriticalityAny
 /**
  * An admin-managed label definition.
 
-Defines one label key plus the values rule authors can choose from. When
-``values`` is empty the label is a boolean tag. When ``allow_custom_values``
-is true authors can type a value not in the list.
+Defines one label key plus the values rule authors can choose from.
+
+Value-input modes for rule authors:
+
+- ``values`` empty and ``allow_custom_values=False`` → boolean tag
+  (true/false toggle).
+- ``values`` empty and ``allow_custom_values=True`` → free-text value
+  (e.g. a Business_Term with no catalog).
+- ``values`` non-empty → catalog select; when ``allow_custom_values``
+  is also true, authors can type a value not in the list.
 
 The reserved key ``weight`` plays a special role: its values populate the
 weight selector in the labels editor on rule authoring pages. Weight is

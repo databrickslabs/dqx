@@ -1369,6 +1369,7 @@
     "noMatchingKeys": "Nenhuma chave correspondente.",
     "noTagsApplied": "Nenhuma tag aplicada",
     "boolean": "booleano",
+    "freeText": "texto livre",
     "valueCount_one": "{{count}} valor",
     "valueCount_other": "{{count}} valores",
     "plusCustom": " + personalizado",

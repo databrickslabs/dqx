@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, History } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDateTimeCompact } from "@/lib/format-utils";
 import { BreachIcon } from "./BreachIcon";
 
 export type Run = {
@@ -31,19 +32,15 @@ export type Run = {
  * run (`run_mode === "draft"`) and a `draftMarker` is supplied, it is appended
  * (e.g. "11 Jun 09:51 · 95% (draft)") so draft-dated runs are distinguishable
  * in Published+Draft mode. Published runs are never tagged.
+ *
+ * Timestamps use the Admin Settings Display timezone (via
+ * ``formatDateTimeCompact``), not the browser's local zone.
  */
 export function formatRun(run: Run, draftMarker?: string): string {
   let label = run.run_id;
   if (run.run_ts) {
-    const d = new Date(run.run_ts);
-    if (!Number.isNaN(d.getTime())) {
-      label = d.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    }
+    const formatted = formatDateTimeCompact(run.run_ts);
+    if (formatted !== "—") label = formatted;
   }
   if (run.pass_rate != null) {
     label += ` · ${Math.round(run.pass_rate * 100)}%`;
