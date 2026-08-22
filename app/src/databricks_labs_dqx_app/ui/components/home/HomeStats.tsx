@@ -149,44 +149,45 @@ function StatCard({
   const { t } = useTranslation();
   return (
     <Card className={cn(inverted && "bg-foreground text-background")}>
-      <CardContent className="relative p-5">
-        {/* B2-1: the "?" explainer is pinned to the card's top-right corner
-            (rather than sitting inline after the label) so a long label +
-            the trigger can never push the big score value onto a second
-            line. */}
-        {infoText && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className={`absolute right-3 top-3 inline-flex items-center justify-center focus-visible:outline-none ${
-                    inverted
-                      ? "text-background/70 hover:text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  aria-label={infoText}
-                >
-                  <HelpCircle className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
-                <p>{infoText}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+      <CardContent className="p-5">
+        {/* B2-1: the "?" explainer sits inline after the label. The label
+            truncates and the icon/trigger never shrink, so the row stays one
+            line — a long translated label can't push the big score value onto
+            a second line and leave this card taller than its neighbours. */}
         <div className="mb-2 flex items-center gap-2">
           <Icon
-            className={`h-4 w-4 ${inverted ? "text-background" : "text-muted-foreground"}`}
+            className={`h-4 w-4 shrink-0 ${inverted ? "text-background" : "text-muted-foreground"}`}
           />
           <span
-            className={`text-xs font-medium uppercase tracking-wide ${
+            className={`min-w-0 truncate text-xs font-medium uppercase tracking-wide ${
               inverted ? "text-background/80" : "text-muted-foreground"
             }`}
+            title={label}
           >
             {label}
           </span>
+          {infoText && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={`inline-flex shrink-0 items-center justify-center focus-visible:outline-none ${
+                      inverted
+                        ? "text-background/70 hover:text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    aria-label={infoText}
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">
+                  <p>{infoText}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
         <div className="flex h-9 items-center gap-2 text-3xl font-semibold tabular-nums sm:h-10 sm:text-4xl">
           {loading ? (

@@ -729,8 +729,10 @@ class SchedulerService:
         Mirrors the scope-config due-ness/tracker dance in :meth:`_tick`
         (first tick after a schedule is created seeds ``next_run_at``
         without firing unless it's already in the past; each due firing
-        advances ``next_run_at`` to the following occurrence). Every branch
-        that fires a run persists a tracker row so a deterministic failure
+        advances ``next_run_at`` to the following occurrence), plus
+        :meth:`_realign_next_run` so an edited cron takes effect on the next
+        tick instead of waiting out the old occurrence. Every branch that
+        fires a run persists a tracker row so a deterministic failure
         (including zero runnable members) cannot turn into a tight
         every-tick retry loop.
         """
@@ -779,6 +781,9 @@ class SchedulerService:
                 next_run = computed.isoformat()
             else:
                 return
+        else:
+            assert tracker is not None  # next_run came from it
+            next_run = self._realign_next_run(schedule_name, tracker, next_run, cron_expr, tz_name, now)
 
         next_run_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
         if next_run_dt is None or next_run_dt > now:
@@ -948,10 +953,12 @@ class SchedulerService:
         """Check due-ness for one monitored table and fire its run if due.
 
         Mirrors :meth:`_tick_one_product` exactly (seed-without-firing on the
-        first tick, single catch-up on a missed window, malformed-cron backoff
-        that never turns into an every-tick retry loop), differing only in the
-        collaborator it fires (``BindingRunService.run_binding`` for one table
-        rather than a product fan-out).
+        first tick, :meth:`_realign_next_run` for an existing tracker whose
+        cron has since changed, single catch-up on a missed window,
+        malformed-cron backoff that never turns into an every-tick retry loop),
+        differing only in the collaborator it fires
+        (``BindingRunService.run_binding`` for one table rather than a product
+        fan-out).
         """
         binding_id = table["binding_id"]
         cron_expr = table["schedule_cron"]
@@ -991,6 +998,9 @@ class SchedulerService:
                 next_run = computed.isoformat()
             else:
                 return
+        else:
+            assert tracker is not None  # next_run came from it
+            next_run = self._realign_next_run(schedule_name, tracker, next_run, cron_expr, tz_name, now)
 
         next_run_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
         if next_run_dt is None or next_run_dt > now:
@@ -1618,6 +1628,98 @@ class SchedulerService:
             "last_run_id": row[3],
             "status": row[4],
         }
+
+    def _realign_next_run(
+        self,
+        schedule_name: str,
+        tracker: dict[str, str],
+        next_run: Any,
+        cron_expr: str,
+        tz_name: str | None,
+        now: datetime,
+    ) -> Any:
+        """Re-derive a tracker's ``next_run_at`` when its cron/timezone changed.
+
+        The tracker row is the only place a schedule's next occurrence lives,
+        and the write paths that edit a cron (``MonitoredTableService.
+        update_schedule``, the product equivalent) touch only the
+        ``schedule_*`` columns — they never invalidate the tracker. Without
+        this, the seed branches above are the *sole* writers of a fresh
+        occurrence, so a schedule whose tracker already exists keeps its OLD
+        cadence until the stale ``next_run_at`` finally elapses: an author who
+        moves a daily 09:18 run to 19:42 sees nothing happen at 19:42, and no
+        amount of re-saving helps.
+
+        Rather than persist the cron that produced ``next_run_at`` (a tracker
+        column, and an edited migration baseline is NOT picked up by existing
+        deployments — see :mod:`backend.migrations.postgres`), the stored value
+        is compared against a re-derivation from the live cron. The anchor is
+        ``last_run_at`` so the result is bit-identical to what
+        :meth:`_finish_schedule_firing` wrote from the same cron: an unchanged
+        schedule recomputes to its stored value and nothing is written. A
+        never-fired row anchors at ``now`` instead, matching the seed branches.
+
+        Only a ``next_run_at`` still in the FUTURE is a candidate. One that has
+        come due is the caller's to fire, and re-deriving it would push a
+        schedule that is legitimately owed a run (a seeded row whose first
+        occurrence just arrived — ``last_run_at`` is NULL, so the anchor would
+        be ``now`` and the re-derivation the occurrence *after* the one owed)
+        forward forever. The re-derived value may itself land in the past,
+        which is intended: the caller fires it as the single catch-up the
+        missed-window contract already allows, and that firing re-anchors
+        ``last_run_at`` to now, so this cannot become a retry loop.
+
+        Two cases deliberately keep the stored value: a cron that no longer
+        parses, and a ``failed`` status. Both mean ``next_run_at`` may be a
+        :data:`_FAILURE_BACKOFF` stamp rather than a real occurrence, and
+        replacing a backoff with "next occurrence after the failed run" is
+        exactly the tight retry loop the backoff exists to prevent. A cron
+        edited during a backoff window takes effect when it expires.
+
+        Returns the ``next_run_at`` the caller should evaluate — the stored one
+        or, when realigned, the new occurrence.
+        """
+        status = tracker.get("status")
+        if status == "failed":
+            return next_run
+
+        stored_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
+        if stored_dt is None or stored_dt <= now:
+            return next_run
+
+        last_run = tracker.get("last_run_at")
+        last_dt = self._parse_ts(last_run) if last_run else None
+        try:
+            expected = self._compute_next_cron_run(cron_expr, last_dt or (now - timedelta(seconds=1)), tz_name)
+        except Exception:
+            logger.warning(
+                "Schedule '%s': could not re-derive next_run_at for cron '%s'; keeping the stored value",
+                schedule_name,
+                cron_expr,
+            )
+            return next_run
+
+        if stored_dt == expected:
+            return next_run
+
+        logger.info(
+            "Schedule '%s' next_run_at realigned to cron '%s' (tz=%s): %s → %s",
+            schedule_name,
+            cron_expr,
+            tz_name or "UTC",
+            stored_dt.isoformat(),
+            expected.isoformat(),
+        )
+        # Only the occurrence moves: last_run_at / last_run_id / status carry
+        # over so the Schedules UI keeps showing the previous run's outcome.
+        self._upsert_tracker(
+            schedule_name,
+            last_dt,
+            expected,
+            tracker.get("last_run_id"),
+            status if status in _VALID_TRACKER_STATUSES else "pending",
+        )
+        return expected
 
     def _upsert_tracker(
         self,

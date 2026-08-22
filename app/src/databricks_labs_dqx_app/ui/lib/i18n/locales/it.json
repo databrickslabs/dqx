@@ -27,7 +27,8 @@
       "approve": "Nota facoltativa per l'autore…",
       "reject": "Perché stai rifiutando?"
     },
-    "pendingRationaleLabel": "Nota di invio"
+    "pendingRationaleLabel": "Nota di invio",
+    "decisionRationaleLabel": "Commento sulla decisione"
   },
   "common": {
     "loading": "Caricamento...",
@@ -619,7 +620,6 @@
     "viewDocs": "Vedi documentazione",
     "input": {
       "title": "Sorgente del contratto",
-      "description": "Fornisci un contratto ODCS v3.x in YAML o JSON. La validazione dello schema richiede che ogni proprietà abbia un physicalType impostato su un tipo Unity Catalog valido.",
       "uploadLabel": "Carica contratto",
       "chooseFile": "Scegli file",
       "orPaste": "o incolla sotto",
@@ -705,16 +705,8 @@
     }
   },
   "rulesBulkImport": {
-    "breadcrumb": "Importazione in blocco",
-    "title": "Importazione in blocco dei contratti",
-    "subtitle": "Carica più contratti ODCS per registrare le loro tabelle, creare regole nel registro e applicarle automaticamente in un solo passaggio.",
-    "entryCard": {
-      "title": "Importazione in blocco dai contratti dati",
-      "description": "Carica più contratti ODCS in una volta: registra tabelle, crea regole e applicale automaticamente quando possibile."
-    },
     "upload": {
       "title": "Contratti",
-      "description": "Aggiungi uno o più file di contratto ODCS v3.x (YAML o JSON). Ogni schema diventa una tabella di destinazione.",
       "dropzone": "Trascina qui i file dei contratti, oppure",
       "chooseFiles": "Scegli file",
       "empty": "Nessun contratto ancora aggiunto.",
@@ -733,11 +725,8 @@
     },
     "options": {
       "title": "Opzioni di generazione",
-      "description": "Applicate a ogni contratto caricato.",
       "groupSchemaTitle": "Regole dallo schema del contratto",
-      "groupSchemaHint": "Derivate automaticamente dal tipo e dai vincoli di ogni proprietà.",
-      "groupPublishingTitle": "Predefiniti e pubblicazione",
-      "groupPublishingHint": "Come le regole generate vengono etichettate e pubblicate nel registro.",
+      "groupPublishingTitle": "Altre impostazioni",
       "skipApproval": "Salta l'approvazione (pubblica le regole subito)",
       "skipApprovalHint": "Crea e approva le regole in un solo passaggio così quelle mappate possono essere applicate subito. Richiede un ruolo di approvatore. Le definizioni duplicate continuano a riutilizzare le regole esistenti."
     },
@@ -807,13 +796,14 @@
     }
   },
   "rulesImport": {
-    "breadcrumb": "Importa regole",
-    "title": "Importa regole",
-    "subtitle": "Importa regole di qualità dei dati da un file YAML.",
-    "subtitleYaml": "Importa in blocco regole da un file YAML di DQX.",
-    "subtitleContract": "Genera regole da un contratto dati ODCS v3.x — schema, vincoli e controlli DQX espliciti.",
-    "tabYaml": "Da YAML di DQX",
-    "tabContract": "Da contratto dati",
+    "breadcrumb": "Importa",
+    "title": "Importa",
+    "sectionRules": "Importa regole",
+    "sectionTables": "Importa nelle tabelle",
+    "scopeNoteRules": "Le regole finiscono solo nel Registro Regole: nessuna tabella viene registrata e nulla viene eseguito. Applica le regole approvate a una tabella dalla sua scheda Applica regole, oppure passa a Importa nelle tabelle per fare entrambe le cose in una volta.",
+    "scopeNoteTables": "Ogni schema del contratto viene registrato come tabella monitorata e le sue regole vengono create nel registro. Le regole che si mappano automaticamente alla tabella vengono applicate; le altre restano nel registro per la mappatura manuale.",
+    "tabYaml": "YAML di DQX",
+    "tabContract": "Contratto dati ODCS",
     "importFromYaml": "Importa da YAML",
     "importDescription": "Carica un file YAML o incolla il contenuto YAML. Ogni voce deve seguire il formato di controllo DQX. Le regole vengono salvate nel Registro Regole — assegnale alle tabelle successivamente da Tabelle.",
     "uploadYamlFile": "Carica file YAML",
@@ -963,6 +953,8 @@
     "registryReadOnly": "Sola visualizzazione",
     "registryRejectTitle": "Rifiutare questa regola del registro?",
     "registryRejectBody": "«{{name}}» verrà contrassegnata come rifiutata e rimossa dalla coda di approvazione. L'autore potrà rivederla e reinviarla.",
+    "registryApproveTitle": "Approvare questa regola del registro?",
+    "registryApproveBody": "Approvare «{{name}}» e renderla disponibile per l'uso.",
     "registryToastApproved": "Regola del registro approvata",
     "registryToastFailedApprove": "Impossibile approvare la regola del registro",
     "registryToastRejected": "Regola del registro rifiutata",
@@ -975,6 +967,7 @@
     "headerSteward": "Responsabile",
     "headerOwner": "Responsabile",
     "headerVersion": "Versione",
+    "noSubmissionNote": "Nessuna nota di invio",
     "ellipsis": "...",
     "tableSpacesSectionTitle": "Raccolte in attesa di approvazione",
     "tableSpacesSectionDescription": "Raccolte inviate per la revisione. Approva per pubblicare la raccolta alla versione successiva, oppure rifiuta per rimandarla all'autore.",
@@ -990,6 +983,10 @@
     "mtToastFailedReject": "Impossibile rifiutare la tabella",
     "mtRejectTitle": "Rifiutare questa tabella?",
     "mtRejectBody": "Rifiutare \"{{name}}\"? Il responsabile può rivedere il set di regole e inviarlo nuovamente per la revisione.",
+    "mtApproveTitle": "Approvare questa tabella?",
+    "mtApproveBody": "Approvare \"{{name}}\" e pubblicare il set di regole in attesa.",
+    "tableSpaceApproveTitle": "Approvare questa raccolta?",
+    "tableSpaceApproveBody": "Approvare \"{{name}}\" e pubblicare le modifiche in attesa.",
     "tableSpacesEmptyState": "Nessuna raccolta in attesa di approvazione.",
     "diff": {
       "title": "Rivedi le modifiche",

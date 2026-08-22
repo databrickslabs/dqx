@@ -346,12 +346,20 @@ function GrantDialog({
           <div className="space-y-2">
             <Label>{t("permissions.privileges")}</Label>
             {/* Grid columns (checkbox · privilege keyword · hint) keep every
-                hint on a shared left edge regardless of keyword width, and the
-                hints are non-selectable so drag-selecting text in the dialog
-                doesn't highlight the explanatory copy. */}
+                hint on a shared left edge regardless of keyword width. The
+                keyword is 10px mono and the hint 12px sans, so the row aligns
+                on the text BASELINE — `items-center` instead centred two
+                unequal line boxes (the keyword's line-height inherits the
+                row's `text-sm`, the hint's comes from `text-xs`) and left the
+                keyword visibly off its hint. The checkbox opts out with
+                `self-center` since it has no baseline of its own. The whole
+                row is `select-none`: it is a <label>, so every toggle click
+                forwards to the checkbox and would otherwise smear a text
+                selection across the keyword and hint. */}
             <div className="space-y-2">
-              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+              <label className="grid select-none grid-cols-[auto_5rem_1fr] items-baseline gap-2 text-sm">
                 <Checkbox
+                  className="self-center"
                   checked={draft.view}
                   disabled={lockSelect}
                   onCheckedChange={(c) => {
@@ -360,49 +368,53 @@ function GrantDialog({
                   }}
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_SELECT)}</span>
-                <span className="select-none text-xs text-muted-foreground">{t("permissions.viewHint")}</span>
+                <span className="text-xs text-muted-foreground">{t("permissions.viewHint")}</span>
               </label>
-              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+              <label className="grid select-none grid-cols-[auto_5rem_1fr] items-baseline gap-2 text-sm">
                 <Checkbox
+                  className="self-center"
                   checked={draft.modify}
                   onCheckedChange={(c) =>
                     setDraft((d) => forceSelectWhenOthers({ ...d, modify: c === true }))
                   }
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_MODIFY)}</span>
-                <span className="select-none text-xs text-muted-foreground">{t("permissions.modifyHint")}</span>
+                <span className="text-xs text-muted-foreground">{t("permissions.modifyHint")}</span>
               </label>
-              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+              <label className="grid select-none grid-cols-[auto_5rem_1fr] items-baseline gap-2 text-sm">
                 <Checkbox
+                  className="self-center"
                   checked={draft.apply}
                   onCheckedChange={(c) =>
                     setDraft((d) => forceSelectWhenOthers({ ...d, apply: c === true }))
                   }
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_APPLY)}</span>
-                <span className="select-none text-xs text-muted-foreground">{t("permissions.applyHint")}</span>
+                <span className="text-xs text-muted-foreground">{t("permissions.applyHint")}</span>
               </label>
               {objectType !== "registry_rule" && (
-                <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+                <label className="grid select-none grid-cols-[auto_5rem_1fr] items-baseline gap-2 text-sm">
                   <Checkbox
+                    className="self-center"
                     checked={draft.execute}
                     onCheckedChange={(c) =>
                       setDraft((d) => forceSelectWhenOthers({ ...d, execute: c === true }))
                     }
                   />
                   <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_EXECUTE)}</span>
-                  <span className="select-none text-xs text-muted-foreground">{t("permissions.executeHint")}</span>
+                  <span className="text-xs text-muted-foreground">{t("permissions.executeHint")}</span>
                 </label>
               )}
-              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+              <label className="grid select-none grid-cols-[auto_5rem_1fr] items-baseline gap-2 text-sm">
                 <Checkbox
+                  className="self-center"
                   checked={draft.manage}
                   onCheckedChange={(c) =>
                     setDraft((d) => forceSelectWhenOthers({ ...d, manage: c === true }))
                   }
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_MANAGE)}</span>
-                <span className="select-none text-xs text-muted-foreground">{t("permissions.manageHint")}</span>
+                <span className="text-xs text-muted-foreground">{t("permissions.manageHint")}</span>
               </label>
             </div>
           </div>

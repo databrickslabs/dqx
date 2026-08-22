@@ -503,6 +503,65 @@ class TestStampRunProvenance:
 
 
 # ---------------------------------------------------------------------------
+# _write_error — run_type tagging on the FAILED row
+# ---------------------------------------------------------------------------
+
+
+class TestWriteErrorRunType:
+    """The FAILED row must carry the SUBMITTER's run_type, not the task_type.
+
+    Every app-submitted check run is submitted as ``task_type="dryrun"``;
+    manual-vs-scheduled travels separately in the job config. Deriving the tag
+    from ``task_type`` recorded a failed scheduled run as ``dryrun``, so Runs
+    History labelled it "Manual".
+    """
+
+    def _written_row(self, spark) -> dict:
+        """Zip the written tuple against its schema so asserts aren't positional."""
+        rows = spark.createDataFrame.call_args.args[0]
+        schema = spark.createDataFrame.call_args.kwargs["schema"]
+        names = [field.strip().rsplit(" ", 1)[0] for field in schema.split(",")]
+        return dict(zip(names, rows[0]))
+
+    def _write(self, runner_module, **kwargs) -> dict:
+        spark = MagicMock(name="spark")
+        runner_module._write_error(
+            spark,
+            kwargs.pop("task_type", "dryrun"),
+            "cat",
+            "sch",
+            "run1",
+            "alice@example.com",
+            "cat.sch.tbl",
+            "cat.tmp.view",
+            "boom",
+            **kwargs,
+        )
+        return self._written_row(spark)
+
+    def test_config_run_type_wins_over_task_type(self, runner_module):
+        # The scheduler fires binding runs as task_type="dryrun" with
+        # run_type="scheduled" in the config — the row must say "scheduled".
+        row = self._write(runner_module, task_type="dryrun", run_type="scheduled")
+        assert row["run_type"] == "scheduled"
+        assert row["status"] == "FAILED"
+
+    def test_manual_run_stays_dryrun(self, runner_module):
+        row = self._write(runner_module, task_type="dryrun", run_type="dryrun")
+        assert row["run_type"] == "dryrun"
+
+    def test_task_type_is_the_fallback_when_config_omits_run_type(self, runner_module):
+        # Callers that submit "scheduled" directly pass no config run_type.
+        assert self._write(runner_module, task_type="scheduled")["run_type"] == "scheduled"
+        assert self._write(runner_module, task_type="dryrun")["run_type"] == "dryrun"
+
+    def test_skip_history_still_forces_preview(self, runner_module):
+        # A preview must never be tagged as history, whatever the config says.
+        row = self._write(runner_module, task_type="dryrun", run_type="scheduled", skip_history=True)
+        assert row["run_type"] == "preview"
+
+
+# ---------------------------------------------------------------------------
 # _is_permission_denied — quiet the redundant SP-side DROP (B2-70)
 # ---------------------------------------------------------------------------
 

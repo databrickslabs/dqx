@@ -57,7 +57,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { CheckCircle2, Clock, Download, GitCompare, History, Loader2, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
 import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/drafts/ChangeDiffDialog";
 import { ExportDialog } from "@/components/ExportDialog";
-import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
+import {
+  LifecycleDecisionNote,
+  LifecycleRationaleDialog,
+  type LifecycleAction,
+} from "@/components/LifecycleRationaleDialog";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -786,6 +790,8 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </div>
         </div>
       )}
+
+      {!isPending && <LifecycleDecisionNote rationale={product.last_decision_rationale} />}
 
       <LifecycleRationaleDialog
         open={lifecycleDialog !== null}

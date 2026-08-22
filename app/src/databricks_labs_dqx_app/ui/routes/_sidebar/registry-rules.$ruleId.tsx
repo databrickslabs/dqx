@@ -55,7 +55,11 @@ import {
   useRejectRegistryRuleWithRationale,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
-import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
+import {
+  LifecycleDecisionNote,
+  LifecycleRationaleDialog,
+  type LifecycleAction,
+} from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import {
@@ -460,6 +464,10 @@ function RegistryRuleDetailPage() {
               ) : null}
             </div>
           </div>
+        )}
+
+        {rule.status !== "pending_approval" && (
+          <LifecycleDecisionNote rationale={rule.last_decision_rationale} />
         )}
 
         <RegistryRuleFormDialog

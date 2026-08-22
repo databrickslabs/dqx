@@ -17,8 +17,26 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MessageSquareText } from "lucide-react";
 
 export type LifecycleAction = "submit" | "approve" | "reject";
+
+/** Durable display for the latest approver/rejecter comment after the request leaves the queue. */
+export function LifecycleDecisionNote({ rationale }: { rationale?: string | null }) {
+  const { t } = useTranslation();
+  const note = rationale?.trim();
+  if (!note) return null;
+
+  return (
+    <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
+      <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 space-y-1">
+        <p className="text-sm font-medium">{t("lifecycle.decisionRationaleLabel")}</p>
+        <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{note}</p>
+      </div>
+    </div>
+  );
+}
 
 export function LifecycleRationaleDialog({
   open,

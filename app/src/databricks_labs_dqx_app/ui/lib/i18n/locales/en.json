@@ -27,7 +27,8 @@
       "approve": "Optional note for the author…",
       "reject": "Why are you rejecting?"
     },
-    "pendingRationaleLabel": "Submission note"
+    "pendingRationaleLabel": "Submission note",
+    "decisionRationaleLabel": "Decision comment"
   },
   "common": {
     "loading": "Loading...",
@@ -619,7 +620,6 @@
     "viewDocs": "View documentation",
     "input": {
       "title": "Contract source",
-      "description": "Provide an ODCS v3.x contract in YAML or JSON. Schema validation requires every property to have a physicalType set to a valid Unity Catalog type.",
       "uploadLabel": "Upload contract",
       "chooseFile": "Choose file",
       "orPaste": "or paste below",
@@ -705,16 +705,8 @@
     }
   },
   "rulesBulkImport": {
-    "breadcrumb": "Bulk import",
-    "title": "Bulk contract import",
-    "subtitle": "Upload multiple ODCS contracts to register their tables, create rules in the registry, and auto-apply them in one step.",
-    "entryCard": {
-      "title": "Bulk import from data contracts",
-      "description": "Upload several ODCS contracts at once — register tables, create rules, and auto-apply where possible."
-    },
     "upload": {
       "title": "Contracts",
-      "description": "Add one or more ODCS v3.x contract files (YAML or JSON). Each schema becomes a target table.",
       "dropzone": "Drag & drop contract files here, or",
       "chooseFiles": "Choose files",
       "empty": "No contracts added yet.",
@@ -733,11 +725,8 @@
     },
     "options": {
       "title": "Generation options",
-      "description": "Applied to every uploaded contract.",
       "groupSchemaTitle": "Rules from the contract schema",
-      "groupSchemaHint": "Derived automatically from each property's type and constraints.",
-      "groupPublishingTitle": "Defaults & publishing",
-      "groupPublishingHint": "How the generated rules are labelled and released into the registry.",
+      "groupPublishingTitle": "Other settings",
       "skipApproval": "Skip approval (publish rules immediately)",
       "skipApprovalHint": "Create and approve rules in one step so mapped rules can be applied right away. Requires an approver role. Duplicate definitions still reuse existing rules."
     },
@@ -807,13 +796,14 @@
     }
   },
   "rulesImport": {
-    "breadcrumb": "Import rules",
-    "title": "Import rules",
-    "subtitle": "Import data quality rules from a YAML file.",
-    "subtitleYaml": "Bulk-import rules from a DQX YAML file.",
-    "subtitleContract": "Generate rules from an ODCS v3.x data contract — schema, constraints, and explicit DQX checks.",
-    "tabYaml": "From DQX YAML",
-    "tabContract": "From data contract",
+    "breadcrumb": "Import",
+    "title": "Import",
+    "sectionRules": "Import rules",
+    "sectionTables": "Import to tables",
+    "scopeNoteRules": "Rules land in the Rules Registry only — no table is registered and nothing runs. Apply approved rules to a table from its Apply rules tab, or switch to Import to tables to do both at once.",
+    "scopeNoteTables": "Each contract schema is registered as a monitored table and its rules are created in the registry. Rules that map to the table automatically are applied; the rest stay in the registry for manual mapping.",
+    "tabYaml": "DQX YAML",
+    "tabContract": "ODCS data contract",
     "importFromYaml": "Import from YAML",
     "importDescription": "Upload a YAML file or paste YAML content. Each entry should follow the DQX check format. Rules are saved to the Rules Registry — assign them to tables later from Tables.",
     "uploadYamlFile": "Upload YAML file",
@@ -963,6 +953,8 @@
     "registryReadOnly": "View only",
     "registryRejectTitle": "Reject this registry rule?",
     "registryRejectBody": "\"{{name}}\" will be marked rejected and removed from the approval queue. The author can revise and resubmit.",
+    "registryApproveTitle": "Approve this registry rule?",
+    "registryApproveBody": "Approve \"{{name}}\" and make it available for use.",
     "registryToastApproved": "Registry rule approved",
     "registryToastFailedApprove": "Failed to approve registry rule",
     "registryToastRejected": "Registry rule rejected",
@@ -975,6 +967,7 @@
     "headerSteward": "Owner",
     "headerOwner": "Owner",
     "headerVersion": "Version",
+    "noSubmissionNote": "No submission note",
     "ellipsis": "...",
     "tableSpacesSectionTitle": "Collections awaiting approval",
     "tableSpacesSectionDescription": "Collections submitted for review. Approve to publish the collection at its next version, or reject to send it back to the author.",
@@ -990,6 +983,10 @@
     "mtToastFailedReject": "Failed to reject table",
     "mtRejectTitle": "Reject this table?",
     "mtRejectBody": "Reject \"{{name}}\"? The owner can revise the rule set and submit it for review again.",
+    "mtApproveTitle": "Approve this table?",
+    "mtApproveBody": "Approve \"{{name}}\" and publish its pending rule set.",
+    "tableSpaceApproveTitle": "Approve this collection?",
+    "tableSpaceApproveBody": "Approve \"{{name}}\" and publish its pending changes.",
     "tableSpacesEmptyState": "No collections are awaiting approval.",
     "diff": {
       "title": "Review changes",

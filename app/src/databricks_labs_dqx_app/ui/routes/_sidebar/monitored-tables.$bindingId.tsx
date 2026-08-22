@@ -125,7 +125,11 @@ import {
   type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
-import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
+import {
+  LifecycleDecisionNote,
+  LifecycleRationaleDialog,
+  type LifecycleAction,
+} from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
@@ -853,6 +857,10 @@ function MonitoredTableDetailPage() {
           </div>
         )}
 
+        {table.status !== "pending_approval" && (
+          <LifecycleDecisionNote rationale={table.last_decision_rationale} />
+        )}
+
         <LifecycleRationaleDialog
           open={lifecycleDialog !== null}
           onOpenChange={(open) => {
@@ -1364,11 +1372,13 @@ function RunTableAction({
 
 // Schema section page size — deliberately small so the schema section lands
 // at roughly the same height as the About section beside it: About renders
-// ten definition rows (text-xs, gap-y-2) plus the Unity Catalog link line,
+// nine definition rows (text-xs, gap-y-2) plus the Unity Catalog link line,
 // and the schema table adds a header row and a pagination footer around its
-// compact (h-8) body rows. Six body rows lands the pagination footer level
-// with About's "Open in Unity Catalog" link line.
-const SCHEMA_PAGE_SIZE = 6;
+// compact (h-8) body rows. Five body rows lands the pagination footer level
+// with About's "Open in Unity Catalog" link line. Alignment is approximate by
+// nature — About drops rows when a table has no status or profiling run — so
+// this trades an exact match on every table for a match on the common case.
+const SCHEMA_PAGE_SIZE = 5;
 
 /** Applied governed tags for one schema column, rendered on a single
  *  fixed-height line. Shows the first tag as a compact chip; if there are more,

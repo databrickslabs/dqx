@@ -1210,8 +1210,21 @@ def _write_error(
     checks: list[dict[str, Any]] | None = None,
     skip_history: bool = False,
     job_run_id: int | None = None,
+    run_type: str | None = None,
 ) -> None:
-    """Write a FAILED status row so the app can report the error."""
+    """Write a FAILED status row so the app can report the error.
+
+    *run_type* is the config's run_type and takes precedence over *task_type*
+    for the persisted tag. The two disagree by design: every app-submitted
+    check run is submitted as ``task_type="dryrun"`` (the frozen runner
+    contract), and manual-vs-scheduled is threaded separately through the job
+    config by the submitter. Deriving the tag from *task_type* alone therefore
+    recorded a FAILED scheduled run as ``dryrun``, so Runs History labelled it
+    "Manual" — and, before the history query stopped keying visibility on the
+    RUNNING placeholder, also cost it the ``run_type IN ('scheduled')`` escape
+    hatch that would have kept it visible. *task_type* remains the fallback for
+    callers that submit ``scheduled`` directly and pass no config run_type.
+    """
     checks_str = _json_dumps(checks) if checks else None
     fingerprint = _compute_fingerprint(checks or [])
     if task_type == "profile":
@@ -1246,6 +1259,8 @@ def _write_error(
         table = f"{result_catalog}.{result_schema}.dq_validation_runs"
         if skip_history:
             error_run_type = "preview"
+        elif run_type:
+            error_run_type = str(run_type)
         elif task_type == "scheduled":
             error_run_type = "scheduled"
         else:
@@ -1353,6 +1368,7 @@ def main() -> None:
                 checks=config.get("checks"),
                 skip_history=bool(config.get("skip_history")),
                 job_run_id=job_run_id,
+                run_type=config.get("run_type"),
             )
         except Exception as write_exc:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)

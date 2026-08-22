@@ -4,8 +4,8 @@ The task-runner job installs ``databricks-labs-dqx`` via a single ``dqx_version`
 the production pin and the development wheel filename both DERIVE from it. Two invariants must hold or
 a deploy silently ships the wrong DQX:
 
-* ``dqx_version`` must equal ``src/databricks/labs/dqx/__about__.py`` — docs/dqx/sync_versions.py keeps
-  them in lockstep on ``make fmt``; this test fails if someone bumps ``__about__.py`` without it.
+* ``dqx_version`` must equal ``src/databricks/labs/dqx/__version__.py`` — docs/dqx/sync_versions.py keeps
+  them in lockstep on ``make fmt``; this test fails if someone bumps ``__version__.py`` without it.
 * production (the default ``dqx_task_dependency``) must stay PINNED to the published registry release
   ``databricks-labs-dqx==${var.dqx_version}`` — only a dev target overrides it to a local wheel.
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLE = _REPO_ROOT / "app" / "databricks.yml"
-_ABOUT = _REPO_ROOT / "src" / "databricks" / "labs" / "dqx" / "__about__.py"
+_VERSION_MODULE = _REPO_ROOT / "src" / "databricks" / "labs" / "dqx" / "__version__.py"
 
 
 def _dqx_version_default() -> str:
@@ -28,16 +28,16 @@ def _dqx_version_default() -> str:
     return match.group("v")
 
 
-def _about_version() -> str:
-    text = _ABOUT.read_text(encoding="utf-8")
+def _library_version() -> str:
+    text = _VERSION_MODULE.read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"(?P<v>\d+\.\d+\.\d+)"', text)
-    assert match, "__version__ not found in __about__.py"
+    assert match, "__version__ not found in __version__.py"
     return match.group("v")
 
 
-def test_dqx_version_tracks_about() -> None:
-    """dqx_version must match __about__.py — run ``make fmt`` (sync_versions.py) if this fails."""
-    assert _dqx_version_default() == _about_version()
+def test_dqx_version_tracks_the_library_version() -> None:
+    """dqx_version must match __version__.py — run ``make fmt`` (sync_versions.py) if this fails."""
+    assert _dqx_version_default() == _library_version()
 
 
 def test_production_dqx_dependency_is_pinned_to_the_registry() -> None:

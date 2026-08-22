@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Card,
@@ -23,6 +23,9 @@ import {
   FileCode2,
   FileText,
   ExternalLink,
+  Info,
+  Library,
+  Table2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLabelDefinitions, useValidateChecks } from "@/lib/api-custom";
@@ -45,10 +48,22 @@ import {
   ContractWorkspace,
   DOCS_URL as CONTRACT_DOCS_URL,
 } from "@/routes/_sidebar/rules.from-contract";
+import { BulkContractImportWorkspace } from "@/components/registry-rules/BulkContractImportWorkspace";
 
-// Old ``/rules/from-contract`` bookmarks redirect to
-// ``/registry-rules/import?tab=contract``.
-export type ImportTab = "yaml" | "contract";
+// The YAML form documents a different thing than the two ODCS surfaces, so the
+// header link follows the active surface instead of vanishing on the YAML tab.
+const CHECKS_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/guide/quality_checks_definition/";
+
+// One flat search param drives two levels of tabs: "yaml"/"contract" are the
+// source formats of the rules-only import, "tables" is the bulk contract import
+// that also registers tables. Flattening keeps old ``?tab=contract`` bookmarks
+// (and the ``/rules/from-contract`` redirect) working unchanged.
+export type ImportTab = "yaml" | "contract" | "tables";
+
+/** Top-level destination of the import: the registry, or registry + tables. */
+type ImportSection = "rules" | "tables";
+/** Source format of a rules-only import. */
+type RulesFormat = "yaml" | "contract";
 
 export interface ImportSearchParams {
   from?: string;
@@ -56,7 +71,7 @@ export interface ImportSearchParams {
 }
 
 export function coerceImportTab(value: unknown): ImportTab | undefined {
-  return value === "yaml" || value === "contract" ? value : undefined;
+  return value === "yaml" || value === "contract" || value === "tables" ? value : undefined;
 }
 
 export interface ImportRulesWorkspaceProps {
@@ -67,57 +82,94 @@ export interface ImportRulesWorkspaceProps {
 
 export function ImportRulesWorkspace({ tab, onTabChange, onDone }: ImportRulesWorkspaceProps) {
   const { t } = useTranslation();
+  const section: ImportSection = tab === "tables" ? "tables" : "rules";
+  const format: RulesFormat = tab === "contract" ? "contract" : "yaml";
+
+  // Coming back from "Import to tables" should restore the format the user was
+  // last on, not silently reset an ODCS import to the YAML form.
+  const lastFormat = useRef<RulesFormat>(format);
+  useEffect(() => {
+    if (tab === "yaml" || tab === "contract") lastFormat.current = tab;
+  }, [tab]);
+
+  const docsUrl = tab === "yaml" ? CHECKS_DOCS_URL : CONTRACT_DOCS_URL;
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t("rulesImport.title")}</h1>
-          <p className="text-muted-foreground">
-            {tab === "contract"
-              ? t("rulesImport.subtitleContract")
-              : t("rulesImport.subtitleYaml")}
-          </p>
-        </div>
-        {tab === "contract" && (
-          <a
-            href={CONTRACT_DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 mt-1"
-          >
-            {t("rulesFromContract.viewDocs")}
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold tracking-tight">{t("rulesImport.title")}</h1>
+        <a
+          href={docsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1.5"
+        >
+          {t("rulesFromContract.viewDocs")}
+          <ExternalLink className="h-3 w-3" />
+        </a>
       </div>
 
       <Tabs
-        value={tab}
-        onValueChange={(value) => {
-          const next = coerceImportTab(value) ?? "yaml";
-          onTabChange(next);
-        }}
+        value={section}
+        onValueChange={(value) =>
+          onTabChange(value === "tables" ? "tables" : lastFormat.current)
+        }
       >
         <TabsList>
-          <TabsTrigger value="yaml" className="gap-2">
-            <FileCode2 className="h-3.5 w-3.5" />
-            {t("rulesImport.tabYaml")}
+          <TabsTrigger value="rules" className="gap-2">
+            <Library className="h-3.5 w-3.5" />
+            {t("rulesImport.sectionRules")}
           </TabsTrigger>
-          <TabsTrigger value="contract" className="gap-2">
-            <FileText className="h-3.5 w-3.5" />
-            {t("rulesImport.tabContract")}
+          <TabsTrigger value="tables" className="gap-2">
+            <Table2 className="h-3.5 w-3.5" />
+            {t("rulesImport.sectionTables")}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="yaml" className="mt-4">
-          <YamlImportCard onDone={onDone} />
+        <TabsContent value="rules" className="mt-4 space-y-4">
+          <ScopeNote text={t("rulesImport.scopeNoteRules")} />
+          <Tabs
+            value={format}
+            onValueChange={(value) => onTabChange(value === "contract" ? "contract" : "yaml")}
+          >
+            {/* Outlined so this reads as a format switch within Import rules,
+                not as a second peer of the Import rules / Import to tables tabs. */}
+            <TabsList className="h-8 border bg-background">
+              <TabsTrigger value="yaml" className="gap-1.5 text-xs">
+                <FileCode2 className="h-3.5 w-3.5" />
+                {t("rulesImport.tabYaml")}
+              </TabsTrigger>
+              <TabsTrigger value="contract" className="gap-1.5 text-xs">
+                <FileText className="h-3.5 w-3.5" />
+                {t("rulesImport.tabContract")}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="yaml" className="mt-2">
+              <YamlImportCard onDone={onDone} />
+            </TabsContent>
+            <TabsContent value="contract" className="mt-2">
+              <ContractWorkspace onDone={onDone} />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
-        <TabsContent value="contract" className="mt-4">
-          <ContractWorkspace onDone={onDone} />
+
+        <TabsContent value="tables" className="mt-4 space-y-4">
+          <ScopeNote text={t("rulesImport.scopeNoteTables")} />
+          <BulkContractImportWorkspace onDone={onDone} />
         </TabsContent>
       </Tabs>
     </>
+  );
+}
+
+/** States where an import lands, which neither tab label can convey on its own. */
+function ScopeNote({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3">
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <p className="text-xs text-muted-foreground">{text}</p>
+    </div>
   );
 }
 

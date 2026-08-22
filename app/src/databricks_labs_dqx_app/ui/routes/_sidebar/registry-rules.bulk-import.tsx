@@ -1,40 +1,20 @@
-import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
-import { useTranslation } from "react-i18next";
+import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { usePermissions } from "@/hooks/use-permissions";
-import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { FadeIn } from "@/components/anim/FadeIn";
-import { BulkContractImportWorkspace } from "@/components/registry-rules/BulkContractImportWorkspace";
 
+// Bulk contract import used to be its own page, reachable only from a card at
+// the bottom of the import page — easy to miss and easy to mistake for a
+// variant of the "From data contract" tab. It is now the "Import to tables" tab
+// of ``/registry-rules/import``, so this route stays only as a redirect for
+// existing bookmarks.
 export const Route = createFileRoute("/_sidebar/registry-rules/bulk-import")({
-  component: RegistryRulesBulkImportPage,
+  component: RegistryRulesBulkImportRedirect,
 });
 
-function RegistryRulesBulkImportPage() {
+function RegistryRulesBulkImportRedirect() {
   const { canCreateRules } = usePermissions();
+  // Enforce the destination's guard here too (mirrors the other legacy import
+  // redirects): no authorization bypass if that guard is ever relaxed, and no
+  // redirect flicker for unauthorized users.
   if (!canCreateRules) return <Navigate to="/registry-rules" replace />;
-  return <RegistryRulesBulkImportPageInner />;
-}
-
-function RegistryRulesBulkImportPageInner() {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-
-  return (
-    <FadeIn>
-      <div className="space-y-6">
-        <PageBreadcrumb
-          items={[
-            { label: t("rulesRegistry.title"), to: "/registry-rules" },
-            { label: t("rulesImport.breadcrumb"), to: "/registry-rules/import" },
-          ]}
-          page={t("rulesBulkImport.breadcrumb")}
-        />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{t("rulesBulkImport.title")}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t("rulesBulkImport.subtitle")}</p>
-        </div>
-        <BulkContractImportWorkspace onDone={() => navigate({ to: "/registry-rules" })} />
-      </div>
-    </FadeIn>
-  );
+  return <Navigate to="/registry-rules/import" search={{ tab: "tables" }} replace />;
 }

@@ -744,8 +744,22 @@ def _make_product_scheduler(make_scheduler, *, dp_service=None):
     return svc, mocks, dp_service
 
 
-def _tracker_row(schedule_name: str, next_run_at: str, status: str = "success") -> tuple:
-    return (schedule_name, "2026-04-30T09:00:00+00:00", next_run_at, "run_old", status)
+def _tracker_row(
+    schedule_name: str,
+    next_run_at: str,
+    status: str = "success",
+    last_run_at: str | None = "2026-04-30T09:00:00+00:00",
+) -> tuple:
+    """One ``dq_schedule_runs`` row as ``_get_tracker`` reads it.
+
+    *last_run_at* is overridable because :meth:`SchedulerService.
+    _realign_next_run` re-derives a future *next_run_at* from it: a row whose
+    two timestamps are more than one cron period apart reads as "the cron
+    changed since this row was written" and gets realigned. Tests that assert
+    a *future* occurrence is left alone must therefore pass the ``last_run_at``
+    that occurrence actually follows.
+    """
+    return (schedule_name, last_run_at, next_run_at, "run_old", status)
 
 
 class TestTickOneProduct:
@@ -784,7 +798,9 @@ class TestTickOneProduct:
 
     def test_not_due_product_is_skipped(self, make_scheduler):
         svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
-        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-02T09:00:00+00:00")]
+        mocks.oltp.query.return_value = [
+            _tracker_row("product:prod1", "2026-05-02T09:00:00+00:00", last_run_at="2026-05-01T09:00:00+00:00")
+        ]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
         svc._tick_one_product(
@@ -1086,7 +1102,9 @@ class TestTickOneTable:
 
     def test_not_due_table_is_skipped(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
-        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-02T09:00:00+00:00")]
+        mocks.oltp.query.return_value = [
+            _tracker_row("table:b1", "2026-05-02T09:00:00+00:00", last_run_at="2026-05-01T09:00:00+00:00")
+        ]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
         svc._tick_one_table(
@@ -1154,6 +1172,130 @@ class TestTickOneTable:
         value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
         assert value_cols["status"] == "pending"
         assert (now + _FAILURE_BACKOFF).isoformat() in value_cols["next_run_at"].expr
+
+
+class TestRealignNextRunOnCronChange:
+    """An edited cron must take effect without waiting out the old occurrence.
+
+    ``update_schedule`` rewrites only the ``schedule_*`` columns, so the
+    tracker keeps the occurrence the PREVIOUS cron produced. Before
+    ``_realign_next_run`` that value was authoritative until it elapsed: a
+    daily 09:18 run moved to 19:42 stayed silent at 19:42 and fired at 09:18
+    the next day instead.
+    """
+
+    def test_edited_cron_realigns_and_fires_the_missed_occurrence(self, make_scheduler):
+        """The reported case: 09:18 daily moved to 19:42 Europe/Berlin."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                "2026-08-22T09:18:00+00:00",  # left over from the old 09:18 cron
+                last_run_at="2026-08-21T09:18:17+00:00",
+            )
+        ]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 8, 21, 17, 56, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "42 19 * * *",
+                "schedule_tz": "Europe/Berlin",
+                "schedule_kind": "dq_only",
+            },
+            now,
+        )
+
+        br_service.run_binding.assert_called_once()
+        realign, firing = mocks.oltp.upsert.call_args_list
+        # 19:42 Berlin == 17:42Z in August: today's occurrence, already past.
+        assert "2026-08-21T17:42:00+00:00" in realign.kwargs["value_cols"]["next_run_at"].expr
+        assert realign.kwargs["value_cols"]["last_run_id"] == "run_old"
+        # Firing re-anchors last_run_at, so the catch-up cannot repeat.
+        assert "2026-08-22T17:42:00+00:00" in firing.kwargs["value_cols"]["next_run_at"].expr
+
+    def test_edited_cron_realigns_without_firing_when_still_in_the_future(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            _tracker_row("table:b1", "2026-05-02T09:00:00+00:00", last_run_at="2026-05-01T09:00:00+00:00")
+        ]
+        now = datetime(2026, 5, 1, 9, 30, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 23 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        assert "2026-05-01T23:00:00+00:00" in mocks.oltp.upsert.call_args.kwargs["value_cols"]["next_run_at"].expr
+
+    def test_unchanged_cron_is_left_alone(self, make_scheduler):
+        """Steady state writes nothing — the re-derivation reproduces the stored value."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            _tracker_row("table:b1", "2026-05-02T09:00:00+00:00", last_run_at="2026-05-01T09:00:05+00:00")
+        ]
+        now = datetime(2026, 5, 1, 9, 30, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_not_called()
+
+    def test_failure_backoff_is_not_realigned_away(self, make_scheduler):
+        """Replacing a backoff would re-fire the run that just failed."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        now = datetime(2026, 5, 1, 9, 5, 0, tzinfo=timezone.utc)
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                (now + _FAILURE_BACKOFF).isoformat(),
+                status="failed",
+                last_run_at="2026-05-01T09:00:00+00:00",
+            )
+        ]
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "*/1 * * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_not_called()
+
+    def test_seeded_occurrence_that_just_came_due_still_fires(self, make_scheduler):
+        """A never-fired row is owed its first run, not the one after it."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            _tracker_row("table:b1", "2026-05-01T09:00:00+00:00", status="pending", last_run_at=None)
+        ]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        br_service.run_binding.assert_called_once()
+        mocks.oltp.upsert.assert_called_once()
+
+    def test_product_schedules_realign_too(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            _tracker_row("product:prod1", "2026-05-02T06:00:00+00:00", last_run_at="2026-05-01T06:00:00+00:00")
+        ]
+        now = datetime(2026, 5, 1, 6, 30, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_product(
+            {"product_id": "prod1", "schedule_cron": "43 17 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"},
+            now,
+        )
+
+        dp_service.run.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        assert "2026-05-01T17:43:00+00:00" in mocks.oltp.upsert.call_args.kwargs["value_cols"]["next_run_at"].expr
 
 
 class TestTickMonitoredTables:

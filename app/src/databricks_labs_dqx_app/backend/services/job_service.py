@@ -289,9 +289,24 @@ class JobService:
 
         A run is considered a history-visible run when:
         - run_type is 'scheduled', OR
-        - run_type is 'dryrun' (or NULL) AND the run has a RUNNING placeholder
-          row (which is only written for Execute-tab / batch-from-catalog runs).
+        - the app wrote a submission row for it (``has_submission``) — only
+          Execute-tab / batch-from-catalog / scheduled-binding runs get one.
         Runs tagged 'preview' (new runner) are always excluded.
+
+        ``has_submission`` deliberately does NOT test ``status = 'RUNNING'``
+        alone. The submission row is inserted RUNNING, but every non-successful
+        outcome later rewrites that very row: ``reconcile_running_rows`` and the
+        per-run status poll flip it to FAILED/CANCELED, the hourly stale
+        tmp-view sweep does the same, and Cancel writes CANCELED. Keying
+        visibility on RUNNING therefore made a failed or canceled run VANISH
+        from history the moment anything reconciled it — while successful runs
+        stayed, because the runner owns the terminal SUCCESS row and nothing
+        rewrites their placeholder. That asymmetry is what read as history
+        being lost at random. ``job_run_id`` is stamped when the placeholder is
+        inserted and is never rewritten by those paths, so it survives
+        reconciliation and is the durable "the app submitted this" marker. The
+        RUNNING arm is kept alongside it so the gate stays a superset of the
+        old one and cannot hide a run that used to show.
 
         ``duration_seconds`` — the run's real wall-clock duration, computed
         server-side so the Runs-History "Time" column matches the linked
@@ -309,6 +324,13 @@ class JobService:
         is positive; otherwise it stays NULL so the UI shows a live tick (still
         RUNNING) or an em dash (old runs whose true start can't be recovered)
         rather than a misleading short value.
+
+        Note the duration stays keyed on a *live* RUNNING placeholder, not on
+        ``has_submission``. Once a run has been reconciled, the placeholder's
+        ``updated_at`` is the instant we NOTICED the failure — the tmp-view
+        sweep runs hourly, so that can be long after the job died — and the
+        span would report that gap as the runtime. An em dash is better than a
+        fabricated one-hour duration on a run that failed in seconds.
         """
         sql = (
             f"SELECT {self._DRYRUN_COLS}, "  # noqa: S608
@@ -322,12 +344,14 @@ class JobService:
             f"      ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
             f"    ) AS rn, "
             f"    SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) OVER (PARTITION BY run_id) AS has_placeholder, "
+            f"    MAX(CASE WHEN status = 'RUNNING' OR job_run_id IS NOT NULL THEN 1 ELSE 0 END) "
+            f"      OVER (PARTITION BY run_id) AS has_submission, "
             f"    MIN(created_at) OVER (PARTITION BY run_id) AS run_started_at, "
             f"    MAX(COALESCE(updated_at, created_at)) OVER (PARTITION BY run_id) AS run_ended_at "
             f"  FROM {table}"
             f") WHERE rn = 1 "
             f"  AND COALESCE(run_type, 'dryrun') != 'preview' "
-            f"  AND (COALESCE(run_type, 'dryrun') IN ('scheduled') OR has_placeholder > 0) "
+            f"  AND (COALESCE(run_type, 'dryrun') IN ('scheduled') OR has_submission > 0) "
             f"ORDER BY created_at DESC LIMIT {int(limit)}"
         )
         return self._sql.query_dicts(sql)

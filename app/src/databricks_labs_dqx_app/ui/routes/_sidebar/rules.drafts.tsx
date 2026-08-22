@@ -24,28 +24,12 @@ import {
 import { FadeIn } from "@/components/anim/FadeIn";
 import { toast } from "sonner";
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
-} from "@/components/ui/alert-dialog";
-import {
   useListRegistryRules,
-  useApproveRegistryRule,
-  useRejectRegistryRule,
   useRevokeRegistryRule,
   useListDataProducts,
-  useApproveDataProduct,
-  useRejectDataProduct,
   getListDataProductsQueryKey,
   getGetDataProductQueryKey,
   useListMonitoredTables,
-  useApproveMonitoredTable,
-  useRejectMonitoredTable,
   type RegistryRuleOut,
   type DataProductOut,
   type MonitoredTableSummaryOut,
@@ -65,10 +49,39 @@ import {
   type MonitoredTableDiffTarget,
   type TableSpaceDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
+import {
+  useApproveRegistryRuleWithRationale,
+  useRejectRegistryRuleWithRationale,
+  useApproveMonitoredTableWithRationale,
+  useRejectMonitoredTableWithRationale,
+  useApproveDataProductWithRationale,
+  useRejectDataProductWithRationale,
+} from "@/lib/api-custom";
+import { LifecycleRationaleDialog, type LifecycleAction } from "@/components/LifecycleRationaleDialog";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
+
+type ApprovalAction = Extract<LifecycleAction, "approve" | "reject">;
+
+function SubmissionNoteCell({ rationale }: { rationale?: string | null }) {
+  const { t } = useTranslation();
+  const note = rationale?.trim();
+  return (
+    <td className="p-3 max-w-64">
+      {note ? (
+        <span className="block text-xs text-muted-foreground whitespace-pre-wrap break-words" title={note}>
+          {note}
+        </span>
+      ) : (
+        <span className="text-muted-foreground/50 text-xs" title={t("rulesDrafts.noSubmissionNote")}>
+          —
+        </span>
+      )}
+    </td>
+  );
+}
 
 export const Route = createFileRoute("/_sidebar/rules/drafts")({
   component: () => (
@@ -145,11 +158,14 @@ function RegistryApprovalsSection({
     [queryClient],
   );
 
-  const approveMutation = useApproveRegistryRule();
-  const rejectMutation = useRejectRegistryRule();
+  const approveMutation = useApproveRegistryRuleWithRationale();
+  const rejectMutation = useRejectRegistryRuleWithRationale();
   const revokeMutation = useRevokeRegistryRule();
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<RegistryRuleOut | null>(null);
+  const [actionTarget, setActionTarget] = useState<{
+    action: ApprovalAction;
+    rule: RegistryRuleOut;
+  } | null>(null);
 
   const isRuleAuthor = useCallback(
     (rule: RegistryRuleOut) => {
@@ -188,17 +204,17 @@ function RegistryApprovalsSection({
     [pendingRuleId, invalidate],
   );
 
-  const confirmApprove = (rule: RegistryRuleOut) =>
+  const confirmApprove = (rule: RegistryRuleOut, rationale: string | null) =>
     runAction(
       rule.rule_id,
-      () => approveMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
+      () => approveMutation.mutateAsync({ ruleId: rule.rule_id, rationale }),
       t("rulesDrafts.registryToastApproved"),
       t("rulesDrafts.registryToastFailedApprove"),
     );
-  const confirmReject = (rule: RegistryRuleOut) =>
+  const confirmReject = (rule: RegistryRuleOut, rationale: string | null) =>
     runAction(
       rule.rule_id,
-      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id, data: null }),
+      () => rejectMutation.mutateAsync({ ruleId: rule.rule_id, rationale }),
       t("rulesDrafts.registryToastRejected"),
       t("rulesDrafts.registryToastFailedReject"),
     );
@@ -231,6 +247,7 @@ function RegistryApprovalsSection({
             <ApprovalTh>{t("rulesDrafts.headerSeverity")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerOwner")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
+            <ApprovalTh>{t("lifecycle.pendingRationaleLabel")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
             <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
           </>
@@ -260,6 +277,7 @@ function RegistryApprovalsSection({
                 {author || "—"}
               </td>
               <td className="p-3 text-xs text-muted-foreground font-mono">v{rule.version}</td>
+              <SubmissionNoteCell rationale={rule.pending_rationale} />
               <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={rule.updated_at ?? ""}>
                 {formatDate(rule.updated_at)}
               </td>
@@ -299,7 +317,7 @@ function RegistryApprovalsSection({
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => confirmApprove(rule)}
+                        onClick={() => setActionTarget({ action: "approve", rule })}
                         className="gap-1 h-7 text-xs text-green-600"
                       >
                         <CheckCircle2 className="h-3 w-3" />
@@ -309,7 +327,7 @@ function RegistryApprovalsSection({
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setRejectTarget(rule)}
+                        onClick={() => setActionTarget({ action: "reject", rule })}
                         className="gap-1 h-7 text-xs text-red-600"
                       >
                         <XCircle className="h-3 w-3" />
@@ -330,33 +348,47 @@ function RegistryApprovalsSection({
 
       <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
-      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("rulesDrafts.registryRejectTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("rulesDrafts.registryRejectBody", {
-                name: rejectTarget
-                  ? getUserMetadata(rejectTarget as unknown as Record<string, unknown>).name || rejectTarget.rule_id
+      <LifecycleRationaleDialog
+        open={actionTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setActionTarget(null);
+        }}
+        action={actionTarget?.action ?? "approve"}
+        title={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.registryRejectTitle")
+            : t("rulesDrafts.registryApproveTitle")
+        }
+        description={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.registryRejectBody", {
+                name: actionTarget
+                  ? getUserMetadata(actionTarget.rule as unknown as Record<string, unknown>).name ||
+                    actionTarget.rule.rule_id
                   : "",
-              })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const target = rejectTarget;
-                setRejectTarget(null);
-                if (target) confirmReject(target);
-              }}
-              className="bg-destructive text-white hover:bg-destructive/90"
-            >
-              {t("rulesDrafts.rejectAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              })
+            : t("rulesDrafts.registryApproveBody", {
+                name: actionTarget
+                  ? getUserMetadata(actionTarget.rule as unknown as Record<string, unknown>).name ||
+                    actionTarget.rule.rule_id
+                  : "",
+              })
+        }
+        confirmLabel={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.rejectAction")
+            : t("rulesDrafts.approveAction")
+        }
+        destructive={actionTarget?.action === "reject"}
+        busy={actionTarget ? pendingRuleId === actionTarget.rule.rule_id : false}
+        onConfirm={(rationale) => {
+          const target = actionTarget;
+          setActionTarget(null);
+          if (!target) return;
+          if (target.action === "approve") confirmApprove(target.rule, rationale);
+          else confirmReject(target.rule, rationale);
+        }}
+      />
     </>
   );
 }
@@ -383,10 +415,13 @@ function MonitoredTablesApprovalsSection({
   const { data, isLoading, error } = useListMonitoredTables({ status: "pending_approval" });
   const tables: MonitoredTableSummaryOut[] = useMemo(() => data?.data ?? [], [data]);
 
-  const approveMutation = useApproveMonitoredTable();
-  const rejectMutation = useRejectMonitoredTable();
+  const approveMutation = useApproveMonitoredTableWithRationale();
+  const rejectMutation = useRejectMonitoredTableWithRationale();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
+  const [actionTarget, setActionTarget] = useState<{
+    action: ApprovalAction;
+    row: MonitoredTableSummaryOut;
+  } | null>(null);
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
 
   const runAction = useCallback(
@@ -407,17 +442,17 @@ function MonitoredTablesApprovalsSection({
     [pendingId, queryClient],
   );
 
-  const confirmApprove = (row: MonitoredTableSummaryOut) =>
+  const confirmApprove = (row: MonitoredTableSummaryOut, rationale: string | null) =>
     runAction(
       row.table.binding_id,
-      () => approveMutation.mutateAsync({ bindingId: row.table.binding_id, data: null }),
+      () => approveMutation.mutateAsync({ bindingId: row.table.binding_id, rationale }),
       t("rulesDrafts.mtToastApproved"),
       t("rulesDrafts.mtToastFailedApprove"),
     );
-  const confirmReject = (row: MonitoredTableSummaryOut) =>
+  const confirmReject = (row: MonitoredTableSummaryOut, rationale: string | null) =>
     runAction(
       row.table.binding_id,
-      () => rejectMutation.mutateAsync({ bindingId: row.table.binding_id, data: null }),
+      () => rejectMutation.mutateAsync({ bindingId: row.table.binding_id, rationale }),
       t("rulesDrafts.mtToastRejected"),
       t("rulesDrafts.mtToastFailedReject"),
     );
@@ -440,6 +475,7 @@ function MonitoredTablesApprovalsSection({
             <ApprovalTh>{t("rulesDrafts.headerOwner")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.mtHeaderChecks")}</ApprovalTh>
+            <ApprovalTh>{t("lifecycle.pendingRationaleLabel")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
             <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
           </>
@@ -456,6 +492,7 @@ function MonitoredTablesApprovalsSection({
               </td>
               <td className="p-3 text-xs text-muted-foreground font-mono">v{tbl.version ?? 0}</td>
               <td className="p-3 text-xs text-muted-foreground tabular-nums">{row.check_count ?? 0}</td>
+              <SubmissionNoteCell rationale={tbl.pending_rationale} />
               <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={tbl.updated_at ?? ""}>
                 {formatDate(tbl.updated_at)}
               </td>
@@ -482,7 +519,7 @@ function MonitoredTablesApprovalsSection({
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => confirmApprove(row)}
+                        onClick={() => setActionTarget({ action: "approve", row })}
                         className="gap-1 h-7 text-xs text-green-600"
                       >
                         <CheckCircle2 className="h-3 w-3" />
@@ -492,7 +529,7 @@ function MonitoredTablesApprovalsSection({
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setRejectTarget(row)}
+                        onClick={() => setActionTarget({ action: "reject", row })}
                         className="gap-1 h-7 text-xs text-red-600"
                       >
                         <XCircle className="h-3 w-3" />
@@ -511,29 +548,37 @@ function MonitoredTablesApprovalsSection({
 
       <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
-      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("rulesDrafts.mtRejectTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("rulesDrafts.mtRejectBody", { name: rejectTarget?.table.table_fqn ?? "" })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const target = rejectTarget;
-                setRejectTarget(null);
-                if (target) confirmReject(target);
-              }}
-              className="bg-destructive text-white hover:bg-destructive/90"
-            >
-              {t("rulesDrafts.rejectAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <LifecycleRationaleDialog
+        open={actionTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setActionTarget(null);
+        }}
+        action={actionTarget?.action ?? "approve"}
+        title={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.mtRejectTitle")
+            : t("rulesDrafts.mtApproveTitle")
+        }
+        description={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.mtRejectBody", { name: actionTarget?.row.table.table_fqn ?? "" })
+            : t("rulesDrafts.mtApproveBody", { name: actionTarget?.row.table.table_fqn ?? "" })
+        }
+        confirmLabel={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.rejectAction")
+            : t("rulesDrafts.approveAction")
+        }
+        destructive={actionTarget?.action === "reject"}
+        busy={actionTarget ? pendingId === actionTarget.row.table.binding_id : false}
+        onConfirm={(rationale) => {
+          const target = actionTarget;
+          setActionTarget(null);
+          if (!target) return;
+          if (target.action === "approve") confirmApprove(target.row, rationale);
+          else confirmReject(target.row, rationale);
+        }}
+      />
     </>
   );
 }
@@ -557,10 +602,13 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
     [data],
   );
 
-  const approveMutation = useApproveDataProduct();
-  const rejectMutation = useRejectDataProduct();
+  const approveMutation = useApproveDataProductWithRationale();
+  const rejectMutation = useRejectDataProductWithRationale();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
+  const [actionTarget, setActionTarget] = useState<{
+    action: ApprovalAction;
+    product: DataProductOut;
+  } | null>(null);
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
 
   const invalidate = useCallback(() => {
@@ -586,17 +634,17 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
     [pendingId, invalidate, queryClient],
   );
 
-  const confirmApprove = (p: DataProductOut) =>
+  const confirmApprove = (p: DataProductOut, rationale: string | null) =>
     runAction(
       p.product_id,
-      () => approveMutation.mutateAsync({ productId: p.product_id, data: null }),
+      () => approveMutation.mutateAsync({ productId: p.product_id, rationale }),
       t("dataProducts.toastApproved"),
       t("dataProducts.toastApproveFailed"),
     );
-  const confirmReject = (p: DataProductOut) =>
+  const confirmReject = (p: DataProductOut, rationale: string | null) =>
     runAction(
       p.product_id,
-      () => rejectMutation.mutateAsync({ productId: p.product_id, data: null }),
+      () => rejectMutation.mutateAsync({ productId: p.product_id, rationale }),
       t("dataProducts.toastRejected"),
       t("dataProducts.toastRejectFailed"),
     );
@@ -619,6 +667,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
             <ApprovalTh>{t("rulesDrafts.headerOwner")}</ApprovalTh>
             <ApprovalTh>{t("dataProducts.colTables")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
+            <ApprovalTh>{t("lifecycle.pendingRationaleLabel")}</ApprovalTh>
             <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
             <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
           </>
@@ -643,6 +692,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
               </td>
               <td className="p-3 text-xs text-muted-foreground tabular-nums">{p.member_count ?? 0}</td>
               <td className="p-3 text-xs text-muted-foreground font-mono">v{p.version ?? 0}</td>
+              <SubmissionNoteCell rationale={p.pending_rationale} />
               <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={p.updated_at ?? ""}>
                 {formatDate(p.updated_at)}
               </td>
@@ -663,7 +713,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => confirmApprove(p)}
+                        onClick={() => setActionTarget({ action: "approve", product: p })}
                         className="gap-1 h-7 text-xs text-green-600"
                       >
                         <CheckCircle2 className="h-3 w-3" />
@@ -673,7 +723,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setRejectTarget(p)}
+                        onClick={() => setActionTarget({ action: "reject", product: p })}
                         className="gap-1 h-7 text-xs text-red-600"
                       >
                         <XCircle className="h-3 w-3" />
@@ -692,29 +742,37 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
 
       <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
-      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("dataProducts.rejectConfirmDescription", { name: rejectTarget?.name ?? "" })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const target = rejectTarget;
-                setRejectTarget(null);
-                if (target) confirmReject(target);
-              }}
-              className="bg-destructive text-white hover:bg-destructive/90"
-            >
-              {t("rulesDrafts.rejectAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <LifecycleRationaleDialog
+        open={actionTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setActionTarget(null);
+        }}
+        action={actionTarget?.action ?? "approve"}
+        title={
+          actionTarget?.action === "reject"
+            ? t("dataProducts.rejectConfirmTitle")
+            : t("rulesDrafts.tableSpaceApproveTitle")
+        }
+        description={
+          actionTarget?.action === "reject"
+            ? t("dataProducts.rejectConfirmDescription", { name: actionTarget?.product.name ?? "" })
+            : t("rulesDrafts.tableSpaceApproveBody", { name: actionTarget?.product.name ?? "" })
+        }
+        confirmLabel={
+          actionTarget?.action === "reject"
+            ? t("rulesDrafts.rejectAction")
+            : t("rulesDrafts.approveAction")
+        }
+        destructive={actionTarget?.action === "reject"}
+        busy={actionTarget ? pendingId === actionTarget.product.product_id : false}
+        onConfirm={(rationale) => {
+          const target = actionTarget;
+          setActionTarget(null);
+          if (!target) return;
+          if (target.action === "approve") confirmApprove(target.product, rationale);
+          else confirmReject(target.product, rationale);
+        }}
+      />
     </>
   );
 }

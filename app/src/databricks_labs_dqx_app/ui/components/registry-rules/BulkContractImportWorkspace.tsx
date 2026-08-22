@@ -82,6 +82,8 @@ import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-inval
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { OptionRow } from "@/routes/_sidebar/rules.from-contract";
 import { usePermissions } from "@/hooks/use-permissions";
+import { HelpTooltip } from "@/components/HelpTooltip";
+import { cn } from "@/lib/utils";
 
 // Above this many tables we confirm before kicking off the (synchronous,
 // per-rule) execute loop, mirroring the ApplyRuleModal "many tables" guard.
@@ -598,7 +600,6 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             <FileText className="h-4 w-4" />
             {t("rulesBulkImport.upload.title")}
           </CardTitle>
-          <CardDescription>{t("rulesBulkImport.upload.description")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div
@@ -664,8 +665,13 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("rulesBulkImport.target.title")}</CardTitle>
-          <CardDescription>{t("rulesBulkImport.target.description")}</CardDescription>
+          <CardTitle className="flex items-center gap-1.5 text-base">
+            {t("rulesBulkImport.target.title")}
+            {/* The catalog/schema below is only a fallback for contracts whose
+                schema has no fully-qualified physical name — too important to
+                drop, too wordy to sit under the title. */}
+            <HelpTooltip text={t("rulesBulkImport.target.description")} />
+          </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -722,13 +728,9 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("rulesBulkImport.options.title")}</CardTitle>
-          <CardDescription>{t("rulesBulkImport.options.description")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          <OptionGroup
-            title={t("rulesBulkImport.options.groupSchemaTitle")}
-            description={t("rulesBulkImport.options.groupSchemaHint")}
-          >
+          <OptionGroup title={t("rulesBulkImport.options.groupSchemaTitle")}>
             <OptionRow
               checked={generatePredefined}
               onChange={setGeneratePredefined}
@@ -754,25 +756,18 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
 
           <Separator />
 
-          <OptionGroup
-            title={t("rulesBulkImport.options.groupPublishingTitle")}
-            description={t("rulesBulkImport.options.groupPublishingHint")}
-          >
-            <div className="flex items-start gap-3 rounded-lg border p-3">
-              <div className="flex-1 space-y-1">
-                <div className="text-sm font-medium">
-                  {t("rulesFromContract.options.severity")}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {t("rulesFromContract.options.severityHint")}
-                </div>
-              </div>
+          <OptionGroup title={t("rulesBulkImport.options.groupPublishingTitle")} columns={2}>
+            <div className="flex items-center gap-2 rounded-lg border p-3">
+              <span className="text-sm font-medium">
+                {t("rulesFromContract.options.severity")}
+              </span>
+              <HelpTooltip text={t("rulesFromContract.options.severityHint")} />
               <Select
                 value={defaultSeverity}
                 onValueChange={setDefaultSeverity}
                 disabled={busy}
               >
-                <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectTrigger className="ml-auto h-8 w-[110px] text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -786,6 +781,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             </div>
             {canApproveRules && (
               <OptionRow
+                compact
                 checked={skipApproval}
                 onChange={setSkipApproval}
                 disabled={busy}
@@ -813,28 +809,23 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
   );
 }
 
-/** A titled group of generation options. The flat single grid grew past the
- *  point where a owner could tell which toggles affect rule generation vs.
- *  how the results get labelled/released, so the options are split into
- *  labelled sections instead. */
+/** A titled group of generation options, separating the toggles that affect rule
+ *  generation from the ones that affect labelling and release. Groups default to
+ *  one column because an odd count in a two-column grid leaves a half-empty row;
+ *  pass ``columns={2}`` for an even count of single-line rows. */
 function OptionGroup({
   title,
-  description,
+  columns = 1,
   children,
 }: {
   title: string;
-  description?: string;
+  columns?: 1 | 2;
   children: ReactNode;
 }) {
   return (
-    <section className="space-y-2.5">
-      <div className="space-y-0.5">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          {title}
-        </h3>
-        {description && <p className="text-xs text-muted-foreground/80">{description}</p>}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">{children}</div>
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      <div className={cn("grid gap-2", columns === 2 && "sm:grid-cols-2")}>{children}</div>
     </section>
   );
 }
