@@ -2831,6 +2831,26 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
     assertDataFrameEqual(actual, expected)
 
 
+@pytest.mark.parametrize(
+    "schema, value, ref_schema, ref_value",
+    [
+        ("id int, value string", "source", "id int, value map<string, string>", {"key": "reference"}),
+        ("id int, value map<string, string>", {"key": "source"}, "id int, value string", "reference"),
+    ],
+)
+def test_dataset_compare_skips_map_col_from_either_schema(
+    spark: SparkSession, schema: str, value: Any, ref_schema: str, ref_value: Any
+):
+    df = spark.createDataFrame([[1, value]], schema)
+    ref_df = spark.createDataFrame([[1, ref_value]], ref_schema)
+    condition, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
+
+    actual = apply(df, spark, {"ref_df": ref_df}).select(*df.columns, condition)
+    expected = spark.createDataFrame([[1, value, None]], f"{schema}, {get_column_name_or_alias(condition)} string")
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
     schema = "id long"
 
