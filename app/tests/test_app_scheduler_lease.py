@@ -16,8 +16,6 @@ These tests pin the new convention so a regression to the
 ``globals()`` form would fail loudly.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
