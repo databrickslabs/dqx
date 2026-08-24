@@ -205,6 +205,9 @@ class AnomalyParams:
             - Confidence scores via standard deviation
             - Better generalization
             Performance: Optimized ensemble scoring makes this negligible overhead.
+            Note: this applies to a single global model only. Segmented training always
+            trains exactly one model per segment and ignores ``ensemble_size``, so
+            confidence scores are not available for segmented models.
         algorithm_config: Isolation Forest parameters (contamination, num_trees, seed).
         feature_engineering: Feature engineering parameters (temporal features, scaling, etc.).
     """

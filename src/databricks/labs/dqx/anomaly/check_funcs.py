@@ -165,7 +165,9 @@ def has_no_row_anomalies(
         row_filter: Optional SQL expression (e.g. \"region = 'US'\"). Only rows matching
             this expression are scored; others are left in the output with null anomaly
             result. Auto-injected from the check filter.
-        drift_threshold: Drift detection threshold (default 3.0, None to disable).
+        drift_threshold: Drift detection threshold, in standard deviations of the training
+            baseline (default None, which disables drift detection). Set a positive value
+            such as 3.0 to enable it.
         enable_contributions: Include SHAP feature contributions for explainability (default True).
             Per-feature contributions are added to _dq_info for anomalous rows only (severity at or
             above the threshold; other rows get a null map), so the SHAP cost scales with the number

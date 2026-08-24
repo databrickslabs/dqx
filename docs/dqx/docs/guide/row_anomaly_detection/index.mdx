@@ -307,7 +307,7 @@ Isolation Forest measures how "easy" it is to isolate a data point; anomalies ar
 
 ### Output structure and options
 
-The `_dq_info` column is an array of structs (one element per dataset-level check that produces info; for row anomaly, one per `has_no_row_anomalies` check). Use `severity_percentile` for threshold decisions; raw `score` is for diagnostics only. Enable `drift_threshold` (for example `3.0`) to get warnings when the scoring distribution shifts from training so you know when to retrain.
+The `_dq_info` column is an array of structs (one element per dataset-level check that produces info; for row anomaly, one per `has_no_row_anomalies` check). Use `severity_percentile` for threshold decisions; raw `score` is for diagnostics only. Enable `drift_threshold` (for example `3.0`) to get warnings when the distribution of the input features shifts away from the training baseline, so you know when to retrain.
 
 Anomalous records can be identified using the standard reporting columns (`_errors` and `_warnings`). The `_dq_info[0].anomaly.is_anomaly` field provides additional detail for in-depth analysis and is set to `False` for records that are not anomalous.
 
@@ -402,14 +402,14 @@ Use row anomaly detection when you want to catch unusual combinations across col
 <details>
 <summary><strong>Q: How much training data do I really need?</strong></summary>
 
-See the **Training data requirements** tip under Quick start. In short: 1,000+ rows preferred; quality and coverage matter more than quantity. For segmented models, use at least 100+ rows per segment. Ensure training data includes all realistic values for categorical columns (regions, types, etc.).
+See the **Training data requirements** tip under Quick start. In short: 1,000+ rows preferred; quality and coverage matter more than quantity. For segmented models, use at least 100+ rows per segment; segments with fewer than **10** rows are skipped entirely and get no model, so rows in them are left unscored. Ensure training data includes all realistic values for categorical columns (regions, types, etc.) — a categorical value absent from training is not scored reliably.
 </details>
 
 <details>
 <summary><strong>Q: How often should I retrain?</strong></summary>
 
 **Retrain when**:
-- Drift warnings appear (distribution changed). Enable `drift_threshold=3.0` to get warnings when retraining is needed
+- Drift warnings appear (the input feature distribution changed). Enable `drift_threshold=3.0` to get warnings when retraining is needed
 - Business logic changes (new products, pricing, processes)
 - Seasonality shifts (quarterly/annual patterns)
 - Major data pipeline changes
