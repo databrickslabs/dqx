@@ -7,10 +7,11 @@ Spark Connect compatibility (no custom Python class serialization).
 """
 
 import json
+import logging
 import re
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from io import StringIO
 from typing import Any
 
@@ -36,6 +37,8 @@ from pyspark.sql.types import DoubleType, TimestampType
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.utils import get_table_primary_keys
+
+logger = logging.getLogger(__name__)
 
 # Serialize stdout capture so concurrent column analysis is thread-safe
 _EXPLAIN_CAPTURE_LOCK = threading.Lock()
@@ -72,22 +75,32 @@ class SparkFeatureMetadata:
     categorical_cardinality_threshold: int = 20  # Threshold used for categorical encoding
 
     def to_json(self) -> str:
-        """Serialize to JSON for storage."""
-        return json.dumps(
-            {
-                "column_infos": self.column_infos,
-                "categorical_frequency_maps": self.categorical_frequency_maps,
-                "onehot_categories": self.onehot_categories,
-                "engineered_feature_names": self.engineered_feature_names,
-                "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
-            }
-        )
+        """Serialize to JSON for storage.
+
+        Every field of the dataclass is persisted. This is the single writer of the
+        ``features.feature_metadata`` column — do not hand-roll the payload elsewhere, or a
+        newly added field is silently dropped at persistence and the model scores with a
+        different feature set than it trained on.
+        """
+        return json.dumps({f.name: getattr(self, f.name) for f in fields(self)})
 
     @classmethod
     def from_json(cls, json_str: str) -> "SparkFeatureMetadata":
-        """Deserialize from JSON."""
+        """Deserialize from JSON.
+
+        Unknown keys are ignored rather than raising, so a model trained by a newer DQX
+        version stays readable by an older one: the reader falls back to the defaults for
+        fields it does not know about instead of failing to load the model at all.
+        """
         data = json.loads(json_str)
-        return cls(**data)
+        known_fields = {f.name for f in fields(cls)}
+        unknown = set(data) - known_fields
+        if unknown:
+            logger.debug(
+                f"Ignoring unknown feature metadata keys {sorted(unknown)}; "
+                "this model was likely trained by a newer version of DQX."
+            )
+        return cls(**{k: v for k, v in data.items() if k in known_fields})
 
 
 def _spark_type_for_category(category: str) -> T.DataType:
@@ -819,3 +832,35 @@ def apply_feature_engineering(
     )
 
     return result_df, metadata
+
+
+def apply_feature_engineering_from_metadata(
+    df: DataFrame,
+    feature_metadata: SparkFeatureMetadata,
+    column_infos: list[ColumnTypeInfo] | None = None,
+) -> tuple[DataFrame, SparkFeatureMetadata]:
+    """Re-apply the transformations recorded in *feature_metadata* to a new DataFrame.
+
+    This is the derived ("scoring") mode of :func:`apply_feature_engineering`: rather than
+    computing encodings from the data, it replays the ones a model was trained with. Every
+    caller that scores, or that recomputes engineered features for an already-trained model,
+    should go through here so that a newly persisted metadata field has to be threaded in one
+    place instead of five.
+
+    Args:
+        df: DataFrame to transform.
+        feature_metadata: Metadata persisted at training time.
+        column_infos: Column infos, reconstructed from *feature_metadata* when omitted.
+
+    Returns:
+        The engineered DataFrame and the metadata describing it. The returned metadata's
+        ``engineered_feature_names`` reflects the columns that actually survived on *df*,
+        which is what the scoring UDF must be handed.
+    """
+    return apply_feature_engineering(
+        df,
+        column_infos if column_infos is not None else reconstruct_column_infos(feature_metadata),
+        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
+    )

@@ -8,7 +8,7 @@ from pyspark.sql import DataFrame
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
-    apply_feature_engineering,
+    apply_feature_engineering_from_metadata,
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -46,12 +46,8 @@ def apply_feature_engineering_for_scoring(
 
     cols_to_select = list(dict.fromkeys([*feature_cols, *merge_columns, *(passthrough_columns or [])]))
 
-    engineered_df, _ = apply_feature_engineering(
-        df.select(*cols_to_select),
-        column_infos,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    engineered_df, _ = apply_feature_engineering_from_metadata(
+        df.select(*cols_to_select), feature_metadata, column_infos=column_infos
     )
 
     return engineered_df

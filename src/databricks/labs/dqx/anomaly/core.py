@@ -29,7 +29,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
     SparkFeatureMetadata,
     apply_feature_engineering,
-    reconstruct_column_infos,
+    apply_feature_engineering_from_metadata,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
@@ -164,14 +164,8 @@ def score_with_model(
     Feature engineering is applied in Spark before the pandas UDF.
     This enables distributed inference across the Spark cluster.
     """
-    column_infos = reconstruct_column_infos(feature_metadata)
-
-    engineered_df, updated_metadata = apply_feature_engineering(
-        df.select(*feature_cols),
-        column_infos,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
+        df.select(*feature_cols), feature_metadata
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -207,14 +201,8 @@ def score_with_ensemble_models(
     models: list[Pipeline], df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
 ) -> DataFrame:
     """Score DataFrame using an ensemble of models and return mean scores."""
-    column_infos = reconstruct_column_infos(feature_metadata)
-
-    engineered_df, updated_metadata = apply_feature_engineering(
-        df.select(*feature_cols),
-        column_infos,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
+        df.select(*feature_cols), feature_metadata
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -407,12 +395,5 @@ def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatur
     Returns:
         Pandas DataFrame with engineered features
     """
-    column_infos_reconstructed = reconstruct_column_infos(feature_metadata)
-    engineered_train_df, _ = apply_feature_engineering(
-        train_df,
-        column_infos_reconstructed,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
-    )
+    engineered_train_df, _ = apply_feature_engineering_from_metadata(train_df, feature_metadata)
     return engineered_train_df.toPandas()

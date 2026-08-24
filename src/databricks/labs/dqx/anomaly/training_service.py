@@ -6,7 +6,6 @@ training logic lives on AnomalyTrainingService (public and private methods).
 """
 
 import collections.abc
-import json
 import logging
 from copy import deepcopy
 from datetime import datetime
@@ -35,8 +34,7 @@ from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from databricks.labs.dqx.anomaly.training_strategies import AnomalyTrainingStrategy, IsolationForestTrainingStrategy
 from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
-    apply_feature_engineering,
-    reconstruct_column_infos,
+    apply_feature_engineering_from_metadata,
 )
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.anomaly.types import AnomalyTrainingContext, TrainingArtifacts
@@ -135,14 +133,7 @@ class AnomalyTrainingService:
         feature_metadata: SparkFeatureMetadata,
     ) -> dict[str, dict[str, float]]:
         """Compute baseline statistics after training for drift detection."""
-        column_infos_for_stats = reconstruct_column_infos(feature_metadata)
-        engineered_train_df, _ = apply_feature_engineering(
-            train_df,
-            column_infos_for_stats,
-            categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-            frequency_maps=feature_metadata.categorical_frequency_maps,
-            onehot_categories=feature_metadata.onehot_categories,
-        )
+        engineered_train_df, _ = apply_feature_engineering_from_metadata(train_df, feature_metadata)
         baseline_stats = compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
         return baseline_stats
 
@@ -426,15 +417,10 @@ class AnomalyTrainingService:
         segment_by: list[str] | None,
     ) -> None:
         """Save training record to registry table."""
-        feature_metadata_json = json.dumps(
-            {
-                "column_infos": artifacts.feature_metadata.column_infos,
-                "categorical_frequency_maps": artifacts.feature_metadata.categorical_frequency_maps,
-                "onehot_categories": artifacts.feature_metadata.onehot_categories,
-                "engineered_feature_names": artifacts.feature_metadata.engineered_feature_names,
-                "categorical_cardinality_threshold": artifacts.feature_metadata.categorical_cardinality_threshold,
-            }
-        )
+        # Must go through to_json() rather than hand-rolling the payload: it is the single
+        # writer of this column, so any field added to SparkFeatureMetadata is persisted
+        # here automatically instead of being silently dropped.
+        feature_metadata_json = artifacts.feature_metadata.to_json()
 
         record = AnomalyModelRecord(
             identity=ModelIdentity(
