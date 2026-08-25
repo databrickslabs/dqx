@@ -44,6 +44,39 @@ Comparisons are **paired by seed** and tested with Wilcoxon signed-rank. The see
 data draw and the forest, and dominates the variance between configurations, so unpaired means would
 largely measure the seed.
 
+## Against the previous release
+
+The comparison that matters most: the released v0.16.0 build and this one, run through the **real DQX
+pipeline** — Spark, MLflow, Unity Catalog — over the same Delta tables, so neither side can differ by
+anything except the code.
+
+| scenario | how it was called | v0.16.0 | current | change |
+|---|---|---|---|---|
+| contextual anomaly | zero config | 0.1885 | **0.5703** | **+0.3818** |
+| contextual anomaly | explicit `columns` | 0.0376 | **0.5703** | **+0.5327** |
+| globally extreme anomaly | zero config | 0.3743 | **1.0000** | **+0.6257** |
+| globally extreme anomaly | explicit `columns` | 1.0000 | 1.0000 | +0.0000 |
+
+Better on three, identical on the fourth, worse on none. Two rows are worth reading closely:
+
+- **`contextual` / explicit columns, 0.0376 → 0.5703.** v0.16.0 has no conditioning mechanism at all,
+  so this is the cleanest statement of what conditioning buys: a fifteenfold improvement on an anomaly
+  that is invisible to a whole-table comparison.
+- **`global` / explicit columns, both exactly 1.0000.** This path is untouched by the change, and the
+  two builds agree exactly. That is the regression check: nothing was traded away to get the rows
+  above.
+
+Getting this measurement right took two attempts, and the reason is worth recording because it applies
+to anyone repeating it. The first run showed the *new* build losing on three of four cells. It was
+measuring the sampler: training samples 30% of rows by default via `.sample`, which under Spark
+Connect depends on partition ordering, so the two builds trained on different rows. With
+`sample_fraction=1.0` every cell is reproducible to four decimal places across repeats, and the
+picture inverts. **A single-point comparison of this pipeline is not evidence.**
+
+Both `RobustScaler` removal and the configuration-hash change landed after these figures were
+measured. Neither can move them: the scaler is provably a no-op (see below), and the hash affects
+model identity rather than scores.
+
 ## Results
 
 1,395 cells: a synthetic two-factor sweep plus the Server Machine Dataset (28 entities) and NSL-KDD,
@@ -161,7 +194,12 @@ Every configuration sees identical rows, so neither affects the comparison.
 - The harness reimplements the baseline-relative transform in numpy rather than calling DQX, so a
   sweep of a few thousand fits needs no Spark session. It therefore measures the **mechanism**, not
   DQX's implementation of it. Pipeline fidelity is asserted separately in
-  `tests/integration_anomaly/test_anomaly_quality.py`, which runs the real Spark and MLflow path.
+  `tests/integration_anomaly/test_anomaly_quality.py`, which runs the real Spark and MLflow path, and
+  the release comparison above runs the pipeline end to end.
+- The harness fits the same estimator configuration DQX ships (200 trees, contamination from
+  `expected_anomaly_rate`). An earlier version used 100 trees, which understated the product; paired
+  comparisons were unaffected, since the configuration is held constant on both sides, but absolute
+  per-dataset figures moved.
 - Each configuration is fitted and scored on the same rows. This measures separability, not
   generalisation to unseen data.
 - Results are indicative. Always benchmark against your own data and environment.
