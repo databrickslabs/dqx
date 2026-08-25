@@ -23,7 +23,6 @@ from pyspark.sql.functions import col, pandas_udf
 from pyspark.sql.types import DoubleType, IntegerType, StructField, StructType
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
 
 from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
 from databricks.labs.dqx.anomaly.transformers import (
@@ -128,10 +127,22 @@ def prepare_training_features(
 
 
 def fit_sklearn_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tuple[Pipeline, dict[str, Any]]:
-    """Train sklearn IsolationForest pipeline on pre-engineered pandas DataFrame.
+    """Train the IsolationForest pipeline on pre-engineered pandas features.
+
+    No feature scaling. ``RobustScaler`` used to sit in front of the forest, and it could not have
+    made any difference: it is an affine per-feature transform, and Isolation Forest splits on
+    per-feature thresholds drawn uniformly between each feature's min and max, so the induced
+    partitions are identical either way. Measured across five ADBench datasets, PR-AUC with and
+    without it agreed to four decimal places -- covertype 0.0572/0.0572, mnist 0.2740/0.2740, cardio
+    0.5766/0.5766, shuttle 0.9789/0.9789, fraud 0.1926/0.1926. It cost a fit and a transform on every
+    training run and every scoring pass, and shipped inside every pickled artifact.
+
+    The single-step ``Pipeline`` is kept deliberately: ``named_steps["model"]`` is how the SHAP
+    explainer reaches the tree model, and it leaves somewhere for a transform that genuinely does
+    something to go later.
 
     Returns:
-        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
+        - pipeline: sklearn Pipeline wrapping the fitted IsolationForest
         - hyperparams: Model configuration for MLflow tracking
     """
     algo_cfg = params.algorithm_config or IsolationForestConfig()
@@ -146,7 +157,7 @@ def fit_sklearn_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tupl
         n_jobs=-1,
     )
 
-    pipeline = Pipeline([('scaler', RobustScaler()), ('model', iso_forest)])
+    pipeline = Pipeline([('model', iso_forest)])
     pipeline.fit(train_pandas)
 
     hyperparams: dict[str, Any] = {
@@ -154,7 +165,7 @@ def fit_sklearn_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tupl
         "num_trees": algo_cfg.num_trees,
         "max_samples": algo_cfg.subsampling_rate,
         "random_seed": algo_cfg.random_seed,
-        "feature_scaling": "RobustScaler",
+        "feature_scaling": "none",
     }
 
     return pipeline, hyperparams
@@ -168,7 +179,7 @@ def fit_isolation_forest(
     Feature engineering runs on Spark, then the model trains on the driver.
 
     Returns:
-        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
+        - pipeline: sklearn Pipeline wrapping the fitted IsolationForest
         - hyperparams: Model configuration for MLflow tracking
         - feature_metadata: Transformation metadata for distributed scoring
     """

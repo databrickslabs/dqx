@@ -192,10 +192,14 @@ def compute_contributions_for_matrix(
     """Compute normalized SHAP contributions for a feature matrix."""
     # If model is a Pipeline (due to feature scaling), extract components
     # SHAP's TreeExplainer only supports tree models, not pipelines
+    # A Pipeline no longer necessarily contains a scaler: DQX fits the forest without one, since an
+    # affine per-feature transform cannot change axis-parallel splits. Models trained before that
+    # still carry a RobustScaler, so the step is looked up rather than assumed -- indexing
+    # named_steps["scaler"] directly would raise KeyError on anything trained by this version.
     if isinstance(model_local, Pipeline):
-        scaler = model_local.named_steps["scaler"]
+        scaler = model_local.named_steps.get("scaler")
         tree_model = model_local.named_steps["model"]
-        needs_scaling = True
+        needs_scaling = scaler is not None
     else:
         scaler = None
         tree_model = model_local
