@@ -11,6 +11,9 @@ The three configurations:
 ``pooled``
     One model over the raw metrics. No notion of a group at all. This is DQX before #1484.
 
+Note the estimator is configured to match the shipped defaults (see :data:`N_TREES`), so the absolute
+figures are comparable with the product rather than with a lighter stand-in.
+
 ``relative``
     One model over the raw metrics *plus* each metric's deviation from its own group's baseline.
     This is what ``baseline_by`` does.
@@ -83,9 +86,18 @@ class FitResult:
     seconds: float
 
 
+# Mirrors what DQX ships: IsolationForestConfig(num_trees=200), and contamination taken from
+# expected_anomaly_rate (default 0.02) rather than sklearn's "auto". An earlier version of this
+# harness used 100 trees and "auto", which understated the product -- contamination only moves the
+# predict/offset_ threshold and cannot change score_samples ranking, so PR-AUC was unaffected by that
+# half, but tree count is not neutral.
+N_TREES = 200
+CONTAMINATION = 0.02
+
+
 def _forest(seed: int) -> IsolationForest:
     """One estimator configuration for every cell, so comparisons are not confounded by tuning."""
-    return IsolationForest(n_estimators=100, contamination="auto", random_state=seed, n_jobs=-1)
+    return IsolationForest(n_estimators=N_TREES, contamination=CONTAMINATION, random_state=seed, n_jobs=-1)
 
 
 def fit_pooled(values: np.ndarray, groups: np.ndarray, seed: int) -> FitResult:
