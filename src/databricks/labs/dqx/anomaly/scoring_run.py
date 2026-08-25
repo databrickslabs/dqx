@@ -25,14 +25,20 @@ from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
     probe_endpoint_reachable,
 )
 from databricks.labs.dqx.anomaly.scoring_utils import (
+    add_baseline_severity_percentile_column,
     add_info_column,
     add_severity_percentile_column,
     apply_row_filter,
     create_null_scored_dataframe,
     join_filtered_results_back,
+    mark_unseen_baselines,
+    null_out_unseen_baseline_scores,
+    permissive_quantile_points,
+    UnseenGroupContext,
 )
-from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
+from databricks.labs.dqx.anomaly.scoring_config import SEVERITY_QUANTILE_KEYS, ScoringConfig
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
+from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.anomaly.single_model_scorer import (
     score_with_sklearn_model,
     score_with_sklearn_model_local,
@@ -79,6 +85,59 @@ def _warn_if_max_groups_below_segments(config: ScoringConfig, num_eligible_segme
         )
 
 
+def _known_group_keys(parsed_metadata: SparkFeatureMetadata) -> list[str]:
+    """Group keys the model actually saw in training.
+
+    Read from the persisted baselines rather than from the per-group quantiles, because the
+    baselines exist for every grouped model while the quantiles are dropped for groups whose
+    calibration was incomplete — a group with a baseline was seen, whatever its calibration.
+    """
+    keys: set[str] = set()
+    for baselines in parsed_metadata.baseline_medians.values():
+        keys.update(baselines)
+    return sorted(keys)
+
+
+def _group_quantile_points(
+    parsed_metadata: SparkFeatureMetadata,
+) -> dict[str, list[tuple[float, float]]]:
+    """Reshape persisted per-group quantiles into interpolation points, per group.
+
+    A group missing any quantile key is dropped rather than partially interpolated: it falls back
+    to the global calibration, which is a defined answer, where a gap in the points would not be.
+    """
+    return {
+        key: [(percentile, quantiles[quantile_key]) for percentile, quantile_key in SEVERITY_QUANTILE_KEYS]
+        for key, quantiles in parsed_metadata.baseline_score_quantiles.items()
+        if all(quantile_key in quantiles for _, quantile_key in SEVERITY_QUANTILE_KEYS)
+    }
+
+
+def _add_severity(
+    scored_df: DataFrame,
+    config: ScoringConfig,
+    parsed_metadata: SparkFeatureMetadata,
+    group_quantile_points: dict[str, list[tuple[float, float]]],
+    global_quantile_points: list[tuple[float, float]],
+) -> DataFrame:
+    """Calibrate severity per group where the model has per-group quantiles, globally otherwise."""
+    if parsed_metadata.baseline_by and group_quantile_points:
+        return add_baseline_severity_percentile_column(
+            scored_df,
+            score_col=config.score_col,
+            severity_col=config.severity_col,
+            baseline_by=parsed_metadata.baseline_by,
+            group_quantile_points=group_quantile_points,
+            fallback_quantile_points=global_quantile_points,
+        )
+    return add_severity_percentile_column(
+        scored_df,
+        score_col=config.score_col,
+        severity_col=config.severity_col,
+        quantile_points=global_quantile_points,
+    )
+
+
 def score_global_model(
     df: DataFrame,
     record: AnomalyModelRecord,
@@ -115,7 +174,13 @@ def score_global_model(
     if record.features.feature_metadata is None:
         raise InvalidParameterError(f"Model {record.identity.model_name} missing feature_metadata")
 
-    quantile_points = extract_quantile_points(record)
+    global_quantile_points = extract_quantile_points(record)
+    parsed_metadata = SparkFeatureMetadata.from_json(record.features.feature_metadata)
+    group_quantile_points = _group_quantile_points(parsed_metadata)
+    # The scorers use these only to decide which rows are worth a SHAP call. With per-group
+    # calibration the bound differs by group, so the gate takes the per-percentile minimum:
+    # permissive, and add_info_column re-masks contributions on the real severity anyway.
+    quantile_points = permissive_quantile_points(group_quantile_points, global_quantile_points)
     if config.driver_only:
         scored_df = (
             score_ensemble_models_local(
@@ -174,11 +239,27 @@ def score_global_model(
     if config.enable_contributions and "anomaly_contributions" in scored_df.columns:
         scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
-    scored_df = add_severity_percentile_column(
+    # Mark unseen groups before severity, then null the score in place afterwards: severity is
+    # interpolated from the score, so nulling first would leave severity computed from nothing.
+    unseen_col = "__dqx_is_new_group"
+    group_key_col = "__dqx_row_group_key"
+    scored_df = mark_unseen_baselines(
         scored_df,
+        parsed_metadata.baseline_by,
+        _known_group_keys(parsed_metadata),
+        unseen_col=unseen_col,
+        group_key_col=group_key_col,
+    )
+
+    scored_df = _add_severity(scored_df, config, parsed_metadata, group_quantile_points, global_quantile_points)
+
+    scored_df = null_out_unseen_baseline_scores(
+        scored_df,
+        unseen_col=unseen_col,
         score_col=config.score_col,
         severity_col=config.severity_col,
-        quantile_points=quantile_points,
+        contributions_col=config.contributions_col if config.enable_contributions else None,
+        score_std_col=config.score_std_col,
     )
 
     if config.enable_ai_explanation:
@@ -194,18 +275,20 @@ def score_global_model(
         scored_df,
         config.model_name,
         config.threshold,
+        output_columns=config.output_columns,
         info_col_name=config.info_col,
         segment_values=None,
         enable_contributions=config.enable_contributions,
         enable_confidence_std=config.enable_confidence_std,
         ai_explanation_col=config.ai_explanation_col if config.enable_ai_explanation else None,
-        score_col=config.score_col,
-        score_std_col=config.score_std_col,
-        contributions_col=config.contributions_col,
-        severity_col=config.severity_col,
+        unseen=UnseenGroupContext(
+            unseen_col=unseen_col,
+            group_key_col=group_key_col,
+            flag_as_violation=config.flag_unseen_baseline_as_violation,
+        ),
     )
 
-    internal_to_remove = [config.score_std_col, config.severity_col]
+    internal_to_remove = [config.score_std_col, config.severity_col, unseen_col, group_key_col]
     if config.enable_contributions:
         internal_to_remove.append(config.contributions_col)
     if config.enable_ai_explanation:
@@ -326,15 +409,12 @@ def score_single_segment(
         segment_scored,
         config.model_name,
         config.threshold,
+        output_columns=config.output_columns,
         info_col_name=config.info_col,
         segment_values=segment_model.segmentation.segment_values,
         enable_contributions=config.enable_contributions,
         enable_confidence_std=config.enable_confidence_std,
         ai_explanation_col=config.ai_explanation_col if config.enable_ai_explanation else None,
-        score_col=config.score_col,
-        score_std_col=config.score_std_col,
-        contributions_col=config.contributions_col,
-        severity_col=config.severity_col,
     )
 
     return segment_scored

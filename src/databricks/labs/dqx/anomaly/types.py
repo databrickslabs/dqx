@@ -70,7 +70,14 @@ class EnsembleTrainingResult:
 
 @dataclass(frozen=True)
 class AnomalyTrainingContext:
-    """Context containing all inputs needed for training."""
+    """Context containing all inputs needed for training.
+
+    ``baseline_by`` and ``segment_by`` are mutually exclusive, and ``_resolve_grouping`` guarantees
+    it: ``segment_by`` selects the legacy path that trains one model per group and dispatches
+    ``train()``, while ``baseline_by`` selects a single pooled model fed each metric's deviation
+    from its own group's baseline. Both being set would append relative features inside each
+    segment while leaving the model config hash unchanged.
+    """
 
     spark: SparkSession
     df: DataFrame
@@ -83,6 +90,7 @@ class AnomalyTrainingContext:
     expected_anomaly_rate: float
     exclude_columns: list[str] | None
     auto_discovery_used: bool
+    baseline_by: list[str] | None = None
 
 
 @dataclass(frozen=True)

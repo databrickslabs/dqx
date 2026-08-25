@@ -39,5 +39,11 @@ anomaly_info_struct_schema = StructType(
         StructField("contributions", MapType(StringType(), DoubleType()), True),
         StructField("confidence_std", DoubleType(), True),
         StructField("ai_explanation", ai_explanation_struct_schema, True),
+        # True when the row's group was never seen in training, so its score and severity are
+        # null rather than guessed. Appended at the end: existing named-field queries such as
+        # _dq_info[0].anomaly.score keep working, but a Delta table already holding _dq_info
+        # needs mergeSchema on append because the struct is now wider.
+        StructField("is_new_baseline", BooleanType(), True),
+        StructField("new_baseline_key", StringType(), True),
     ]
 )

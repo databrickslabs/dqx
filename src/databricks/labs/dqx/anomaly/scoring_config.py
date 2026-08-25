@@ -65,6 +65,17 @@ class ScoringConfig:
     # eligible segments — total LLM calls stay <= *max_groups* regardless of segment
     # count.
     max_groups: int = 500
+    # Whether a row whose group was absent from training counts as a violation. Such a row gets a
+    # null score and severity because neither encoder can represent an unseen category honestly,
+    # so `severity >= threshold` is null and the verdict has to be chosen rather than computed.
+    #
+    # Deliberately not exposed on has_no_row_anomalies. "Is this group value one I recognise?" is a
+    # set-membership question, and DQX already has foreign_key / is_in_list for exactly that — a
+    # flag here would duplicate a better-suited check while pushing the anomaly check past the
+    # argument count the project holds itself to. Kept as an internal seam so the behaviour is
+    # testable and reachable programmatically; False keeps "could not judge" distinct from
+    # "is anomalous", and is_new_baseline reports the fact either way.
+    flag_unseen_baseline_as_violation: bool = False
     output_columns: ScoringOutputColumns = field(default_factory=ScoringOutputColumns)
 
     @property

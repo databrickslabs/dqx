@@ -25,6 +25,11 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from databricks.labs.dqx.anomaly.group_config import (
+    MAX_AUTO_GROUP_COUNT,
+    MAX_SEGMENT_MODELS,
+    MIN_ROWS_PER_SEGMENT,
+)
 from databricks.labs.dqx.profiling_utils import compute_exact_distinct_counts, compute_null_and_distinct_counts
 
 logger = logging.getLogger(__name__)
@@ -245,12 +250,12 @@ def _calculate_total_segments(
     # Warn if segments are too granular relative to data size
     avg_rows_per_segment = total_count / segment_count if segment_count > 0 else 0
 
-    if segment_count > 50:
+    if segment_count > MAX_SEGMENT_MODELS:
         warnings.append(
             f"Detected {segment_count} total segments, training may be slow. "
             "Consider filtering or using coarser segmentation."
         )
-    elif avg_rows_per_segment < 100:
+    elif avg_rows_per_segment < MIN_ROWS_PER_SEGMENT:
         warnings.append(
             f"Detected {segment_count} segments with only ~{int(avg_rows_per_segment)} rows per segment on average. "
             f"Models may be unreliable. Consider reducing segmentation or using more data (total rows: {total_count})."
@@ -297,10 +302,10 @@ def _select_segment_columns(
         # Only consider columns with 2-20 distinct values (not 50)
         # Ensure at least 100 rows per segment on average
         meets_segment_criteria = (
-            2 <= distinct_count <= 20  # More conservative upper bound
+            2 <= distinct_count <= MAX_AUTO_GROUP_COUNT  # More conservative upper bound
             and null_rate < 0.1
             and not is_id_column
-            and (total_count / distinct_count) >= 100  # At least 100 rows per segment
+            and (total_count / distinct_count) >= MIN_ROWS_PER_SEGMENT
         )
         is_high_cardinality = distinct_count > 50
 

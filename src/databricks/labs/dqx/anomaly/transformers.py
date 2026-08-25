@@ -11,11 +11,11 @@ import logging
 import re
 import sys
 import threading
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from io import StringIO
 from typing import Any
 
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql.functions import (
@@ -34,6 +34,7 @@ from pyspark.sql.functions import (
 )
 from pyspark.sql.types import DoubleType, TimestampType
 
+from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.utils import get_table_primary_keys
@@ -73,6 +74,17 @@ class SparkFeatureMetadata:
     onehot_categories: dict[str, list[str]]  # col_name -> [distinct_values] for OneHot encoding
     engineered_feature_names: list[str]  # Final feature names after engineering
     categorical_cardinality_threshold: int = 20  # Threshold used for categorical encoding
+    # Group conditioning. Every field defaults to empty, so a model trained before these existed
+    # deserializes with no grouping, the relative transform returns immediately, and
+    # engineered_feature_names is byte-identical to what it was — such models score exactly as
+    # they did before. See databrickslabs/dqx#1484.
+    baseline_by: list[str] = field(default_factory=list)  # Columns forming the group key
+    baseline_medians: dict[str, dict[str, float]] = field(default_factory=dict)  # metric -> (group key -> median)
+    global_medians: dict[str, float] = field(default_factory=dict)  # metric -> median, for unseen groups
+    # Per-group score calibration: group key -> (quantile key -> score bound). Lives here rather
+    # than in the typed training.score_quantiles map<string,double> column, which would need a
+    # registry migration to hold a nested map; training.score_quantiles stays the global fallback.
+    baseline_score_quantiles: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """Serialize to JSON for storage.
@@ -742,12 +754,132 @@ def _process_numeric_columns(
     return transformed_df
 
 
+def _signed_log1p(column: Column) -> Column:
+    """``signum(x) * log1p(abs(x))`` — a log-like transform defined over all reals.
+
+    Plain ``log1p`` is NaN for ``x <= -1``, so it is only safe for counts and shares. Any signed
+    metric (profit, balance, delta) would silently produce NaN features. This form is monotone
+    over the whole real line and identical to ``log1p`` for ``x >= 0``.
+    """
+    return F.signum(column) * F.log1p(F.abs(column))
+
+
+def _process_baseline_relative_features(
+    transformed_df: DataFrame,
+    numeric_cols: list[ColumnTypeInfo],
+    baseline_by: list[str],
+    is_training: bool,
+    baseline_medians: dict[str, dict[str, float]],
+    global_medians: dict[str, float],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Append each numeric metric's deviation from its own group's baseline.
+
+    ``rel = signed_log(value) - signed_log(group_median(value))``. The log-ratio form is stable
+    when a baseline is near zero and symmetric for halving versus doubling; the raw metric is
+    kept alongside, so globally absurd values stay detectable even where they are ordinary for
+    their group.
+
+    Follows ``_apply_frequency_encoding``'s shape exactly: compute and persist while training,
+    broadcast-join and coalesce the miss while scoring. A row whose group was never trained on
+    falls back to the global baseline, which makes it look ordinary rather than extreme — the
+    conservative direction, and the case a caller can detect explicitly via ``is_new_baseline``.
+
+    Must run last. ``engineered_feature_names`` is positional: the sklearn pipeline is handed
+    columns in this order, so features may only ever be appended at the tail. Inserting a
+    transform before this one would silently reorder an already-trained model's inputs.
+    """
+    if not baseline_by or not numeric_cols:
+        return transformed_df
+
+    metrics = [c.name for c in numeric_cols]
+    group_key_col = BASELINE_KEY_COLUMN
+    transformed_df = with_baseline_key(transformed_df, baseline_by)
+
+    if is_training:
+        computed_group, computed_global = _compute_baseline_medians(transformed_df, metrics, group_key_col)
+        baseline_medians.update(computed_group)
+        global_medians.update(computed_global)
+
+    for metric in metrics:
+        feature_name = f"{metric}_rel_baseline"
+        baselines = baseline_medians.get(metric, {})
+        global_baseline = global_medians.get(metric, 0.0)
+
+        if not baselines:
+            # No baseline for this metric at all: the deviation is undefined, so emit a constant
+            # rather than a fabricated signal. Still appended, to keep the feature list stable.
+            transformed_df = transformed_df.withColumn(feature_name, lit(0.0))
+            engineered_features.append(feature_name)
+            continue
+
+        baseline_col = f"__dqx_{metric}_baseline"
+        lookup_df = _baseline_lookup_df(transformed_df, baselines, group_key_col, baseline_col)
+        transformed_df = transformed_df.join(broadcast(lookup_df), on=group_key_col, how="left")
+        resolved_baseline = coalesce(col(baseline_col), lit(global_baseline))
+        transformed_df = transformed_df.withColumn(
+            feature_name, _signed_log1p(col(metric)) - _signed_log1p(resolved_baseline)
+        )
+        transformed_df = transformed_df.drop(baseline_col)
+        engineered_features.append(feature_name)
+
+    # The key column deliberately survives: it is the frame's only remaining record of the
+    # grouping once the raw group columns are dropped, and training-time severity calibration
+    # runs on the scored frame, downstream of here. It is not a feature — see the explicit
+    # projection in ``prepare_training_features``, which is what keeps it out of the model.
+    return transformed_df
+
+
+def _compute_baseline_medians(
+    df: DataFrame, metrics: list[str], group_key_col: str
+) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
+    """Compute each metric's per-group median, plus a global median for unseen groups.
+
+    One ``groupBy`` over all metrics rather than one per metric, and one global aggregation.
+    ``percentile_approx`` rather than an exact median: the baseline only has to be
+    representative, and an exact median would need a full sort per group.
+    """
+    group_exprs = [F.percentile_approx(col(m), 0.5).alias(m) for m in metrics]
+    group_rows = df.groupBy(group_key_col).agg(*group_exprs).collect()
+
+    baseline_medians: dict[str, dict[str, float]] = {m: {} for m in metrics}
+    for row in group_rows:
+        key = row[group_key_col]
+        for metric in metrics:
+            value = row[metric]
+            if value is not None:
+                baseline_medians[metric][key] = float(value)
+
+    global_row = df.agg(*[F.percentile_approx(col(m), 0.5).alias(m) for m in metrics]).first()
+    global_medians: dict[str, float] = {}
+    if global_row is not None:
+        for metric in metrics:
+            value = global_row[metric]
+            global_medians[metric] = float(value) if value is not None else 0.0
+
+    return baseline_medians, global_medians
+
+
+def _baseline_lookup_df(df: DataFrame, baselines: dict[str, float], group_key_col: str, baseline_col: str) -> DataFrame:
+    """Build a broadcastable ``(group key, baseline)`` lookup for one metric."""
+    schema = T.StructType(
+        [
+            T.StructField(group_key_col, T.StringType(), False),
+            T.StructField(baseline_col, T.DoubleType(), False),
+        ]
+    )
+    return df.sparkSession.createDataFrame(list(baselines.items()), schema=schema)
+
+
 def apply_feature_engineering(
     df: DataFrame,
     column_infos: list[ColumnTypeInfo],
     categorical_cardinality_threshold: int = 20,
     frequency_maps: dict[str, dict[str, float]] | None = None,
     onehot_categories: dict[str, list[str]] | None = None,
+    baseline_by: list[str] | None = None,
+    baseline_medians: dict[str, dict[str, float]] | None = None,
+    global_medians: dict[str, float] | None = None,
 ) -> tuple[DataFrame, SparkFeatureMetadata]:
     """
     Apply feature engineering transformations in Spark (distributed).
@@ -756,13 +888,18 @@ def apply_feature_engineering(
         - DataFrame with engineered numeric features
         - Metadata for reconstructing transformations during scoring
 
-    Transformations applied:
+    Transformations applied, in this order — the order is part of the contract, because
+    ``engineered_feature_names`` is positional and the sklearn pipeline is handed columns in it:
     1. Categorical: OneHot (low-card) or Frequency encoding (high-card)
     2. Datetime: Extract hour_sin/cos, dow_sin/cos, month_sin/cos, is_weekend
     3. Boolean: Map to 0/1
     4. Numeric: Keep as-is
-    5. Null indicators: Add column_is_null for columns with nulls
-    6. Imputation: Fill nulls with 0 (numeric), "MISSING" (categorical), epoch (datetime), 0 (boolean)
+    5. Group-relative: deviation of each numeric metric from its own group's baseline
+    6. Null indicators: Add column_is_null for columns with nulls
+    7. Imputation: Fill nulls with 0 (numeric), "MISSING" (categorical), epoch (datetime), 0 (boolean)
+
+    New transforms must be appended at the end, never inserted: inserting one shifts the feature
+    positions an already-trained model expects.
 
     Args:
         df: Input DataFrame with original columns
@@ -770,12 +907,21 @@ def apply_feature_engineering(
         categorical_cardinality_threshold: Threshold for OneHot vs Frequency encoding
         frequency_maps: Pre-computed frequency maps (for scoring). If None, compute from df (for training).
         onehot_categories: Pre-computed OneHot distinct values (for scoring). If None, compute from df (for training).
+        baseline_by: Columns forming the group key. Empty disables group-relative features entirely,
+            which is what makes a pre-grouping model's feature list byte-identical.
+        baseline_medians: Pre-computed per-group medians (for scoring). Computed from df when training.
+        global_medians: Pre-computed global medians, used for groups absent from training.
     """
     is_training = frequency_maps is None
     if frequency_maps is None:
         frequency_maps = {}
     if onehot_categories is None:
         onehot_categories = {}
+    baseline_by = list(baseline_by or [])
+    if baseline_medians is None:
+        baseline_medians = {}
+    if global_medians is None:
+        global_medians = {}
 
     transformed_df = df
     engineered_features: list[str] = []
@@ -804,10 +950,27 @@ def apply_feature_engineering(
 
     transformed_df = _process_numeric_columns(transformed_df, numeric_cols, engineered_features)
 
+    # Must stay last: engineered_feature_names is positional, so features may only be appended.
+    transformed_df = _process_baseline_relative_features(
+        transformed_df,
+        numeric_cols,
+        baseline_by,
+        is_training,
+        baseline_medians,
+        global_medians,
+        engineered_features,
+    )
+
     # Select engineered features + preserve any extra columns not in column_infos
-    # (e.g., __dqx_row_id__ for joining results back)
+    # (e.g., __dqx_row_id__ for joining results back). Group columns are the comparison basis,
+    # not features, so they are excluded here — they must not reach the sklearn pipeline or the
+    # inferred MLflow signature.
     feature_col_names = [c.name for c in column_infos]
-    extra_cols = [c for c in transformed_df.columns if c not in feature_col_names and c not in engineered_features]
+    extra_cols = [
+        c
+        for c in transformed_df.columns
+        if c not in feature_col_names and c not in engineered_features and c not in baseline_by
+    ]
     result_df = transformed_df.select(*engineered_features, *extra_cols)
 
     # Use only the features that actually exist in the result DataFrame
@@ -829,6 +992,9 @@ def apply_feature_engineering(
         onehot_categories=onehot_categories,
         engineered_feature_names=actual_engineered_features,
         categorical_cardinality_threshold=categorical_cardinality_threshold,
+        baseline_by=baseline_by,
+        baseline_medians=baseline_medians,
+        global_medians=global_medians,
     )
 
     return result_df, metadata
@@ -863,4 +1029,7 @@ def apply_feature_engineering_from_metadata(
         categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
         frequency_maps=feature_metadata.categorical_frequency_maps,
         onehot_categories=feature_metadata.onehot_categories,
+        baseline_by=feature_metadata.baseline_by,
+        baseline_medians=feature_metadata.baseline_medians,
+        global_medians=feature_metadata.global_medians,
     )

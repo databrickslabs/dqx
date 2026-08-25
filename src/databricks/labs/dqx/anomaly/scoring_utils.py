@@ -1,7 +1,9 @@
 """Anomaly scoring helpers: DataFrame/schema builders, row filter, join, reserved column checks."""
 
+from dataclasses import dataclass
+
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql.types import (
     DoubleType,
     MapType,
@@ -11,7 +13,8 @@ from pyspark.sql.types import (
 )
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema, anomaly_info_struct_schema
-from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values
+from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
+from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values, baseline_key_column
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.utils import safe_filter_expr
 from databricks.labs.dqx.schema.dq_info_schema import (
@@ -60,19 +63,31 @@ def create_null_scored_dataframe(
     return result.withColumn(info_col_name, build_dq_info_struct(anomaly=null_anomaly_info))
 
 
+@dataclass(frozen=True)
+class UnseenGroupContext:
+    """Where to find the unseen-group verdict, and what it should mean.
+
+    Bundled rather than passed as three more parameters to ``add_info_column``: they are only ever
+    meaningful together, and the alternative is a twelve-plus argument signature nobody can read.
+    """
+
+    unseen_col: str
+    group_key_col: str
+    flag_as_violation: bool = False
+
+
 def add_info_column(
     df: DataFrame,
     model_name: str,
     threshold: float,
-    info_col_name: str,
+    *,
+    output_columns: ScoringOutputColumns | None = None,
+    info_col_name: str | None = None,
     segment_values: dict[str, str] | None = None,
     enable_contributions: bool = False,
     enable_confidence_std: bool = False,
     ai_explanation_col: str | None = None,
-    score_col: str = "anomaly_score",
-    score_std_col: str = "anomaly_score_std",
-    contributions_col: str = "anomaly_contributions",
-    severity_col: str = "severity_percentile",
+    unseen: UnseenGroupContext | None = None,
 ) -> DataFrame:
     """Add info struct column with anomaly metadata.
 
@@ -80,26 +95,45 @@ def add_info_column(
         df: Scored DataFrame with anomaly_score, prediction, etc.
         model_name: Name of the model used for scoring.
         threshold: Threshold used for row anomaly detection.
-        info_col_name: Name for the info struct column (collision-safe UUID name expected).
+        output_columns: Internal column names to read scores, severity, contributions and std
+            from, and where to write the info struct. Defaults to the standard names.
+        info_col_name: Overrides ``output_columns.info`` when given (collision-safe UUID name).
         segment_values: Segment values if model is segmented (None for global models).
         enable_contributions: Whether anomaly_contributions are available (0–100 percent).
         enable_confidence_std: Whether anomaly_score_std is available.
         ai_explanation_col: Optional column name carrying the pre-computed AI explanation struct.
             When provided and present on df, it is packaged into _dq_info.
-        score_col: Column name for anomaly scores (internal, collision-safe).
-        score_std_col: Column name for ensemble std scores (internal, collision-safe).
-        contributions_col: Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
-        severity_col: Column name for severity percentile (internal, collision-safe).
+        unseen: Where the unseen-group verdict lives and whether it counts as a violation. None
+            means the model is not grouped, so no row is unseen.
 
     Returns:
         DataFrame with info column added.
     """
+    output_columns = output_columns or ScoringOutputColumns()
+    score_col = output_columns.score
+    score_std_col = output_columns.score_std
+    contributions_col = output_columns.contributions
+    severity_col = output_columns.severity
+    info_col_name = info_col_name or output_columns.info
+
     # Build anomaly info struct
+    unseen_col = unseen.unseen_col if unseen else None
+    group_key_col = unseen.group_key_col if unseen else None
+    flag_unseen_baseline_as_violation = unseen.flag_as_violation if unseen else False
+    unseen_expr = F.col(unseen_col) if unseen_col and unseen_col in df.columns else F.lit(False)
+
+    # An unseen group has a null severity, so `severity >= threshold` is null rather than False.
+    # Decide it explicitly: flag_unseen_baseline_as_violation says whether "we cannot judge this row"
+    # should count as a violation, which is a policy question only the caller can answer.
+    is_anomaly = F.when(unseen_expr, F.lit(bool(flag_unseen_baseline_as_violation))).otherwise(
+        F.col(severity_col) >= F.lit(threshold)
+    )
+
     anomaly_info_fields = {
         "check_name": F.lit("has_no_row_anomalies"),
         "score": F.round(F.col(score_col), 3),
         "severity_percentile": F.round(F.col(severity_col), 1),
-        "is_anomaly": F.col(severity_col) >= F.lit(threshold),
+        "is_anomaly": is_anomaly,
         "threshold": F.lit(threshold),
         "model": F.lit(model_name),
     }
@@ -136,6 +170,16 @@ def add_info_column(
     else:
         anomaly_info_fields["ai_explanation"] = F.lit(None).cast(ai_explanation_struct_schema)
 
+    # Surface the unseen-group verdict, and the key that was not recognised so the caller can act
+    # on it (retrain, or investigate an unexpected dimension value) without re-deriving it.
+    anomaly_info_fields["is_new_baseline"] = unseen_expr
+    if group_key_col and group_key_col in df.columns:
+        anomaly_info_fields["new_baseline_key"] = F.when(unseen_expr, F.col(group_key_col)).otherwise(
+            F.lit(None).cast(StringType())
+        )
+    else:
+        anomaly_info_fields["new_baseline_key"] = F.lit(None).cast(StringType())
+
     anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()]).cast(
         anomaly_info_struct_schema
     )
@@ -163,29 +207,202 @@ def add_severity_percentile_column(
     if not quantile_points:
         return df.withColumn(severity_col, F.lit(None).cast(DoubleType()))
 
-    # Ensure points are sorted by percentile
     points = sorted(quantile_points, key=lambda p: p[0])
-    score_expr = F.col(score_col)
+    expr = _piecewise_severity_expr(F.col(score_col), [(p, F.lit(float(q))) for p, q in points])
+    return df.withColumn(severity_col, expr)
 
-    # Handle null scores
+
+def _piecewise_severity_expr(score_expr: Column, points: list[tuple[float, Column]]) -> Column:
+    """Map a score onto 0–100 by piecewise linear interpolation between *points*.
+
+    The score bounds are Columns rather than floats so the same interpolation serves both the
+    global calibration, where each bound is a literal, and per-group calibration, where each
+    bound is a column read from a broadcast lookup of that row's group.
+
+    Args:
+        score_expr: The score to map.
+        points: ``(percentile, score bound)`` pairs, ordered by percentile.
+    """
     expr = F.when(score_expr.isNull(), F.lit(None).cast(DoubleType()))
 
     prev_p, prev_q = points[0]
-    expr = expr.when(score_expr <= F.lit(prev_q), F.lit(float(prev_p)))
+    expr = expr.when(score_expr <= prev_q, F.lit(float(prev_p)))
 
     for current_p, current_q in points[1:]:
-        if current_q == prev_q:
-            interpolated = F.lit(float(current_p))
-        else:
-            interpolated = F.lit(float(prev_p)) + (
-                (score_expr - F.lit(prev_q)) * (float(current_p) - float(prev_p)) / (float(current_q) - float(prev_q))
-            )
-        expr = expr.when(score_expr <= F.lit(current_q), interpolated)
+        span = current_q - prev_q
+        # A degenerate segment (equal bounds) would divide by zero. It means every score in this
+        # band sits on one point, so the upper percentile is the answer outright.
+        interpolated = F.when(span == F.lit(0.0), F.lit(float(current_p))).otherwise(
+            F.lit(float(prev_p)) + ((score_expr - prev_q) * F.lit(float(current_p) - float(prev_p)) / span)
+        )
+        expr = expr.when(score_expr <= current_q, interpolated)
         prev_p, prev_q = current_p, current_q
 
-    expr = expr.otherwise(F.lit(float(prev_p)))
+    return expr.otherwise(F.lit(float(prev_p)))
 
-    return df.withColumn(severity_col, expr)
+
+def add_baseline_severity_percentile_column(
+    df: DataFrame,
+    *,
+    score_col: str,
+    severity_col: str,
+    baseline_by: list[str],
+    group_quantile_points: dict[str, list[tuple[float, float]]],
+    fallback_quantile_points: list[tuple[float, float]],
+) -> DataFrame:
+    """Add a severity percentile calibrated against each row's own group.
+
+    A raw anomaly score is not comparable across groups: severity is a percentile of a score
+    distribution, and each group has its own. Calibrating per group is what makes "severity 97"
+    mean the same thing in a high-volume group as in a quiet one.
+
+    Implemented as a broadcast join of a ``(group key, p00 … p100)`` lookup plus one piecewise
+    expression over those columns — deliberately *not* a nested
+    ``when(group_key == lit(k), <interpolation>)`` chain, which at 90 groups and 11 points is
+    around a thousand branches of generated code and blows up compilation.
+
+    Groups absent from *group_quantile_points* fall back to the global calibration, so a group
+    seen at scoring but not at training still gets a severity rather than a null.
+    """
+    if not group_quantile_points:
+        return add_severity_percentile_column(
+            df, score_col=score_col, severity_col=severity_col, quantile_points=fallback_quantile_points
+        )
+
+    percentiles = [p for p, _ in sorted(fallback_quantile_points, key=lambda point: point[0])]
+    fallback_by_percentile = dict(fallback_quantile_points)
+    quantile_cols = {p: f"__dqx_group_q{int(p * 100):05d}" for p in percentiles}
+
+    group_key_col = "__dqx_severity_group_key"
+    df = df.withColumn(group_key_col, baseline_key_column(baseline_by))
+
+    schema = StructType(
+        [StructField(group_key_col, StringType(), False)]
+        + [StructField(quantile_cols[p], DoubleType(), True) for p in percentiles]
+    )
+    rows = []
+    for key, points in group_quantile_points.items():
+        by_percentile = dict(points)
+        rows.append((key, *[by_percentile.get(p) for p in percentiles]))
+    lookup_df = df.sparkSession.createDataFrame(rows, schema=schema)
+
+    df = df.join(F.broadcast(lookup_df), on=group_key_col, how="left")
+
+    bounds = [(p, F.coalesce(F.col(quantile_cols[p]), F.lit(float(fallback_by_percentile[p])))) for p in percentiles]
+    df = df.withColumn(severity_col, _piecewise_severity_expr(F.col(score_col), bounds))
+
+    return df.drop(group_key_col, *quantile_cols.values())
+
+
+#: Above this many known group keys, membership is tested with a broadcast anti-join rather than
+#: an `isin` list. An `isin` of thousands of literals bloats the query plan.
+_MAX_ISIN_GROUP_KEYS = 200
+
+
+def mark_unseen_baselines(
+    df: DataFrame,
+    baseline_by: list[str],
+    known_group_keys: list[str],
+    *,
+    unseen_col: str,
+    group_key_col: str,
+) -> DataFrame:
+    """Add a boolean *unseen_col*, True where the row's group was absent from training.
+
+    Both categorical encoders mishandle an unseen value, in opposite directions, and neither
+    tells the caller:
+
+    - One-hot emits all zeros. Because each one-hot column is 0 for most training rows, an
+      all-zeros row looks like the majority on *every* axis, so axis-aligned splits cannot see
+      that no category is set at all. Result: a false negative — the most normal-looking score
+      in the table.
+    - Frequency encoding coalesces the miss to 0.0, which sits *below every frequency seen in
+      training*. Result: a false positive, a fabricated extreme. This is the branch taken above
+      the cardinality threshold, so it is the one that fires on wide groupings.
+
+    Either way the score is not meaningful, so the honest answer is to flag it rather than emit a
+    number. Uses ``isin`` for a modest number of known keys and a broadcast left-join for many,
+    since an ``isin`` over thousands of literals bloats the query plan.
+    """
+    if not baseline_by:
+        return df.withColumn(unseen_col, F.lit(False)).withColumn(group_key_col, F.lit(None).cast(StringType()))
+
+    df = df.withColumn(group_key_col, baseline_key_column(baseline_by))
+
+    if not known_group_keys:
+        # A grouped model with no recorded groups cannot judge membership; treating every row as
+        # unseen would null the whole frame, so trust the score instead.
+        return df.withColumn(unseen_col, F.lit(False))
+
+    if len(known_group_keys) <= _MAX_ISIN_GROUP_KEYS:
+        return df.withColumn(unseen_col, ~F.col(group_key_col).isin(known_group_keys))
+
+    known_col = "__dqx_known_group_key"
+    known_df = df.sparkSession.createDataFrame(
+        [(key,) for key in known_group_keys],
+        schema=StructType([StructField(known_col, StringType(), False)]),
+    )
+    joined = df.join(F.broadcast(known_df), F.col(group_key_col) == F.col(known_col), "left")
+    return joined.withColumn(unseen_col, F.col(known_col).isNull()).drop(known_col)
+
+
+def null_out_unseen_baseline_scores(
+    df: DataFrame,
+    *,
+    unseen_col: str,
+    score_col: str,
+    severity_col: str,
+    contributions_col: str | None,
+    score_std_col: str | None,
+) -> DataFrame:
+    """Null the score, severity and contributions of unseen-group rows, in place.
+
+    Deliberately not routed through ``create_null_scored_dataframe``: that builds the anomaly
+    struct as ``lit(None).cast(schema)``, a wholly null struct, which cannot carry
+    ``is_new_baseline``. Overwriting the individual columns keeps the struct intact so the flag
+    survives to the caller.
+    """
+    unseen = F.col(unseen_col)
+    df = df.withColumn(score_col, F.when(unseen, F.lit(None).cast(DoubleType())).otherwise(F.col(score_col)))
+    df = df.withColumn(severity_col, F.when(unseen, F.lit(None).cast(DoubleType())).otherwise(F.col(severity_col)))
+    if contributions_col and contributions_col in df.columns:
+        df = df.withColumn(
+            contributions_col,
+            F.when(unseen, F.lit(None).cast(MapType(StringType(), DoubleType()))).otherwise(F.col(contributions_col)),
+        )
+    if score_std_col and score_std_col in df.columns:
+        df = df.withColumn(
+            score_std_col, F.when(unseen, F.lit(None).cast(DoubleType())).otherwise(F.col(score_std_col))
+        )
+    return df
+
+
+def permissive_quantile_points(
+    group_quantile_points: dict[str, list[tuple[float, float]]],
+    fallback_quantile_points: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Per-percentile *minimum* score bound across all groups.
+
+    Used only to decide which rows are worth computing SHAP contributions for. Taking the
+    minimum makes the gate deliberately permissive: a row that any group would consider
+    anomalous passes it. That is safe because the observable contract is re-enforced downstream
+    by ``add_info_column``, which masks contributions on severity against the real threshold —
+    so a permissive gate can only cost a little wasted SHAP, while a strict one would silently
+    drop contributions from genuinely anomalous rows in the groups with the widest score ranges.
+    """
+    if not group_quantile_points:
+        return fallback_quantile_points
+
+    minima: dict[float, float] = {}
+    for points in group_quantile_points.values():
+        for percentile, bound in points:
+            existing = minima.get(percentile)
+            minima[percentile] = bound if existing is None else min(existing, bound)
+
+    for percentile, bound in fallback_quantile_points:
+        minima.setdefault(percentile, bound)
+
+    return sorted(minima.items())
 
 
 def create_udf_schema(enable_contributions: bool) -> StructType:
@@ -236,7 +453,10 @@ def join_filtered_results_back(
 
     agg_exprs = [
         F.max(score_col).alias(score_col),
-        F.max_by(info_col, score_col).alias(info_col),
+        # max_by returns null when every score in the group is null, which would throw away the
+        # info struct for rows that are deliberately unscored — an unseen group carries a null
+        # score but still has is_new_baseline to report. Fall back to any non-null info in that case.
+        F.coalesce(F.max_by(info_col, score_col), F.first(info_col, ignorenulls=True)).alias(info_col),
     ]
     scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
 

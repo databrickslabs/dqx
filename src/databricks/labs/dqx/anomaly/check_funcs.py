@@ -148,11 +148,22 @@ def has_no_row_anomalies(
       - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100); populated
         only for anomalous rows, null otherwise
       - _dq_info[0].anomaly.confidence_std: Ensemble std (if requested)
+      - _dq_info[0].anomaly.is_new_baseline: True when the row's group was absent from training,
+        in which case score and severity_percentile are null
+      - _dq_info[0].anomaly.new_baseline_key: The unrecognised group key, for unseen rows
 
     Notes:
         DQX always scores using the columns the model was trained on.
         DQX aligns scored rows back to the input using an internal row id and removes it before returning.
         Segmentation is inferred from the trained model configuration.
+
+        Rows whose group was never seen in training are reported (`is_new_baseline`) but are **not**
+        flagged as violations: neither categorical encoder can represent an unseen value honestly
+        — one-hot makes it look maximally normal, frequency encoding maximally extreme — so DQX
+        cannot judge the row, and "could not judge" is not the same claim as "is anomalous". If an
+        unrecognised group value is itself a problem worth failing on, that is a membership
+        question rather than an anomaly one: use `foreign_key` or `is_in_list` on the group column
+        against your set of known values, which is the check built for it.
 
     Args:
         model_name: Model name (REQUIRED). Provide the fully qualified model name

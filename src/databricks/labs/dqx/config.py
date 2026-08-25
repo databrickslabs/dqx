@@ -210,6 +210,16 @@ class AnomalyParams:
             confidence scores are not available for segmented models.
         algorithm_config: Isolation Forest parameters (contamination, num_trees, seed).
         feature_engineering: Feature engineering parameters (temporal features, scaling, etc.).
+        max_segment_models: Ceiling on how many per-segment models one training run will attempt
+            (default 50). Guards the legacy *segment_by* path, which is the only one that trains a
+            model per group: cost is linear in the segment count and segmented training does not
+            ensemble, so 90 segments measures roughly 88 minutes. Raise this only if you are
+            prepared to wait. Irrelevant to *baseline_by*, which trains a single model.
+        baseline_by: Columns identifying the group a row belongs to, so a metric is judged against
+            its own group's baseline rather than against the whole table. Each numeric metric gains
+            its deviation from that baseline as an extra feature, on one pooled model, so cost does
+            not grow with the group count. Normally set by passing *baseline_by* to
+            ``AnomalyEngine.train()``, which populates this.
     """
 
     sample_fraction: float = 0.3
@@ -218,6 +228,10 @@ class AnomalyParams:
     ensemble_size: int | None = 3  # Default 3-model ensemble for robustness, tie-breaking, and confidence scores
     algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
     feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
+    # Kept in sync with anomaly.group_config.MAX_SEGMENT_MODELS by a unit test; not imported from
+    # there because that package requires the 'anomaly' extras and this module must not.
+    max_segment_models: int = 50
+    baseline_by: list[str] | None = None
 
 
 @dataclass
@@ -225,9 +239,12 @@ class AnomalyConfig:
     """Configuration for row anomaly detection."""
 
     columns: list[str] | None = None  # Auto-discovered if omitted
-    segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)
+    segment_by: list[str] | None = None  # Legacy: one model per segment. Prefer baseline_by.
     model_name: str | None = None  # Optional in workflows; defaults to dqx_anomaly_<run_config.name>
     registry_table: str | None = None
+    # Preferred over segment_by: declares the basis each metric is judged against, on one pooled
+    # model. Optional, so installed run-config YAML written before it existed still loads.
+    baseline_by: list[str] | None = None
 
 
 @dataclass

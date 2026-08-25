@@ -44,7 +44,11 @@ def apply_feature_engineering_for_scoring(
             "Ensure the anomaly check is applied to the same DataFrame instance."
         )
 
-    cols_to_select = list(dict.fromkeys([*feature_cols, *merge_columns, *(passthrough_columns or [])]))
+    # Group columns must survive this select or the group-relative transform has no basis to
+    # compute against; feature engineering drops them again before the model sees anything.
+    cols_to_select = list(
+        dict.fromkeys([*feature_cols, *feature_metadata.baseline_by, *merge_columns, *(passthrough_columns or [])])
+    )
 
     engineered_df, _ = apply_feature_engineering_from_metadata(
         df.select(*cols_to_select), feature_metadata, column_infos=column_infos

@@ -30,6 +30,10 @@ from databricks.labs.dqx.anomaly.model_registry import (
     SegmentationConfig,
     TrainingMetadata,
 )
+from databricks.labs.dqx.anomaly.group_config import (
+    MIN_ROWS_TO_TRAIN_SEGMENT,
+    SEGMENT_COUNT_WARN_THRESHOLD,
+)
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from databricks.labs.dqx.anomaly.training_strategies import AnomalyTrainingStrategy, IsolationForestTrainingStrategy
 from databricks.labs.dqx.anomaly.transformers import (
@@ -41,6 +45,7 @@ from databricks.labs.dqx.anomaly.types import AnomalyTrainingContext, TrainingAr
 from databricks.labs.dqx.anomaly.validation import (
     validate_columns,
     validate_fully_qualified_name,
+    validate_baseline_columns,
     validate_spark_version,
     validate_training_params,
 )
@@ -106,12 +111,26 @@ class AnomalyTrainingService:
 
     @staticmethod
     def _get_and_validate_segments(
-        df: DataFrame, segment_by: list[str]
+        df: DataFrame, segment_by: list[str], params: AnomalyParams
     ) -> tuple[int, collections.abc.Iterator[dict[str, Any]]]:
-        """Get distinct segments and validate count."""
+        """Get distinct segments and validate count.
+
+        Raises above ``params.max_segment_models``. One model is trained per segment and
+        segmented training does not ensemble, so cost is linear in the segment count: 90
+        segments measures roughly 88 minutes. Warning and proceeding meant a run could spend
+        hours registering thousands of models behind a single log line, which is why this is
+        an error rather than a warning.
+        """
         segments_df = df.select(*segment_by).distinct()
         segment_count = segments_df.count()
-        if segment_count > 100:
+        if segment_count > params.max_segment_models:
+            raise InvalidParameterError(
+                f"Segmenting by {segment_by} produces {segment_count} segments, above the limit of "
+                f"{params.max_segment_models}. One model is trained per segment, so this run would train "
+                f"{segment_count} models (roughly {segment_count} minutes). Either segment more coarsely, "
+                f"or raise the limit with AnomalyParams(max_segment_models={segment_count})."
+            )
+        if segment_count > SEGMENT_COUNT_WARN_THRESHOLD:
             logger.warning(
                 f"Training {segment_count} segments may be slow. Consider coarser segmentation or explicit segment_by."
             )
@@ -192,6 +211,94 @@ class AnomalyTrainingService:
             return None, df.select(*remaining)
         return None, df
 
+    def _discover_columns_and_grouping(
+        self,
+        df_filtered: DataFrame,
+        columns: list[str] | None,
+        declared_baseline_by: list[str] | None,
+        segment_by: list[str] | None,
+    ) -> tuple[list[str], list[str] | None, list[str] | None]:
+        """Fill in whichever of the feature columns and the grouping the caller left unspecified.
+
+        Returns ``(columns, baseline_by, segment_by)``.
+        """
+        if columns is None:
+            columns, discovered_segments = self._perform_auto_discovery(df_filtered, segment_by)
+            if declared_baseline_by:
+                # A declared baseline column is the basis metrics are compared against, not a
+                # metric. Auto-discovery does not know that, so drop them here rather than making
+                # the caller reconcile a list they never wrote.
+                columns = [c for c in columns if c not in declared_baseline_by]
+            elif segment_by is None and discovered_segments:
+                # Route a discovered grouping to baseline_by, not segment_by. Assigning it to
+                # segment_by would pin it to one model per group, which is how a discovered 90-way
+                # grouping became an hours-long run — and would now hit the segment ceiling and fail
+                # outright rather than using the mechanism that scales.
+                return columns, discovered_segments, None
+            else:
+                segment_by = discovered_segments
+            return columns, declared_baseline_by, segment_by
+
+        if declared_baseline_by is None and segment_by is None:
+            # Grouping discovery used to be reachable only when the columns were discovered too, so
+            # naming your feature columns silently gave up any chance of conditioning. Those are
+            # independent questions. Costs one extra profiling pass for callers who pass explicit
+            # columns and no grouping.
+            return columns, self._discover_baseline_columns(df_filtered), None
+
+        return columns, declared_baseline_by, segment_by
+
+    @staticmethod
+    def _discover_baseline_columns(df_filtered: DataFrame) -> list[str] | None:
+        """Discover a baseline grouping when the caller named feature columns but no grouping.
+
+        Kept separate from ``_perform_auto_discovery`` so that discovering a grouping does not
+        require also discovering the feature columns.
+        """
+        profile = auto_discover_columns(df_filtered)
+        if not profile.recommended_segments:
+            return None
+        logger.info(
+            f"Auto-detected {len(profile.recommended_segments)} baseline columns: "
+            f"{profile.recommended_segments} ({profile.segment_count} total groups)"
+        )
+        return profile.recommended_segments
+
+    @staticmethod
+    def _resolve_grouping(
+        baseline_by: list[str] | None,
+        segment_by: list[str] | None,
+    ) -> tuple[list[str] | None, list[str] | None]:
+        """Reconcile ``baseline_by`` against the legacy ``segment_by``.
+
+        Returns ``(baseline_by, effective_segment_by)``. Exactly one of the two is ever populated:
+
+        * ``segment_by`` — the legacy path, one model per segment. **Must** clear ``baseline_by``.
+          Leaving both set would compute baseline-relative features *inside* each segment, where the
+          baseline key is constant because ``_train_segmented`` has already filtered the frame, while
+          ``compute_config_hash`` is built from ``segment_by`` alone and would not change. A model
+          whose feature list moved but whose config hash did not is a silent train/score hazard, and
+          it breaks the byte-identical-feature-list guarantee that makes already-trained models safe.
+        * ``baseline_by`` — one pooled model fed each metric's deviation from its own group's
+          baseline.
+
+        There is no strategy to choose any more: on SMD, per-group models were the worst of three
+        configurations (PR-AUC 0.1416 against 0.1499 pooled and 0.1536 relative) with one entity
+        producing 15,963 false positives on 28,392 normal rows, so ``segment_by`` survives for
+        compatibility rather than as a recommendation. See databrickslabs/dqx#1484.
+        """
+        if baseline_by is not None and segment_by is not None:
+            raise InvalidParameterError(
+                "Pass either baseline_by or segment_by, not both. segment_by is the legacy name for "
+                "training one model per group; baseline_by judges each metric against its own "
+                "group's baseline using a single model."
+            )
+
+        if segment_by is not None:
+            return None, segment_by
+
+        return baseline_by, None
+
     def build_context(
         self,
         df: DataFrame,
@@ -203,6 +310,7 @@ class AnomalyTrainingService:
         params: AnomalyParams | None,
         exclude_columns: list[str] | None,
         expected_anomaly_rate: float,
+        baseline_by: list[str] | None = None,
     ) -> AnomalyTrainingContext:
         """Build training context with all validated inputs."""
         validate_spark_version(self._spark)
@@ -221,19 +329,27 @@ class AnomalyTrainingService:
             if invalid:
                 raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid}")
 
+        params = AnomalyParams() if params is None else params
+        validate_training_params(params, expected_anomaly_rate)
+        declared_baseline_by = baseline_by if baseline_by is not None else params.baseline_by
+
         columns, df_filtered = self._resolve_columns_and_filtered_df(df, columns, exclude_list)
         auto_discovery_used = columns is None
-        if columns is None:
-            columns, segment_by = self._perform_auto_discovery(df_filtered, segment_by)
+        columns, declared_baseline_by, segment_by = self._discover_columns_and_grouping(
+            df_filtered, columns, declared_baseline_by, segment_by
+        )
 
         if not columns:
             raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
 
-        params = AnomalyParams() if params is None else params
-        validate_training_params(params, expected_anomaly_rate)
         validation_warnings = validate_columns(df, columns, params)
         for warning in validation_warnings:
             logger.warning(warning)
+
+        validate_baseline_columns(df, declared_baseline_by, columns)
+        baseline_by, segment_by = self._resolve_grouping(declared_baseline_by, segment_by)
+        if baseline_by:
+            logger.info(f"Judging each metric against its own group's baseline, grouped by {baseline_by}")
 
         self._prepare_training_config(
             model_name=model_name,
@@ -243,6 +359,10 @@ class AnomalyTrainingService:
         )
 
         params = self.apply_expected_anomaly_rate_if_default_contamination(params, expected_anomaly_rate)
+        # Already a deepcopy, so recording the resolved grouping here cannot leak back to the
+        # caller's params. Downstream feature engineering reads baseline_by off params, because
+        # every narrowing select is already handed params and nothing else.
+        params.baseline_by = baseline_by
 
         return AnomalyTrainingContext(
             spark=self._spark,
@@ -256,6 +376,7 @@ class AnomalyTrainingService:
             expected_anomaly_rate=expected_anomaly_rate,
             exclude_columns=exclude_columns,
             auto_discovery_used=auto_discovery_used,
+            baseline_by=baseline_by,
         )
 
     def train(self, context: AnomalyTrainingContext) -> str:
@@ -344,7 +465,9 @@ class AnomalyTrainingService:
         """Train separate models for each segment."""
         if context.segment_by is None:
             raise InvalidParameterError("segment_by is required for segmented training")
-        segment_count, segment_iterator = self._get_and_validate_segments(context.df_filtered, context.segment_by)
+        segment_count, segment_iterator = self._get_and_validate_segments(
+            context.df_filtered, context.segment_by, context.params
+        )
         model_uris = []
         skipped_segments = []
         failed_segments: list[tuple[str, str]] = []
@@ -358,7 +481,7 @@ class AnomalyTrainingService:
                 segment_df = segment_df.filter(segment_df[col_name] == val)
 
             sampled_df, row_count, _ = sample_df(segment_df, context.columns, context.params)
-            if row_count < 10:
+            if row_count < MIN_ROWS_TO_TRAIN_SEGMENT:
                 skipped_segments.append(segment_name)
                 continue
 
