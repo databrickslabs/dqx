@@ -4636,8 +4636,12 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
             - Spark Column expression corresponding to the input.
     """
     col_expr = _get_column_expr(column)
-    column_str = get_column_name_or_alias(col_expr)
-    col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
+    if isinstance(column, str):
+        column_str = column
+        col_str_norm = normalize_col_str(column)
+    else:
+        column_str = get_column_name_or_alias(col_expr)
+        col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
 
