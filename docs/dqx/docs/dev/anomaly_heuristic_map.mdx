@@ -1,0 +1,108 @@
+---
+
+title: Anomaly heuristic map
+
+sidebar_position: 645
+
+---
+
+# Anomaly Detection Heuristic Map
+
+Every decision row anomaly detection makes on the way from a DataFrame to a flagged row, with the
+default that governs it. It exists to make a bad result diagnosable by working down a path, rather
+than by reading the module.
+
+Training and scoring are two passes over the same feature-engineering code: training persists what
+scoring later reads back. Diamonds are branches.
+
+```mermaid
+flowchart TD
+  A["train(df)"] --> B{"columns given?"}
+
+  B -- no --> C["<b>1</b> pick metrics<br/>numeric, stddev&gt;0, nulls&lt;50%<br/>low-card categoricals also eligible"]
+  B -- yes --> D["use the caller's columns"]
+  C --> E["<b>2</b> pick a grouping<br/>nulls&lt;10%, not id-like<br/>baseline: &ge;30 rows/group, &le;5000 groups<br/>segmented: one lowest-cardinality column"]
+  D --> E
+
+  E --> F{"baseline_by or<br/>segment_by declared?"}
+  F -- both --> X1["error"]
+  F -- "segment_by" --> G["<b>3</b> one model per segment<br/>&gt;50 error, &gt;100 warn<br/>baseline_by cleared"]
+  F -- "neither / baseline_by" --> H["<b>4</b> one model,<br/>grouping to baseline_by"]
+
+  G --> I["<b>5</b> sample 30%, split 80/20"]
+  H --> I
+  I --> J["<b>6</b> feature engineering<br/>onehot card&le;20 else frequency<br/>+ metric_rel_baseline per metric"]
+  J --> K["<b>7</b> IsolationForest<br/>200 trees, 256 rows/tree,<br/>contamination 0.02, no scaling"]
+  K --> L["<b>8</b> quantiles: global<br/>+ per baseline group"]
+  L --> M["register: MLflow + registry row<br/>+ feature_metadata JSON"]
+
+  M -.->|"persisted baselines, medians, quantiles"| N
+
+  N["score(df)"] --> O["<b>9</b> re-engineer from metadata<br/>baselines broadcast-joined<br/>unseen group &rarr; global median"]
+  O --> P["pandas UDF: anomaly score"]
+  P --> Q["<b>10</b> mark unseen baselines<br/>isin if &le;200 keys, else join"]
+  Q --> R["<b>11</b> severity percentile<br/>per-group quantiles if present,<br/>else global"]
+  R --> S{"baseline unseen?"}
+  S -- yes --> T["null score, not flagged<br/>is_new_baseline = true"]
+  S -- no --> U{"severity &ge; threshold 95?"}
+  U -- yes --> V["flagged"]
+  U -- no --> W["passes"]
+```
+
+## Reading a bad result
+
+Working down the path, three questions separate most failures.
+
+**What was chosen?** Stages 1 and 2 decide silently, and both defects found while building this map
+were there.
+
+```sql
+SELECT identity.model_name, training.columns, segmentation.baseline_by
+FROM <registry_table>
+WHERE identity.status = 'active'
+```
+
+**Did conditioning engage, and on what?** Look for `<metric>_rel_baseline` in
+`engineered_feature_names`, and count the entries in `baseline_medians`. Three groups where the data
+has ninety means stage 2 chose too coarsely — a model can be conditioned and still be conditioned on
+almost nothing.
+
+**Is the comparison even valid?** Training samples 30% of rows by default via `.sample`, and splits
+80/20 via `.randomSplit`; under Spark Connect both depend on partition ordering. Two runs of identical
+code can therefore train on different rows. If you are comparing two builds, set
+`sample_fraction=1.0` first — otherwise you are measuring the sampler. Suspect stage 5 before
+suspecting the design.
+
+## Defaults in one place
+
+| Default | Value | Governs |
+|---|---|---|
+| `MIN_ROWS_PER_BASELINE_GROUP` | 30 | rows/group needed to trust a baseline median |
+| `MAX_BASELINE_GROUPS` | 5000 | ceiling on total baseline groups |
+| `MAX_BASELINE_COLUMN_CARDINALITY` | 50 | per-column ceiling for a baseline column |
+| `MAX_AUTO_GROUP_COUNT` | 20 | per-column ceiling on the legacy segmented path |
+| `MIN_ROWS_PER_SEGMENT` | 100 | rows/segment needed to train a per-segment model |
+| `MAX_SEGMENT_MODELS` | 50 | hard ceiling on the legacy segmented path |
+| `DEFAULT_SAMPLE_FRACTION` | 0.3 | share of rows used for training |
+| `DEFAULT_TRAIN_RATIO` | 0.8 | train/validation split |
+| `categorical_cardinality_threshold` | 20 | one-hot below, frequency-encode above |
+| `num_trees` | 200 | Isolation Forest size |
+| `max_samples` | 256 | sklearn "auto"; rows per tree |
+| `expected_anomaly_rate` | 0.02 | becomes contamination when unset |
+| `threshold` | 95.0 | severity percentile that flags a row |
+
+## Known weak points
+
+Measured, with the evidence in `benchmarks/anomaly_conditioning/`:
+
+- **Stage 1 can pick dimensions as metrics.** Low-cardinality categoricals qualify as features, so a
+  table keyed by several dimensions can produce a dozen one-hot columns beside a single real metric,
+  diluting the signal. Largely avoided when those columns are recognised as a grouping instead, since
+  the profiler removes the grouping from the feature list — but a categorical that is *not* selected
+  as a grouping can still land in features.
+- **Stage 7 has a blind spot.** Isolation Forest loses to a max-abs-z baseline where anomalies are
+  single-feature extremes in few dimensions, and in high dimension. Not fixable by tuning, and adding
+  a complementary scorer measured worse on average — see `complementary_detector.py`.
+- **Stage 9's fallback is silent by design.** A group absent at training falls back to the global
+  baseline, which makes the row read as ordinary rather than extreme. `is_new_baseline` is how that
+  case is detected; it is the conservative direction, not a bug.
