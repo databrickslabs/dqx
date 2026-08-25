@@ -289,6 +289,118 @@ Scores are normalized into `severity_percentile` (0–100). The anomaly threshol
 
 The threshold controls how many rows are flagged as anomalies (percentile cutoff; default 95). Lower values (for example 90) flag more rows; higher values (for example 98) flag fewer (only extreme anomalies). Start with the default (95). If you get too many alerts, raise the threshold; if you are missing issues you care about, lower it.
 
+## Baseline conditioning
+
+Some values are only wrong *in context*. If one country's daily order volume drops 80% while the
+overall total holds steady — because other countries absorbed the difference — the collapsed number
+still sits comfortably inside the range other countries occupy normally. A model that compares every
+row against the whole table cannot see it: on the measurements behind
+[#1484](https://github.com/databrickslabs/dqx/issues/1484) such a collapse scored **45.1**, the 45th
+percentile. No threshold recovers that without flagging half the table.
+
+Pass `baseline_by` to give DQX the right basis for comparison:
+
+```python
+anomaly_engine.train(
+    df,
+    model_name="catalog.schema.orders_model",
+    registry_table="catalog.schema.dqx_anomaly_models",
+    columns=["order_count"],
+    baseline_by=["country", "product"],
+)
+```
+
+The same collapse then scores above 95.
+
+### How it works, and what it costs
+
+For each numeric metric, DQX adds one feature: that metric's deviation from its own group's
+baseline, as a signed log-ratio.
+
+```
+signed_log(x)          = signum(x) * log1p(abs(x))
+<metric>_rel_baseline  = signed_log(value) - signed_log(group_median(metric))
+```
+
+The raw metric is kept alongside, so a globally absurd value stays detectable even where it is
+ordinary for its group. The log-ratio form is stable when a baseline is near zero and symmetric for
+halving versus doubling; the *signed* form matters because plain `log1p` is NaN for values at or
+below −1, which would silently produce NaN features on any signed metric such as profit or balance.
+
+There is **one model**, however many groups you have. Baselines are computed once at training and
+persisted with the model, then broadcast-joined at scoring time. So the cost does not grow with the
+group count — which is the whole point, and the difference from `segment_by`.
+
+Measured offline (see `tests/unit/test_anomaly_relative_feature_separability.py`, which runs in the
+unit suite):
+
+| scenario | without conditioning | with `baseline_by` |
+|---|---|---|
+| contextual collapse (ordinary globally) | PR-AUC 0.0028 — chance | PR-AUC 0.6962 |
+| anomaly extreme against every group | PR-AUC 1.0000 | PR-AUC 1.0000 |
+
+The second row is why conditioning is on by default when a grouping is available: it costs nothing
+measurable when the anomaly was already visible.
+
+Across a wider sweep — 1,395 configurations over synthetic data, the Server Machine Dataset and
+NSL-KDD — conditioning is worth about **+0.07 PR-AUC** where anomalies are contextual, and about
+**−0.001** where they are not. That asymmetry, not a hunch, is why a discovered grouping is used
+rather than ignored. See [Anomaly detection quality](/docs/reference/anomaly_detection_quality) for
+the full results, the datasets, and what these numbers do *not* mean.
+
+### Baseline columns are not features
+
+A baseline column is the basis of comparison, not a metric being compared, so it never becomes a
+model feature. Passing the same column as both `columns` and `baseline_by` is an error. If you let
+DQX auto-discover `columns`, it drops your declared baseline columns from the feature list for you.
+
+Baseline columns must be string, integral, boolean or date. Float, double and decimal are
+**rejected**: Spark and Python format floating-point values differently, and DQX builds each row's
+baseline key in both — Python when saving baselines, Spark when looking them up. A mismatch would
+not raise; it would silently miss every lookup and quietly condition on nothing. Bucket the value or
+cast it to a string first.
+
+:::note
+That failure mode is not hypothetical. Booleans hit it during development — Spark renders `true`,
+Python renders `True` — and it was caught only by a test that compares the two implementations
+against a live session. Both halves of the key are now pinned by that test.
+:::
+
+### Groups that appear after training
+
+A row whose group was never seen during training gets a **null** score and severity, plus
+`is_new_baseline = true` and the unrecognised key in `new_baseline_key`:
+
+```python
+result.filter(F.col("_dq_info")[0].anomaly.is_new_baseline).select("_dq_info")
+```
+
+It is not flagged as a violation. Neither categorical encoder can represent an unseen value honestly
+— one-hot makes it look maximally normal, frequency encoding maximally extreme — so DQX cannot judge
+the row, and "could not judge" is a different claim from "is anomalous". Previously such rows were
+scored 0.0 and silently passed, which is the most normal-looking value in the table.
+
+If an unrecognised group value is itself something you want to fail on, that is a membership question
+rather than an anomaly one: use `foreign_key` or `is_in_list` on the baseline column against your set
+of known values.
+
+### segment_by is legacy
+
+`segment_by` trains one model per group. It still works, but prefer `baseline_by`, because
+per-group models lost on every axis that was measured:
+
+* **Detection.** On the Server Machine Dataset they were the worst of three configurations —
+  PR-AUC 0.1416 against 0.1499 for plain pooling and 0.1536 with baseline conditioning.
+* **Reliability.** One entity produced 15,963 false positives out of 28,392 normal rows, a 56%
+  false-alarm rate. Each per-group model calibrates its severity threshold on its own small sample,
+  so each is independently fragile.
+* **Cost.** Linear in the group count, and segmented training does not ensemble. 90 groups measured
+  roughly 88 minutes; a 90-group run was cancelled after 70 minutes without finishing. Runs above
+  `AnomalyParams.max_segment_models` (default 50) now raise rather than warn.
+
+Passing both `baseline_by` and `segment_by` is an error. A `DeprecationWarning` on `segment_by`
+follows one release later.
+
 ## How it works under the hood
 
 For full parameter and schema details, see [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection).
@@ -299,7 +411,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains an ensemble of Isolation Forest models, and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; segmented models use deterministic names (for example `__seg_region=US_tier=gold`).
 4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. SHAP contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring.
-5. **Auto-discovery of columns and segments**: When you call `train()` without `columns` or `segment_by`, DQX automatically discovers both. It selects numeric columns with enough variance as features and may **auto-segment** when it finds suitable segment columns: categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per segment (for example region, product category). If your auto-trained model is segmented, that is expected. To force a single global model, pass `segment_by=[]` (or omit segment columns from the data used for discovery) or set `columns` and `segment_by` explicitly.
+5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping — categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group (for example region, product category) — and this happens whether or not you passed `columns`, since what to measure and what to compare it against are independent questions. A discovered grouping is used as `baseline_by` (see [Baseline conditioning](#baseline-conditioning)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`.
 
 ### Why Isolation Forest?
 
@@ -330,6 +442,8 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
 | `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); populated only for anomalous rows — `null` for non-anomalous rows or if you set it `False`. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
+| `is_new_baseline` | boolean | `true` when the row's group was absent from training, in which case `score` and `severity_percentile` are `null` and the row is **not** flagged. See [Groups that appear after training](#groups-that-appear-after-training). |
+| `new_baseline_key` | string | The unrecognised group key, for rows where `is_new_baseline` is `true`; `null` otherwise. |
 | `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
 
 The nested `ai_explanation` struct (populated when AI explanations are on — the default):
@@ -423,7 +537,7 @@ See the **Training data requirements** tip under Quick start. In short: 1,000+ r
 <details>
 <summary><strong>Q: Why is my auto-trained model segmented?</strong></summary>
 
-When you train without specifying `columns` or `segment_by`, DQX auto-discovers both. If your data has columns that look like good segment dimensions (for example region, category) — low cardinality (2–50 distinct values), low null rate, and enough rows per segment — DQX will train **one model per segment**. That is intentional: segmented models often fit better when behavior differs by segment. To get a single global model instead, pass `segment_by=[]` or provide explicit `columns` (and no segment columns) when calling `train()`.
+When you train without specifying a grouping, DQX looks for one: columns that look like good dimensions (for example region, category) — low cardinality (2–50 distinct values), low null rate, and enough rows per group. That is intentional, because behaviour often does differ by group, and the user least likely to pass `baseline_by` explicitly is the one most likely to miss a contextual anomaly. A discovered grouping is used as `baseline_by`: each metric gains its deviation from that group's baseline, on a **single** model, so the discovery cannot turn into an hours-long run however many groups it finds. The grouping it chose is logged. To compare against the whole table instead, pass `baseline_by=[]`.
 </details>
 
 <details>

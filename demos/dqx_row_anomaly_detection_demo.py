@@ -699,7 +699,10 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC
 # MAGIC **Training options (`AnomalyEngine.train` / `AnomalyParams`):**
 # MAGIC - `columns` (list[str]): explicit feature list (disables auto‑discovery)
-# MAGIC - `segment_by` (list[str]): explicit segmentation columns
+# MAGIC - `baseline_by` (list[str]): columns identifying a row's group, so each metric is judged
+# MAGIC   against its own group's baseline rather than the whole table — catches values that are
+# MAGIC   ordinary globally but wrong in context. One model, whatever the group count.
+# MAGIC - `segment_by` (list[str]): legacy, trains one model per group; prefer `baseline_by`
 # MAGIC - `sample_fraction`, `max_rows`: training sample controls
 # MAGIC - `ensemble_size`: number of models in the ensemble
 # MAGIC - `expected_anomaly_rate`: expected anomaly rate for calibration
@@ -828,7 +831,7 @@ else:
 # MAGIC ```
 # MAGIC
 # MAGIC **Optional next steps:**
-# MAGIC - Add segmentation (`segment_by` option for training), drift detection, and scheduled scoring.
+# MAGIC - Add group conditioning (`group_by` for training), drift detection, and scheduled scoring.
 # MAGIC - Automate retraining and alerting.
 
 # COMMAND ----------
