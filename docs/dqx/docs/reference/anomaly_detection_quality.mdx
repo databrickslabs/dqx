@@ -34,11 +34,13 @@ segment when any single point inside it is detected — a *random* score achieve
 `baseline_by` judges each metric against its own group's baseline rather than against the whole table.
 Whether that helps depends on what makes your anomalies anomalous.
 
+<!-- generated:conditioning:start -->
 | your anomalies are... | median ΔPR-AUC with `baseline_by` | what to do |
 |---|---|---|
 | **contextual** — ordinary for the table, wrong for their group | **+0.0742** | use `baseline_by` |
 | **globally extreme** — unusual against the whole table | +0.0000 | costs nothing; leave it on |
 | mixed or unknown (real-world datasets) | +0.0025 | leave it on |
+<!-- generated:conditioning:end -->
 
 Read that as one asymmetry rather than three results: conditioning is worth a great deal where it
 applies and nothing measurable where it does not. That is why DQX enables it automatically when it
@@ -56,16 +58,20 @@ To compare against the whole table anyway, pass `baseline_by=[]`.
 The legacy `segment_by` trains a separate model per group. Conditioning expresses the grouping as
 features on a single model instead, and wins on both axes.
 
+<!-- generated:per-group:start -->
 | your anomalies are... | median ΔPR-AUC vs one-model-per-group |
 |---|---|
 | contextual | **+0.0252** |
 | globally extreme | +0.0005 |
 | mixed or unknown | +0.0054 |
+<!-- generated:per-group:end -->
 
+<!-- generated:cost:start -->
 | approach | models trained | median fit time |
 |---|---|---|
 | `baseline_by` | 1 | 0.17s |
 | `segment_by` | one per group (12 in this sweep) | 1.38s |
+<!-- generated:cost:end -->
 
 Per-group models also fail in a way that averages conceal. On the Server Machine Dataset one entity
 produced 15,963 false positives across 28,392 normal rows — a 56% false-alarm rate — while the
@@ -81,6 +87,7 @@ without any conditioning.
 Each row is read against its own random floor, and against `max-abs-z` — the largest absolute z-score
 across features, which is the cheapest defensible detector and a genuinely competitive one.
 
+<!-- generated:tabular:start -->
 | dataset | rows | features | base rate | DQX PR-AUC | random | max-abs-z | lift vs random | beats max-abs-z |
 |---|---|---|---|---|---|---|---|---|
 | shuttle | 30000 | 9 | 7.15% | **0.9788** | 0.0731 | 0.8983 | 13.4x | yes |
@@ -93,6 +100,7 @@ across features, which is the cheapest defensible detector and a genuinely compe
 | fraud | 30000 | 29 | 0.17% | 0.2240 | 0.0019 | 0.1365 | **115.4x** | yes |
 | mammography | 11183 | 6 | 2.32% | 0.2193 | 0.0236 | 0.1779 | 9.3x | yes |
 | covertype | 30000 | 10 | 0.96% | 0.0534 | 0.0094 | 0.1122 | 5.7x | **no** |
+<!-- generated:tabular:end -->
 
 DQX beats the random floor on all ten and `max-abs-z` on eight. `fraud` — the Kaggle credit-card set at
 a 0.17% base rate — is the standout at 115x the floor.

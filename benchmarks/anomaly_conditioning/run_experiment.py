@@ -509,6 +509,9 @@ def write_report(
                 "evidence": evidence,
                 "spearman": {"rho": rho, "ci_low": lo, "ci_high": hi},
                 "regression": regression,
+                # Included so emit_docs.py can refresh the published tables without re-running the
+                # sweep, and so a results file is self-contained.
+                "tabular_baselines": tabular_baselines or [],
                 "cells": [c.as_dict() for c in cells],
             },
             indent=2,
