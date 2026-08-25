@@ -26,6 +26,7 @@ from databricks.labs.dqx.utils import (
     get_file_extension,
     resolve_variables,
     quote_column_name,
+    normalize_column_expr,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
@@ -945,3 +946,33 @@ def test_quote_column_name():
     column_name = "my `column` name"
     result = quote_column_name(column_name)
     assert result == "`my ``column`` name`"
+
+
+@pytest.mark.parametrize(
+    "column, expected",
+    [
+        # Valid bare identifiers are left untouched
+        ("id", "id"),
+        ("col_1", "col_1"),
+        ("_private", "_private"),
+        # Nested-field paths keep working; each valid segment is left alone
+        ("struct_col.field1", "struct_col.field1"),
+        ("a.b.c", "a.b.c"),
+        # Names requiring SQL escaping are back-quoted
+        ("Päivämäärä", "`Päivämäärä`"),
+        ("Ääkkönen", "`Ääkkönen`"),
+        ("Customer Name", "`Customer Name`"),
+        # Only the segment that needs escaping is quoted in a nested path
+        ("parent.Odd Name", "parent.`Odd Name`"),
+        # Already back-quoted segments are left as-is
+        ("`Customer Name`", "`Customer Name`"),
+        # SQL expressions are passed through unchanged
+        ("a + b", "a + b"),
+        ("substr(x, 1, 2)", "substr(x, 1, 2)"),
+        ("amount * 1.5", "amount * 1.5"),
+        ("col > 5", "col > 5"),
+        ("*", "*"),
+    ],
+)
+def test_normalize_column_expr(column: str, expected: str):
+    assert normalize_column_expr(column) == expected

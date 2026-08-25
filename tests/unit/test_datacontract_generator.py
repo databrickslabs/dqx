@@ -2367,6 +2367,34 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_sql_expression_back_quotes_column_requiring_escaping(self, generator):
+        """Tests that rules parse correctly for columns that require SQL escaping."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "Päivämäärä",
+                    "physicalType": "DOUBLE",
+                    "logicalType": "number",
+                    "logicalTypeOptions": {"minimum": 0.0, "maximum": 100.0},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            range_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
+            assert range_rule["check"]["arguments"]["expression"] == "`Päivämäärä` >= 0.0 AND `Päivämäärä` <= 100.0"
+            # The columns list keeps the raw name (used for resolution / skip messaging).
+            assert range_rule["check"]["arguments"]["columns"] == ["Päivämäärä"]
+
+        finally:
+            os.unlink(temp_path)
+
     def test_field_with_only_integer_maximum_constraint(self, generator):
         """Test that field with only integer maximum generates is_aggr_not_greater_than rule."""
         contract_dict = self.create_basic_contract(
