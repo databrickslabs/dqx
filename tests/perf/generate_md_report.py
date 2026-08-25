@@ -21,6 +21,12 @@ report_path = Path(__file__).parent.parent.parent / "docs" / "dqx" / "docs" / "r
 
 data = json.loads(baseline_path.read_text())
 
+# Anomaly benchmarks get their own section below, with detection-quality columns the check
+# benchmarks have no use for. Split them out here so they are not also listed in the main table.
+ANOMALY_GROUP = "anomaly_synthetic"
+check_benchmarks = [b for b in data["benchmarks"] if b.get("group") != ANOMALY_GROUP]
+anomaly_benchmarks = [b for b in data["benchmarks"] if b.get("group") == ANOMALY_GROUP]
+
 lines = []
 lines.append("---\n")
 lines.append("title: Benchmarks\n")
@@ -48,7 +54,7 @@ lines.append(
     "|------|----------|------------|---------|---------|------------|---------|--------|--------|--------|--------------|-----------------|-------|"
 )
 
-for bench in data["benchmarks"]:
+for bench in check_benchmarks:
     stats = bench["stats"]
     lines.append(
         f"| {bench['name']} "
@@ -66,10 +72,27 @@ for bench in data["benchmarks"]:
         f"| {stats['ops']:.2f} |"
     )
 
-# Optional anomaly benchmark section (extra_info like roc_auc).
-anomaly_benchmarks = [b for b in data["benchmarks"] if b.get("group") == "anomaly_synthetic"]
+# Anomaly benchmark section: timings plus indicative detection quality carried in extra_info.
 if anomaly_benchmarks:
     lines.append("\n## Anomaly Benchmarks\n")
+    provenance: dict = next((b.get("extra_info", {}) for b in anomaly_benchmarks if b.get("extra_info")), {})
+    if provenance.get("dataset"):
+        lines.append(
+            f"* Measured on {provenance['dataset']} "
+            f"({provenance.get('n_train_rows', 'n/a')} train / {provenance.get('n_test_rows', 'n/a')} test rows, "
+            f"{provenance.get('n_features', 'n/a')} features, "
+            f"{provenance.get('anomaly_frac', 'n/a')} anomaly fraction, seed {provenance.get('seed', 'n/a')})."
+        )
+    lines.append(
+        "* Quality columns are **indicative and first-observed only**: the nightly baseline merge keeps "
+        "existing entries on conflict, so `extra_info` is not refreshed once a benchmark has been "
+        "recorded. Quality regressions are caught by assertions in "
+        "`tests/integration_anomaly/test_anomaly_quality.py`, not by this table."
+    )
+    lines.append(
+        "* These are synthetic distributions chosen to be moderately hard, not a general claim about "
+        "detection quality on your own data.\n"
+    )
     lines.append(
         "| Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | Rounds | Ops/s | ROC-AUC | Precision | Recall | F1 | Precision@N |"
     )
