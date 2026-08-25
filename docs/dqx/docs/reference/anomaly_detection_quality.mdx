@@ -79,16 +79,16 @@ model identity rather than scores.
 
 ## Results
 
-1,395 cells: a synthetic two-factor sweep plus the Server Machine Dataset (28 entities) and NSL-KDD,
-15 seeds each.
+1,545 cells: a synthetic two-factor sweep, the Server Machine Dataset (28 entities), NSL-KDD, and ten
+classical tabular benchmarks, 15 seeds each.
 
 ### `baseline_by` versus comparing against the whole table
 
 | anomaly mechanism | n | median ΔPR-AUC | IQR | Wilcoxon p |
 |---|---|---|---|---|
-| contextual (ordinary globally, wrong for its group) | 195 | **+0.0734** | +0.0068 to +0.2649 | 5.3e-32 |
-| global (extreme for the whole table) | 195 | +0.0000 | −0.0000 to +0.0000 | 2.0e-01 |
-| real datasets (mechanism unknown) | 75 | −0.0010 | −0.1622 to +0.0110 | 3.1e-03 |
+| contextual (ordinary globally, wrong for its group) | 195 | **+0.0742** | +0.0076 to +0.3070 | 1.3e-31 |
+| global (extreme for the whole table) | 195 | +0.0000 | −0.0000 to +0.0000 | 2.3e-01 |
+| real datasets (mechanism unknown) | 75 | +0.0025 | −0.1452 to +0.0124 | 1.8e-02 |
 
 Read these three rows together, because they are the whole argument:
 
@@ -101,31 +101,39 @@ Read these three rows together, because they are the whole argument:
   the median difference is zero and the test does not reject (p = 0.20). At low heterogeneity every
   group median approaches the global median, so the relative feature degenerates into a monotone
   transform of the raw metric: a near-duplicate of an informative column rather than noise.
-- **On real datasets, conditioning is marginally worse, and detectably so.** Median −0.0010 at
-  p = 0.003. The magnitude is negligible; the sign is real. SMD and NSL-KDD anomalies are largely
-  globally extreme or sequence-dependent rather than contextual with respect to a categorical group,
-  so the extra feature dilutes slightly without adding signal.
+- **On real datasets, conditioning is marginally better.** Median +0.0025 at p = 0.018, with a wide
+  spread either side. SMD and NSL-KDD anomalies are largely globally extreme or sequence-dependent
+  rather than contextual with respect to a categorical group, so there is little for conditioning to
+  find — and it does not get in the way.
 
-The practical reading: `baseline_by` buys roughly +0.07 PR-AUC where it applies and costs roughly
-0.001 where it does not. That asymmetry is why auto-discovery enables it rather than requiring you to
-opt in.
+  An earlier revision of this page reported **−0.0010 at p = 0.003** here and described conditioning as
+  marginally *worse* on real data. That was an artefact of the harness: it fitted 100 trees where DQX
+  ships 200, which understated the forest on exactly the datasets where the forest does the work.
+  Correcting the harness moved this row from marginally negative to marginally positive. The
+  contextual and global rows barely moved, because a paired comparison holds the configuration
+  constant on both sides — it was the real-data row, where the two mechanisms are closest, that the
+  fidelity gap could flip.
+
+The practical reading: `baseline_by` buys roughly +0.07 PR-AUC where it applies and costs nothing
+measurable where it does not. That asymmetry is why auto-discovery enables it rather than requiring
+you to opt in.
 
 ### `baseline_by` versus one model per group
 
 | anomaly mechanism | n | median ΔPR-AUC | IQR | Wilcoxon p |
 |---|---|---|---|---|
-| contextual | 195 | **+0.0274** | +0.0128 to +0.0413 | 1.2e-33 |
-| global | 195 | +0.0006 | +0.0000 to +0.0017 | 3.4e-26 |
-| real datasets | 75 | **+0.0123** | −0.0043 to +0.2785 | 3.2e-05 |
+| contextual | 195 | **+0.0252** | +0.0147 to +0.0356 | 9.4e-34 |
+| global | 195 | +0.0005 | +0.0000 to +0.0019 | 6.1e-29 |
+| real datasets | 75 | **+0.0054** | −0.0051 to +0.2832 | 2.7e-04 |
 
 One conditioned model beats one model per group in **every** mechanism, including on real data, while
 training a single model instead of one per group:
 
 | configuration | median models trained | median fit seconds |
 |---|---|---|
-| pooled | 1 | 0.09 |
-| relative | 1 | 0.09 |
-| per-group | 12 | 0.79 |
+| pooled | 1 | 0.17 |
+| relative | 1 | 0.17 |
+| per-group | 12 | 1.38 |
 
 Per-group models also fail in a particular way that averages hide. On the Server Machine Dataset one
 entity produced 15,963 false positives across 28,392 normal rows — a 56% false-alarm rate — while the
@@ -133,6 +141,58 @@ aggregate metric looked merely mediocre. Each per-group model calibrates its own
 own rows, so a group containing nothing unusual still has its most-unusual few percent scored as
 extreme. This is why DQX reports the **worst** group's false-positive rate rather than the average,
 and why `segment_by` is retained for compatibility rather than recommended.
+
+## Plain tabular benchmarks
+
+Ten classical benchmarks with no grouping at all, from [ADBench](https://github.com/Minqi824/ADBench)
+(BSD-2-Clause), which redistributes the ODDS / UCI / Kaggle collections. Conditioning does not apply
+here — these characterise the ungrouped path, which this work does not change, and act as its
+regression baseline.
+
+PR-AUC **moves with the base rate**, so these rows are not comparable with each other. Each is read
+against its own random floor, and against `max-abs-z` — the largest absolute z-score across features,
+which is the cheapest defensible detector and a genuinely competitive one.
+
+| dataset | rows | features | base rate | DQX PR-AUC | random | max-abs-z | lift vs random | beats max-abs-z |
+|---|---|---|---|---|---|---|---|---|
+| shuttle | 30000 | 9 | 7.15% | **0.9788** | 0.0731 | 0.8983 | 13.4x | yes |
+| satellite | 6435 | 36 | 31.64% | 0.6668 | 0.3131 | 0.5946 | 2.1x | yes |
+| cardio | 1831 | 21 | 9.61% | 0.5811 | 0.1012 | 0.5534 | 5.7x | yes |
+| thyroid | 3772 | 6 | 2.47% | 0.5389 | 0.0251 | 0.3007 | 21.5x | yes |
+| spambase | 4207 | 57 | 39.91% | 0.4758 | 0.4033 | 0.4039 | 1.2x | yes |
+| campaign | 30000 | 62 | 11.27% | 0.2867 | 0.1160 | 0.2398 | 2.5x | yes |
+| mnist | 7603 | 100 | 9.21% | 0.2766 | 0.0999 | 0.3367 | 2.8x | **no** |
+| fraud | 30000 | 29 | 0.17% | 0.2240 | 0.0019 | 0.1365 | **115.4x** | yes |
+| mammography | 11183 | 6 | 2.32% | 0.2193 | 0.0236 | 0.1779 | 9.3x | yes |
+| covertype | 30000 | 10 | 0.96% | 0.0534 | 0.0094 | 0.1122 | 5.7x | **no** |
+
+DQX beats the random floor on all ten and `max-abs-z` on eight. `fraud` — the Kaggle credit-card set,
+at a 0.17% base rate — is the standout at 115x the floor.
+
+### Where it underperforms, and why
+
+Two rows say **no**, and they say it for the same reason.
+
+- **`covertype`** (10 features, 0.96% base rate): 0.0534 against a z-score's 0.1122, so roughly half.
+- **`mnist`** (100 features): 0.2766 against 0.3367.
+
+This is Isolation Forest's inductive bias, not a tuning gap. It splits on one randomly chosen feature
+at a time, so when an anomaly is a single extreme value among few dimensions the signal is diluted
+across the other axes, and in 100 dimensions the random choice rarely lands on the informative one. A
+global max-abs-z captures "any feature is extreme" directly.
+
+Tuning does not recover it, and the obvious knob makes things worse elsewhere: raising `max_samples`
+from 256 to 4096 lifts `fraud` (0.1926 → 0.2924) while dropping `shuttle` (0.9789 → 0.8546) and
+`cardio` (0.5766 → 0.4835). sklearn's default is well chosen — subsampling is *why* Isolation Forest
+works.
+
+Adding a complementary z-score detector to the ensemble was measured and **rejected**: it wins on 5 of
+10 datasets with a median of −0.0028 and a −0.1409 worst case. And it cannot be fixed by choosing per
+dataset, because choosing needs labels and DQX is unsupervised. See
+`benchmarks/anomaly_conditioning/complementary_detector.py` for the full result.
+
+One caveat on `spambase`: a 39.9% base rate is not anomaly detection, it is classification with an
+unusual framing, and its 1.2x lift should be read that way.
 
 ## Why there is no heterogeneity threshold
 
@@ -153,10 +213,10 @@ The seed-by-seed breakdown shows why:
 
 | dataset | grouping | eta-squared | median Δ | min | max | seeds agree? |
 |---|---|---|---|---|---|---|
-| NSL-KDD | `protocol_type` | 0.0509 | +0.0285 | −0.0744 | +0.1003 | no |
-| SMD | machine family | 0.0669 | +0.0033 | −0.0047 | +0.0125 | no |
-| synthetic | spread 0.000 | 0.0008 | +0.0000 | −0.0019 | +0.0283 | no |
-| synthetic | spread 0.050 | 0.0593 | +0.0000 | −0.0019 | +0.0169 | no |
+| NSL-KDD | `protocol_type` | 0.0509 | +0.0396 | −0.0498 | +0.0967 | no |
+| SMD | machine family | 0.0669 | +0.0029 | −0.0027 | +0.0103 | no |
+| synthetic | spread 0.000 | 0.0008 | +0.0000 | −0.0027 | +0.0299 | no |
+| synthetic | spread 0.050 | 0.0593 | +0.0000 | −0.0002 | +0.0222 | no |
 
 Every low-heterogeneity grouping straddles zero. The pre-registered rule takes a minimum over
 individual cells, which makes it maximally sensitive to estimator variance, and it fired on single

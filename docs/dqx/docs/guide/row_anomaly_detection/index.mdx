@@ -343,11 +343,13 @@ unit suite):
 The second row is why conditioning is on by default when a grouping is available: it costs nothing
 measurable when the anomaly was already visible.
 
-Across a wider sweep — 1,395 configurations over synthetic data, the Server Machine Dataset and
-NSL-KDD — conditioning is worth about **+0.07 PR-AUC** where anomalies are contextual, and about
-**−0.001** where they are not. That asymmetry, not a hunch, is why a discovered grouping is used
-rather than ignored. See [Anomaly detection quality](/docs/reference/anomaly_detection_quality) for
-the full results, the datasets, and what these numbers do *not* mean.
+Across a wider sweep — 1,545 configurations over synthetic data, the Server Machine Dataset, NSL-KDD
+and ten classical tabular benchmarks — conditioning is worth about **+0.07 PR-AUC** where anomalies are
+contextual, and **nothing measurable** where they are not. Against the previous release, on the same
+tables through the real pipeline, it moves a contextual collapse from 0.0376 to 0.5703. That
+asymmetry, not a hunch, is why a discovered grouping is used rather than ignored. See
+[Anomaly detection quality](/docs/reference/anomaly_detection_quality) for the full results, the
+datasets, and what these numbers do *not* mean.
 
 ### Baseline columns are not features
 
