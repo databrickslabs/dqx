@@ -5,10 +5,12 @@
   (e.g. sklearn version mismatch). Registry types and persistence live in model_registry.
 """
 
+import collections
 import collections.abc
 import warnings
 import sklearn
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.model_config import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier
@@ -52,6 +54,64 @@ def validate_columns(
 
     _column_infos, warnings_list = classifier.analyze_columns(df, list(columns))
     return warnings_list
+
+
+#: Group column types whose Spark ``cast("string")`` is guaranteed to match Python's ``str()``.
+#: Floating-point and decimal types are excluded deliberately: the two disagree on formatting
+#: (Spark renders 1.0 as "1.0" but 1e-7 differently from Python), and a group key that differs
+#: between training and scoring misses every baseline lookup silently rather than failing.
+_ALLOWED_GROUP_COLUMN_TYPES = (
+    T.StringType,
+    T.ByteType,
+    T.ShortType,
+    T.IntegerType,
+    T.LongType,
+    T.BooleanType,
+    T.DateType,
+)
+
+
+def validate_baseline_columns(
+    df: DataFrame, baseline_by: list[str] | None, columns: collections.abc.Iterable[str]
+) -> None:
+    """Validate declared group columns.
+
+    Group columns identify the comparison basis; they are not features. They must therefore
+    exist, must not double as feature columns, and must have a type whose string rendering is
+    stable between Spark and Python.
+    """
+    if not baseline_by:
+        return
+
+    duplicates = [name for name, count in collections.Counter(baseline_by).items() if count > 1]
+    if duplicates:
+        raise InvalidParameterError(f"baseline_by contains duplicate columns: {duplicates}.")
+
+    schema_fields = {field.name: field.dataType for field in df.schema.fields}
+    missing = [name for name in baseline_by if name not in schema_fields]
+    if missing:
+        raise InvalidParameterError(f"baseline_by columns not found in DataFrame: {missing}. Available: {df.columns}.")
+
+    overlap = sorted(set(baseline_by) & set(columns))
+    if overlap:
+        raise InvalidParameterError(
+            f"Columns {overlap} are used both as features and as baseline_by columns. A group column "
+            "defines the basis a metric is compared against, so it cannot also be one of the "
+            "metrics being compared. Remove them from one or the other."
+        )
+
+    unsupported = {
+        name: schema_fields[name].simpleString()
+        for name in baseline_by
+        if not isinstance(schema_fields[name], _ALLOWED_GROUP_COLUMN_TYPES)
+    }
+    if unsupported:
+        raise InvalidParameterError(
+            f"baseline_by columns have unsupported types: {unsupported}. Group columns must be string, "
+            "integral, boolean or date. Floating-point and decimal columns are rejected because "
+            "Spark and Python format them differently, which would make a row's group key differ "
+            "between training and scoring. Cast to string or bucket the value first."
+        )
 
 
 def _validate_float_range(
