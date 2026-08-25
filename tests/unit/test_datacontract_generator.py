@@ -3386,3 +3386,1141 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert len(rules) == 0
         finally:
             os.unlink(temp_path)
+
+
+class TestDataContractGeneratorLibraryRules(DataContractGeneratorTestBase):
+    """Tests for type: library quality metric dispatch and warn-and-skip handling."""
+
+    _SUPPORTED_METRICS_TEXT = "rowCount, nullValues, missingValues, invalidValues, duplicateValues"
+
+    def test_unrecognized_metric_on_property_is_skipped_with_warning(self, generator, caplog):
+        """A type: library entry with an unrecognized metric is skipped; no rule is generated."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[{"type": "library", "metric": "notARealMetric"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert rules == []
+            assert "Unrecognized library metric 'notARealMetric'" in caplog.text
+            assert "property 'email'" in caplog.text
+            assert "schema 'test_table'" in caplog.text
+            assert self._SUPPORTED_METRICS_TEXT in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_missing_metric_on_property_is_skipped_with_warning(self, generator, caplog):
+        """A type: library entry with no 'metric' field is skipped, not raised."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[{"type": "library"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert rules == []
+            assert "Missing 'metric' on type: library quality entry" in caplog.text
+            assert "property 'email'" in caplog.text
+            assert self._SUPPORTED_METRICS_TEXT in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_unrecognized_metric_on_schema_omits_property_clause(self, generator, caplog):
+        """A schema-level type: library entry's warning omits the property clause entirely."""
+        contract_dict = self.create_basic_contract(
+            schema_name="orders",
+            properties=[{"name": "order_id", "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "library", "metric": "bogusMetric"}]
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert rules == []
+            assert "Unrecognized library metric 'bogusMetric'" in caplog.text
+            assert "schema 'orders'" in caplog.text
+            assert "property" not in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_missing_metric_on_schema_is_skipped_with_warning(self, generator, caplog):
+        """A schema-level type: library entry missing 'metric' is skipped, not raised."""
+        contract_dict = self.create_basic_contract(
+            schema_name="orders",
+            properties=[{"name": "order_id", "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "library"}]
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert rules == []
+            assert "Missing 'metric' on type: library quality entry" in caplog.text
+            assert "schema 'orders'" in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_recognized_metric_does_not_raise_and_yields_no_rule_yet(self, generator, caplog):
+        """A recognized metric name (e.g. nullValues) is accepted without warning.
+
+        Per-metric rule construction lands with each metric's own ticket; nullValues now has one
+        (see TestDataContractGeneratorLibraryRulesNullValues), so it generates a rule here too.
+        """
+        contract_dict = self.create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[{"type": "library", "metric": "nullValues", "mustBe": 0}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert len(rules) == 1
+            assert "nullValues" not in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_mixed_valid_and_malformed_library_entries_preserve_other_rules(self, generator, caplog):
+        """One malformed type: library entry never blocks the rest of the contract's rules."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "urn:datacontract:test:mixed",
+            "name": "Mixed Rule Sources Contract",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "customers",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "customer_id",
+                            "physicalType": "STRING",
+                            "logicalType": "string",
+                            "required": True,
+                        },
+                        {
+                            "name": "email",
+                            "physicalType": "STRING",
+                            "logicalType": "string",
+                            "quality": [
+                                {"type": "library"},
+                                {"type": "library", "metric": "notARealMetric"},
+                                {
+                                    "type": "custom",
+                                    "engine": "dqx",
+                                    "implementation": {
+                                        "name": "email_not_empty",
+                                        "criticality": "error",
+                                        "check": {
+                                            "function": "is_not_null_and_not_empty",
+                                            "arguments": {"column": "email"},
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=True,
+                    process_text_rules=False,
+                    generate_schema_validation=True,
+                )
+            self._assert_mixed_library_rules_preserved(rules, caplog)
+        finally:
+            os.unlink(temp_path)
+
+    @staticmethod
+    def _assert_mixed_library_rules_preserved(rules, caplog):
+        """Assert other rule sources still generated despite malformed library entries."""
+        rule_types = {rule["user_metadata"].get("rule_type") for rule in rules}
+        assert rule_types == {"schema_validation", "predefined", "explicit"}
+
+        not_null_rules = [r for r in rules if r["name"] == "customer_id_is_null"]
+        assert len(not_null_rules) == 1
+
+        explicit_rules = [r for r in rules if r["name"] == "email_not_empty"]
+        assert len(explicit_rules) == 1
+
+        assert "Missing 'metric' on type: library quality entry" in caplog.text
+        assert "Unrecognized library metric 'notARealMetric'" in caplog.text
+
+
+class TestDataContractGeneratorLibraryRulesRowCount(DataContractGeneratorTestBase):
+    """Tests for the type: library rowCount metric mapping onto DQX dataset-level checks."""
+
+    def _contract_with_row_count(self, quality_entry: dict, schema_name: str = "orders") -> dict:
+        """Build an ODCS contract with a single schema-level rowCount library quality entry."""
+        contract_dict = self.create_basic_contract(
+            schema_name=schema_name,
+            properties=[{"name": "order_id", "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "library", "metric": "rowCount", **quality_entry}]
+        return contract_dict
+
+    def _generate(self, generator, contract_dict) -> list[dict]:
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            return generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_must_be_generates_is_aggr_equal(self, generator):
+        """mustBe maps onto an is_aggr_equal count-aggregate check with full lineage metadata."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustBe": 100}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "orders_rowCount"
+        assert rule["check"]["function"] == "is_aggr_equal"
+        assert rule["check"]["arguments"] == {"column": "*", "limit": 100, "aggr_type": "count"}
+        user_metadata = rule["user_metadata"]
+        assert user_metadata["rule_type"] == "metric"
+        assert user_metadata["metric"] == "rowCount"
+        assert user_metadata["threshold_field"] == "mustBe"
+        assert user_metadata["unit"] == "rows"
+        assert user_metadata["dimension"] == "completeness"
+        assert "field" not in user_metadata
+        assert "fields" not in user_metadata
+        assert "severity" not in user_metadata
+
+    def test_must_not_be_generates_is_aggr_not_equal(self, generator):
+        """mustNotBe maps onto an is_aggr_not_equal count-aggregate check."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustNotBe": 0}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_equal"
+        assert rule["check"]["arguments"] == {"column": "*", "limit": 0, "aggr_type": "count"}
+        assert rule["user_metadata"]["threshold_field"] == "mustNotBe"
+
+    def test_must_be_greater_or_equal_to_generates_inclusive_bound_check(self, generator):
+        """mustBeGreaterOrEqualTo maps onto the matching inclusive-bound aggregate check."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustBeGreaterOrEqualTo": 10}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_less_than"
+        assert rule["check"]["arguments"] == {"column": "*", "limit": 10, "aggr_type": "count"}
+        assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterOrEqualTo"
+
+    def test_must_be_greater_than_falls_back_to_sql_query(self, generator):
+        """mustBeGreaterThan (strict) has no aggregate equivalent, so it falls back to sql_query."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustBeGreaterThan": 100}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == "SELECT COUNT(*) <= 100 AS condition FROM {{ input_view }}"
+        assert rule["check"]["arguments"]["condition_column"] == "condition"
+        assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
+
+    def test_must_be_between_falls_back_to_sql_query_with_exclusive_bounds(self, generator):
+        """mustBeBetween has no aggregate equivalent (both bounds exclusive per ODCS), so it falls
+        back to sql_query rather than being decomposed into two inclusive-bound checks."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustBeBetween": [10, 20]}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == (
+            "SELECT NOT (COUNT(*) > 10 AND COUNT(*) < 20) AS condition FROM {{ input_view }}"
+        )
+        assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
+
+    def test_severity_passed_through_verbatim_when_present(self, generator):
+        """DataQuality.severity is copied verbatim into user_metadata when the contract sets it."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustBe": 5, "severity": "critical"}))
+
+        assert rules[0]["user_metadata"]["severity"] == "critical"
+
+    def test_contract_dimension_overrides_default(self, generator):
+        """DataQuality.dimension overrides the rowCount default of 'completeness'."""
+        rules = self._generate(generator, self._contract_with_row_count({"mustBe": 5, "dimension": "accuracy"}))
+
+        assert rules[0]["user_metadata"]["dimension"] == "accuracy"
+
+    def test_no_threshold_field_set_is_skipped_with_warning(self, generator, caplog):
+        """A rowCount entry with none of the eight threshold fields set is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._contract_with_row_count({}))
+
+        assert rules == []
+        assert "rowCount entry on schema 'orders' has no recognized threshold field set" in caplog.text
+
+
+class TestDataContractGeneratorLibraryRulesNullValues(DataContractGeneratorTestBase):
+    """Tests for the type: library nullValues metric mapping onto DQX checks."""
+
+    def _contract_with_nullvalues(
+        self, quality_entry: dict, property_name: str = "email", schema_name: str = "test_table"
+    ) -> dict:
+        """Build an ODCS contract with a single property-level nullValues library quality entry."""
+        return self.create_contract_with_quality(
+            property_name=property_name,
+            logical_type="string",
+            quality_checks=[{"type": "library", "metric": "nullValues", **quality_entry}],
+            schema_name=schema_name,
+        )
+
+    def _generate(self, generator, contract_dict) -> list[dict]:
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            return generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_must_be_zero_generates_row_level_is_not_null(self, generator):
+        """mustBe: 0 maps onto the cheaper, row-pinpointing is_not_null check rather than a
+        dataset-level aggregate, unit-independent."""
+        rules = self._generate(generator, self._contract_with_nullvalues({"mustBe": 0}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "email_nullValues"
+        assert rule["check"] == {"function": "is_not_null", "arguments": {"column": "email"}}
+        user_metadata = rule["user_metadata"]
+        assert user_metadata["rule_type"] == "metric"
+        assert user_metadata["metric"] == "nullValues"
+        assert user_metadata["threshold_field"] == "mustBe"
+        assert user_metadata["unit"] == "rows"
+        assert user_metadata["dimension"] == "completeness"
+        assert user_metadata["field"] == "email"
+        assert "severity" not in user_metadata
+
+    def test_nonzero_rows_threshold_generates_null_count_aggregate(self, generator):
+        """A non-zero unit: rows threshold generates a dataset-level null-count aggregate, scoped
+        to null rows via a row_filter built from a safely quoted column."""
+        rules = self._generate(generator, self._contract_with_nullvalues({"mustBeLessOrEqualTo": 5}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_greater_than"
+        assert rule["check"]["arguments"] == {
+            "column": "*",
+            "limit": 5,
+            "aggr_type": "count",
+            "row_filter": "email IS NULL",
+        }
+        assert rule["user_metadata"]["threshold_field"] == "mustBeLessOrEqualTo"
+        assert rule["user_metadata"]["unit"] == "rows"
+
+    def test_unit_percent_generates_avg_indicator_check(self, generator):
+        """unit: percent compares the percentage of null rows via an AVG-of-indicator aggregate,
+        not the row_filter+'*' mechanism (which cannot express a percentage)."""
+        rules = self._generate(generator, self._contract_with_nullvalues({"mustBeLessOrEqualTo": 1, "unit": "percent"}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_greater_than"
+        args = rule["check"]["arguments"]
+        assert args["aggr_type"] == "avg"
+        assert args["limit"] == 1
+        assert "row_filter" not in args
+        assert "email IS NULL" in str(args["column"])
+        assert rule["user_metadata"]["unit"] == "percent"
+
+    def test_must_be_greater_than_falls_back_to_sql_query(self, generator):
+        """mustBeGreaterThan (strict) has no aggregate equivalent, so it falls back to sql_query."""
+        rules = self._generate(generator, self._contract_with_nullvalues({"mustBeGreaterThan": 3}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == "SELECT COUNT(*) <= 3 AS condition FROM {{ input_view }}"
+        assert rule["check"]["arguments"]["row_filter"] == "email IS NULL"
+        assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
+
+    def test_quoted_identifier_for_property_needing_quoting(self, generator):
+        """A property name requiring SQL-identifier quoting is safely backtick-quoted in the
+        generated row_filter, not left to produce a broken query."""
+        rules = self._generate(
+            generator,
+            self._contract_with_nullvalues({"mustBeLessOrEqualTo": 5}, property_name="order-id"),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["arguments"]["row_filter"] == "`order-id` IS NULL"
+
+    def test_no_threshold_field_set_is_skipped_with_warning(self, generator, caplog):
+        """A nullValues entry with none of the eight threshold fields set is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._contract_with_nullvalues({}))
+
+        assert rules == []
+        assert "nullValues entry on property 'email'" in caplog.text
+        assert "has no recognized threshold field set" in caplog.text
+
+    def test_schema_level_entry_is_skipped_with_warning(self, generator, caplog):
+        """nullValues is a property-level metric; a schema-level entry (no property) is skipped."""
+        contract_dict = self.create_basic_contract(
+            schema_name="orders",
+            properties=[{"name": "order_id", "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "library", "metric": "nullValues", "mustBe": 0}]
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert rules == []
+            assert "nullValues entry in schema 'orders' has no property" in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+
+class TestDataContractGeneratorLibraryRulesMissingValues(DataContractGeneratorTestBase):
+    """Tests for the type: library missingValues metric mapping onto DQX checks."""
+
+    def _contract_with_missing_values(
+        self, quality_entry: dict, property_name: str = "email", schema_name: str = "test_table"
+    ) -> dict:
+        """Build an ODCS contract with a single property-level missingValues library quality entry."""
+        return self.create_contract_with_quality(
+            property_name=property_name,
+            logical_type="string",
+            quality_checks=[{"type": "library", "metric": "missingValues", **quality_entry}],
+            schema_name=schema_name,
+        )
+
+    def _generate(self, generator, contract_dict) -> list[dict]:
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            return generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+
+    @staticmethod
+    def _forbidden_literals(forbidden: list) -> list:
+        """Render an is_not_in_list `forbidden` list of F.lit(...) Columns back to plain values.
+
+        Column.__eq__ builds a comparison Column rather than a bool, so comparing the list
+        directly (or via a dict == containing it) would crash on the implicit bool() coercion.
+        Comparing string reprs instead sidesteps that entirely.
+        """
+        return [str(item) for item in forbidden]
+
+    def test_must_be_zero_with_null_and_sentinel_generates_two_row_level_rules(self, generator):
+        """mustBe: 0 with both a null and a non-null sentinel listed splits into two independent
+        row-level rules (is_not_null, is_not_in_list) that share identical user_metadata, only
+        `name` differing -- OR'd via DQX's own per-row _errors/_warnings union."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values({"mustBe": 0, "arguments": {"missingValues": [None, "", "N/A"]}}),
+        )
+
+        assert len(rules) == 2
+        null_rule, sentinel_rule = rules
+
+        assert null_rule["name"] == "email_missingValues_null"
+        assert null_rule["check"] == {"function": "is_not_null", "arguments": {"column": "email"}}
+
+        assert sentinel_rule["name"] == "email_missingValues_sentinel"
+        assert sentinel_rule["check"]["function"] == "is_not_in_list"
+        sentinel_args = sentinel_rule["check"]["arguments"]
+        assert sentinel_args["column"] == "email"
+        assert sentinel_args["case_sensitive"] is True
+        assert self._forbidden_literals(sentinel_args["forbidden"]) == [str(F.lit("")), str(F.lit("N/A"))]
+
+        for rule in rules:
+            user_metadata = rule["user_metadata"]
+            assert user_metadata["rule_type"] == "metric"
+            assert user_metadata["metric"] == "missingValues"
+            assert user_metadata["threshold_field"] == "mustBe"
+            assert user_metadata["unit"] == "rows"
+            assert user_metadata["dimension"] == "completeness"
+            assert user_metadata["field"] == "email"
+            assert "severity" not in user_metadata
+
+        # user_metadata is shared verbatim between the two rules; only the top-level `name` differs.
+        assert null_rule["user_metadata"] == sentinel_rule["user_metadata"]
+
+    def test_must_be_zero_null_only_generates_single_row_level_rule(self, generator):
+        """A sentinel list containing only `null` emits just the is_not_null row rule."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values({"mustBe": 0, "arguments": {"missingValues": [None]}}),
+        )
+
+        assert len(rules) == 1
+        assert rules[0]["name"] == "email_missingValues_null"
+        assert rules[0]["check"] == {"function": "is_not_null", "arguments": {"column": "email"}}
+
+    def test_nonzero_rows_threshold_generates_missing_count_aggregate(self, generator):
+        """A non-zero unit: rows threshold generates a dataset-level count aggregate scoped to
+        rows matching either the null condition or the sentinel condition, OR'd in the row_filter,
+        with the column name safely quoted via _safe_sql_identifier."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values(
+                {"mustBeLessOrEqualTo": 5, "arguments": {"missingValues": [None, "", "N/A"]}}
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "email_missingValues"
+        assert rule["check"]["function"] == "is_aggr_not_greater_than"
+        assert rule["check"]["arguments"] == {
+            "column": "*",
+            "limit": 5,
+            "aggr_type": "count",
+            "row_filter": "email IS NULL OR email IN ('', 'N/A')",
+        }
+        assert rule["user_metadata"]["threshold_field"] == "mustBeLessOrEqualTo"
+        assert rule["user_metadata"]["unit"] == "rows"
+
+    def test_unit_percent_generates_avg_indicator_check(self, generator):
+        """unit: percent compares the percentage of missing rows via an AVG-of-indicator
+        aggregate string expression combining both conditions with OR, not the row_filter+'*'
+        mechanism (which cannot express a percentage)."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values(
+                {
+                    "mustBeLessOrEqualTo": 1,
+                    "unit": "percent",
+                    "arguments": {"missingValues": [None, "N/A"]},
+                }
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_greater_than"
+        args = rule["check"]["arguments"]
+        assert args["aggr_type"] == "avg"
+        assert args["limit"] == 1
+        assert "row_filter" not in args
+        assert args["column"] == "CASE WHEN email IS NULL OR email IN ('N/A') THEN 100.0 ELSE 0.0 END"
+        assert rule["user_metadata"]["unit"] == "percent"
+
+    def test_must_be_greater_than_falls_back_to_sql_query(self, generator):
+        """mustBeGreaterThan (strict) has no aggregate equivalent, so it falls back to sql_query."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values({"mustBeGreaterThan": 3, "arguments": {"missingValues": [None]}}),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == "SELECT COUNT(*) <= 3 AS condition FROM {{ input_view }}"
+        assert rule["check"]["arguments"]["row_filter"] == "email IS NULL"
+        assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
+
+    def test_must_be_between_falls_back_to_sql_query_with_exclusive_bounds_and_percent_unit(self, generator):
+        """mustBeBetween has no aggregate equivalent (both bounds exclusive per ODCS), so it falls
+        back to sql_query under unit: percent too, using the AVG(CASE WHEN ...) expression."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values(
+                {
+                    "mustBeBetween": [1, 5],
+                    "unit": "percent",
+                    "arguments": {"missingValues": [None]},
+                }
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == (
+            "SELECT NOT (AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END) > 1 AND "
+            "AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END) < 5) AS condition FROM {{ input_view }}"
+        )
+        assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
+
+    def test_missing_arguments_is_skipped_with_warning(self, generator, caplog):
+        """No 'arguments' block at all is skipped, not raised, naming the malformed key."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._contract_with_missing_values({"mustBe": 0}))
+
+        assert rules == []
+        assert "arguments" in caplog.text
+        assert "missingValues" in caplog.text
+
+    def test_wrong_type_arguments_missing_values_is_skipped_with_warning(self, generator, caplog):
+        """arguments.missingValues of the wrong type (not a list) is skipped, not raised, naming
+        the malformed key and its expected shape."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator,
+                self._contract_with_missing_values({"mustBe": 0, "arguments": {"missingValues": "not-a-list"}}),
+            )
+
+        assert rules == []
+        assert "arguments.missingValues" in caplog.text
+        assert "expected list" in caplog.text
+
+    def test_empty_arguments_missing_values_is_skipped_with_warning(self, generator, caplog):
+        """An empty arguments.missingValues list is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator,
+                self._contract_with_missing_values({"mustBe": 0, "arguments": {"missingValues": []}}),
+            )
+
+        assert rules == []
+        assert "arguments.missingValues" in caplog.text
+
+    def test_schema_level_entry_is_skipped_with_warning(self, generator, caplog):
+        """missingValues is a property-level metric; a schema-level entry (no property) is skipped."""
+        contract_dict = self.create_basic_contract(
+            schema_name="orders",
+            properties=[{"name": "order_id", "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["quality"] = [
+            {"type": "library", "metric": "missingValues", "mustBe": 0, "arguments": {"missingValues": [None]}}
+        ]
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                    generate_schema_validation=False,
+                )
+
+            assert rules == []
+            assert "missingValues entry in schema 'orders' has no property" in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_no_threshold_field_set_is_skipped_with_warning(self, generator, caplog):
+        """A missingValues entry with none of the eight threshold fields set is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator, self._contract_with_missing_values({"arguments": {"missingValues": [None]}})
+            )
+
+        assert rules == []
+        assert "missingValues entry on property 'email'" in caplog.text
+        assert "has no recognized threshold field set" in caplog.text
+
+    def test_quoted_identifier_for_property_needing_quoting(self, generator):
+        """A property name requiring SQL-identifier quoting is safely backtick-quoted in the
+        generated row_filter, not left to produce a broken query."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values(
+                {"mustBeLessOrEqualTo": 5, "arguments": {"missingValues": [None]}},
+                property_name="order-id",
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["arguments"]["row_filter"] == "`order-id` IS NULL"
+
+
+class TestDataContractGeneratorLibraryRulesInvalidValues(DataContractGeneratorTestBase):
+    """Tests for the type: library invalidValues metric mapping onto DQX checks."""
+
+    def _contract_with_invalid_values(self, quality_entry: dict, property_name: str = "status") -> dict:
+        """Build an ODCS contract with a single property-level invalidValues library quality entry."""
+        return self.create_contract_with_quality(
+            property_name=property_name,
+            logical_type="string",
+            quality_checks=[{"type": "library", "metric": "invalidValues", **quality_entry}],
+        )
+
+    def _generate(self, generator, contract_dict) -> list[dict]:
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            return generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_must_be_zero_with_valid_values_only_generates_is_in_list_row_rule(self, generator):
+        """mustBe: 0 with only arguments.validValues generates a single row-level is_in_list check,
+        quoting each string entry so is_in_list resolves it as a literal, not a column reference."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values({"mustBe": 0, "arguments": {"validValues": ["ACTIVE", "INACTIVE"]}}),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "status_invalidValues_allowed"
+        assert rule["check"]["function"] == "is_in_list"
+        assert rule["check"]["arguments"] == {
+            "column": "status",
+            "allowed": ["'ACTIVE'", "'INACTIVE'"],
+            "case_sensitive": True,
+        }
+        user_metadata = rule["user_metadata"]
+        assert user_metadata["rule_type"] == "metric"
+        assert user_metadata["metric"] == "invalidValues"
+        assert user_metadata["threshold_field"] == "mustBe"
+        assert user_metadata["unit"] == "rows"
+        assert user_metadata["dimension"] == "conformity"
+        assert user_metadata["field"] == "status"
+        assert "severity" not in user_metadata
+
+    def test_must_be_zero_with_pattern_only_generates_regex_match_row_rule(self, generator):
+        """mustBe: 0 with only arguments.pattern generates a single row-level regex_match check."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values({"mustBe": 0, "arguments": {"pattern": "^[A-Z]{3}$"}}),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "status_invalidValues_pattern"
+        assert rule["check"]["function"] == "regex_match"
+        assert rule["check"]["arguments"] == {"column": "status", "regex": "^[A-Z]{3}$"}
+        assert rule["user_metadata"]["threshold_field"] == "mustBe"
+
+    def test_must_be_zero_with_both_mechanisms_generates_both_row_rules(self, generator):
+        """mustBe: 0 with both validValues and pattern generates both row-level rules, sharing
+        identical user_metadata (only *name* differs) -- a value is invalid if it fails either."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values(
+                {"mustBe": 0, "arguments": {"validValues": ["ACTIVE"], "pattern": "^[A-Z]+$"}}
+            ),
+        )
+
+        assert len(rules) == 2
+        names = {rule["name"] for rule in rules}
+        assert names == {"status_invalidValues_allowed", "status_invalidValues_pattern"}
+
+        allowed_rule = next(rule for rule in rules if rule["name"] == "status_invalidValues_allowed")
+        pattern_rule = next(rule for rule in rules if rule["name"] == "status_invalidValues_pattern")
+        assert allowed_rule["check"]["function"] == "is_in_list"
+        assert pattern_rule["check"]["function"] == "regex_match"
+
+        allowed_metadata = dict(allowed_rule["user_metadata"])
+        pattern_metadata = dict(pattern_rule["user_metadata"])
+        assert allowed_metadata == pattern_metadata
+
+    def test_non_zero_threshold_unit_rows_generates_row_filter_count_aggregate(self, generator):
+        """A non-zero mustBe threshold with unit: rows (default) generates a count(*) aggregate
+        over an OR'd NOT IN / NOT RLIKE row_filter."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values(
+                {"mustBe": 5, "arguments": {"validValues": ["ACTIVE"], "pattern": "^[A-Z]+$"}}
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "status_invalidValues"
+        assert rule["check"]["function"] == "is_aggr_equal"
+        assert rule["check"]["arguments"] == {
+            "column": "*",
+            "limit": 5,
+            "aggr_type": "count",
+            "row_filter": "status NOT IN ('ACTIVE') OR NOT (status RLIKE '^[A-Z]+$')",
+        }
+        user_metadata = rule["user_metadata"]
+        assert user_metadata["threshold_field"] == "mustBe"
+        assert user_metadata["unit"] == "rows"
+        assert user_metadata["field"] == "status"
+
+    def test_unit_percent_generates_indicator_column_avg_aggregate(self, generator):
+        """unit: percent generates a CASE WHEN indicator SQL expression with aggr_type='avg',
+        since row_filter+'*' cannot express a percentage."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values(
+                {"mustNotBe": 10, "unit": "percent", "arguments": {"validValues": ["ACTIVE"]}}
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_equal"
+        assert rule["check"]["arguments"] == {
+            "column": "CASE WHEN status NOT IN ('ACTIVE') THEN 100.0 ELSE 0.0 END",
+            "limit": 10,
+            "aggr_type": "avg",
+        }
+        assert rule["user_metadata"]["unit"] == "percent"
+
+    def test_strict_threshold_falls_back_to_sql_query(self, generator):
+        """mustBeGreaterThan (strict) has no aggregate equivalent, so it falls back to sql_query
+        with the invalid condition passed as row_filter."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values(
+                {"mustBeGreaterThan": 3, "arguments": {"validValues": ["ACTIVE", "INACTIVE"]}}
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == ("SELECT COUNT(*) <= 3 AS condition FROM {{ input_view }}")
+        assert rule["check"]["arguments"]["row_filter"] == "status NOT IN ('ACTIVE', 'INACTIVE')"
+        assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
+
+    def test_malformed_arguments_is_skipped_with_warning(self, generator, caplog):
+        """A malformed arguments.validValues (wrong type) with no usable pattern is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator,
+                self._contract_with_invalid_values({"mustBe": 0, "arguments": {"validValues": "not-a-list"}}),
+            )
+
+        assert rules == []
+        assert "Missing or malformed 'arguments.validValues': expected list, got str" in caplog.text
+        assert "neither a usable 'arguments.validValues' list nor a usable 'arguments.pattern'" in caplog.text
+
+    def test_neither_valid_values_nor_pattern_present_is_skipped_with_warning(self, generator, caplog):
+        """An invalidValues entry with no arguments at all is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._contract_with_invalid_values({"mustBe": 0}))
+
+        assert rules == []
+        assert "neither a usable 'arguments.validValues' list nor a usable 'arguments.pattern'" in caplog.text
+
+    def test_unrecognized_unit_on_non_zero_threshold_is_skipped_with_warning(self, generator, caplog):
+        """A non-zero threshold with an unrecognized unit is skipped, not raised, per the general
+        unmapped-metric unit policy (only 'rows' and 'percent' are recognized)."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator,
+                self._contract_with_invalid_values(
+                    {"mustBe": 5, "unit": "bogus", "arguments": {"validValues": ["ACTIVE"]}}
+                ),
+            )
+
+        assert rules == []
+        assert "Unrecognized unit 'bogus'" in caplog.text
+        assert "expected 'rows' or 'percent'" in caplog.text
+
+    def test_pattern_exceeding_length_cap_is_skipped_with_warning(self, generator, caplog):
+        """A pattern longer than 200 characters fails the ReDoS length-cap guard and is skipped,
+        never compiled into a check."""
+        long_pattern = "a" * 201
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator, self._contract_with_invalid_values({"mustBe": 0, "arguments": {"pattern": long_pattern}})
+            )
+
+        assert rules == []
+        assert "failed the ReDoS safety guard" in caplog.text
+
+    def test_pattern_with_nested_quantifier_is_skipped_with_warning(self, generator, caplog):
+        """A nested-quantifier pattern like (a+)+ fails the ReDoS guard and is skipped."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator, self._contract_with_invalid_values({"mustBe": 0, "arguments": {"pattern": "(a+)+"}})
+            )
+
+        assert rules == []
+        assert "failed the ReDoS safety guard" in caplog.text
+
+    def test_pattern_with_alternation_quantifier_is_skipped_with_warning(self, generator, caplog):
+        """An alternation-plus-quantifier pattern like (a|a)* fails the ReDoS guard and is skipped."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator, self._contract_with_invalid_values({"mustBe": 0, "arguments": {"pattern": "(a|a)*"}})
+            )
+
+        assert rules == []
+        assert "failed the ReDoS safety guard" in caplog.text
+
+    def test_pattern_failing_to_compile_is_skipped_with_warning(self, generator, caplog):
+        """A syntactically invalid regex fails the re.compile() proxy check and is skipped."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator, self._contract_with_invalid_values({"mustBe": 0, "arguments": {"pattern": "a("}})
+            )
+
+        assert rules == []
+        assert "failed the ReDoS safety guard" in caplog.text
+
+
+class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGeneratorTestBase):
+    """Tests for the type: library duplicateValues metric mapping onto DQX checks."""
+
+    def _contract_with_duplicate_values_property(
+        self, quality_entry: dict, property_name: str = "order_id", schema_name: str = "orders"
+    ) -> dict:
+        """Build an ODCS contract with a single-property (argument-less) duplicateValues entry."""
+        contract_dict = self.create_basic_contract(
+            schema_name=schema_name,
+            properties=[{"name": property_name, "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["properties"][0]["quality"] = [
+            {"type": "library", "metric": "duplicateValues", **quality_entry}
+        ]
+        return contract_dict
+
+    def _contract_with_duplicate_values_schema(self, quality_entry: dict, schema_name: str = "orders") -> dict:
+        """Build an ODCS contract with a schema-level (composite-key) duplicateValues entry."""
+        contract_dict = self.create_basic_contract(
+            schema_name=schema_name,
+            properties=[
+                {"name": "tenant_id", "physicalType": "STRING"},
+                {"name": "order_id", "physicalType": "STRING"},
+            ],
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "library", "metric": "duplicateValues", **quality_entry}]
+        return contract_dict
+
+    def _generate(self, generator, contract_dict) -> list[dict]:
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            return generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_must_be_zero_single_property_generates_is_unique(self, generator):
+        """A single-property duplicateValues entry with mustBe: 0 generates is_unique on that column."""
+        rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBe": 0}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "order_id_duplicateValues"
+        assert rule["check"] == {"function": "is_unique", "arguments": {"columns": ["order_id"]}}
+        user_metadata = rule["user_metadata"]
+        assert user_metadata["rule_type"] == "metric"
+        assert user_metadata["metric"] == "duplicateValues"
+        assert user_metadata["threshold_field"] == "mustBe"
+        assert user_metadata["unit"] == "rows"
+        assert user_metadata["dimension"] == "uniqueness"
+        assert user_metadata["field"] == "order_id"
+        assert "fields" not in user_metadata
+        assert "severity" not in user_metadata
+
+    def test_composite_properties_must_be_zero_generates_is_unique_across_columns(self, generator):
+        """A schema-level arguments.properties composite key with mustBe: 0 generates is_unique
+        across every listed column."""
+        rules = self._generate(
+            generator,
+            self._contract_with_duplicate_values_schema(
+                {"mustBe": 0, "arguments": {"properties": ["tenant_id", "order_id"]}}
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["name"] == "orders_duplicateValues"
+        assert rule["check"] == {"function": "is_unique", "arguments": {"columns": ["tenant_id", "order_id"]}}
+        user_metadata = rule["user_metadata"]
+        assert user_metadata["fields"] == ["tenant_id", "order_id"]
+        assert "field" not in user_metadata
+
+    def test_non_zero_unit_rows_generates_sum_indicator_aggregate(self, generator):
+        """A non-zero threshold with unit: rows (or absent) uses the window-function duplicate
+        indicator passed via `column`, with aggr_type='sum'."""
+        rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBeLessOrEqualTo": 5}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_not_greater_than"
+        args = rule["check"]["arguments"]
+        assert args["aggr_type"] == "sum"
+        assert args["limit"] == 5
+        assert args["column"] == (
+            "CASE WHEN order_id IS NOT NULL AND COUNT(*) OVER (PARTITION BY order_id) > 1 THEN 1 ELSE 0 END"
+        )
+        assert rule["user_metadata"]["unit"] == "rows"
+        assert rule["user_metadata"]["threshold_field"] == "mustBeLessOrEqualTo"
+
+    def test_unit_percent_generates_avg_indicator_aggregate(self, generator):
+        """unit: percent uses the same indicator with the 100.0 percent value and aggr_type='avg'."""
+        rules = self._generate(
+            generator, self._contract_with_duplicate_values_property({"mustBe": 10, "unit": "percent"})
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "is_aggr_equal"
+        args = rule["check"]["arguments"]
+        assert args["aggr_type"] == "avg"
+        assert args["limit"] == 10
+        assert args["column"] == (
+            "CASE WHEN order_id IS NOT NULL AND COUNT(*) OVER (PARTITION BY order_id) > 1 THEN 100.0 ELSE 0 END"
+        )
+        assert rule["user_metadata"]["unit"] == "percent"
+
+    def test_must_be_greater_than_falls_back_to_sql_query(self, generator):
+        """A strict threshold (mustBeGreaterThan) has no aggregate equivalent, so it falls back to
+        sql_query, keyed on the same duplicate-count indicator."""
+        rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBeGreaterThan": 3}))
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        assert rule["check"]["arguments"]["query"] == (
+            "SELECT SUM(CASE WHEN order_id IS NOT NULL AND COUNT(*) OVER (PARTITION BY order_id) > 1 "
+            "THEN 1 ELSE 0 END) <= 3 AS condition FROM {{ input_view }}"
+        )
+        assert rule["check"]["arguments"]["condition_column"] == "condition"
+        assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
+
+    def test_composite_between_falls_back_to_sql_query_with_exclusive_bounds(self, generator):
+        """A composite-key mustBeBetween falls back to sql_query with exclusive bounds, partitioned
+        by every listed column."""
+        rules = self._generate(
+            generator,
+            self._contract_with_duplicate_values_schema(
+                {"mustBeBetween": [1, 4], "arguments": {"properties": ["tenant_id", "order_id"]}}
+            ),
+        )
+
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["check"]["function"] == "sql_query"
+        indicator = (
+            "CASE WHEN tenant_id IS NOT NULL AND order_id IS NOT NULL AND "
+            "COUNT(*) OVER (PARTITION BY tenant_id, order_id) > 1 THEN 1 ELSE 0 END"
+        )
+        assert rule["check"]["arguments"]["query"] == (
+            f"SELECT NOT (SUM({indicator}) > 1 AND SUM({indicator}) < 4) AS condition FROM {{{{ input_view }}}}"
+        )
+        assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
+
+    def test_malformed_arguments_properties_wrong_type_is_skipped_with_warning(self, generator, caplog):
+        """A schema-level entry whose arguments.properties isn't a list is skipped, not raised."""
+        contract_dict = self._contract_with_duplicate_values_schema({"mustBe": 0, "arguments": {"properties": "x"}})
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, contract_dict)
+
+        assert rules == []
+        assert "arguments.properties" in caplog.text
+
+    def test_malformed_arguments_properties_empty_is_skipped_with_warning(self, generator, caplog):
+        """A schema-level entry with an empty arguments.properties list is skipped, not raised."""
+        contract_dict = self._contract_with_duplicate_values_schema({"mustBe": 0, "arguments": {"properties": []}})
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, contract_dict)
+
+        assert rules == []
+        assert "arguments.properties" in caplog.text
+
+    def test_malformed_arguments_properties_non_string_entry_is_skipped_with_warning(self, generator, caplog):
+        """A schema-level entry whose arguments.properties list contains a non-string entry is
+        skipped, not raised."""
+        contract_dict = self._contract_with_duplicate_values_schema(
+            {"mustBe": 0, "arguments": {"properties": ["tenant_id", 123]}}
+        )
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, contract_dict)
+
+        assert rules == []
+        assert "arguments.properties" in caplog.text
+
+    def test_unrecognized_unit_on_non_zero_threshold_is_skipped_with_warning(self, generator, caplog):
+        """A non-zero threshold with an unrecognized unit value is skipped, not defaulted."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(
+                generator, self._contract_with_duplicate_values_property({"mustBe": 5, "unit": "bogus"})
+            )
+
+        assert rules == []
+        assert "Unrecognized unit 'bogus'" in caplog.text
+
+    def test_severity_passed_through_verbatim_when_present(self, generator):
+        """DataQuality.severity is copied verbatim into user_metadata when the contract sets it."""
+        rules = self._generate(
+            generator, self._contract_with_duplicate_values_property({"mustBe": 0, "severity": "critical"})
+        )
+
+        assert rules[0]["user_metadata"]["severity"] == "critical"
+
+    def test_contract_dimension_overrides_default(self, generator):
+        """DataQuality.dimension overrides the duplicateValues default of 'uniqueness'."""
+        rules = self._generate(
+            generator, self._contract_with_duplicate_values_property({"mustBe": 0, "dimension": "accuracy"})
+        )
+
+        assert rules[0]["user_metadata"]["dimension"] == "accuracy"
+
+    def test_no_threshold_field_set_is_skipped_with_warning(self, generator, caplog):
+        """A duplicateValues entry with none of the eight threshold fields set is skipped, not raised."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._contract_with_duplicate_values_property({}))
+
+        assert rules == []
+        assert "duplicateValues entry in schema 'orders' has no recognized threshold field set" in caplog.text
