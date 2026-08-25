@@ -32,6 +32,34 @@ SEGMENT_COUNT_WARN_THRESHOLD = 100
 MIN_ROWS_TO_TRAIN_SEGMENT = 10
 
 # Upper bound on the distinct values a column may have to be *recommended* as a grouping by
-# auto-discovery. Conservative on purpose: a wide grouping is fine for baseline_by, which trains one
-# model, but auto-discovery's recommendation is also what the legacy segmented path would consume.
+# auto-discovery on the legacy segmented path. Conservative on purpose: each distinct value there
+# becomes its own model.
 MAX_AUTO_GROUP_COUNT = 20
+
+
+# --- baseline conditioning ----------------------------------------------------------------------
+#
+# These deliberately differ from the segmented thresholds above, because the cost model differs.
+# A per-segment model must *train a forest* on its group, so it needs hundreds of rows and the group
+# count is a direct cost. A baseline group only has to yield a *median*, and there is one model
+# however many groups exist — so the constraint is statistical, not economic.
+#
+# Applying the segmented thresholds to baseline_by was a real defect: on a dataset whose natural
+# grouping was country x event_type x product (90 groups), discovery selected the single
+# lowest-cardinality column — 3 groups — and conditioning barely engaged, scoring PR-AUC 0.1302
+# against 0.1176 unconditioned. Finer grouping is what makes a baseline tight.
+
+# Rows per group needed for a representative median. Well below MIN_ROWS_PER_SEGMENT because a
+# median is a far cheaper statistic than a fitted forest: percentile_approx over a few dozen rows is
+# a usable centre, where a forest over the same rows is not a usable model.
+MIN_ROWS_PER_BASELINE_GROUP = 30
+
+# Ceiling on total baseline groups. Not a training cost — it bounds what gets persisted in the
+# feature metadata and broadcast at scoring. Well above the 200 keys at which unseen-group marking
+# switches from an isin to a broadcast join, so both strategies stay viable.
+MAX_BASELINE_GROUPS = 5000
+
+# Per-column distinct-value ceiling for a baseline column. Higher than MAX_AUTO_GROUP_COUNT since
+# breadth is affordable here, but still below the profiler's high-cardinality warning at 50, so an
+# identifier-like column is never mistaken for a dimension.
+MAX_BASELINE_COLUMN_CARDINALITY = 50

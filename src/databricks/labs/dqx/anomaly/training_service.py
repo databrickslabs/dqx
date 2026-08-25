@@ -75,8 +75,14 @@ class AnomalyTrainingService:
         df_filtered: DataFrame,
         segment_by: list[str] | None,
     ) -> tuple[list[str], list[str] | None]:
-        """Perform auto-discovery of columns and segments."""
-        profile = auto_discover_columns(df_filtered)
+        """Perform auto-discovery of columns and segments.
+
+        When the caller has not declared ``segment_by``, any grouping discovered here is routed to
+        ``baseline_by``, so discovery is asked for a baseline-shaped grouping: finer, bounded by rows
+        per group rather than by model count. Asking for the segmented shape was a real defect --
+        it returned a single lowest-cardinality column and conditioning barely engaged.
+        """
+        profile = auto_discover_columns(df_filtered, for_baseline=segment_by is None)
         discovered_columns = profile.recommended_columns
         discovered_segments = segment_by
         if segment_by is None:
@@ -244,25 +250,28 @@ class AnomalyTrainingService:
             # naming your feature columns silently gave up any chance of conditioning. Those are
             # independent questions. Costs one extra profiling pass for callers who pass explicit
             # columns and no grouping.
-            return columns, self._discover_baseline_columns(df_filtered), None
+            return columns, self._discover_baseline_columns(df_filtered, columns), None
 
         return columns, declared_baseline_by, segment_by
 
     @staticmethod
-    def _discover_baseline_columns(df_filtered: DataFrame) -> list[str] | None:
+    def _discover_baseline_columns(df_filtered: DataFrame, columns: list[str]) -> list[str] | None:
         """Discover a baseline grouping when the caller named feature columns but no grouping.
 
         Kept separate from ``_perform_auto_discovery`` so that discovering a grouping does not
         require also discovering the feature columns.
+
+        Anything the caller named as a feature is excluded. When discovery picks the columns itself
+        the profiler already keeps the two lists disjoint, but here the feature list came from the
+        caller: a column they asked to have measured must not silently become the basis it is
+        measured against, which ``validate_baseline_columns`` would reject anyway.
         """
-        profile = auto_discover_columns(df_filtered)
-        if not profile.recommended_segments:
+        profile = auto_discover_columns(df_filtered, for_baseline=True)
+        discovered = [c for c in profile.recommended_segments if c not in set(columns)]
+        if not discovered:
             return None
-        logger.info(
-            f"Auto-detected {len(profile.recommended_segments)} baseline columns: "
-            f"{profile.recommended_segments} ({profile.segment_count} total groups)"
-        )
-        return profile.recommended_segments
+        logger.info(f"Auto-detected {len(discovered)} baseline columns: {discovered}")
+        return discovered
 
     @staticmethod
     def _resolve_grouping(
