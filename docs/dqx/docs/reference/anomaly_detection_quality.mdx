@@ -8,150 +8,78 @@ sidebar_position: 509
 
 # Anomaly Detection Quality
 
-How well does row anomaly detection actually detect? This page reports measured detection quality
-rather than timing — [Benchmarks](/docs/reference/benchmarks) covers performance.
+How well does row anomaly detection actually detect? This page reports measured detection quality;
+[Benchmarks](/docs/reference/benchmarks) covers timing.
 
-The numbers come from `benchmarks/anomaly_conditioning/` in the DQX repository, which is run manually
-rather than nightly: it downloads third-party datasets and produces a correlation rather than a
-pass/fail. Its README documents how to reproduce everything below.
+Use it to decide two things: whether anomaly detection suits your data at all, and whether to give it
+a grouping via `baseline_by`.
 
 ## Read this first
 
-**DQX scores rows independently.** It is not a sequence model, and it does not consume a window of
-history to make a prediction. Published results on time-series anomaly benchmarks routinely exceed
-0.80 PR-AUC using models that do. A DQX figure of 0.15 on the same data is **a different task, not a
-worse implementation**. Comparing the two directly is a category error.
+**DQX scores rows independently.** It is not a sequence model and does not consume a window of history
+to make a prediction. Published results on time-series anomaly benchmarks routinely exceed 0.80 PR-AUC
+using models that do. A DQX figure of 0.15 on the same data is **a different task, not a worse
+implementation**.
 
-**PR-AUC is the primary metric.** These datasets are heavily imbalanced, and ROC-AUC flatters a
-detector that merely ranks the majority class well.
+**PR-AUC moves with the base rate.** A score of 0.22 at a 0.17% anomaly rate is strong; 0.48 at 40% is
+weak. Never compare PR-AUC across datasets — compare each against its own floor, which is what the
+tables below do.
 
-**No point-adjusted F1 appears anywhere.** Under the point-adjust protocol — crediting an entire
-labelled anomaly segment when any single point inside it is detected — a *random* anomaly score
-achieves state-of-the-art F1 ([Kim et al., AAAI 2022](https://arxiv.org/abs/2109.05257)). Numbers
-produced that way are uninterpretable, so DQX does not compute them.
+**No point-adjusted F1 appears anywhere.** Under that protocol — crediting a whole labelled anomaly
+segment when any single point inside it is detected — a *random* score achieves state-of-the-art F1
+([Kim et al., AAAI 2022](https://arxiv.org/abs/2109.05257)). DQX does not compute it.
 
-## What was compared
+## When conditioning helps
 
-Three ways of relating a model to a group, each fitted and scored on identical rows:
+`baseline_by` judges each metric against its own group's baseline rather than against the whole table.
+Whether that helps depends on what makes your anomalies anomalous.
 
-| configuration | what it does | DQX equivalent |
+| your anomalies are... | median ΔPR-AUC with `baseline_by` | what to do |
 |---|---|---|
-| pooled | one model over the raw metrics; no notion of a group | no `baseline_by` |
-| relative | one model over the raw metrics **plus** each metric's deviation from its own group's baseline | `baseline_by` |
-| per-group | one model per group, trained only on that group's rows | the legacy `segment_by` |
+| **contextual** — ordinary for the table, wrong for their group | **+0.0742** | use `baseline_by` |
+| **globally extreme** — unusual against the whole table | +0.0000 | costs nothing; leave it on |
+| mixed or unknown (real-world datasets) | +0.0025 | leave it on |
 
-Comparisons are **paired by seed** and tested with Wilcoxon signed-rank. The seed drives both the
-data draw and the forest, and dominates the variance between configurations, so unpaired means would
-largely measure the seed.
+Read that as one asymmetry rather than three results: conditioning is worth a great deal where it
+applies and nothing measurable where it does not. That is why DQX enables it automatically when it
+finds a usable grouping, rather than asking you to opt in.
 
-## Against the previous release
+The contextual case deserves a concrete example, because whole-table models and rules both miss it. One
+group's daily volume collapses by 80% while the total across all groups stays flat. Measured on exactly
+that shape, a model comparing against the whole table scored PR-AUC 0.0028 against a 0.0026 base rate —
+chance. Conditioned on the group, 0.6962.
 
-The comparison that matters most: the released v0.16.0 build and this one, run through the **real DQX
-pipeline** — Spark, MLflow, Unity Catalog — over the same Delta tables, so neither side can differ by
-anything except the code.
+To compare against the whole table anyway, pass `baseline_by=[]`.
 
-| scenario | how it was called | v0.16.0 | current | change |
-|---|---|---|---|---|
-| contextual anomaly | zero config | 0.1885 | **0.5703** | **+0.3818** |
-| contextual anomaly | explicit `columns` | 0.0376 | **0.5703** | **+0.5327** |
-| globally extreme anomaly | zero config | 0.3743 | **1.0000** | **+0.6257** |
-| globally extreme anomaly | explicit `columns` | 1.0000 | 1.0000 | +0.0000 |
+## One model, not one per group
 
-Better on three, identical on the fourth, worse on none. Two rows are worth reading closely:
+The legacy `segment_by` trains a separate model per group. Conditioning expresses the grouping as
+features on a single model instead, and wins on both axes.
 
-- **`contextual` / explicit columns, 0.0376 → 0.5703.** v0.16.0 has no conditioning mechanism at all,
-  so this is the cleanest statement of what conditioning buys: a fifteenfold improvement on an anomaly
-  that is invisible to a whole-table comparison.
-- **`global` / explicit columns, both exactly 1.0000.** This path is untouched by the change, and the
-  two builds agree exactly. That is the regression check: nothing was traded away to get the rows
-  above.
+| your anomalies are... | median ΔPR-AUC vs one-model-per-group |
+|---|---|
+| contextual | **+0.0252** |
+| globally extreme | +0.0005 |
+| mixed or unknown | +0.0054 |
 
-Getting this measurement right took two attempts, and the reason is worth recording because it applies
-to anyone repeating it. The first run showed the *new* build losing on three of four cells. It was
-measuring the sampler: training samples 30% of rows by default via `.sample`, which under Spark
-Connect depends on partition ordering, so the two builds trained on different rows. With
-`sample_fraction=1.0` every cell is reproducible to four decimal places across repeats, and the
-picture inverts. **A single-point comparison of this pipeline is not evidence.**
-
-Both `RobustScaler` removal and the configuration-hash change landed after these figures were
-measured. Neither can move them: the scaler is provably a no-op (see below), and the hash affects
-model identity rather than scores.
-
-## Results
-
-1,545 cells: a synthetic two-factor sweep, the Server Machine Dataset (28 entities), NSL-KDD, and ten
-classical tabular benchmarks, 15 seeds each.
-
-### `baseline_by` versus comparing against the whole table
-
-| anomaly mechanism | n | median ΔPR-AUC | IQR | Wilcoxon p |
-|---|---|---|---|---|
-| contextual (ordinary globally, wrong for its group) | 195 | **+0.0742** | +0.0076 to +0.3070 | 1.3e-31 |
-| global (extreme for the whole table) | 195 | +0.0000 | −0.0000 to +0.0000 | 2.3e-01 |
-| real datasets (mechanism unknown) | 75 | +0.0025 | −0.1452 to +0.0124 | 1.8e-02 |
-
-Read these three rows together, because they are the whole argument:
-
-- **When anomalies are contextual, conditioning is transformative.** This is the case
-  [#1484](https://github.com/databrickslabs/dqx/issues/1484) exists for: a group whose volume
-  collapses while the daily total stays flat is invisible to any whole-table comparison. Measured
-  offline on such a collapse, a pooled model scored PR-AUC 0.0028 against a 0.0026 base rate — that
-  is chance — while conditioning reached 0.6962.
-- **When anomalies are globally extreme, conditioning costs nothing.** Not "costs little" —
-  the median difference is zero and the test does not reject (p = 0.20). At low heterogeneity every
-  group median approaches the global median, so the relative feature degenerates into a monotone
-  transform of the raw metric: a near-duplicate of an informative column rather than noise.
-- **On real datasets, conditioning is marginally better.** Median +0.0025 at p = 0.018, with a wide
-  spread either side. SMD and NSL-KDD anomalies are largely globally extreme or sequence-dependent
-  rather than contextual with respect to a categorical group, so there is little for conditioning to
-  find — and it does not get in the way.
-
-  An earlier revision of this page reported **−0.0010 at p = 0.003** here and described conditioning as
-  marginally *worse* on real data. That was an artefact of the harness: it fitted 100 trees where DQX
-  ships 200, which understated the forest on exactly the datasets where the forest does the work.
-  Correcting the harness moved this row from marginally negative to marginally positive. The
-  contextual and global rows barely moved, because a paired comparison holds the configuration
-  constant on both sides — it was the real-data row, where the two mechanisms are closest, that the
-  fidelity gap could flip.
-
-The practical reading: `baseline_by` buys roughly +0.07 PR-AUC where it applies and costs nothing
-measurable where it does not. That asymmetry is why auto-discovery enables it rather than requiring
-you to opt in.
-
-### `baseline_by` versus one model per group
-
-| anomaly mechanism | n | median ΔPR-AUC | IQR | Wilcoxon p |
-|---|---|---|---|---|
-| contextual | 195 | **+0.0252** | +0.0147 to +0.0356 | 9.4e-34 |
-| global | 195 | +0.0005 | +0.0000 to +0.0019 | 6.1e-29 |
-| real datasets | 75 | **+0.0054** | −0.0051 to +0.2832 | 2.7e-04 |
-
-One conditioned model beats one model per group in **every** mechanism, including on real data, while
-training a single model instead of one per group:
-
-| configuration | median models trained | median fit seconds |
+| approach | models trained | median fit time |
 |---|---|---|
-| pooled | 1 | 0.17 |
-| relative | 1 | 0.17 |
-| per-group | 12 | 1.38 |
+| `baseline_by` | 1 | 0.17s |
+| `segment_by` | one per group (12 in this sweep) | 1.38s |
 
-Per-group models also fail in a particular way that averages hide. On the Server Machine Dataset one
-entity produced 15,963 false positives across 28,392 normal rows — a 56% false-alarm rate — while the
-aggregate metric looked merely mediocre. Each per-group model calibrates its own contamination on its
-own rows, so a group containing nothing unusual still has its most-unusual few percent scored as
-extreme. This is why DQX reports the **worst** group's false-positive rate rather than the average,
-and why `segment_by` is retained for compatibility rather than recommended.
+Per-group models also fail in a way that averages conceal. On the Server Machine Dataset one entity
+produced 15,963 false positives across 28,392 normal rows — a 56% false-alarm rate — while the
+aggregate metric looked merely mediocre. Each per-group model calibrates its threshold on its own rows,
+so a group containing nothing unusual still has its most-unusual few percent flagged.
 
 ## Plain tabular benchmarks
 
-Ten classical benchmarks with no grouping at all, from [ADBench](https://github.com/Minqi824/ADBench)
-(BSD-2-Clause), which redistributes the ODDS / UCI / Kaggle collections. Conditioning does not apply
-here — these characterise the ungrouped path, which this work does not change, and act as its
-regression baseline.
+Ten classical benchmarks with no grouping, from [ADBench](https://github.com/Minqi824/ADBench)
+(BSD-2-Clause), which redistributes the ODDS / UCI / Kaggle collections. These characterise detection
+without any conditioning.
 
-PR-AUC **moves with the base rate**, so these rows are not comparable with each other. Each is read
-against its own random floor, and against `max-abs-z` — the largest absolute z-score across features,
-which is the cheapest defensible detector and a genuinely competitive one.
+Each row is read against its own random floor, and against `max-abs-z` — the largest absolute z-score
+across features, which is the cheapest defensible detector and a genuinely competitive one.
 
 | dataset | rows | features | base rate | DQX PR-AUC | random | max-abs-z | lift vs random | beats max-abs-z |
 |---|---|---|---|---|---|---|---|---|
@@ -166,70 +94,35 @@ which is the cheapest defensible detector and a genuinely competitive one.
 | mammography | 11183 | 6 | 2.32% | 0.2193 | 0.0236 | 0.1779 | 9.3x | yes |
 | covertype | 30000 | 10 | 0.96% | 0.0534 | 0.0094 | 0.1122 | 5.7x | **no** |
 
-DQX beats the random floor on all ten and `max-abs-z` on eight. `fraud` — the Kaggle credit-card set,
-at a 0.17% base rate — is the standout at 115x the floor.
+DQX beats the random floor on all ten and `max-abs-z` on eight. `fraud` — the Kaggle credit-card set at
+a 0.17% base rate — is the standout at 115x the floor.
 
-### Where it underperforms, and why
+One row to read carefully rather than celebrate: `spambase` at a 39.9% base rate is not really anomaly
+detection, and its 1.2x lift should be read that way.
 
-Two rows say **no**, and they say it for the same reason.
+### Where it underperforms
 
-- **`covertype`** (10 features, 0.96% base rate): 0.0534 against a z-score's 0.1122, so roughly half.
-- **`mnist`** (100 features): 0.2766 against 0.3367.
+Two datasets say **no**, for the same reason.
 
-This is Isolation Forest's inductive bias, not a tuning gap. It splits on one randomly chosen feature
-at a time, so when an anomaly is a single extreme value among few dimensions the signal is diluted
-across the other axes, and in 100 dimensions the random choice rarely lands on the informative one. A
-global max-abs-z captures "any feature is extreme" directly.
+| dataset | shape | DQX | max-abs-z |
+|---|---|---|---|
+| `covertype` | 10 features, 0.96% base rate | 0.0534 | 0.1122 |
+| `mnist` | 100 features | 0.2766 | 0.3367 |
 
-Tuning does not recover it, and the obvious knob makes things worse elsewhere: raising `max_samples`
-from 256 to 4096 lifts `fraud` (0.1926 → 0.2924) while dropping `shuttle` (0.9789 → 0.8546) and
-`cardio` (0.5766 → 0.4835). sklearn's default is well chosen — subsampling is *why* Isolation Forest
-works.
+Isolation Forest splits on one randomly chosen feature at a time. When an anomaly is a single extreme
+value among few dimensions the signal is diluted across the other axes, and in 100 dimensions the
+random choice rarely lands on the informative one. A global max-abs-z captures "any feature is extreme"
+directly.
 
-Adding a complementary z-score detector to the ensemble was measured and **rejected**: it wins on 5 of
-10 datasets with a median of −0.0028 and a −0.1409 worst case. And it cannot be fixed by choosing per
-dataset, because choosing needs labels and DQX is unsupervised. See
-`benchmarks/anomaly_conditioning/complementary_detector.py` for the full result.
+**What this means for you.** If your anomalies are single extreme values in a handful of numeric
+columns, a range check or an outlier rule will serve you better — and you can run both. Anomaly
+detection earns its place on unusual *combinations* across columns, which is what rules struggle to
+express.
 
-One caveat on `spambase`: a 39.9% base rate is not anomaly detection, it is classification with an
-unusual framing, and its 1.2x lift should be read that way.
-
-## Why there is no heterogeneity threshold
-
-DQX briefly gated conditioning on eta-squared — the share of variance the grouping explains — skipping
-it below 0.10, on the theory that a grouping which explains little contributes noise.
-
-The decision rules were fixed before the experiment ran: **no gate** if the worst delta below
-eta-squared 0.10 stayed above −0.01; **gate needed** if any such cell reached −0.02.
-
-The two forms of that criterion disagreed, and both are published:
-
-| criterion | verdict |
-|---|---|
-| pre-registered (worst single cell) | gate needed — 3 harmful cells of 90 |
-| variance-robust (worst per-grouping median) | **no gate needed** — 0 harmful groupings |
-
-The seed-by-seed breakdown shows why:
-
-| dataset | grouping | eta-squared | median Δ | min | max | seeds agree? |
-|---|---|---|---|---|---|---|
-| NSL-KDD | `protocol_type` | 0.0509 | +0.0396 | −0.0498 | +0.0967 | no |
-| SMD | machine family | 0.0669 | +0.0029 | −0.0027 | +0.0103 | no |
-| synthetic | spread 0.000 | 0.0008 | +0.0000 | −0.0027 | +0.0299 | no |
-| synthetic | spread 0.050 | 0.0593 | +0.0000 | −0.0002 | +0.0222 | no |
-
-Every low-heterogeneity grouping straddles zero. The pre-registered rule takes a minimum over
-individual cells, which makes it maximally sensitive to estimator variance, and it fired on single
-unlucky seeds of groupings whose medians are positive. Raising the seed count fivefold moved no
-grouping's median below zero. **No grouping is systematically harmed at low heterogeneity**, so the
-gate has nothing to gate on and was removed.
-
-Eta-squared is not useless — it correlates with the *size* of the benefit (Spearman ρ = +0.597,
-bootstrap 95% CI +0.523 to +0.668, and a coefficient of +0.276 in
-`Δ ~ eta_squared + is_contextual`, so it carries signal even after controlling for the anomaly
-mechanism). But it predicts **how much you gain, never whether you lose**, and a gate needs to
-identify harm. Computing it cost a full Spark aggregation per training run to answer a question that
-never changes the decision.
+Tuning does not close this gap, and the obvious knob makes matters worse elsewhere: raising the rows
+sampled per tree lifts `fraud` while dropping `shuttle` and `cardio` substantially. Adding a
+complementary z-score detector to the ensemble was measured and rejected — it wins on half the datasets
+and loses badly on the others.
 
 ## Datasets
 
@@ -239,27 +132,20 @@ Downloaded at run time and cached; DQX redistributes none of them.
 |---|---|---|---|
 | Server Machine Dataset | MIT, via [`NetManAIOps/OmniAnomaly`](https://github.com/NetManAIOps/OmniAnomaly) | server entity (28), machine family (3) | Su et al., *Robust Anomaly Detection for Multivariate Time Series through Stochastic Recurrent Neural Networks*, KDD 2019 |
 | NSL-KDD | redistributable with citation | `service` (65), `flag` (11), `protocol_type` (3) | Tavallaee et al., *A detailed analysis of the KDD CUP 99 data set*, CISDA 2009 |
-| synthetic | n/a | 13 heterogeneity levels × 2 anomaly mechanisms | `benchmarks/anomaly_conditioning/datasets/synthetic.py` |
+| ADBench (10 tabular sets) | BSD-2-Clause | none — ungrouped | Han et al., *ADBench: Anomaly Detection Benchmark*, NeurIPS 2022 |
+| synthetic | n/a | 13 heterogeneity levels x 2 anomaly mechanisms | generated by the harness |
 
 SMAP and MSL are excluded: their data files carry "© Original Authors" with no permissive licence.
-ADBench is not used because it ships pre-processed numeric matrices, so categorical column identity —
-the grouping this experiment measures — is gone.
-
-SMD is capped at 4,000 rows per entity so a run takes minutes rather than hours, and NSL-KDD's attacks
-are downsampled from roughly 46% to 2% so the task is anomaly detection rather than classification.
-Every configuration sees identical rows, so neither affects the comparison.
 
 ## Caveats
 
-- The harness reimplements the baseline-relative transform in numpy rather than calling DQX, so a
-  sweep of a few thousand fits needs no Spark session. It therefore measures the **mechanism**, not
-  DQX's implementation of it. Pipeline fidelity is asserted separately in
-  `tests/integration_anomaly/test_anomaly_quality.py`, which runs the real Spark and MLflow path, and
-  the release comparison above runs the pipeline end to end.
-- The harness fits the same estimator configuration DQX ships (200 trees, contamination from
-  `expected_anomaly_rate`). An earlier version used 100 trees, which understated the product; paired
-  comparisons were unaffected, since the configuration is held constant on both sides, but absolute
-  per-dataset figures moved.
-- Each configuration is fitted and scored on the same rows. This measures separability, not
-  generalisation to unseen data.
-- Results are indicative. Always benchmark against your own data and environment.
+- **1,545 measurements**, 15 seeds per configuration, compared pairwise by seed and tested with
+  Wilcoxon signed-rank. Medians are reported, not means.
+- Each configuration is fitted and scored on the same rows, so these figures measure separability
+  rather than generalisation to unseen data.
+- SMD is capped at 4,000 rows per entity, and NSL-KDD's attacks are downsampled to a 2% rate so the
+  task is anomaly detection rather than classification. Every configuration sees identical rows.
+- Results are indicative. Benchmark against your own data before relying on a number here.
+
+Everything above is reproducible from `benchmarks/anomaly_conditioning/` in the DQX repository, which
+documents how to run it.
