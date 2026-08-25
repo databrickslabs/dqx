@@ -23,6 +23,7 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
+from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -212,6 +213,24 @@ class ExplanationContext:
             redact_columns=tuple(config.redact_columns or ()),
             pattern_col=config.pattern_col,
         )
+
+
+def redaction_set(redact_columns: tuple[str, ...]) -> frozenset[str]:
+    """Columns to redact, plus the engineered features derived from them.
+
+    Redaction matches contribution keys exactly, and contribution keys are *engineered* feature
+    names. So redacting ``amount`` did not stop ``amount_rel_baseline`` -- a signed log-ratio of the
+    same column -- from reaching the LLM prompt. A caller naming a column sensitive means every
+    feature derived from it is sensitive too.
+
+    Known remaining gap: one-hot and frequency-encoded features are not covered, because their names
+    cannot be reconstructed from the source column alone (``country`` becomes ``country_C3``,
+    ``country_DE`` and so on, one per observed value). Closing that needs the feature metadata at
+    prompt-construction time, which this function does not have. Tracked separately.
+    """
+    expanded = set(redact_columns)
+    expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
+    return frozenset(expanded)
 
 
 def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
@@ -648,7 +667,7 @@ def _add_explanation_column_ai_query(
     the documented "one call per group per scoring run" cost model. The collected payload is
     small and bounded: at most ``max_groups`` rows, each holding three length-capped text fields.
     """
-    redact_set = frozenset(ctx.redact_columns)
+    redact_set = redaction_set(ctx.redact_columns)
     anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
     kept_sdf, dropped_groups_count, dropped_rows_count, total_groups = _aggregate_groups_spark(
         anomalous,
@@ -718,7 +737,7 @@ def add_explanation_column(
     Raises:
       InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
     """
-    redact_set = frozenset(ctx.redact_columns)
+    redact_set = redaction_set(ctx.redact_columns)
     segment_str = _format_segment(segment_values, redact_set)
     df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(

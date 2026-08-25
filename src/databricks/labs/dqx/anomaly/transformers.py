@@ -764,6 +764,12 @@ def _signed_log1p(column: Column) -> Column:
     return F.signum(column) * F.log1p(F.abs(column))
 
 
+# Suffix marking a baseline-relative feature. Named here rather than inlined because redaction has
+# to be able to recognise a feature as derived from a source column: a caller who redacts "amount"
+# means the LLM must not see "amount_rel_baseline" either.
+BASELINE_RELATIVE_SUFFIX = "_rel_baseline"
+
+
 def _process_baseline_relative_features(
     transformed_df: DataFrame,
     numeric_cols: list[ColumnTypeInfo],
@@ -802,7 +808,7 @@ def _process_baseline_relative_features(
         global_medians.update(computed_global)
 
     for metric in metrics:
-        feature_name = f"{metric}_rel_baseline"
+        feature_name = f"{metric}{BASELINE_RELATIVE_SUFFIX}"
         baselines = baseline_medians.get(metric, {})
         global_baseline = global_medians.get(metric, 0.0)
 
