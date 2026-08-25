@@ -58,10 +58,18 @@ class FeatureEngineering:
 
 @dataclass
 class SegmentationConfig:
-    """Segmentation configuration (5 fields)."""
+    """How a model relates to groups in the data (6 fields).
+
+    ``baseline_by`` is duplicated here from the feature metadata on purpose. It also lives inside the
+    ``features.feature_metadata`` JSON blob, which is where scoring reads it, but a JSON blob is not
+    queryable: answering "is this model conditioned, and on what" meant parsing it. It is the first
+    question worth asking when detection looks wrong, so it belongs in a column next to
+    ``training.columns``.
+    """
 
     segment_by: list[str] | None = None
     segment_values: dict[str, str] | None = None
+    baseline_by: list[str] | None = None
     is_global_model: bool = True
     sklearn_version: str | None = None
     config_hash: str | None = None
@@ -75,7 +83,7 @@ class AnomalyModelRecord:
     - identity: Core model identification (5 fields)
     - training: Training configuration and metrics (6 fields)
     - features: Feature engineering metadata (5 fields)
-    - segmentation: Segmentation configuration (5 fields)
+    - segmentation: Grouping configuration (6 fields)
 
     Stored as nested structs in Delta tables (no flattening needed).
     """

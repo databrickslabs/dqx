@@ -32,7 +32,7 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
     "features struct<mode:string, column_types:map<string,string>, feature_metadata:string, "
     "feature_importance:map<string,double>, temporal_config:map<string,string>>, "
     "segmentation struct<segment_by:array<string>, segment_values:map<string,string>, "
-    "is_global_model:boolean, sklearn_version:string, config_hash:string>"
+    "baseline_by:array<string>, is_global_model:boolean, sklearn_version:string, config_hash:string>"
 )
 
 
@@ -88,6 +88,7 @@ class AnomalyModelRegistry:
             "segmentation": {
                 "segment_by": record.segmentation.segment_by,
                 "segment_values": record.segmentation.segment_values,
+                "baseline_by": record.segmentation.baseline_by,
                 "is_global_model": record.segmentation.is_global_model,
                 "sklearn_version": record.segmentation.sklearn_version,
                 "config_hash": record.segmentation.config_hash,
@@ -108,7 +109,11 @@ class AnomalyModelRegistry:
             self._archive_previous(table, record.identity.model_name)
 
         df = self.build_model_df(self.spark, record)
-        save_dataframe_as_table(df, OutputConfig(location=table, mode="append"))
+        # mergeSchema so a registry table created by an earlier DQX gains new struct fields on the
+        # next write instead of failing. Without it, adding `baseline_by` to the segmentation struct
+        # would make retraining fail against an existing table -- and retraining is exactly what the
+        # configuration-hash error tells the user to do, so the remedy has to work.
+        save_dataframe_as_table(df, OutputConfig(location=table, mode="append", options={"mergeSchema": "true"}))
 
     def get_active_model(self, table: str, model_name: str) -> AnomalyModelRecord | None:
         """Fetch the active model for a given name."""

@@ -576,6 +576,7 @@ class AnomalyTrainingService:
             ),
             segmentation=SegmentationConfig(
                 segment_by=segment_by,
+                baseline_by=context.baseline_by,
                 segment_values=self._stringify_dict(artifacts.segment_values) if artifacts.segment_values else None,
                 is_global_model=segment_by is None,
                 sklearn_version=sklearn.__version__,
