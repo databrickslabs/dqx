@@ -275,6 +275,8 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
         "segment",
         "contributions",
         "confidence_std",
+        "is_new_baseline",
+        "new_baseline_key",
     ]
 
     for field in expected_fields:

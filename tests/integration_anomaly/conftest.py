@@ -140,6 +140,7 @@ def train_model_with_params(
     params: AnomalyParams,
     segment_by: list[str] | None = None,
     expected_anomaly_rate: float = 0.02,
+    baseline_by: list[str] | None = None,
 ) -> str:
     """Train a model with internal params (test-only)."""
     return engine.train(
@@ -148,6 +149,7 @@ def train_model_with_params(
         model_name=model_name,
         registry_table=registry_table,
         segment_by=segment_by,
+        baseline_by=baseline_by,
         params=params,
         expected_anomaly_rate=expected_anomaly_rate,
     )
@@ -800,6 +802,8 @@ def quick_model_factory(ws, make_random, make_schema):
         segment_by: list[str] | None = None,
         catalog: str = TEST_CATALOG,
         schema: str | None = None,
+        baseline_by: list[str] | None = None,
+        train_schema: str | None = None,
     ):
         """
         Train a quick test model.
@@ -811,6 +815,9 @@ def quick_model_factory(ws, make_random, make_schema):
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
             params (AnomalyParams | None): Internal training params (test-only)
             segment_by (list[str] | None): Segment columns for segmented models
+            baseline_by (list[str] | None): Group columns for group-conditioned models
+            train_schema (str | None): Explicit DDL for train_data (needed when group columns
+                are not doubles)
             catalog (str): Catalog name
             schema (str | None): Schema name
 
@@ -835,8 +842,9 @@ def quick_model_factory(ws, make_random, make_schema):
         if train_data is None:
             train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
 
-        # Infer schema from columns
-        schema_str = ", ".join(f"{col} double" for col in columns)
+        # Infer schema from columns unless the caller gave explicit DDL (group columns are
+        # typically strings, which cannot be inferred from the feature column list)
+        schema_str = train_schema or ", ".join(f"{col} double" for col in columns)
         train_df = session.createDataFrame(train_data, schema_str)
 
         # Create engine with shared ws client
@@ -849,6 +857,7 @@ def quick_model_factory(ws, make_random, make_schema):
                 model_name=model_name,
                 registry_table=registry_table,
                 segment_by=segment_by,
+                baseline_by=baseline_by,
             )
         else:
             full_model_name = train_model_with_params(
@@ -859,6 +868,7 @@ def quick_model_factory(ws, make_random, make_schema):
                 columns=columns,
                 params=params,
                 segment_by=segment_by,
+                baseline_by=baseline_by,
             )
 
         return full_model_name, registry_table, columns

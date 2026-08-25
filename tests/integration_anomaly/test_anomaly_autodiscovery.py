@@ -79,7 +79,14 @@ def test_auto_discover_excludes_high_cardinality(spark: SparkSession):
 
 
 def test_zero_config_training(spark: SparkSession, make_schema, make_random, anomaly_engine):
-    """Test zero-configuration training with auto-discovery."""
+    """Zero-config training discovers the metrics *and* a grouping, and conditions on it.
+
+    A discovered grouping produces **one** model that judges each metric against its own group's
+    baseline, not one model per group. It used to produce one per group, which is the configuration
+    that measured worst on the Server Machine Dataset — worse than pooling, with one entity emitting
+    15,963 false positives on 28,392 normal rows — while also being the only configuration whose
+    cost grows with group count. See databrickslabs/dqx#1484.
+    """
     # Create unique schema for test isolation
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
@@ -106,12 +113,13 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
     # Verify models were created
     assert model_uri is not None
 
-    # Check registry for segment models
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
 
-    # Should create 2 segment models (US and EU)
-    assert len(models) == 2
+    # One conditioned model, not one per region.
+    assert len(models) == 1
+    assert models[0].segmentation.is_global_model is True
+    assert models[0].segmentation.segment_by is None
 
     # Verify auto-discovered columns (amount and discount)
     for model in models:
