@@ -30,6 +30,30 @@ def test_compute_config_hash_handles_none_segment_by() -> None:
     assert hash_a == hash_b
 
 
+def test_compute_config_hash_distinguishes_baseline_by() -> None:
+    """The gap this closed: the same name retrained with a different grouping used to hash alike.
+
+    Collision detection exists to catch "same model_name, different configuration", and the grouping
+    is part of the configuration -- it changes the feature list and the persisted baselines.
+    """
+    ungrouped = compute_config_hash(["a", "b"], None)
+    grouped = compute_config_hash(["a", "b"], None, ["region"])
+    grouped_wider = compute_config_hash(["a", "b"], None, ["region", "product"])
+
+    assert ungrouped != grouped
+    assert grouped != grouped_wider
+
+
+def test_compute_config_hash_is_baseline_order_independent() -> None:
+    """Baseline columns are a set: the key is built from them sorted, so listing order cannot matter."""
+    assert compute_config_hash(["a"], None, ["p", "c"]) == compute_config_hash(["a"], None, ["c", "p"])
+
+
+def test_compute_config_hash_treats_empty_baseline_as_ungrouped() -> None:
+    """``baseline_by=[]`` is how a caller asks for whole-table comparison, which is the ungrouped case."""
+    assert compute_config_hash(["a"], None, []) == compute_config_hash(["a"], None, None)
+
+
 def test_compute_config_hash_different_columns_produce_different_hash() -> None:
     """Different column sets should produce different hashes."""
     hash_a = compute_config_hash(["col1", "col2"], None)

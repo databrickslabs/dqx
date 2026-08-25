@@ -144,7 +144,18 @@ def score_global_model(
     config: ScoringConfig,
 ) -> DataFrame:
     """Score using a global (non-segmented) model."""
-    expected_hash = compute_config_hash(config.columns, config.segment_by)
+    # baseline_by is a property of the trained model rather than something the caller supplies, so it
+    # is read back from the persisted metadata. That makes the recomputed hash match for any model
+    # trained by this version, and mismatch for one trained before baseline_by joined the hash --
+    # which is the intended loud failure rather than an accident. See compute_config_hash.
+    # A record with no persisted feature metadata cannot have been trained with a grouping, so it
+    # hashes as ungrouped -- and will still mismatch, because the hash formula itself changed.
+    trained_baseline_by = (
+        SparkFeatureMetadata.from_json(record.features.feature_metadata).baseline_by
+        if record.features.feature_metadata
+        else None
+    )
+    expected_hash = compute_config_hash(config.columns, config.segment_by, trained_baseline_by)
 
     if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
@@ -152,10 +163,12 @@ def score_global_model(
             f"  Trained columns: {record.training.columns}\n"
             f"  Provided columns: {config.columns}\n"
             f"  Trained segment_by: {record.segmentation.segment_by}\n"
-            f"  Provided segment_by: {config.segment_by}\n\n"
-            f"This model was trained with a different configuration. Either:\n"
-            f"  1. Use the correct columns/segments that match the trained model\n"
-            f"  2. Retrain the model with the new configuration"
+            f"  Provided segment_by: {config.segment_by}\n"
+            f"  Trained baseline_by: {trained_baseline_by or None}\n\n"
+            f"This model was trained with a different configuration, or by a DQX version before\n"
+            f"baseline_by became part of the configuration hash (0.17.0). Either:\n"
+            f"  1. Use the columns that match the trained model\n"
+            f"  2. Retrain the model — required for any model registered before 0.17.0"
         )
 
     check_model_staleness(record, config.model_name)

@@ -579,7 +579,7 @@ class AnomalyTrainingService:
                 segment_values=self._stringify_dict(artifacts.segment_values) if artifacts.segment_values else None,
                 is_global_model=segment_by is None,
                 sklearn_version=sklearn.__version__,
-                config_hash=compute_config_hash(context.columns, segment_by),
+                config_hash=compute_config_hash(context.columns, segment_by, context.baseline_by),
             ),
         )
         registry = AnomalyModelRegistry(context.spark)

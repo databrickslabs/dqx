@@ -1,0 +1,132 @@
+---
+
+title: Anomaly compatibility debt
+
+sidebar_position: 640
+
+---
+
+# Anomaly Detection Compatibility Debt
+
+Baseline conditioning ([#1484](https://github.com/databrickslabs/dqx/issues/1484)) was added without
+breaking anything: the previous grouping mechanism still works, and models trained before it still
+score. That cost a set of affordances which exist **only** to keep old behaviour alive.
+
+This page is the removal checklist for when they go. Every site listed here carries the marker
+
+```python
+# COMPAT(anomaly-v1): <what it preserves> -- see docs/dev/anomaly_compatibility
+```
+
+so `git grep "COMPAT(anomaly-v1)"` finds the lot, and nothing has to be rediscovered by reading.
+
+Two things this page deliberately keeps apart, because they look identical in a diff:
+
+- **Compatibility debt** — exists for old callers or old models, and is removable.
+- **Runtime fallbacks** — permanent behaviour for cases that will still happen after any deprecation
+  (a group absent at training, a group too small to calibrate). Listed at the bottom under
+  [Not compatibility debt](#not-compatibility-debt) so they are not deleted by mistake.
+
+## A. The legacy `segment_by` path
+
+The largest block, and the one whose removal deletes the most code. `segment_by` trains one model per
+group; `baseline_by` trains one model whatever the group count. On the Server Machine Dataset the
+per-segment configuration was the *worst* of three measured, with one entity emitting 15,963 false
+positives across 28,392 normal rows, so nothing depends on keeping it except existing callers.
+
+| Site | What to remove |
+|---|---|
+| `config.py` · `AnomalyParams.segment_by` | the field and its docstring entry |
+| `config.py` · `AnomalyParams.max_segment_models` | the field; its only consumer is this path |
+| `anomaly_engine.py` · `train(segment_by=...)` | the parameter and its docs |
+| `training_service.py` · `_resolve_grouping` | collapses to "use `baseline_by`"; the both-declared error and the `baseline_by = None` clearing both go |
+| `training_service.py` · `_get_and_validate_segments` | delete |
+| `training_service.py` · `_train_segmented` | delete, and the `if context.segment_by:` dispatch above it |
+| `training_service.py` · `_perform_auto_discovery` | `for_baseline=segment_by is None` becomes unconditional `True` |
+| `profiler.py` · `_select_segment_columns` | the `elif candidate_segments:` legacy branch and the `for_baseline` parameter; `select_baseline_columns` becomes the only policy |
+| `profiler.py` · `_is_grouping_candidate` | drops `for_baseline`; keeps only the baseline thresholds |
+| `group_config.py` | `MAX_SEGMENT_MODELS`, `MIN_ROWS_PER_SEGMENT`, `SEGMENT_COUNT_WARN_THRESHOLD`, `MIN_ROWS_TO_TRAIN_SEGMENT`, `MAX_AUTO_GROUP_COUNT` — the whole segmented half of the module |
+| `segment_utils.py` | `canonicalize_segment_values`, `build_segment_name`, `build_segment_filter` |
+| `scoring_orchestrator.py` · `try_segmented_scoring_fallback` | delete, and the `if config.segment_by:` branch that calls it |
+| `scoring_run.py` · `score_segmented` | delete |
+| `scoring_strategies.py` · `score_segmented` | delete from the protocol and its implementations |
+| `scoring_config.py` · `ScoringConfig.segment_by` | delete |
+| `types.py` · `AnomalyTrainingContext.segment_by` | delete |
+| `model_config.py` · `SegmentationConfig` | `segment_by`, `segment_values`, `is_global_model` become meaningless — every model is global |
+| `model_registry.py` · registry schema | the `segmentation` struct loses those fields. **Registry migration required** — see below |
+| tests | `test_anomaly_segments.py`, the `segment_by` cases in `test_anomaly_groups.py`, `test_segment_by_does_not_gain_baseline_relative_features` |
+
+**Registry migration.** The `segmentation` struct is a persisted Delta schema. Dropping fields from it
+is not a code-only change: existing registry tables carry them. Either keep the columns and stop
+writing them, or migrate the table. Decide this before starting, because it is the only item here
+that touches customer data rather than customer code.
+
+## B. Pre-#1484 model metadata
+
+Every group-conditioning field on `SparkFeatureMetadata` defaults to empty specifically so a model
+trained before they existed deserializes into "no grouping", the relative transform returns
+immediately, and `engineered_feature_names` is byte-identical to what it was. That is what makes old
+models score unchanged.
+
+| Site | What to remove |
+|---|---|
+| `transformers.py` · `SparkFeatureMetadata` group fields | the empty defaults may become required once no old model can be loaded |
+| `transformers.py` · `from_json` unknown-key tolerance | the `logger.debug` branch that ignores unknown keys. Forward-compatibility for *older DQX reading newer models*, symmetrical debt |
+| `transformers.py` · OneHot category reconstruction | the "Model may be from an older version without OneHot category storage" branch — predates #1484 and is older debt still |
+
+Note `_process_baseline_relative_features`'s early return on `not baseline_by` is **not** in this
+table. It looks like the same thing but it is the legitimate ungrouped path, which survives any
+deprecation.
+
+## C. `compute_config_hash` excludes `baseline_by`
+
+The hash is `(columns, segment_by)`. A model retrained under the same name with a *different*
+`baseline_by` therefore produces an identical hash, so the collision detection that exists to catch
+"same name, different config" cannot see a grouping change. The persisted metadata still records the
+real grouping, so this misleads rather than corrupts.
+
+It is left alone because a scoring-time hash mismatch **raises**
+(`scoring_run.py` · `score_global_model`), so changing the formula would stop every existing model
+from scoring. Fixing it correctly means adding `baseline_by` to the hash *and* accepting that break —
+which is exactly the decision this page exists to inform.
+
+## D. `RobustScaler` residue
+
+Conditional on the scaler removal landing. `RobustScaler` is an affine per-feature transform and
+Isolation Forest splits on per-feature thresholds, so the model is invariant to it — measured
+identical to four decimal places across five ADBench datasets. New models are fitted without it; old
+models still have it pickled inside their pipeline.
+
+| Site | What to remove |
+|---|---|
+| `explainability.py` · `compute_shap_values` | the `scaler.transform(...) if scaler else ...` branch |
+| `explainability.py` · contribution helper | the `isinstance(model_local, Pipeline)` branch that pulls out a scaler |
+| `core.py` · `fit_sklearn_model` | the single-step `Pipeline` wrapper, once nothing needs `named_steps["model"]` |
+
+## Not compatibility debt
+
+These are permanent, and deleting them would change behaviour for cases that still occur:
+
+- **Unseen baseline group → global median.** A group absent at training gets the global baseline, so
+  the row reads as ordinary rather than extreme, and `is_new_baseline` reports it. New groups appear
+  in production forever.
+- **Missing per-group quantiles → global calibration.** A group without a full quantile set falls back
+  to table-wide calibration rather than being half-calibrated.
+- **`_process_baseline_relative_features` early return.** The ungrouped path.
+- **Drift threshold default** in `scoring_config.py`.
+- **Python/Spark baseline-key agreement.** `build_baseline_key` and `baseline_key_column` must keep
+  matching for as long as both exist; the notes there are a contract, not debt.
+
+## If the break happens now instead
+
+Deprecating immediately rather than later removes everything in A–D in one change. What a user has to
+do:
+
+1. **Replace `segment_by` with `baseline_by`.** Not a rename — the semantics differ. `segment_by`
+   partitions into N models; `baseline_by` judges each metric against its own group's baseline on one
+   model. Scores will differ.
+2. **Retrain every model.** Persisted metadata from before #1484 would no longer be loadable, and the
+   config hash would change even where the configuration did not.
+3. **Migrate or recreate registry tables**, per the note in section A.
+4. **Expect different scores on auto-discovered groupings** even without any config change, since
+   discovery now selects a finer grouping routed to `baseline_by`.
