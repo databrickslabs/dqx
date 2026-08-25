@@ -190,8 +190,16 @@ class ChecksSemanticValidator:
         if not function:
             return None
         arguments = ChecksSemanticValidator._get_arguments(check)
-        column = arguments.get("col_name") or arguments.get("column") or arguments.get("columns")
-        if not column:
+        # Read with 'is None' fallbacks rather than 'or': a Column-valued argument (e.g. a
+        # generated indicator expression) raises on truthiness testing, so it can never be the
+        # left-hand side of an 'or' chain. Emptiness is only checked for str/list, whose falsiness
+        # is well-defined; other types (including Column) are treated as identifiable once present.
+        column = arguments.get("col_name")
+        if column is None:
+            column = arguments.get("column")
+        if column is None:
+            column = arguments.get("columns")
+        if column is None or (isinstance(column, (str, list)) and not column):
             return None
         if isinstance(column, list):
             # Column order is not semantically significant; normalize so reordered
