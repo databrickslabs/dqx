@@ -103,6 +103,24 @@ def macro_average(values: dict[str, float]) -> float:
     return float(np.mean(finite)) if finite else float("nan")
 
 
+def trivial_baselines(values: np.ndarray, labels: np.ndarray, *, seed: int = 42) -> dict[str, float]:
+    """PR-AUC of scores that required no model, as the floor a result has to clear.
+
+    Absolute PR-AUC is uninterpretable on its own because it moves with the base rate: 0.30 is
+    excellent at a 0.17% anomaly rate and poor at 30%. ``random`` fixes the base rate to compare
+    against, and ``max_abs_z`` -- the largest absolute z-score across features -- is the cheapest
+    defensible detector, so beating it is what shows a model earns its cost.
+    """
+    rng = np.random.default_rng(seed)
+    means, stds = np.nanmean(values, axis=0), np.nanstd(values, axis=0)
+    stds = np.where(stds == 0, 1.0, stds)
+    max_abs_z = np.nanmax(np.abs((values - means) / stds), axis=1)
+    return {
+        "random": pr_auc(labels, rng.random(len(labels))),
+        "max_abs_z": pr_auc(labels, max_abs_z),
+    }
+
+
 def wilcoxon_paired(deltas: list[float]) -> tuple[float, float]:
     """Wilcoxon signed-rank on per-seed differences: returns ``(statistic, p_value)``.
 

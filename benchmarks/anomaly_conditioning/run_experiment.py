@@ -33,6 +33,7 @@ from metrics import (  # noqa: E402
     precision_at_n,
     roc_auc,
     spearman_with_bootstrap_ci,
+    trivial_baselines,
     wilcoxon_paired,
     worst_group_false_positive_rate,
 )
@@ -145,6 +146,77 @@ def run_real(real_module, name: str, seeds: int) -> list[Cell]:
                 )
         print(f"    done ({seeds} seeds x {len(CONFIGS)} configs)")
     return cells
+
+
+def run_tabular(seeds: int, names: list[str] | None = None) -> tuple[list[Cell], list[dict]]:
+    """The plain-tabular regime: no grouping, so only the pooled configuration is meaningful.
+
+    Returns ``(cells, baselines)``. This does not compare configurations -- there is nothing to
+    condition on -- it characterises absolute quality on the benchmarks the field actually reports,
+    and pins each result against its own base rate and its own trivial baselines. Reported per
+    dataset and never pooled into one headline: PR-AUC is not comparable across base rates.
+    """
+    from datasets import tabular  # noqa: PLC0415 - downloads data, so only imported when asked for
+
+    cells: list[Cell] = []
+    baselines: list[dict] = []
+    for name, values, labels in tabular.iter_datasets(names):
+        base_rate = float(labels.mean())
+        print(f"  {name}: {values.shape[0]} rows, {values.shape[1]} features, base rate {base_rate:.4%}")
+        groups = np.zeros(len(values), dtype=str)  # one group: pooled is the only configuration
+        for seed in range(seeds):
+            cells.append(
+                Cell(
+                    dataset=f"tabular:{name}",
+                    grouping="none",
+                    config="pooled",
+                    seed=seed,
+                    mechanism="tabular",
+                    level_spread=float("nan"),
+                    metrics=measure(values, labels, groups, "pooled", seed),
+                )
+            )
+        trivial = trivial_baselines(values, labels)
+        baselines.append(
+            {
+                "dataset": name,
+                "n_rows": int(values.shape[0]),
+                "n_features": int(values.shape[1]),
+                "base_rate": base_rate,
+                "dqx_pr_auc": float(np.median([c.metrics.pr_auc for c in cells if c.dataset.endswith(name)])),
+                **trivial,
+            }
+        )
+    return cells, baselines
+
+
+def tabular_table(baselines: list[dict]) -> list[str]:
+    """Per-dataset absolute quality against the floor, with the base rate alongside."""
+    if not baselines:
+        return []
+    lines = [
+        "## Plain tabular benchmarks (no grouping)",
+        "",
+        "No grouping exists in these datasets, so conditioning is not applicable and only the pooled",
+        "configuration runs. This characterises the mechanism on the benchmarks the field reports, and",
+        "is the regression check that adding conditioning did not disturb the ungrouped path.",
+        "",
+        "PR-AUC is **not comparable across rows** — it moves with the base rate — so each dataset is",
+        "read against its own random floor. `lift` is DQX PR-AUC divided by the random floor.",
+        "",
+        "| dataset | rows | features | base rate | DQX PR-AUC | random | max-abs-z | lift vs random | beats max-abs-z |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in baselines:
+        lift = row["dqx_pr_auc"] / row["random"] if row["random"] else float("nan")
+        beats = "yes" if row["dqx_pr_auc"] > row["max_abs_z"] else "**no**"
+        lines.append(
+            f"| {row['dataset']} | {row['n_rows']} | {row['n_features']} | {row['base_rate']:.2%} | "
+            f"{row['dqx_pr_auc']:.4f} | {row['random']:.4f} | {row['max_abs_z']:.4f} | "
+            f"{lift:.1f}x | {beats} |"
+        )
+    lines.append("")
+    return lines
 
 
 def paired_deltas(cells: list[Cell], left: str, right: str, metric: str = "pr_auc") -> list[dict]:
@@ -339,7 +411,9 @@ def low_eta_table(deltas: list[dict]) -> list[str]:
     return lines
 
 
-def write_report(cells: list[Cell], seeds: int, datasets: list[str]) -> pathlib.Path:
+def write_report(
+    cells: list[Cell], seeds: int, datasets: list[str], tabular_baselines: list[dict] | None = None
+) -> pathlib.Path:
     """Write the dated markdown and JSON results, and return the markdown path."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.date.today().isoformat()
@@ -405,6 +479,7 @@ def write_report(cells: list[Cell], seeds: int, datasets: list[str]) -> pathlib.
             "",
         ]
 
+    lines += tabular_table(tabular_baselines or [])
     lines += low_eta_table(rel_vs_pooled)
     lines += ["## Paired comparisons", ""]
     lines += summarise(rel_vs_pooled, "baseline-relative minus pooled (PR-AUC)")
@@ -451,12 +526,17 @@ def main() -> int:
         "--datasets",
         nargs="+",
         default=["synthetic"],
-        choices=["synthetic", "smd", "nslkdd"],
+        choices=["synthetic", "smd", "nslkdd", "tabular"],
         help="synthetic needs no network; the others download at run time",
     )
     args = parser.parse_args()
 
     cells: list[Cell] = []
+    tabular_baselines: list[dict] = []
+    if "tabular" in args.datasets:
+        print("plain tabular benchmarks:")
+        tab_cells, tabular_baselines = run_tabular(args.seeds)
+        cells += tab_cells
     if "synthetic" in args.datasets:
         print("synthetic sweep:")
         cells += run_synthetic(args.seeds)
@@ -474,7 +554,7 @@ def main() -> int:
         print("no cells measured", file=sys.stderr)
         return 1
 
-    path = write_report(cells, args.seeds, args.datasets)
+    path = write_report(cells, args.seeds, args.datasets, tabular_baselines)
     print(f"\nwrote {path}")
     print(path.read_text(encoding="utf-8"))
     return 0
