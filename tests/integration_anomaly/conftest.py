@@ -138,7 +138,6 @@ def train_model_with_params(
     registry_table: str,
     columns: list[str],
     params: AnomalyParams,
-    segment_by: list[str] | None = None,
     expected_anomaly_rate: float = 0.02,
     baseline_by: list[str] | None = None,
 ) -> str:
@@ -148,7 +147,6 @@ def train_model_with_params(
         columns=columns,
         model_name=model_name,
         registry_table=registry_table,
-        segment_by=segment_by,
         baseline_by=baseline_by,
         params=params,
         expected_anomaly_rate=expected_anomaly_rate,
@@ -799,7 +797,6 @@ def quick_model_factory(ws, make_random, make_schema):
         columns: list[str] | None = None,
         train_data: list[tuple] | None = None,
         params=None,
-        segment_by: list[str] | None = None,
         catalog: str = TEST_CATALOG,
         schema: str | None = None,
         baseline_by: list[str] | None = None,
@@ -814,8 +811,7 @@ def quick_model_factory(ws, make_random, make_schema):
             columns (list[str] | None): Column names (default: ["amount", "quantity"])
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
             params (AnomalyParams | None): Internal training params (test-only)
-            segment_by (list[str] | None): Segment columns for segmented models
-            baseline_by (list[str] | None): Group columns for group-conditioned models
+            baseline_by (list[str] | None): Group columns for baseline-conditioned models
             train_schema (str | None): Explicit DDL for train_data (needed when group columns
                 are not doubles)
             catalog (str): Catalog name
@@ -856,7 +852,6 @@ def quick_model_factory(ws, make_random, make_schema):
                 columns=columns,
                 model_name=model_name,
                 registry_table=registry_table,
-                segment_by=segment_by,
                 baseline_by=baseline_by,
             )
         else:
@@ -867,7 +862,6 @@ def quick_model_factory(ws, make_random, make_schema):
                 registry_table=registry_table,
                 columns=columns,
                 params=params,
-                segment_by=segment_by,
                 baseline_by=baseline_by,
             )
 

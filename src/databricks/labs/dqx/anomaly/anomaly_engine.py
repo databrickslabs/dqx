@@ -41,7 +41,7 @@ class AnomalyEngine(DQEngineBase):
             model_name="catalog.schema.regional_model",
             registry_table="catalog.schema.dqx_anomaly_models",
             columns=["revenue", "transactions"],
-            segment_by=["region"]
+            baseline_by=["region"]
         )
     """
 
@@ -60,22 +60,21 @@ class AnomalyEngine(DQEngineBase):
         model_name: str,
         registry_table: str,
         columns: list[str] | None = None,
-        segment_by: list[str] | None = None,
         params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
         expected_anomaly_rate: float = 0.02,
         baseline_by: list[str] | None = None,
     ) -> str:
         """
-            Train row anomaly detection model(s) with intelligent auto-discovery.
+            Train a row anomaly detection model with intelligent auto-discovery.
 
             Requires Spark >= 3.4 and the 'anomaly' extras installed:
                 pip install 'databricks-labs-dqx[anomaly]'
 
             Auto-discovery behavior:
-            - columns=None, segment_by=None: Auto-discovers both (simplest)
-            - columns specified, segment_by=None: Uses columns, no segmentation
-            - columns=None, segment_by specified: Auto-discovers columns, uses segments
+            - columns=None, baseline_by=None: Auto-discovers both the feature columns and a grouping
+            - columns specified, baseline_by=None: Uses the columns, still discovers a grouping
+            - baseline_by specified: Conditions on that grouping
 
         Args:
             df: Input DataFrame containing historical "normal" data.
@@ -89,14 +88,7 @@ class AnomalyEngine(DQEngineBase):
                       numeric metric gains its deviation from that baseline as an extra feature on
                       a single pooled model, so the cost does not grow with the group count. This
                       is what catches a value that is unremarkable across the table but wrong for
-                      its own group. Cannot be combined with `segment_by`.
-            segment_by: Legacy. Trains one model per group instead. Kept for compatibility, and not
-                        recommended: on the Server Machine Dataset per-group models were the worst
-                        of three configurations, with one entity producing 15,963 false positives
-                        on 28,392 normal rows, and cost is linear in the group count (90 groups
-                        measures roughly 88 minutes, capped by `params.max_segment_models`). Prefer
-                        `baseline_by`. Auto-discovered when both `columns` and `segment_by` are
-                        omitted, in which case the discovered grouping is used as `baseline_by`.
+                      its own group. Auto-discovered when omitted.
             params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Exclusions always take precedence over `columns` if both are provided.
@@ -115,9 +107,7 @@ class AnomalyEngine(DQEngineBase):
             - See documentation for detailed column selection best practices.
 
         Returns:
-            Base model name (e.g., 'catalog.schema.model_name'). For segmented models,
-            individual segments are stored with suffixes like '__seg_region=APAC', but
-            the base name is returned for simplified API usage.
+            The model name (e.g., 'catalog.schema.model_name').
 
         Examples:
             # Auto-discovery with default 2% expected anomaly rate (simplest)
@@ -157,9 +147,8 @@ class AnomalyEngine(DQEngineBase):
                 columns=["revenue", "transactions"],
             )
 
-            # Judge each row against its own group rather than the whole table. With few
-            # groups this trains one model each; with many it switches to group-relative
-            # features, which keeps one model however many groups there are.
+            # Judge each row against its own group's baseline rather than the whole table, on a
+            # single model however many groups there are.
             anomaly_engine.train(
                 df,
                 model_name="catalog.schema.regional_model",
@@ -174,7 +163,6 @@ class AnomalyEngine(DQEngineBase):
             model_name,
             registry_table,
             columns=columns,
-            segment_by=segment_by,
             params=params,
             exclude_columns=exclude_columns,
             expected_anomaly_rate=expected_anomaly_rate,

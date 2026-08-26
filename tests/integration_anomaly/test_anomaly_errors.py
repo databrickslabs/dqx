@@ -18,7 +18,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
@@ -28,7 +28,6 @@ from databricks.labs.dqx.anomaly.scoring_utils import (
     create_null_scored_dataframe,
     create_udf_schema,
 )
-from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
@@ -128,7 +127,7 @@ def test_config_hash_mismatch_raises(
 
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET segmentation.config_hash = 'bogus' "
+        f"SET grouping.config_hash = 'bogus' "
         f"WHERE identity.model_name = '{full_model_name}'"
     )
 
@@ -214,8 +213,7 @@ def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory
             features STRUCT<mode: STRING, column_types: MAP<STRING, STRING>,
                           feature_metadata: STRING, feature_importance: MAP<STRING, DOUBLE>,
                           temporal_config: STRING>,
-            segmentation STRUCT<segment_by: ARRAY<STRING>, segment_values: MAP<STRING, STRING>,
-                              is_global_model: BOOLEAN, sklearn_version: STRING, config_hash: STRING>
+            grouping STRUCT<baseline_by: ARRAY<STRING>, sklearn_version: STRING, config_hash: STRING>
         ) USING DELTA
     """
     )
@@ -305,13 +303,6 @@ def test_has_no_row_anomalies_invalid_inputs(kwargs, match):
             registry_table="catalog.schema.table",
             **kwargs,
         )
-
-
-def test_build_segment_filter_handles_none_and_multi_key():
-    """Test segment filter construction handles None and multiple keys."""
-    assert build_segment_filter(None) is None
-    expr = build_segment_filter({"region": "US", "product": "A"})
-    assert expr is not None
 
 
 def test_row_filter_scores_only_matching_rows(
@@ -407,7 +398,7 @@ def test_sklearn_version_mismatch_warns(
 
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET segmentation.sklearn_version = '0.0' "
+        f"SET grouping.sklearn_version = '0.0' "
         f"WHERE identity.model_name = '{full_model_name}'"
     )
 
@@ -442,7 +433,7 @@ def test_sklearn_version_parse_error_silently_skips(
 
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET segmentation.sklearn_version = 'bad.version' "
+        f"SET grouping.sklearn_version = 'bad.version' "
         f"WHERE identity.model_name = '{full_model_name}'"
     )
 
@@ -478,7 +469,7 @@ def test_validate_sklearn_compatibility_skips_when_missing_version():
             training_time=datetime.now(timezone.utc),
         ),
         features=FeatureEngineering(feature_metadata=None),
-        segmentation=SegmentationConfig(sklearn_version=None),
+        grouping=GroupingConfig(sklearn_version=None),
     )
     validate_sklearn_compatibility(record)
 

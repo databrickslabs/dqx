@@ -272,7 +272,6 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
         "is_anomaly",
         "threshold",
         "model",
-        "segment",
         "contributions",
         "confidence_std",
         "is_new_baseline",
@@ -290,7 +289,6 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
     assert model_name in anomaly.model, f"model should contain {model_name}"
 
     # Verify optional fields are None when not requested
-    assert anomaly.segment is None, "segment should be None for global model"
     assert anomaly.contributions is None, "contributions should be None when not requested"
     assert anomaly.confidence_std is None, "confidence_std should be None when not requested"
 

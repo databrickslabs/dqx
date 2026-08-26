@@ -72,11 +72,8 @@ class EnsembleTrainingResult:
 class AnomalyTrainingContext:
     """Context containing all inputs needed for training.
 
-    ``baseline_by`` and ``segment_by`` are mutually exclusive, and ``_resolve_grouping`` guarantees
-    it: ``segment_by`` selects the legacy path that trains one model per group and dispatches
-    ``train()``, while ``baseline_by`` selects a single pooled model fed each metric's deviation
-    from its own group's baseline. Both being set would append relative features inside each
-    segment while leaving the model config hash unchanged.
+    ``baseline_by`` names the columns each metric is judged against. It is expressed as features on a
+    single model, so the group count never decides how many models are trained.
     """
 
     spark: SparkSession
@@ -85,7 +82,6 @@ class AnomalyTrainingContext:
     model_name: str
     registry_table: str
     columns: list[str]
-    segment_by: list[str] | None
     params: AnomalyParams
     expected_anomaly_rate: float
     exclude_columns: list[str] | None
@@ -95,7 +91,7 @@ class AnomalyTrainingContext:
 
 @dataclass(frozen=True)
 class TrainingArtifacts:
-    """Artifacts produced by training a single model or segment."""
+    """Artifacts produced by training a model."""
 
     model_name: str
     model_uri: str
@@ -108,4 +104,3 @@ class TrainingArtifacts:
     score_quantiles: dict[str, float]
     baseline_stats: dict[str, dict[str, float]]
     algorithm: str
-    segment_values: dict[str, Any] | None = None

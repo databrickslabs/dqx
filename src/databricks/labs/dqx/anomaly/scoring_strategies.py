@@ -4,18 +4,18 @@ from abc import ABC, abstractmethod
 
 from pyspark.sql import DataFrame
 
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
-from databricks.labs.dqx.anomaly.scoring_run import score_global_model, score_segmented
+from databricks.labs.dqx.anomaly.scoring_run import score_global_model
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
 class AnomalyScoringStrategy(ABC):
     """Scoring strategy interface for row anomaly models.
 
-    Implementations that bypass `score_global_model` / `score_segmented` must call
-    `add_explanation_column` themselves when `config.enable_ai_explanation` is True;
-    otherwise the `_dq_info.anomaly.ai_explanation` struct will always be null.
+    Implementations that bypass `score_global_model` must call `add_explanation_column` themselves
+    when `config.enable_ai_explanation` is True; otherwise the `_dq_info.anomaly.ai_explanation`
+    struct will always be null.
     """
 
     @abstractmethod
@@ -24,17 +24,7 @@ class AnomalyScoringStrategy(ABC):
 
     @abstractmethod
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
-        """Score a global model."""
-
-    @abstractmethod
-    def score_segmented(
-        self,
-        df: DataFrame,
-        config: ScoringConfig,
-        registry_client: AnomalyModelRegistry,
-        all_segments: list[AnomalyModelRecord],
-    ) -> DataFrame:
-        """Score a segmented model."""
+        """Score the model."""
 
 
 class IsolationForestScoringStrategy(AnomalyScoringStrategy):
@@ -45,15 +35,6 @@ class IsolationForestScoringStrategy(AnomalyScoringStrategy):
 
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
         return score_global_model(df, record, config)
-
-    def score_segmented(
-        self,
-        df: DataFrame,
-        config: ScoringConfig,
-        registry_client: AnomalyModelRegistry,
-        all_segments: list[AnomalyModelRecord],
-    ) -> DataFrame:
-        return score_segmented(df, config, registry_client, all_segments)
 
 
 _SCORING_STRATEGIES: list[AnomalyScoringStrategy] = [IsolationForestScoringStrategy()]

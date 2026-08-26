@@ -707,18 +707,17 @@ def _add_explanation_column_ai_query(
 def add_explanation_column(
     df: DataFrame,
     ctx: ExplanationContext,
-    segment_values: dict[str, str] | None,
     is_ensemble: bool,
     drift_summary: str = "none",
     endpoint_reachable: bool | None = None,
 ) -> DataFrame:
     """Add the AI explanation column to df using the group-based algorithm.
 
-    Anomalous rows are bucketed by a deterministic (segment, pattern) key — pattern =
-    sorted top-2 contributing SHAP features. The LLM is called once per group via the Spark SQL
-    ``ai_query`` function against a Databricks Model Serving endpoint, and every row in that group
-    receives the same narrative/business_impact/action, plus the group's size and mean severity.
-    Rows below threshold or in groups exceeding ``ctx.max_groups`` receive a null struct.
+    Anomalous rows are bucketed by a deterministic pattern key — the sorted top-2 contributing SHAP
+    features. The LLM is called once per group via the Spark SQL ``ai_query`` function against a
+    Databricks Model Serving endpoint, and every row in that group receives the same
+    narrative/business_impact/action, plus the group's size and mean severity. Rows below threshold
+    or in groups exceeding ``ctx.max_groups`` receive a null struct.
 
     Preconditions (caller's responsibility):
       - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
@@ -726,20 +725,16 @@ def add_explanation_column(
     Args:
         df: Scored DataFrame to annotate with the explanation column.
         ctx: Explanation inputs (columns, threshold, model, redaction, budget).
-        segment_values: Segment key/value pairs for this run, or None for a global model.
         is_ensemble: Whether the scoring model is an ensemble (drives the confidence label).
         drift_summary: Baseline-drift summary string for the prompt, or "none".
         endpoint_reachable: Pre-computed serving-endpoint reachability. When None (default) the
-            endpoint is probed here with a single 1-token ai_query call. Callers that invoke this
-            repeatedly in one scoring run (e.g. once per segment) should probe once via
-            probe_endpoint_reachable and pass the result to avoid one billable probe per call.
+            endpoint is probed here with a single 1-token ai_query call.
 
     Raises:
       InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
     """
     redact_set = redaction_set(ctx.redact_columns)
-    segment_str = _format_segment(segment_values, redact_set)
     df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(
-        df_with_pattern, ctx, segment_str, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
+        df_with_pattern, ctx, "", is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
     )

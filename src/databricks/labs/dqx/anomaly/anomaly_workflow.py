@@ -45,7 +45,6 @@ class AnomalyTrainerWorkflow(Workflow):
         anomaly_engine.train(
             df=df,
             columns=anomaly_config.columns,
-            segment_by=anomaly_config.segment_by,
             baseline_by=anomaly_config.baseline_by,
             model_name=model_name,
             registry_table=registry_table,

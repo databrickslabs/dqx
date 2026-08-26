@@ -213,11 +213,11 @@ def validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
         >>> validate_sklearn_compatibility(record)
         # Warns if sklearn versions don't match
     """
-    if not model_record.segmentation.sklearn_version:
+    if not model_record.grouping.sklearn_version:
         # Old models without version tracking - can't validate
         return
 
-    trained_version = model_record.segmentation.sklearn_version
+    trained_version = model_record.grouping.sklearn_version
     current_version = sklearn.__version__
 
     if trained_version == current_version:

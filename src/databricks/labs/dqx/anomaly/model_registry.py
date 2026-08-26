@@ -9,16 +9,14 @@ from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.window import Window
 
 from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     FeatureEngineering,
+    GroupingConfig,
     ModelIdentity,
-    SegmentationConfig,
     TrainingMetadata,
 )
-from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.utils import table_exists
@@ -31,8 +29,7 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
     "baseline_stats:map<string,map<string,double>>>, "
     "features struct<mode:string, column_types:map<string,string>, feature_metadata:string, "
     "feature_importance:map<string,double>, temporal_config:map<string,string>>, "
-    "segmentation struct<segment_by:array<string>, segment_values:map<string,string>, "
-    "baseline_by:array<string>, is_global_model:boolean, sklearn_version:string, config_hash:string>"
+    "grouping struct<baseline_by:array<string>, sklearn_version:string, config_hash:string>"
 )
 
 
@@ -85,13 +82,10 @@ class AnomalyModelRegistry:
                 "feature_importance": record.features.feature_importance,
                 "temporal_config": record.features.temporal_config,
             },
-            "segmentation": {
-                "segment_by": record.segmentation.segment_by,
-                "segment_values": record.segmentation.segment_values,
-                "baseline_by": record.segmentation.baseline_by,
-                "is_global_model": record.segmentation.is_global_model,
-                "sklearn_version": record.segmentation.sklearn_version,
-                "config_hash": record.segmentation.config_hash,
+            "grouping": {
+                "baseline_by": record.grouping.baseline_by,
+                "sklearn_version": record.grouping.sklearn_version,
+                "config_hash": record.grouping.config_hash,
             },
         }
 
@@ -109,10 +103,10 @@ class AnomalyModelRegistry:
             self._archive_previous(table, record.identity.model_name)
 
         df = self.build_model_df(self.spark, record)
-        # mergeSchema so a registry table created by an earlier DQX gains new struct fields on the
-        # next write instead of failing. Without it, adding `baseline_by` to the segmentation struct
-        # would make retraining fail against an existing table -- and retraining is exactly what the
-        # configuration-hash error tells the user to do, so the remedy has to work.
+        # mergeSchema so a registry table created by an earlier DQX reconciles to the new struct
+        # shape on the next write instead of failing -- the `grouping` struct replaced `segmentation`
+        # this release. Retraining is exactly what the configuration-hash error tells the user to do,
+        # and it writes to their existing table, so the remedy has to work.
         save_dataframe_as_table(df, OutputConfig(location=table, mode="append", options={"mergeSchema": "true"}))
 
     def get_active_model(self, table: str, model_name: str) -> AnomalyModelRecord | None:
@@ -136,53 +130,10 @@ class AnomalyModelRegistry:
             identity=ModelIdentity(**values["identity"]),
             training=TrainingMetadata(**values["training"]),
             features=FeatureEngineering(**values["features"]),
-            segmentation=SegmentationConfig(**values["segmentation"]),
+            grouping=GroupingConfig(**values["grouping"]),
         )
 
         return record
-
-    def get_segment_model(
-        self, table: str, base_model_name: str, segment_values: dict[str, str]
-    ) -> AnomalyModelRecord | None:
-        """Fetch model for specific segment combination."""
-        if not table_exists(self.spark, table):
-            return None
-
-        # Build segment name matching the training logic
-        segment_name = build_segment_name(segment_values)
-        segment_model_name = f"{base_model_name}__seg_{segment_name}"
-
-        return self.get_active_model(table, segment_model_name)
-
-    def get_all_segment_models(self, table: str, base_model_name: str) -> list[AnomalyModelRecord]:
-        """Fetch all segment models for a base name."""
-        if not table_exists(self.spark, table):
-            return []
-
-        # Get all active models that start with base_model_name__seg_
-        # Use window function to get only the latest version of each segment
-        df = self.spark.table(table).filter(
-            (F.col("identity.model_name").startswith(f"{base_model_name}__seg_"))
-            & (F.col("identity.status") == "active")
-        )
-
-        # Deduplicate by model_name (segment), taking the most recent by training_time
-        window = Window.partitionBy("identity.model_name").orderBy(F.col("training.training_time").desc())
-        df_deduped = df.withColumn("row_num", F.row_number().over(window)).filter(F.col("row_num") == 1).drop("row_num")
-
-        # Warning is produced earlier, for 100+ segments this could be a memory concern
-        rows = df_deduped.orderBy(F.col("training.training_time").desc()).collect()
-
-        # Convert nested Row structures to dataclasses
-        return [
-            AnomalyModelRecord(
-                identity=ModelIdentity(**row.asDict(recursive=True)["identity"]),
-                training=TrainingMetadata(**row.asDict(recursive=True)["training"]),
-                features=FeatureEngineering(**row.asDict(recursive=True)["features"]),
-                segmentation=SegmentationConfig(**row.asDict(recursive=True)["segmentation"]),
-            )
-            for row in rows
-        ]
 
     def _create_table(self, table: str) -> None:
         empty_df = self.spark.createDataFrame([], schema=ANOMALY_MODEL_TABLE_SCHEMA)

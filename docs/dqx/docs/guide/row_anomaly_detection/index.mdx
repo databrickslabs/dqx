@@ -20,34 +20,34 @@ Use row anomaly detection to automatically find unusual rows in your data using 
 
 <Deck>
   <Slide title="Spot the odd banana." visual="title">
-    Row anomaly detection in data quality — in a few minutes.
+    Row anomaly detection in data quality, in a few minutes.
   </Slide>
   <Slide title="Known unknowns vs unknown unknowns." visual="known-unknowns">
-    **Rules** catch things we already expect — like "bananas should be yellow" or "a batch must have at least 100 rows". But what about surprises we never thought to check for? That's where **anomaly detection** comes in.
+    **Rules** catch things we already expect, like "bananas should be yellow" or "a batch must have at least 100 rows". But what about surprises we never thought to check for? That's where **anomaly detection** comes in.
   </Slide>
   <Slide title="DQX handles rules really well." visual="dqx-rules">
-    For a single banana, we can write rules: check size, colour, flavour. These rules live in code — clear, testable, versioned.
+    For a single banana, we can write rules: check size, colour, flavour. These rules live in code: clear, testable, versioned.
   </Slide>
   <Slide title="DQM built-in anomaly detection" visual="trucks-dqm">
     Databricks Data Quality Monitoring (DQM) watches the big picture: did the data arrive? Is it fresh? Are the row counts about right? Think of it as checking the delivery trucks.
   </Slide>
   <Slide title="But who checks inside the boxes?" visual="gap">
-    The truck arrived on time and the count looks right — great. But are the bananas inside actually good? DQM watches the delivery; nobody's inspecting the contents. That's the gap.
+    The truck arrived on time and the count looks right. Great. But are the bananas inside actually good? DQM watches the delivery; nobody's inspecting the contents. That's the gap.
   </Slide>
   <Slide title="DQX fills that gap." visual="row-level">
-    DQX learns what "normal" looks like from your good data, then checks every single row. No labels needed — it figures out what's unusual on its own. *"Is this banana weird?"*
+    DQX learns what "normal" looks like from your good data, then checks every single row. No labels needed; it figures out what's unusual on its own. *"Is this banana weird?"*
   </Slide>
   <Slide title="How does it work? Features & Isolation Forest." visual="features">
-    Each banana becomes a set of numbers — size, colour, spots, bend. An Isolation Forest then tries to separate each point from the rest. If a banana is easy to isolate, it's probably odd.
+    Each banana becomes a set of numbers: size, colour, spots, bend. An Isolation Forest then tries to separate each point from the rest. If a banana is easy to isolate, it's probably odd.
   </Slide>
   <Slide title="The odd banana stands alone." visual="isolation-forest">
-    An unusual banana gets separated in just a few steps — it sticks out. A normal banana is buried in the crowd and takes many steps to single out.
+    An unusual banana gets separated in just a few steps, so it sticks out. A normal banana is buried in the crowd and takes many steps to single out.
   </Slide>
   <Slide title="Why was this banana flagged? SHAP explains." visual="shap">
-    A score alone isn't enough — you want to know *why*. SHAP breaks it down: "too brown", "wrong size". So you can act on the insight straight away.
+    A score alone isn't enough. You want to know *why*. SHAP breaks it down: "too brown", "wrong size". So you can act on the insight straight away.
   </Slide>
   <Slide title="Why DQX row anomaly detection?" visual="summary">
-    Everything you need to catch unusual rows — no ML expertise required.
+    Everything you need to catch unusual rows, no ML expertise required.
   </Slide>
   <Slide title="Get started" visual="coming-soon">
     Install DQX and start catching unusual rows in minutes.
@@ -109,6 +109,21 @@ Because results are **explainable**, you don't just get a list of flagged rows. 
 
 **Use DQX for**: "Is this data unusual?"  
 **Use domain models for**: "Is this data fraudulent, faulty, or malicious?"
+
+### How well does it detect, and how to judge it
+
+Row anomaly detection scores each row **on its own**. It is not a time-series or sequence model and does not read a window of history to make a prediction. The high numbers you see on published anomaly-detection leaderboards are usually won by sequence models on time-series data, which is a different problem, so they are not a yardstick for DQX. The right yardstick is your own data.
+
+What it is reliably good at, and what it is not:
+
+- **Good at unusual _combinations_ across columns**: several values that are each individually fine but wrong together. Rules struggle to express that, and it is where anomaly detection earns its place.
+- **Weaker than a plain rule when a single column is extreme in isolation.** A range check or an outlier rule catches that more reliably and more cheaply, so reach for a rule there. You can run both.
+
+On DQX's own benchmarks (ten classical tabular datasets) it beats a random baseline on every one and a simple "largest z-score across columns" baseline on most. The exceptions are exactly the single-extreme-value case above. The full measured results, the datasets, and what the numbers do *not* mean are in [Anomaly detection quality](/docs/reference/anomaly_detection_quality).
+
+<Admonition type="tip" title="Judge it on your own data">
+Whatever a benchmark says, measure on **your** data before relying on a number. Train on a slice you consider good, score a slice you understand, and check that the rows it flags are ones you would actually want flagged.
+</Admonition>
 
 ## Complements Databricks Data Quality Monitoring
 
@@ -252,7 +267,7 @@ However, when you run a row anomaly detection check, DQX also adds a `_dq_info` 
 
 The info column is an array of structs, with one element per anomaly detection check that was applied.
 
-Feature contributions are on by default and are computed only for anomalous rows (severity at or above the threshold) — non-anomalous rows carry a `null` contributions map, so the SHAP cost scales with the number of anomalies, not the table size. Set `enable_contributions=False` to skip them entirely for the fastest scoring. Severity percentiles are always computed for every row, so you can still count would-be anomalies at other thresholds after scoring; but if you want contributions (and AI explanations) for rows below your enforcement threshold, score with the lower exploration threshold and filter afterwards:
+Feature contributions are on by default and are computed only for anomalous rows (severity at or above the threshold). Non-anomalous rows carry a `null` contributions map, so the SHAP cost scales with the number of anomalies, not the table size. Set `enable_contributions=False` to skip them entirely for the fastest scoring. Severity percentiles are always computed for every row, so you can still count would-be anomalies at other thresholds after scoring; but if you want contributions (and AI explanations) for rows below your enforcement threshold, score with the lower exploration threshold and filter afterwards:
 
 ```python
 DQDatasetRule(
@@ -290,14 +305,9 @@ Scores are normalized into `severity_percentile` (0–100). The anomaly threshol
 
 The threshold controls how many rows are flagged as anomalies (percentile cutoff; default 95). Lower values (for example 90) flag more rows; higher values (for example 98) flag fewer (only extreme anomalies). Start with the default (95). If you get too many alerts, raise the threshold; if you are missing issues you care about, lower it.
 
-## Baseline conditioning
+## Group-aware anomaly detection
 
-Some values are only wrong *in context*. If one country's daily order volume drops 80% while the
-overall total holds steady — because other countries absorbed the difference — the collapsed number
-still sits comfortably inside the range other countries occupy normally. A model that compares every
-row against the whole table cannot see it: on the measurements behind
-[#1484](https://github.com/databrickslabs/dqx/issues/1484) such a collapse scored **45.1**, the 45th
-percentile. No threshold recovers that without flagging half the table.
+Some values are only wrong *in context*. If one country's daily order volume drops 80% while the overall total holds steady (because other countries absorbed the difference), the collapsed number still sits comfortably inside the range other countries occupy normally. A model that compares every row against the whole table cannot see it.
 
 Pass `baseline_by` to give DQX the right basis for comparison:
 
@@ -311,98 +321,33 @@ anomaly_engine.train(
 )
 ```
 
-The same collapse then scores above 95.
+Now each metric is judged against its own group's baseline, so the collapse stands out even though its value is ordinary for the table as a whole.
 
-### How it works, and what it costs
-
-For each numeric metric, DQX adds one feature: that metric's deviation from its own group's
-baseline, as a signed log-ratio.
-
-```
-signed_log(x)          = signum(x) * log1p(abs(x))
-<metric>_rel_baseline  = signed_log(value) - signed_log(group_median(metric))
-```
-
-The raw metric is kept alongside, so a globally absurd value stays detectable even where it is
-ordinary for its group. The log-ratio form is stable when a baseline is near zero and symmetric for
-halving versus doubling; the *signed* form matters because plain `log1p` is NaN for values at or
-below −1, which would silently produce NaN features on any signed metric such as profit or balance.
-
-There is **one model**, however many groups you have. Baselines are computed once at training and
-persisted with the model, then broadcast-joined at scoring time. So the cost does not grow with the
-group count — which is the whole point, and the difference from `segment_by`.
-
-Measured offline (see `tests/unit/test_anomaly_relative_feature_separability.py`, which runs in the
-unit suite):
-
-| scenario | without conditioning | with `baseline_by` |
-|---|---|---|
-| contextual collapse (ordinary globally) | PR-AUC 0.0028 — chance | PR-AUC 0.6962 |
-| anomaly extreme against every group | PR-AUC 1.0000 | PR-AUC 1.0000 |
-
-The second row is why conditioning is on by default when a grouping is available: it costs nothing
-measurable when the anomaly was already visible.
-
-Across a wider sweep — 1,545 configurations over synthetic data, the Server Machine Dataset, NSL-KDD
-and ten classical tabular benchmarks — conditioning is worth about **+0.07 PR-AUC** where anomalies are
-contextual, and **nothing measurable** where they are not. Against the previous release, on the same
-tables through the real pipeline, it moves a contextual collapse from 0.0376 to 0.5703. That
-asymmetry, not a hunch, is why a discovered grouping is used rather than ignored. See
-[Anomaly detection quality](/docs/reference/anomaly_detection_quality) for the full results, the
-datasets, and what these numbers do *not* mean.
-
-### Baseline columns are not features
-
-A baseline column is the basis of comparison, not a metric being compared, so it never becomes a
-model feature. Passing the same column as both `columns` and `baseline_by` is an error. If you let
-DQX auto-discover `columns`, it drops your declared baseline columns from the feature list for you.
-
-Baseline columns must be string, integral, boolean or date. Float, double and decimal are
-**rejected**: Spark and Python format floating-point values differently, and DQX builds each row's
-baseline key in both — Python when saving baselines, Spark when looking them up. A mismatch would
-not raise; it would silently miss every lookup and quietly condition on nothing. Bucket the value or
-cast it to a string first.
-
-:::note
-That failure mode is not hypothetical. Booleans hit it during development — Spark renders `true`,
-Python renders `True` — and it was caught only by a test that compares the two implementations
-against a live session. Both halves of the key are now pinned by that test.
-:::
+<Admonition type="warning" title="Choosing baseline columns">
+A baseline column is the basis of comparison, not a metric being compared, so it never becomes a model feature. Passing the same column in both `columns` and `baseline_by` is an error, and if you let DQX auto-discover `columns`, it drops your declared baseline columns from the feature list for you. Baseline columns must be string, integral, boolean, or date. Float, double, and decimal are rejected, because Spark and Python format floating-point values differently and the baseline lookup would silently match nothing. Bucket the value or cast it to a string first.
+</Admonition>
 
 ### Groups that appear after training
 
-A row whose group was never seen during training gets a **null** score and severity, plus
-`is_new_baseline = true` and the unrecognised key in `new_baseline_key`:
+A row whose group was never seen during training gets a **null** score and severity, plus `is_new_baseline = true` and the unrecognised key in `new_baseline_key`:
 
 ```python
 result.filter(F.col("_dq_info")[0].anomaly.is_new_baseline).select("_dq_info")
 ```
 
-It is not flagged as a violation. Neither categorical encoder can represent an unseen value honestly
-— one-hot makes it look maximally normal, frequency encoding maximally extreme — so DQX cannot judge
-the row, and "could not judge" is a different claim from "is anomalous". Previously such rows were
-scored 0.0 and silently passed, which is the most normal-looking value in the table.
+It is not flagged as a violation. Neither categorical encoder can represent an unseen value honestly: one-hot makes it look maximally normal, and frequency encoding makes it look maximally extreme. So DQX cannot judge the row, and "could not judge" is a different claim from "is anomalous". Previously such rows were scored 0.0 and silently passed, which is the most normal-looking value in the table.
 
-If an unrecognised group value is itself something you want to fail on, that is a membership question
-rather than an anomaly one: use `foreign_key` or `is_in_list` on the baseline column against your set
-of known values.
+If an unrecognised group value is itself something you want to fail on, that is a membership question rather than an anomaly one: use `foreign_key` or `is_in_list` on the baseline column against your set of known values.
 
-### segment_by is legacy
+## Upgrading and breaking changes
 
-`segment_by` trains one model per group. It still works, but prefer `baseline_by`, because
-per-group models lost on every axis that was measured:
+Row anomaly detection was **Experimental** in earlier releases and is now **Beta**. This release replaces the old per-group model path (`segment_by`) with `baseline_by`, which measured better on detection, reliability, and cost. If you never used `segment_by`, nothing here affects you.
 
-* **Detection.** On the Server Machine Dataset they were the worst of three configurations —
-  PR-AUC 0.1416 against 0.1499 for plain pooling and 0.1536 with baseline conditioning.
-* **Reliability.** One entity produced 15,963 false positives out of 28,392 normal rows, a 56%
-  false-alarm rate. Each per-group model calibrates its severity threshold on its own small sample,
-  so each is independently fragile.
-* **Cost.** Linear in the group count, and segmented training does not ensemble. 90 groups measured
-  roughly 88 minutes; a 90-group run was cancelled after 70 minutes without finishing. Runs above
-  `AnomalyParams.max_segment_models` (default 50) now raise rather than warn.
+If you did, three things change. The full detail is in the [migration guide](/docs/dev/anomaly_compatibility).
 
-Passing both `baseline_by` and `segment_by` is an error. A `DeprecationWarning` on `segment_by`
-follows one release later.
+- **Replace `segment_by` with `baseline_by`.** They are not the same. `segment_by` trained one model per group; `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change.
+- **Retrain your models.** A model trained before this release raises an error at scoring time until you retrain it.
+- **Your registry table is handled for you.** Retraining writes the new schema into your existing table in place.
 
 ## How it works under the hood
 
@@ -412,9 +357,9 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 
 1. **Feature engineering** (automatic): DQX detects column types and creates features (numerical standardized, categorical one-hot or frequency-encoded, temporal expanded to hour/day/month/weekend).
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains an ensemble of Isolation Forest models, and captures baseline statistics for drift detection.
-3. **Model registry**: Models and metadata live in MLflow and a Delta table; segmented models use deterministic names (for example `__seg_region=US_tier=gold`).
+3. **Model registry**: Models and metadata live in MLflow and a Delta table; each `train()` call registers one model under its name and archives the previously active version.
 4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. SHAP contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring.
-5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping — categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group (for example region, product category) — and this happens whether or not you passed `columns`, since what to measure and what to compare it against are independent questions. A discovered grouping is used as `baseline_by` (see [Baseline conditioning](#baseline-conditioning)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`.
+5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping (categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group, for example region or product category), and this happens whether or not you passed `columns`, since what to measure and what to compare it against are independent questions. A discovered grouping is used as `baseline_by` (see [Group-aware anomaly detection](#group-aware-anomaly-detection)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`.
 
 ### Why Isolation Forest?
 
@@ -442,39 +387,38 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `is_anomaly` | boolean | `true` if `severity_percentile` ≥ threshold. |
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
-| `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
-| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); populated only for anomalous rows — `null` for non-anomalous rows or if you set it `False`. |
+| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). On by default (`enable_contributions=True`); populated only for anomalous rows (`null` for non-anomalous rows or if you set it `False`). |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
 | `is_new_baseline` | boolean | `true` when the row's group was absent from training, in which case `score` and `severity_percentile` are `null` and the row is **not** flagged. See [Groups that appear after training](#groups-that-appear-after-training). |
 | `new_baseline_key` | string | The unrecognised group key, for rows where `is_new_baseline` is `true`; `null` otherwise. |
-| `ai_explanation` | struct | LLM-generated explanation for the row's `(segment, pattern)` group. On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
+| `ai_explanation` | struct | LLM-generated explanation for the row's anomaly group (rows sharing the same top contributing features). On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
 
-The nested `ai_explanation` struct (populated when AI explanations are on — the default):
+The nested `ai_explanation` struct (populated when AI explanations are on, which is the default):
 
 | Field | Type | Description |
 |--------|------|-------------|
 | `narrative` | string | Plain-language description of why the group was flagged. |
 | `business_impact` | string | Likely downstream impact if the rows are processed unchanged. |
 | `action` | string | What an analyst should investigate. |
-| `top_features` | string | Deterministic top-2 contributing features (e.g. `amount+quantity`) — the group's pattern key. |
-| `group_size` | long | Number of anomalous rows in this `(segment, pattern)` group. |
+| `top_features` | string | Deterministic top-2 contributing features (e.g. `amount+quantity`), the group's pattern key. |
+| `group_size` | long | Number of anomalous rows in this anomaly group. |
 | `group_avg_severity` | double | Mean `severity_percentile` across the group. |
 
-**Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect–friendly patterns).
+**Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect friendly patterns).
 
 ### AI explanations
 
-AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do* — without anyone reading raw SHAP percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the SHAP contributions as input). The explanation is AI-generated from the anomaly signal (feature names + SHAP + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
+AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do*, without anyone reading raw SHAP percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the SHAP contributions as input). The explanation is AI-generated from the anomaly signal (feature names + SHAP + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
 
 The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra setup and scales with the cluster. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together and the model is called **once per group** rather than once per row, so cost stays predictable on large datasets.
 
-Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional — it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
+Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional: it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
 
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
-# Contributions + AI explanations are on by default — this is all you need:
+# Contributions + AI explanations are on by default. This is all you need:
 checks = [
   DQDatasetRule(
     criticality="error",
@@ -492,9 +436,9 @@ checks = [
 ```
 
 <Admonition type="note" title="Cost and privacy">
-* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many groups the model is called for per run. For segmented models the cap is shared across segments (at least one call each), so if you set `max_groups` lower than the number of segments you still get one call per segment — a warning is logged when that happens. Set `enable_ai_explanation=False` to turn explanations off.
-* No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes — nothing breaks.
-* `redact_columns` keeps the listed feature and segment names out of the prompt. Segment **values** for non-redacted keys are sent verbatim — avoid segmenting on sensitive columns, or list them in `redact_columns`.
+* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many anomaly groups the model is called for per run. Set `enable_ai_explanation=False` to turn explanations off.
+* No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes, so nothing breaks.
+* `redact_columns` keeps the listed feature names out of the prompt (their contribution keys are shown as `<redacted>`).
 </Admonition>
 
 ## Practical examples (non-technical)
@@ -517,9 +461,15 @@ Use row anomaly detection when you want to catch unusual combinations across col
 ## Frequently Asked Questions
 
 <details>
+<summary><strong>Q: I upgraded and my `segment_by` code stopped working. What do I do?</strong></summary>
+
+`segment_by` has been removed. Replace it with `baseline_by`, which compares each metric against its own group's baseline on a single model instead of training one model per group, and retrain (models from earlier releases no longer load). Row anomaly detection was Experimental in earlier releases, which is what allowed this break, and it is now Beta. See [Upgrading and breaking changes](#upgrading-and-breaking-changes).
+</details>
+
+<details>
 <summary><strong>Q: How much training data do I really need?</strong></summary>
 
-See the **Training data requirements** tip under Quick start. In short: 1,000+ rows preferred; quality and coverage matter more than quantity. For segmented models, use at least 100+ rows per segment; segments with fewer than **10** rows are skipped entirely and get no model, so rows in them are left unscored. Ensure training data includes all realistic values for categorical columns (regions, types, etc.) — a categorical value absent from training is not scored reliably.
+See the **Training data requirements** tip under Quick start. In short: 1,000+ rows preferred; quality and coverage matter more than quantity. If you use `baseline_by`, each group needs enough rows for a stable baseline, and DQX will not auto-pick a grouping that leaves fewer than ~30 rows per group. Ensure training data includes all realistic values for categorical columns (regions, types, etc.); a categorical value absent from training is not scored reliably.
 </details>
 
 <details>
@@ -538,9 +488,9 @@ See the **Training data requirements** tip under Quick start. In short: 1,000+ r
 </details>
 
 <details>
-<summary><strong>Q: Why is my auto-trained model segmented?</strong></summary>
+<summary><strong>Q: Why did auto-training choose a grouping?</strong></summary>
 
-When you train without specifying a grouping, DQX looks for one: columns that look like good dimensions (for example region, category) — low cardinality (2–50 distinct values), low null rate, and enough rows per group. That is intentional, because behaviour often does differ by group, and the user least likely to pass `baseline_by` explicitly is the one most likely to miss a contextual anomaly. A discovered grouping is used as `baseline_by`: each metric gains its deviation from that group's baseline, on a **single** model, so the discovery cannot turn into an hours-long run however many groups it finds. The grouping it chose is logged. To compare against the whole table instead, pass `baseline_by=[]`.
+When you train without specifying a grouping, DQX looks for one: columns that look like good dimensions (for example region or category) with low cardinality (2–50 distinct values), low null rate, and enough rows per group. That is intentional, because behaviour often does differ by group, and the user least likely to pass `baseline_by` explicitly is the one most likely to miss a contextual anomaly. A discovered grouping is used as `baseline_by`: each metric gains its deviation from that group's baseline, on a **single** model, so the discovery cannot turn into an hours-long run however many groups it finds. The grouping it chose is logged. To compare against the whole table instead, pass `baseline_by=[]`.
 </details>
 
 <details>

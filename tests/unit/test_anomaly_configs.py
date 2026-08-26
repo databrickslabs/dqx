@@ -1,6 +1,5 @@
 """Unit tests for anomaly detection configuration classes."""
 
-from databricks.labs.dqx.anomaly.group_config import MAX_SEGMENT_MODELS
 from databricks.labs.dqx.config import (
     AnomalyConfig,
     AnomalyParams,
@@ -86,18 +85,7 @@ def test_anomaly_params_defaults():
     assert params.sample_fraction == 0.3
     assert params.max_rows == 1_000_000
     assert params.train_ratio == 0.8
-    assert params.max_segment_models == 50
     assert isinstance(params.algorithm_config, IsolationForestConfig)
-
-
-def test_max_group_models_default_matches_group_config():
-    """The default must track the shared constant.
-
-    ``config`` cannot import it, because the anomaly package requires the 'anomaly' extras
-    and ``config`` must stay importable without them, so the value is duplicated as a
-    literal. This test is the thing that stops the two drifting apart.
-    """
-    assert AnomalyParams().max_segment_models == MAX_SEGMENT_MODELS
 
 
 def test_anomaly_params_custom_sample_fraction():
@@ -204,21 +192,21 @@ def test_anomaly_config_defaults():
     """Test AnomalyConfig defaults."""
     cfg = AnomalyConfig()
     assert cfg.columns is None
-    assert cfg.segment_by is None
+    assert cfg.baseline_by is None
     assert cfg.model_name is None
     assert cfg.registry_table is None
 
 
-def test_anomaly_config_with_columns_and_segments():
-    """Test AnomalyConfig with custom columns and segmentation."""
+def test_anomaly_config_with_columns_and_baseline():
+    """Test AnomalyConfig with custom columns and a baseline grouping."""
     cfg = AnomalyConfig(
         columns=["a", "b"],
-        segment_by=["region"],
+        baseline_by=["region"],
         model_name="demo_model",
         registry_table="main.default.dqx_anomaly_models",
     )
     assert cfg.columns == ["a", "b"]
-    assert cfg.segment_by == ["region"]
+    assert cfg.baseline_by == ["region"]
     assert cfg.model_name == "demo_model"
     assert cfg.registry_table == "main.default.dqx_anomaly_models"
 

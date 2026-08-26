@@ -35,7 +35,6 @@ anomaly_info_struct_schema = StructType(
         StructField("is_anomaly", BooleanType(), True),
         StructField("threshold", DoubleType(), True),
         StructField("model", StringType(), True),
-        StructField("segment", MapType(StringType(), StringType()), True),
         StructField("contributions", MapType(StringType(), DoubleType()), True),
         StructField("confidence_std", DoubleType(), True),
         StructField("ai_explanation", ai_explanation_struct_schema, True),

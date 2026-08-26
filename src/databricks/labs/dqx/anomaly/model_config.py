@@ -57,8 +57,8 @@ class FeatureEngineering:
 
 
 @dataclass
-class SegmentationConfig:
-    """How a model relates to groups in the data (6 fields).
+class GroupingConfig:
+    """How a model is conditioned on groups in the data.
 
     ``baseline_by`` is duplicated here from the feature metadata on purpose. It also lives inside the
     ``features.feature_metadata`` JSON blob, which is where scoring reads it, but a JSON blob is not
@@ -67,10 +67,7 @@ class SegmentationConfig:
     ``training.columns``.
     """
 
-    segment_by: list[str] | None = None
-    segment_values: dict[str, str] | None = None
     baseline_by: list[str] | None = None
-    is_global_model: bool = True
     sklearn_version: str | None = None
     config_hash: str | None = None
 
@@ -83,7 +80,7 @@ class AnomalyModelRecord:
     - identity: Core model identification (5 fields)
     - training: Training configuration and metrics (6 fields)
     - features: Feature engineering metadata (5 fields)
-    - segmentation: Grouping configuration (6 fields)
+    - grouping: Baseline-conditioning configuration (3 fields)
 
     Stored as nested structs in Delta tables (no flattening needed).
     """
@@ -91,28 +88,27 @@ class AnomalyModelRecord:
     identity: ModelIdentity
     training: TrainingMetadata
     features: FeatureEngineering
-    segmentation: SegmentationConfig
+    grouping: GroupingConfig
 
 
-def compute_config_hash(columns: list[str], segment_by: list[str] | None, baseline_by: list[str] | None = None) -> str:
+def compute_config_hash(columns: list[str], baseline_by: list[str] | None = None) -> str:
     """Generate stable hash of model configuration.
 
     Args:
         columns: List of column names used for training
-        segment_by: List of columns used for segmentation, or None
         baseline_by: Columns the metrics are judged against, or None
 
     Returns:
         16-character hex string (first 16 chars of SHA256 hash)
 
     Note:
-        This hash uniquely identifies a model configuration based on the sorted, order-independent
-        lists of feature columns, segment columns and baseline columns. It is used for collision
-        detection when the same model_name is reused with a different configuration.
+        This hash uniquely identifies a model configuration from the sorted, order-independent lists
+        of feature columns and baseline columns. It is used for collision detection when the same
+        model_name is reused with a different configuration.
 
-        **Breaking change.** *baseline_by* joined the hash inputs in 0.17.0, which changes the hash of
-        every configuration -- including ones with no grouping, since the key is present either way.
-        A model registered before that therefore fails the configuration check in
+        **Breaking change.** *baseline_by* joined the hash inputs in 0.17.0, and the legacy
+        *segment_by* left it. Both change the hash of every configuration, so a model registered by
+        an earlier version fails the configuration check in
         :func:`~databricks.labs.dqx.anomaly.scoring_run.score_global_model` and must be retrained.
         That is deliberate: without *baseline_by* in the hash, retraining under the same name with a
         different grouping produced an identical hash, so the one thing this hash exists to catch --
@@ -122,7 +118,6 @@ def compute_config_hash(columns: list[str], segment_by: list[str] | None, baseli
     """
     config = {
         "columns": sorted(columns),
-        "segment_by": sorted(segment_by) if segment_by else None,
         "baseline_by": sorted(baseline_by) if baseline_by else None,
     }
     config_str = json.dumps(config, sort_keys=True)

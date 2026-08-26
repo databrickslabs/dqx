@@ -116,23 +116,27 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
 
-    # One conditioned model, not one per region.
+    # One conditioned model, not one per region: the discovered grouping becomes baseline_by.
     assert len(models) == 1
-    assert models[0].segmentation.is_global_model is True
-    assert models[0].segmentation.segment_by is None
+    assert models[0].grouping.baseline_by == ["region"]
 
     # Verify auto-discovered columns (amount and discount)
     for model in models:
         assert set(model.training.columns) == {"amount", "discount"}
 
 
-def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make_random, anomaly_engine):
-    """Test that providing explicit columns disables auto-segmentation."""
+def test_explicit_columns_still_get_baseline_discovery(spark: SparkSession, make_schema, make_random, anomaly_engine):
+    """Naming the feature columns does not turn off baseline discovery — they are independent choices.
+
+    Under the old segmented policy, passing explicit columns suppressed auto-segmentation. Baseline
+    conditioning has no reason to: there is one model regardless of group count, so a caller who
+    names the metrics still gets a grouping discovered for them. See databrickslabs/dqx#1484.
+    """
     # Create unique schema for test isolation
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
 
-    # Create data with segment column
+    # region is a strong baseline candidate (2 values, 200 rows each)
     data = []
     for region in ("US", "EU"):
         for i in range(200):
@@ -142,37 +146,20 @@ def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make
     table_name = f"{TEST_CATALOG}.{schema.name}.explicit_cols_test_{suffix}"
     df.write.saveAsTable(table_name)
 
-    # Train with explicit columns (should NOT auto-segment)
+    # Explicit feature column, no explicit grouping: the grouping is still discovered.
     registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
     anomaly_engine.train(
         df=spark.table(table_name),
-        columns=["amount"],  # Explicit columns provided
+        columns=["amount"],
         model_name=qualify_model_name(f"test_explicit_{suffix}", registry_table),
         registry_table=registry_table,
     )
 
-    # Verify only 1 global model created (no segmentation)
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 1
-    assert models[0].segmentation.is_global_model is True
-
-
-def test_warnings_for_small_segments(spark: SparkSession):
-    """Test that warnings are issued for segments with <1000 rows."""
-    # Create data with small segments
-    data = []
-    for region in SEGMENT_REGIONS:
-        for i in range(500):  # Only 500 rows per segment
-            data.append((region, 100.0 + i))
-
-    df = spark.createDataFrame(data, "region string, amount double")
-
-    profile = auto_discover_columns(df)
-
-    # Should still recommend region but warn about small segments
-    assert "region" in profile.recommended_segments
-    assert any("1000 rows" in w for w in profile.warnings)
+    assert models[0].training.columns == ["amount"]
+    assert models[0].grouping.baseline_by == ["region"]
 
 
 def test_autodiscovery_excludes_high_null_numeric_columns(spark: SparkSession):
@@ -265,12 +252,16 @@ def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
 
     profile = auto_discover_columns(df)
 
-    # category has 5 distinct values (≤20) - should be selected
-    assert "category" in profile.recommended_columns
+    # category has 5 distinct values - low cardinality makes it a baseline grouping column,
+    # not a feature. Under the baseline-aware policy it is routed to recommended_segments and
+    # removed from recommended_columns (baseline columns are not features).
+    assert "category" in profile.recommended_segments
+    assert "category" not in profile.recommended_columns
     assert profile.column_types is not None
     assert profile.column_types["category"] == "categorical"
 
-    # user_code has 50 distinct values (21-100 range) - should be selected as priority 5
+    # user_code has 50 distinct values - stays a feature: adding it as a second baseline column
+    # would push groups past the rows-per-group floor, so it is not selected for grouping.
     assert "user_code" in profile.recommended_columns
     assert profile.column_types["user_code"] == "categorical"
 
@@ -368,40 +359,23 @@ def test_autodiscovery_many_segments_warning(spark: SparkSession):
     assert "region" in profile.recommended_columns
 
 
-def test_autodiscovery_granular_segments_warning(spark: SparkSession):
-    """Test warning when average rows per segment <100 (lines 245-249)."""
-    # Create 10 segments (within 2-20 range) with only 50 rows each (avg <100)
-    # However, line 295 requires (total_count / distinct_count) >= 100
-    # So 50 rows per segment won't pass the criteria
-    # We need a test that passes line 292 but triggers line 245-249
-    # Let's use 5 segments with 80 rows each = 400 total
-    # 400 / 5 = 80 rows/segment, which is < 100 but >= the minimum threshold
-    # Actually, line 295 checks >= 100, so we need to check line 245 differently
-    # Line 245 is checked AFTER selection, so we need segments that pass >= 100 in line 295
-    # but when calculated in line 238, avg < 100
-    # This is contradictory - if it passes line 295, avg = total/distinct >= 100
-    # So line 245 only triggers with multiple segment columns where product > actual avg
-    # For single column test, let's just verify the segment is properly analyzed
+def test_autodiscovery_selects_multi_value_grouping(spark: SparkSession):
+    """Five groups of 150 rows clear the 30-rows-per-group floor and are selected as the grouping.
+
+    The baseline policy bounds groups by rows-per-group, not by a fixed minimum count, and emits no
+    "too granular" warning once the floor is met — one model serves every group.
+    """
     data = []
     for region in [f"region_{i}" for i in range(5)]:
-        for j in range(150):  # 150 rows per segment > 100, satisfies line 295
+        for j in range(150):  # 150 rows per group, well above MIN_ROWS_PER_BASELINE_GROUP
             data.append((region, 100.0 + j))
 
     df = spark.createDataFrame(data, "region string, amount double")
 
     profile = auto_discover_columns(df)
 
-    # region should be selected as segment (5 distinct is in 2-20 range, 150 rows/segment >= 100)
     assert "region" in profile.recommended_segments
-
-    # Verify segment count is calculated correctly
     assert profile.segment_count == 5
-
-    # Should have warning about small segment size (lines 195-198)
-    warnings_text = " ".join(profile.warnings)
-    # The warning comes from _validate_and_add_segment_column (line 195-198)
-    # which checks for < 1000 rows per segment
-    assert "region" in warnings_text and ("min:" in warnings_text or "<1000 rows" in warnings_text)
 
 
 def test_segment_column_explicitly_removed_from_features(spark: SparkSession):

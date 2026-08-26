@@ -14,7 +14,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRegistry,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
@@ -222,7 +222,7 @@ def test_registry_table_schema(
 
     # Verify all expected nested struct columns exist
     registry_df = spark.table(registry_table)
-    expected_top_level_columns = ["identity", "training", "features", "segmentation"]
+    expected_top_level_columns = ["identity", "training", "features", "grouping"]
 
     actual_columns = registry_df.columns
 
@@ -247,9 +247,7 @@ def test_registry_table_schema(
         "temporal_config",
         "column_types",
         "feature_metadata",
-        "segment_by",
-        "segment_values",
-        "is_global_model",
+        "baseline_by",
         "sklearn_version",
         "config_hash",
     ]
@@ -329,16 +327,6 @@ def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry
     assert model is None
 
 
-def test_get_segment_model_returns_none_when_registry_table_does_not_exist(
-    spark: SparkSession, anomaly_registry_prefix
-):
-    """Test that get_segment_model returns None when registry table does not exist."""
-    registry = AnomalyModelRegistry(spark)
-    nonexistent_table = f"{anomaly_registry_prefix}.nonexistent_registry_table"
-    result = registry.get_segment_model(nonexistent_table, "base_model", {"region": "US"})
-    assert result is None
-
-
 def test_nonexistent_model_returns_none(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
 ):
@@ -360,11 +348,11 @@ def test_nonexistent_model_returns_none(
 def test_config_hash_stability():
     """Test that config_hash is stable for same inputs."""
     columns = ["amount", "quantity", "discount"]
-    segment_by = ["region", "category"]
+    baseline_by = ["region", "category"]
 
     # Compute hash multiple times
-    hash1 = compute_config_hash(columns, segment_by)
-    hash2 = compute_config_hash(columns, segment_by)
+    hash1 = compute_config_hash(columns, baseline_by)
+    hash2 = compute_config_hash(columns, baseline_by)
 
     assert hash1 == hash2
     assert len(hash1) == 16  # 16 hex characters
@@ -386,8 +374,8 @@ def test_config_hash_differentiation():
     hash3 = compute_config_hash(["amount", "quantity"], ["region"])
 
     assert hash1 != hash2  # Different columns
-    assert hash1 != hash3  # Different segment_by
-    assert hash2 != hash3  # Different columns and segment_by
+    assert hash1 != hash3  # Different baseline_by
+    assert hash2 != hash3  # Different columns and baseline_by
 
 
 def test_config_hash_stored_during_training(
@@ -407,11 +395,11 @@ def test_config_hash_stored_during_training(
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
 
     assert record is not None
-    assert record["segmentation"]["config_hash"] is not None
+    assert record["grouping"]["config_hash"] is not None
 
     # Verify hash matches expected
     expected_hash = compute_config_hash(columns, None)
-    assert record["segmentation"]["config_hash"] == expected_hash
+    assert record["grouping"]["config_hash"] == expected_hash
 
 
 def test_config_change_warning(
@@ -474,7 +462,7 @@ def test_registry_active_model_and_archiving(
             baseline_stats={"amount": {"mean": 1.0, "std": 0.1}},
         ),
         features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="hash_v1"),
+        grouping=GroupingConfig(config_hash="hash_v1"),
     )
 
     record_v2 = AnomalyModelRecord(
@@ -492,7 +480,7 @@ def test_registry_active_model_and_archiving(
             metrics={"precision": 0.95},
         ),
         features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="hash_v2"),
+        grouping=GroupingConfig(config_hash="hash_v2"),
     )
 
     registry.save_model(record_v1, registry_table)
@@ -533,7 +521,7 @@ def test_save_model_when_table_does_not_exist_creates_table_no_archive(
             training_time=datetime.utcnow(),
         ),
         features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="h"),
+        grouping=GroupingConfig(config_hash="h"),
     )
 
     registry.save_model(record, registry_table)
@@ -541,84 +529,3 @@ def test_save_model_when_table_does_not_exist_creates_table_no_archive(
     rows = spark.table(registry_table).collect()
     assert len(rows) == 1
     assert rows[0]["identity"]["status"] == "active"
-
-
-def test_registry_segment_lookup(spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix):
-    """Test segment model lookup and listing."""
-    unique_id = make_random(8).lower()
-    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-
-    registry = AnomalyModelRegistry(spark)
-    base_name = f"{anomaly_registry_prefix}.seg_model_{make_random(4).lower()}"
-    segment_name = f"{base_name}__seg_region=US"
-
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=segment_name,
-            model_uri="models:/seg_model/1",
-            algorithm="isolation_forest",
-            mlflow_run_id="run_seg",
-        ),
-        training=TrainingMetadata(
-            columns=["amount"],
-            hyperparameters={},
-            training_rows=50,
-            training_time=datetime.utcnow(),
-        ),
-        features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(
-            segment_by=["region"],
-            segment_values={"region": "US"},
-            is_global_model=False,
-            config_hash="hash_seg",
-        ),
-    )
-
-    registry.save_model(record, registry_table)
-
-    fetched = registry.get_segment_model(registry_table, base_name, {"region": "US"})
-    assert fetched is not None
-    assert fetched.identity.model_name == segment_name
-
-    all_segments = registry.get_all_segment_models(registry_table, base_name)
-    assert len(all_segments) == 1
-
-
-def test_registry_segment_lookup_uses_canonical_order(
-    spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix
-):
-    """Segment lookup should be deterministic regardless of input dictionary order."""
-    unique_id = make_random(8).lower()
-    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-
-    registry = AnomalyModelRegistry(spark)
-    base_name = f"{anomaly_registry_prefix}.seg_model_{make_random(4).lower()}"
-    segment_name = f"{base_name}__seg_region=US_tier=gold"
-
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=segment_name,
-            model_uri="models:/seg_model/1",
-            algorithm="isolation_forest",
-            mlflow_run_id="run_seg",
-        ),
-        training=TrainingMetadata(
-            columns=["amount"],
-            hyperparameters={},
-            training_rows=50,
-            training_time=datetime.utcnow(),
-        ),
-        features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(
-            segment_by=["region", "tier"],
-            segment_values={"region": "US", "tier": "gold"},
-            is_global_model=False,
-            config_hash="hash_seg",
-        ),
-    )
-
-    registry.save_model(record, registry_table)
-
-    fetched = registry.get_segment_model(registry_table, base_name, {"tier": "gold", "region": "US"})
-    assert fetched is not None
-    assert fetched.identity.model_name == segment_name

@@ -14,7 +14,7 @@ from pyspark.sql.types import (
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema, anomaly_info_struct_schema
 from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
-from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values, baseline_key_column
+from databricks.labs.dqx.anomaly.segment_utils import baseline_key_column
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.utils import safe_filter_expr
 from databricks.labs.dqx.schema.dq_info_schema import (
@@ -83,7 +83,6 @@ def add_info_column(
     *,
     output_columns: ScoringOutputColumns | None = None,
     info_col_name: str | None = None,
-    segment_values: dict[str, str] | None = None,
     enable_contributions: bool = False,
     enable_confidence_std: bool = False,
     ai_explanation_col: str | None = None,
@@ -98,7 +97,6 @@ def add_info_column(
         output_columns: Internal column names to read scores, severity, contributions and std
             from, and where to write the info struct. Defaults to the standard names.
         info_col_name: Overrides ``output_columns.info`` when given (collision-safe UUID name).
-        segment_values: Segment values if model is segmented (None for global models).
         enable_contributions: Whether anomaly_contributions are available (0–100 percent).
         enable_confidence_std: Whether anomaly_score_std is available.
         ai_explanation_col: Optional column name carrying the pre-computed AI explanation struct.
@@ -137,15 +135,6 @@ def add_info_column(
         "threshold": F.lit(threshold),
         "model": F.lit(model_name),
     }
-
-    # Add segment as map (null for global models)
-    if segment_values:
-        canonical_values = canonicalize_segment_values(segment_values)
-        anomaly_info_fields["segment"] = F.create_map(
-            *[F.lit(item) for pair in canonical_values.items() for item in pair]
-        )
-    else:
-        anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))
 
     # Add contributions (null if not requested or not available). Contributions are only
     # surfaced for anomalous rows: SHAP is computed just for rows at or above the threshold

@@ -26,12 +26,9 @@ from pyspark.sql.types import (
 )
 
 from databricks.labs.dqx.anomaly.group_config import (
-    MAX_AUTO_GROUP_COUNT,
     MAX_BASELINE_COLUMN_CARDINALITY,
     MAX_BASELINE_GROUPS,
-    MAX_SEGMENT_MODELS,
     MIN_ROWS_PER_BASELINE_GROUP,
-    MIN_ROWS_PER_SEGMENT,
 )
 from databricks.labs.dqx.profiling_utils import compute_exact_distinct_counts, compute_null_and_distinct_counts
 
@@ -51,12 +48,12 @@ class AnomalyProfile:
     unsupported_columns: list[str] | None = None  # NEW: columns that cannot be used
 
 
-def auto_discover_columns(df: DataFrame, *, for_baseline: bool = False) -> AnomalyProfile:
+def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
     """
-    Auto-discover columns and segments for row anomaly detection.
+    Auto-discover feature columns and a baseline grouping for row anomaly detection.
 
-    Analyzes the DataFrame using on-the-fly heuristics to recommend
-    suitable columns and segmentation strategy.
+    Analyzes the DataFrame using on-the-fly heuristics to recommend suitable columns and a grouping
+    to condition on.
 
     Column selection criteria:
     - Numeric types (int, long, float, double, decimal)
@@ -64,24 +61,19 @@ def auto_discover_columns(df: DataFrame, *, for_baseline: bool = False) -> Anoma
     - null_rate < 50%
     - Exclude: timestamps, IDs (detected by name patterns)
 
-    Segment selection criteria:
-    - Categorical types (string, int with low cardinality)
-    - Distinct values: 2-50 (inclusive)
+    Baseline grouping criteria (see :func:`select_baseline_columns`):
+    - Categorical types (string, int) with 2-50 distinct values
     - null_rate < 10%
-    - At least 1000 rows per segment (warn if violated)
+    - At least MIN_ROWS_PER_BASELINE_GROUP rows per resulting group
 
     Args:
         df: DataFrame to analyze.
-        for_baseline: Select the grouping for baseline conditioning rather than for the legacy
-            segmented path. Baseline conditioning trains one model whatever the group count, so it
-            can afford a finer grouping and only needs enough rows per group to take a median. See
-            :func:`select_baseline_columns`.
 
     Returns:
         AnomalyProfile with recommendations and warnings.
     """
     warnings: list[str] = []
-    return _auto_discover_heuristic(df, warnings, for_baseline=for_baseline)
+    return _auto_discover_heuristic(df, warnings)
 
 
 def _compute_numeric_stats_batched(df: DataFrame, column_names: list[str]) -> dict[str, dict[str, float]]:
@@ -208,22 +200,6 @@ def _select_top_columns(
     return recommended_columns, column_types
 
 
-def _validate_and_add_segment_column(
-    df: DataFrame,
-    col_name: str,
-    warnings: list[str],
-) -> bool:
-    """Validate minimum segment size and add warnings if needed. Returns True if column should be added."""
-    min_segment_size_row = df.groupBy(col_name).count().select(F.min("count").alias("min_count")).first()
-    min_segment_size = min_segment_size_row["min_count"] if min_segment_size_row else None
-    if min_segment_size is not None and min_segment_size < 1000:
-        warnings.append(
-            f"Segment column '{col_name}' has segments with <1000 rows (min: {min_segment_size}), "
-            "models may be unreliable."
-        )
-    return True
-
-
 def _check_high_cardinality_warning(
     field: Any,
     col_name: str,
@@ -234,41 +210,23 @@ def _check_high_cardinality_warning(
     if isinstance(field.dataType, StringType) and "id" not in col_name.lower():
         warnings.append(
             f"Column '{col_name}' has {distinct_count} distinct values, "
-            "excluding from auto-selection (too high cardinality for segmentation)."
+            "excluding from auto-selection (too high cardinality for a baseline grouping)."
         )
 
 
-def _calculate_total_segments(
-    recommended_segments: list[str],
-    warnings: list[str],
-    *,
-    total_count: int,
-    distinct_counts: dict[str, int],
-) -> int:
-    """Calculate total segment combinations and add warning if too many."""
+def _count_group_combinations(recommended_segments: list[str], distinct_counts: dict[str, int]) -> int:
+    """Total groups the chosen grouping produces, as the product of its columns' cardinalities.
+
+    No warnings here any more. This used to caution about too many segments or too few rows each,
+    which mattered when every group became its own model. :func:`select_baseline_columns` now enforces
+    both bounds while choosing, so neither condition can survive to be warned about.
+    """
     if not recommended_segments:
         return 1
-
-    segment_count = 1
+    combinations = 1
     for col in recommended_segments:
-        distinct_count = distinct_counts[col]
-        segment_count *= distinct_count
-
-    # Warn if segments are too granular relative to data size
-    avg_rows_per_segment = total_count / segment_count if segment_count > 0 else 0
-
-    if segment_count > MAX_SEGMENT_MODELS:
-        warnings.append(
-            f"Detected {segment_count} total segments, training may be slow. "
-            "Consider filtering or using coarser segmentation."
-        )
-    elif avg_rows_per_segment < MIN_ROWS_PER_SEGMENT:
-        warnings.append(
-            f"Detected {segment_count} segments with only ~{int(avg_rows_per_segment)} rows per segment on average. "
-            f"Models may be unreliable. Consider reducing segmentation or using more data (total rows: {total_count})."
-        )
-
-    return segment_count
+        combinations *= distinct_counts[col]
+    return combinations
 
 
 def _is_grouping_candidate(
@@ -277,22 +235,18 @@ def _is_grouping_candidate(
     null_rate: float,
     is_id_column: bool,
     total_count: int,
-    for_baseline: bool,
 ) -> bool:
-    """Whether a column may be *considered* as a grouping.
+    """Whether a column may be *considered* as a baseline grouping.
 
-    The bar differs by destination, for the same reason the selection policy does: a segment has to
-    support training a forest on its own rows, a baseline group only has to yield a median. Identifier
-    -like names and columns that are more than 10% null are rejected either way -- a grouping keyed on
-    something nearly unique or frequently missing is not a peer group.
+    Identifier-like names and columns more than 10% null are rejected: a grouping keyed on something
+    nearly unique or frequently missing is not a peer group. The row requirement is only what a
+    median needs, since there is one model regardless of how many groups result.
     """
-    max_cardinality = MAX_BASELINE_COLUMN_CARDINALITY if for_baseline else MAX_AUTO_GROUP_COUNT
-    min_rows = MIN_ROWS_PER_BASELINE_GROUP if for_baseline else MIN_ROWS_PER_SEGMENT
     return (
-        2 <= distinct_count <= max_cardinality
+        2 <= distinct_count <= MAX_BASELINE_COLUMN_CARDINALITY
         and null_rate < 0.1
         and not is_id_column
-        and (total_count / distinct_count) >= min_rows
+        and (total_count / distinct_count) >= MIN_ROWS_PER_BASELINE_GROUP
     )
 
 
@@ -348,16 +302,12 @@ def _select_segment_columns(
     total_count: int,
     null_counts: dict[str, int],
     distinct_counts: dict[str, int],
-    for_baseline: bool = False,
 ) -> tuple[list[str], int]:
-    """Identify and validate segment columns.
+    """Identify baseline grouping columns and count the groups they produce.
 
-    *for_baseline* selects the grouping policy. See :func:`select_baseline_columns` for why the two
-    differ: a per-segment model has to train on its group, a baseline group only has to yield a
-    median.
+    See :func:`select_baseline_columns` for the policy.
     """
-    recommended_segments = []
-    candidate_segments = []  # Track all viable candidates for user info
+    candidate_segments = []
     categorical_types = (StringType, IntegerType)
     categorical_fields = [f for f in df.schema.fields if isinstance(f.dataType, categorical_types)]
 
@@ -376,51 +326,22 @@ def _select_segment_columns(
             distinct_count = distinct_row[0]
         null_rate = null_counts.get(col_name, 0) / total_count if total_count > 0 else 1.0
 
-        meets_segment_criteria = _is_grouping_candidate(
+        if _is_grouping_candidate(
             distinct_count,
             null_rate=null_rate,
             is_id_column=id_pattern.search(col_name) is not None,
             total_count=total_count,
-            for_baseline=for_baseline,
-        )
-
-        if meets_segment_criteria and _validate_and_add_segment_column(df, col_name, warnings):
+        ):
             candidate_segments.append((col_name, distinct_count, total_count / distinct_count))
         elif distinct_count > 50:
             _check_high_cardinality_warning(field, col_name, distinct_count, warnings)
 
-    # Sort candidates by lowest cardinality first. For the segmented path that means "fewest models";
-    # for the baseline path it means the cheapest granularity is added first.
+    # Cheapest granularity first, so the row budget is spent on coarse dimensions before fine ones
+    # and the grouping degrades gracefully on smaller tables.
     candidate_segments.sort(key=lambda x: x[1])  # Sort by distinct_count ascending
+    recommended_segments = select_baseline_columns(candidate_segments, total_count)
 
-    if candidate_segments and for_baseline:
-        recommended_segments.extend(select_baseline_columns(candidate_segments, total_count))
-    elif candidate_segments:
-        # LEGACY SEGMENTED PATH: be conservative, take a single column. Every distinct value becomes
-        # its own model, so breadth here is paid for in training time.
-        selected = candidate_segments[0]
-        recommended_segments.append(selected[0])
-
-        # Log helpful info about selection and alternatives
-        logger.info(
-            f"Auto-segmentation selected 1 column: [{selected[0]}] "
-            f"({int(selected[1])} segments, ~{int(selected[2])} rows/segment)"
-        )
-
-        # Suggest additional segmentation options if available
-        if len(candidate_segments) > 1:
-            other_options = ", ".join(
-                [f"{col} ({int(dc)} segments)" for col, dc, _ in candidate_segments[1:4]]  # Show up to 3 more
-            )
-            logger.info(
-                f"Consider additional segmentation for more granularity: "
-                f"segment_by=['{selected[0]}', <column>] where <column> could be: {other_options}"
-            )
-
-    # Calculate total segment combinations
-    segment_count = _calculate_total_segments(
-        recommended_segments, warnings, total_count=total_count, distinct_counts=distinct_counts
-    )
+    segment_count = _count_group_combinations(recommended_segments, distinct_counts)
     return recommended_segments, segment_count
 
 
@@ -518,15 +439,13 @@ def _compute_discovery_stats(df: DataFrame) -> tuple[dict[str, int], dict[str, i
     return null_counts, distinct_counts, numeric_stats, total_count
 
 
-def _auto_discover_heuristic(df: DataFrame, warnings: list[str], *, for_baseline: bool = False) -> AnomalyProfile:
+def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfile:
     """
     Auto-discover using on-the-fly heuristics with multi-type support.
 
     Args:
         df: DataFrame to analyze.
         warnings: List to accumulate warnings.
-        for_baseline: Select the grouping for baseline conditioning rather than the legacy
-            segmented path. See :func:`select_baseline_columns`.
 
     Returns:
         AnomalyProfile with recommendations (max 10 columns).
@@ -577,10 +496,10 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str], *, for_baseline
         total_count=total_count,
         null_counts=null_counts,
         distinct_counts=distinct_counts,
-        for_baseline=for_baseline,
     )
 
-    # Remove segment columns from feature columns (they would be constant within each segment)
+    # The grouping columns are the basis of comparison, not features, so drop them from the feature
+    # list. A column cannot be both what is measured and what it is measured against.
     if recommended_segments:
         recommended_columns = [col for col in recommended_columns if col not in recommended_segments]
 

@@ -12,7 +12,7 @@ from typing import Any
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
-from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns_and_segments
+from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import check_reserved_row_id_columns
 from databricks.labs.dqx.anomaly.scoring_orchestrator import run_anomaly_scoring
@@ -135,7 +135,7 @@ def has_no_row_anomalies(
 
     Auto-discovery:
     - columns: Inferred from model registry
-    - segmentation: Inferred from model registry (checks if model is segmented)
+    - baseline grouping: Inferred from the model's persisted metadata
 
     Output columns:
     - _dq_info: Array of structs (one element per dataset-level check). For example:
@@ -144,7 +144,6 @@ def has_no_row_anomalies(
       - _dq_info[0].anomaly.is_anomaly: Boolean flag
       - _dq_info[0].anomaly.threshold: Severity percentile threshold used (0–100)
       - _dq_info[0].anomaly.model: Model name
-      - _dq_info[0].anomaly.segment: Segment values (if segmented)
       - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100); populated
         only for anomalous rows, null otherwise
       - _dq_info[0].anomaly.confidence_std: Ensemble std (if requested)
@@ -155,7 +154,7 @@ def has_no_row_anomalies(
     Notes:
         DQX always scores using the columns the model was trained on.
         DQX aligns scored rows back to the input using an internal row id and removes it before returning.
-        Segmentation is inferred from the trained model configuration.
+        Baseline conditioning is inferred from the trained model's metadata.
 
         Rows whose group was never seen in training are reported (`is_new_baseline`) but are **not**
         flagged as violations: neither categorical encoder can represent an unseen value honestly
@@ -264,7 +263,7 @@ def has_no_row_anomalies(
     def apply(df: DataFrame) -> DataFrame:
         check_reserved_row_id_columns(df)
         df_to_score = df.withColumn(row_id_col, F.monotonically_increasing_id())
-        columns, segment_by = fetch_model_columns_and_segments(df_to_score, model_name, registry_table)
+        columns = fetch_model_columns(df_to_score, model_name, registry_table)
 
         config = ScoringConfig(
             columns=columns,
@@ -280,7 +279,6 @@ def has_no_row_anomalies(
             llm_model_config=llm_model_config,
             redact_columns=redact_columns or [],
             max_groups=max_groups,
-            segment_by=segment_by,
             driver_only=driver_only,
             output_columns=output_columns,
         )
