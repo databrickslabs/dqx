@@ -445,7 +445,8 @@ good-names = [
     "_",            # use for ignores
     "a",            # use for databricks.sdk.AccountClient
     "w", "ws",      # use for databricks.sdk.WorkspaceClient
-    "me"            # use for current user
+    "me",           # use for current user
+    "X", "y"        # required by the scikit-learn estimator contract (fit/predict/score_samples)
 ]
 
 # Good variable names regexes, separated by a comma. If names match any regex,
