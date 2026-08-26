@@ -42,6 +42,7 @@ import numpy as np
 
 from datasets.real import SMD_ENTITIES, load_smd_split
 from metrics import pr_auc, precision_at_n, roc_auc
+from sklearn.covariance import LedoitWolf
 from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
 from sklearn.neural_network import MLPRegressor
@@ -152,16 +153,55 @@ def score_mlp_autoencoder(train: np.ndarray, test: np.ndarray, seed: int) -> np.
     return np.sum((te - model.predict(te)) ** 2, axis=1)
 
 
+def _mahalanobis_sq(train: np.ndarray, test: np.ndarray, *, shrinkage: str | float, ridge: float) -> np.ndarray:
+    """Squared Mahalanobis distance from the training centre, scaled and regularised.
+
+    Two facts govern every variant below, and they are easy to get wrong.
+
+    **The scaler is a no-op in exact arithmetic.** Mahalanobis distance is invariant under any
+    invertible linear map: standardising *x* and using the standardised covariance gives bit-identical
+    distances to using the raw covariance. So ``StandardScaler`` cannot change the answer directly --
+    it changes it only *through the regulariser*, because a shrinkage target is not affine-equivariant.
+    A fixed ``1e-3`` ridge is negligible against a column of variance 1e6 and dominant against one of
+    variance 1e-3; standardising first makes one ridge value mean the same thing for every column. This
+    is the mirror image of the argument in ``core.py`` for why RobustScaler was removed for
+    IsolationForest: there the scaler was measured to be a genuine no-op, here it earns its place only
+    by fixing the regulariser's basis.
+
+    **Ledoit-Wolf minimises the error of the covariance, not the conditioning of its inverse.** So a
+    ridge floor is still applied on top, expressed relative to the average variance so it is
+    scale-free.
+    """
+    scaler = StandardScaler().fit(train)
+    tr, te = scaler.transform(train), scaler.transform(test)
+
+    if shrinkage == "ledoit_wolf":
+        cov = LedoitWolf(assume_centered=False).fit(tr).covariance_
+    else:
+        cov = np.atleast_2d(np.cov(tr - tr.mean(axis=0), rowvar=False))
+        if shrinkage:  # explicit convex shrink toward the average-variance diagonal
+            target = np.eye(cov.shape[0]) * (np.trace(cov) / cov.shape[0])
+            cov = (1.0 - float(shrinkage)) * cov + float(shrinkage) * target
+
+    cov = np.atleast_2d(cov)
+    cov = cov + np.eye(cov.shape[0]) * ridge * (np.trace(cov) / cov.shape[0])
+    delta = te - tr.mean(axis=0)
+    # Cholesky solve rather than an explicit inverse: same answer, better conditioned.
+    factor = np.linalg.cholesky(cov)
+    solved = np.linalg.solve(factor, delta.T)
+    return np.sum(solved**2, axis=0)
+
+
 def score_mahalanobis(train: np.ndarray, test: np.ndarray, seed: int) -> np.ndarray:
-    """Covariance-aware distance from the training centre. Ledoit-Wolf style ridge for stability."""
+    """The candidate under test: StandardScaler + Ledoit-Wolf + a scale-free ridge floor (G1)."""
     del seed
-    mean = train.mean(axis=0)
-    centred = train - mean
-    cov = np.cov(centred, rowvar=False)
-    cov = np.atleast_2d(cov) + np.eye(cov.shape[0] if cov.ndim else 1) * 1e-3
-    inv = np.linalg.pinv(cov)
-    delta = test - mean
-    return np.einsum("ij,jk,ik->i", delta, inv, delta)
+    return _mahalanobis_sq(train, test, shrinkage="ledoit_wolf", ridge=1e-6)
+
+
+def score_mahalanobis_ridge(train: np.ndarray, test: np.ndarray, seed: int) -> np.ndarray:
+    """Same, with no Ledoit-Wolf: the fallback if data-estimated shrinkage over-regularises (G1)."""
+    del seed
+    return _mahalanobis_sq(train, test, shrinkage=0.0, ridge=1e-6)
 
 
 ESTIMATORS = {
@@ -169,6 +209,7 @@ ESTIMATORS = {
     "pca_recon": score_pca_recon,
     "mlp_ae": score_mlp_autoencoder,
     "mahalanobis": score_mahalanobis,
+    "maha_ridge": score_mahalanobis_ridge,
 }
 
 
@@ -206,6 +247,38 @@ def event_recall_at_budget(labels: np.ndarray, scores: np.ndarray, budget_frac: 
 # --------------------------------------------------------------------------------------
 # Axis 3: scope, and the driver
 # --------------------------------------------------------------------------------------
+
+
+def contaminate(
+    train: dict[str, np.ndarray],
+    test: dict[str, np.ndarray],
+    labels: dict[str, np.ndarray],
+    rate: float,
+    seed: int = 0,
+) -> dict[str, np.ndarray]:
+    """Return a copy of *train* with anomalous rows mixed in, at approximately *rate*.
+
+    Without this, the whole exercise measures the wrong thing. SMD ships a **clean** train split, but
+    DQX fits on ``sample_df`` -- a random sample of the user's table, anomalies included. Sample mean and
+    covariance are non-robust, so a few extreme rows inflate the covariance *along the anomaly
+    direction*, which is precisely the direction that must stay tight. That is masking, and it is the
+    difference between a benchmark number and a number a user will see.
+
+    IsolationForest resists this (it has ``contamination`` and subsampling); a moment-based estimator
+    does not. Anomalous rows are drawn from each entity's own test split so they are realistic
+    anomalies for that machine rather than synthetic noise.
+    """
+    rng = np.random.default_rng(seed)
+    out = {}
+    for entity, rows in train.items():
+        anomalous = test[entity][labels[entity] > 0]
+        n_inject = int(len(rows) * rate)
+        if len(anomalous) == 0 or n_inject == 0:
+            out[entity] = rows
+            continue
+        picks = rng.choice(len(anomalous), size=min(n_inject, len(anomalous)), replace=n_inject > len(anomalous))
+        out[entity] = np.vstack([rows, anomalous[picks]])
+    return out
 
 
 def run_cell(
@@ -263,10 +336,19 @@ def main() -> None:
     parser.add_argument("--seeds", type=int, default=2)
     parser.add_argument("--estimators", nargs="+", default=list(ESTIMATORS), choices=list(ESTIMATORS))
     parser.add_argument("--skip-per-entity", action="store_true", help="pooled scope only (faster)")
+    parser.add_argument(
+        "--contaminate",
+        type=float,
+        default=0.0,
+        help="Mix this fraction of anomalous rows into the TRAIN split (G3: masking under contamination)",
+    )
     args = parser.parse_args()
 
     print("Loading SMD (cached)...", flush=True)
     train, test, labels = load_smd_split()
+    if args.contaminate:
+        train = contaminate(train, test, labels, args.contaminate)
+        print(f"  TRAIN CONTAMINATED at {args.contaminate:.1%} (G3: does the estimator survive masking?)")
     y = np.concatenate([labels[e] for e in SMD_ENTITIES])
     _, n_events = event_recall_at_budget(y, np.random.default_rng(0).random(len(y)))
     print(f"  28 entities | {len(y):,} test rows | {y.mean():.2%} anomalous points | {n_events} events")
@@ -328,9 +410,14 @@ def main() -> None:
     print("\nThe best row here IS the ballpark: published SMD figures use point adjustment and are not")
     print("a valid target. '80% of the ballpark' means 80% of the best honest configuration above.")
 
-    out = "benchmarks/anomaly_conditioning/results/smd-bakeoff.json"
+    suffix = f"-contaminated-{args.contaminate:g}" if args.contaminate else ""
+    out = f"benchmarks/anomaly_conditioning/results/smd-bakeoff{suffix}.json"
     with open(out, "w", encoding="utf-8") as handle:
-        json.dump({"window": WINDOW, "seeds": args.seeds, "results": results}, handle, indent=2)
+        json.dump(
+            {"window": WINDOW, "seeds": args.seeds, "contaminate": args.contaminate, "results": results},
+            handle,
+            indent=2,
+        )
     print(f"\nwrote {out}")
 
 
