@@ -236,7 +236,7 @@ def score_global_model(
     if config.enable_ai_explanation:
         scored_df = add_explanation_column(
             scored_df,
-            ExplanationContext.from_scoring_config(config),
+            ExplanationContext.from_scoring_config(config, parsed_metadata),
             is_ensemble=record.identity.is_ensemble,
             drift_summary=format_drift_summary(drift_result, config.redact_columns),
         )

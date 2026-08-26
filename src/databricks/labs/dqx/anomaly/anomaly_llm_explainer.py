@@ -23,7 +23,8 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
-from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX
+from databricks.labs.dqx.anomaly.feature_naming import engineered_from
+from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -194,13 +195,20 @@ class ExplanationContext:
     # the absolute cap on LLM calls for that one call.
     max_groups: int = 500
     redact_columns: tuple[str, ...] = ()
-    # Internal working-column name for the (segment, pattern) group key. Defaults to a fixed
+    # Internal working-column name for the (baseline group, pattern) group key. Defaults to a fixed
     # name for direct construction; production scoring passes a UUID-suffixed name so it can
     # never collide with a user-supplied column.
     pattern_col: str = _DEFAULT_PATTERN_COL
+    # The model's feature metadata, threaded through so redaction can drop every feature derived
+    # from a redacted column (not just the column itself) and so contribution keys can be rendered
+    # as human labels. Optional: a caller that builds the context directly without it falls back to
+    # best-effort redaction of the baseline-relative feature only, and to raw engineered keys.
+    feature_metadata: SparkFeatureMetadata | None = None
 
     @classmethod
-    def from_scoring_config(cls, config: "ScoringConfig") -> "ExplanationContext":
+    def from_scoring_config(
+        cls, config: "ScoringConfig", feature_metadata: SparkFeatureMetadata | None = None
+    ) -> "ExplanationContext":
         return cls(
             severity_col=config.severity_col,
             contributions_col=config.contributions_col,
@@ -212,24 +220,30 @@ class ExplanationContext:
             max_groups=config.max_groups,
             redact_columns=tuple(config.redact_columns or ()),
             pattern_col=config.pattern_col,
+            feature_metadata=feature_metadata,
         )
 
 
-def redaction_set(redact_columns: tuple[str, ...]) -> frozenset[str]:
-    """Columns to redact, plus the engineered features derived from them.
+def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadata | None = None) -> frozenset[str]:
+    """Columns to redact, plus every engineered feature derived from them.
 
     Redaction matches contribution keys exactly, and contribution keys are *engineered* feature
-    names. So redacting ``amount`` did not stop ``amount_rel_baseline`` -- a signed log-ratio of the
-    same column -- from reaching the LLM prompt. A caller naming a column sensitive means every
-    feature derived from it is sensitive too.
+    names. So redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of
+    the same column -- and redacting ``country`` must stop ``country_US``, ``country_DE``,
+    ``country_freq`` and ``country_is_null``. A caller naming a column sensitive means every feature
+    derived from it is sensitive too.
 
-    Known remaining gap: one-hot and frequency-encoded features are not covered, because their names
-    cannot be reconstructed from the source column alone (``country`` becomes ``country_C3``,
-    ``country_DE`` and so on, one per observed value). Closing that needs the feature metadata at
-    prompt-construction time, which this function does not have. Tracked separately.
+    With *metadata*, the derived features are enumerated exactly via *engineered_from*, which closes
+    the one-hot and frequency gap that the source column alone could not. Without it (a caller who
+    built the context directly and did not thread metadata through), only the baseline-relative
+    feature is reconstructable from the column name, so that alone is covered -- best effort.
     """
     expanded = set(redact_columns)
-    expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
+    if metadata is not None:
+        for column in redact_columns:
+            expanded.update(engineered_from(column, metadata))
+    else:
+        expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
     return frozenset(expanded)
 
 
@@ -667,7 +681,7 @@ def _add_explanation_column_ai_query(
     the documented "one call per group per scoring run" cost model. The collected payload is
     small and bounded: at most ``max_groups`` rows, each holding three length-capped text fields.
     """
-    redact_set = redaction_set(ctx.redact_columns)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
     kept_sdf, dropped_groups_count, dropped_rows_count, total_groups = _aggregate_groups_spark(
         anomalous,
@@ -733,7 +747,7 @@ def add_explanation_column(
     Raises:
       InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
     """
-    redact_set = redaction_set(ctx.redact_columns)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(
         df_with_pattern, ctx, "", is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
