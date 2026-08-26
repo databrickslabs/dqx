@@ -14,6 +14,7 @@ from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from databricks.labs.dqx.anomaly.scoring_utils import join_filtered_results_back
 from databricks.labs.dqx.anomaly.segment_utils import (
     BASELINE_KEY_NULL,
     build_baseline_key,
@@ -138,6 +139,28 @@ def test_relative_feature_is_appended_last(spark: SparkSession):
     assert metadata.engineered_feature_names[-1] == "amount_rel_baseline"
 
 
+def test_all_relative_features_form_the_trailing_block(spark: SparkSession):
+    """With several metrics, every _rel_baseline feature is a trailing entry, one per metric.
+
+    Strengthens the single-metric case above: an already-trained model is handed features in this
+    order, so the relative block must stay contiguous at the tail — not interleaved with base
+    features, which would silently reorder the model's inputs.
+    """
+    df = spark.createDataFrame(
+        [("DE", 100.0, 5.0), ("DE", 110.0, 6.0), ("IT", 20.0, 1.0), ("IT", 22.0, 2.0)],
+        "country string, amount double, quantity double",
+    )
+
+    _, metadata = apply_feature_engineering(
+        df, [_numeric_info("amount"), _numeric_info("quantity")], baseline_by=["country"]
+    )
+
+    names = metadata.engineered_feature_names
+    relative = [name for name in names if name.endswith("_rel_baseline")]
+    assert set(relative) == {"amount_rel_baseline", "quantity_rel_baseline"}
+    assert names[-len(relative) :] == relative  # a contiguous trailing block
+
+
 def test_feature_prefix_matches_an_ungrouped_model(spark: SparkSession):
     """Everything before the appended tail must be identical to the ungrouped feature list.
 
@@ -230,3 +253,30 @@ def test_unseen_group_falls_back_to_the_global_baseline(spark: SparkSession):
 
     value = _first(engineered)["amount_rel_baseline"]
     assert value is not None
+
+
+# ============================================================================
+# is_new_baseline survives the row_filter merge-back
+# ============================================================================
+
+
+def test_unscored_row_keeps_its_info_when_merged_back(spark: SparkSession):
+    """An unseen-group row carries a null score but a real is_new_baseline flag to report.
+
+    join_filtered_results_back groups by the row id and aggregates with
+    ``max_by(info, score)`` — which is null when the row's only score is null — so the merge would
+    drop the info struct for exactly those rows. The ``coalesce(..., first(info))`` is what rescues
+    it. This pins that a null-scored row keeps its info; regressing the coalesce would silently lose
+    is_new_baseline on every unseen-group row.
+    """
+    df = spark.createDataFrame([(1,), (2,)], "row_id long")
+    result = spark.createDataFrame(
+        [(1, None, "unseen-group"), (2, 0.9, "scored")],
+        "row_id long, score double, info string",
+    )
+
+    merged = join_filtered_results_back(df, result, ["row_id"], "score", "info")
+
+    info_by_id = {row["row_id"]: row["info"] for row in merged.collect()}
+    assert info_by_id[1] == "unseen-group"  # kept despite a null score
+    assert info_by_id[2] == "scored"

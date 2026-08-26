@@ -199,7 +199,16 @@ def prepare_drift_df(
     columns: list[str],
     record: AnomalyModelRecord,
 ) -> tuple[DataFrame, list[str]]:
-    """Prepare drift DataFrame and columns aligned to training baseline stats."""
+    """Prepare drift DataFrame and columns aligned to training baseline stats.
+
+    Drift is measured over the *engineered* feature list, which for a grouped model includes the
+    ``_rel_baseline`` features. Those are each already a deviation from the group baseline, so a
+    shift in the baseline itself moves the raw metric and its baseline together and leaves the
+    relative feature unchanged. Consequence, by design: drift on a grouped metric reports a change
+    in how far rows sit *from their group norm*, not a change in the norm. A wholesale shift of a
+    group's level is absorbed into the baseline and is not flagged here — that is the point of
+    conditioning, not a gap in drift detection.
+    """
     feature_metadata_json = record.features.feature_metadata
     if not feature_metadata_json:
         return df.select(*columns), columns
