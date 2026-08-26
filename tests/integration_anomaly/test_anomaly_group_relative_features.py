@@ -224,6 +224,36 @@ def test_relative_value_is_the_signed_log_ratio_to_the_group_median(spark: Spark
     assert row["amount_rel_baseline"] == pytest.approx(math.log1p(200.0) - math.log1p(100.0), abs=1e-6)
 
 
+def test_multiple_metrics_get_independent_group_baselines(spark: SparkSession):
+    """Each metric deviates from its own per-group median, computed in one joined lookup.
+
+    Exercises the single-join path directly: two metrics, two groups, and one row per metric bumped
+    to twice its group median. Each relative value must be the signed-log ratio for that metric's
+    own baseline — no cross-contamination between the metrics' baseline columns.
+    """
+    rows = [
+        ("DE", 100.0, 4.0),
+        ("DE", 100.0, 4.0),
+        ("DE", 200.0, 4.0),  # amount at 2x its DE median; quantity on its median
+        ("IT", 10.0, 40.0),
+        ("IT", 10.0, 40.0),
+        ("IT", 10.0, 80.0),  # quantity at 2x its IT median; amount on its median
+    ]
+    df = spark.createDataFrame(rows, "country string, amount double, quantity double")
+
+    engineered, _ = apply_feature_engineering(
+        df, [_numeric_info("amount"), _numeric_info("quantity")], baseline_by=["country"]
+    )
+
+    bumped_amount = _first(engineered.filter((F.col("country") == "DE") & (F.col("amount") == 200.0)))
+    assert bumped_amount["amount_rel_baseline"] == pytest.approx(math.log1p(200.0) - math.log1p(100.0), abs=1e-6)
+    assert bumped_amount["quantity_rel_baseline"] == pytest.approx(0.0, abs=1e-6)
+
+    bumped_quantity = _first(engineered.filter((F.col("country") == "IT") & (F.col("quantity") == 80.0)))
+    assert bumped_quantity["quantity_rel_baseline"] == pytest.approx(math.log1p(80.0) - math.log1p(40.0), abs=1e-6)
+    assert bumped_quantity["amount_rel_baseline"] == pytest.approx(0.0, abs=1e-6)
+
+
 def test_negative_metrics_stay_finite(spark: SparkSession):
     """Plain log1p is NaN for x <= -1; the signed form must survive signed metrics."""
     df = spark.createDataFrame(

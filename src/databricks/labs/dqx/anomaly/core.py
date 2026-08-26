@@ -266,7 +266,7 @@ def compute_validation_metrics(
     model: Pipeline, val_df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
 ) -> dict[str, float]:
     """Compute validation metrics and distribution statistics."""
-    if val_df.count() == 0:
+    if not val_df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
         return {"validation_rows": 0}
 
     scored = score_with_model(model, val_df, feature_cols, feature_metadata)
@@ -305,7 +305,7 @@ def compute_score_quantiles(
     Also populates ``feature_metadata.baseline_score_quantiles`` when the model is grouped, so
     scoring can calibrate severity against each group's own distribution.
     """
-    if df.count() == 0:
+    if not df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
         return {}
 
     scored = score_with_model(model, df, feature_cols, feature_metadata)
@@ -319,7 +319,7 @@ def compute_score_quantiles_ensemble(
 
     Also populates ``feature_metadata.baseline_score_quantiles`` when the model is grouped.
     """
-    if df.count() == 0:
+    if not df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
         return {}
 
     scored = score_with_ensemble_models(models, df, feature_cols, feature_metadata)

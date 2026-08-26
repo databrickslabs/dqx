@@ -807,10 +807,19 @@ def _process_baseline_relative_features(
         baseline_medians.update(computed_group)
         global_medians.update(computed_global)
 
+    # One broadcast join carrying every metric's baseline as its own column, rather than one join
+    # per metric. The per-metric append order below is preserved exactly (the feature list is
+    # positional), and each feature's value is unchanged: the same per-group baseline, the same
+    # coalesce to the global baseline on a group miss, the same signed-log-ratio.
+    metrics_with_baselines = [metric for metric in metrics if baseline_medians.get(metric)]
+    baseline_cols = {metric: f"__dqx_{metric}_baseline" for metric in metrics_with_baselines}
+    if metrics_with_baselines:
+        lookup_df = _baseline_lookup_df(transformed_df, baseline_medians, metrics_with_baselines, group_key_col)
+        transformed_df = transformed_df.join(broadcast(lookup_df), on=group_key_col, how="left")
+
     for metric in metrics:
         feature_name = f"{metric}{BASELINE_RELATIVE_SUFFIX}"
         baselines = baseline_medians.get(metric, {})
-        global_baseline = global_medians.get(metric, 0.0)
 
         if not baselines:
             # No baseline for this metric at all: the deviation is undefined, so emit a constant
@@ -819,15 +828,15 @@ def _process_baseline_relative_features(
             engineered_features.append(feature_name)
             continue
 
-        baseline_col = f"__dqx_{metric}_baseline"
-        lookup_df = _baseline_lookup_df(transformed_df, baselines, group_key_col, baseline_col)
-        transformed_df = transformed_df.join(broadcast(lookup_df), on=group_key_col, how="left")
-        resolved_baseline = coalesce(col(baseline_col), lit(global_baseline))
+        global_baseline = global_medians.get(metric, 0.0)
+        resolved_baseline = coalesce(col(baseline_cols[metric]), lit(global_baseline))
         transformed_df = transformed_df.withColumn(
             feature_name, _signed_log1p(col(metric)) - _signed_log1p(resolved_baseline)
         )
-        transformed_df = transformed_df.drop(baseline_col)
         engineered_features.append(feature_name)
+
+    if baseline_cols:
+        transformed_df = transformed_df.drop(*baseline_cols.values())
 
     # The key column deliberately survives: it is the frame's only remaining record of the
     # grouping once the raw group columns are dropped, and training-time severity calibration
@@ -866,15 +875,26 @@ def _compute_baseline_medians(
     return baseline_medians, global_medians
 
 
-def _baseline_lookup_df(df: DataFrame, baselines: dict[str, float], group_key_col: str, baseline_col: str) -> DataFrame:
-    """Build a broadcastable ``(group key, baseline)`` lookup for one metric."""
+def _baseline_lookup_df(
+    df: DataFrame,
+    baseline_medians: dict[str, dict[str, float]],
+    metrics: list[str],
+    group_key_col: str,
+) -> DataFrame:
+    """Build one broadcastable lookup: ``(group key, <metric>_baseline per metric)``.
+
+    One row per group key seen for any metric, with each metric's baseline in its own column and
+    null where that metric never saw the group — which the caller coalesces to the global baseline,
+    exactly as a per-metric left join would. Replaces N single-metric lookups with one.
+    """
+    all_keys = sorted({key for metric in metrics for key in baseline_medians[metric]})
+    baseline_cols = {metric: f"__dqx_{metric}_baseline" for metric in metrics}
+    rows = [(key, *(baseline_medians[metric].get(key) for metric in metrics)) for key in all_keys]
     schema = T.StructType(
-        [
-            T.StructField(group_key_col, T.StringType(), False),
-            T.StructField(baseline_col, T.DoubleType(), False),
-        ]
+        [T.StructField(group_key_col, T.StringType(), False)]
+        + [T.StructField(baseline_cols[metric], T.DoubleType(), True) for metric in metrics]
     )
-    return df.sparkSession.createDataFrame(list(baselines.items()), schema=schema)
+    return df.sparkSession.createDataFrame(rows, schema=schema)
 
 
 def apply_feature_engineering(
