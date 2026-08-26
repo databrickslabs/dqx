@@ -112,6 +112,12 @@ def test_ai_query_explanation_populated_for_anomalous_row(
     assert explanation["top_features"]
     for feat in explanation["top_features"].split("+"):
         assert feat in {"amount", "quantity", "discount"}
+    # top_drivers is the same drivers rendered for a reader, with weights. For these plain numeric
+    # features the human label is the column name itself, so each top feature appears with a percent.
+    assert explanation["top_drivers"]
+    assert "%" in explanation["top_drivers"]
+    for feat in explanation["top_features"].split("+"):
+        assert feat in explanation["top_drivers"]
     assert explanation["group_size"] == 1
     # Single-row group: group_avg_severity is the row's severity. The struct's
     # severity_percentile is rounded to 1 decimal while group_avg_severity is full precision,
@@ -171,7 +177,7 @@ def test_ai_query_explanation_redact_columns_filters_output(
 def test_ai_query_explanation_one_call_per_group(
     spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
 ):
-    """Multiple identical anomalous rows collapse into a single (segment, pattern) group.
+    """Multiple identical anomalous rows collapse into a single pattern group.
 
     The ai_query call runs on executors so we can't intercept it directly; instead we assert the
     *observable* contract: every flagged row in the group shares the same narrative and

@@ -1,8 +1,8 @@
 """Unit tests for the ai_query-based group explainer in anomaly_llm_explainer.
 
 Spark is never started — these exercise the pure helpers: prompt rendering, endpoint
-resolution, segment redaction, SQL-literal escaping, the structured-output schema, and the
-pattern-column threading through ExplanationContext.
+resolution, baseline-grouping and human-label rendering, SQL-literal escaping, the
+structured-output schema, and the pattern-column threading through ExplanationContext.
 """
 
 from pathlib import Path
@@ -11,6 +11,7 @@ import pytest
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import ExplanationContext
+from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -153,21 +154,51 @@ def test_ai_query_response_format_is_strict_json_schema_built_from_output_fields
     assert llm_explainer._build_ai_query_response_format() == schema
 
 
-def test_format_segment_empty_returns_empty_string():
-    assert llm_explainer._format_segment(None, frozenset()) == ""
-    assert llm_explainer._format_segment({}, frozenset()) == ""
+def test_baseline_grouping_str_reports_the_grouping_columns():
+    """The prompt's baseline_grouping field is the baseline_by columns, a per-run constant."""
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "amount", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["amount"],
+        baseline_by=["region", "product"],
+    )
+    assert llm_explainer._baseline_grouping_str(metadata) == "region, product"
 
 
-def test_format_segment_formats_key_value_pairs():
-    out = llm_explainer._format_segment({"region": "US", "product": "electronics"}, frozenset())
-    assert out == "region=US, product=electronics"
+def test_baseline_grouping_str_is_none_when_ungrouped_or_metadataless():
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "amount", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["amount"],
+    )
+    assert llm_explainer._baseline_grouping_str(metadata) == "none"
+    assert llm_explainer._baseline_grouping_str(None) == "none"
 
 
-def test_format_segment_redacts_listed_keys():
-    """A segment key in redact_columns must never leak its value into the prompt."""
-    out = llm_explainer._format_segment({"region": "US", "customer_id": "C-42"}, frozenset({"customer_id"}))
-    assert out == "region=US, customer_id=<redacted>"
-    assert "C-42" not in out
+def test_human_labels_map_omits_identity_and_labels_derived_features():
+    """Only features whose label differs from the raw name are in the map; identities are dropped
+    so the SQL lookup stays small and unmapped keys fall back to the raw name."""
+    metadata = SparkFeatureMetadata(
+        column_infos=[
+            {"name": "amount", "category": "numeric"},
+            {"name": "country", "category": "categorical"},
+        ],
+        categorical_frequency_maps={"country": {"US": 0.7}},
+        onehot_categories={"country": ["US"]},
+        engineered_feature_names=["amount", "amount_rel_baseline", "country_US", "country_freq"],
+    )
+    labels = llm_explainer._human_labels(metadata)
+
+    assert "amount" not in labels  # identity, omitted
+    assert labels["amount_rel_baseline"] == "amount vs its group baseline"
+    assert labels["country_US"] == "country = US"
+    assert labels["country_freq"] == "country frequency"
+
+
+def test_human_labels_map_is_empty_without_metadata():
+    assert not llm_explainer._human_labels(None)
 
 
 def test_sql_string_literal_escapes_quote_and_backslash():

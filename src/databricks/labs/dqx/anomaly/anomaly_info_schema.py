@@ -12,13 +12,16 @@ from pyspark.sql.types import (
 
 # Schema for the AI explanation sub-struct inside the anomaly info struct.
 # narrative / business_impact / action are LLM-generated; top_features is deterministic
-# (the sorted top-2 contributing SHAP features that define the group).
-# group_size / group_avg_severity describe the (segment, pattern) group this row belongs to.
+# (the sorted top-2 contributing SHAP features that define the group, as engineered names, so it
+# stays stable for grouping and tooling). top_drivers is the same drivers rendered as human labels
+# with their weights, e.g. 'amount vs its group baseline (74%), quantity (12%)', for display.
+# group_size / group_avg_severity describe the pattern group this row belongs to.
 ai_explanation_struct_schema = StructType(
     [
         StructField("narrative", StringType(), True),
         StructField("business_impact", StringType(), True),
         StructField("top_features", StringType(), True),
+        StructField("top_drivers", StringType(), True),
         StructField("action", StringType(), True),
         StructField("group_size", LongType(), True),
         StructField("group_avg_severity", DoubleType(), True),
