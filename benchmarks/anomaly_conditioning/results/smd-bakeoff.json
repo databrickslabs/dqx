@@ -1,0 +1,30 @@
+{
+  "window": 60,
+  "seeds": 1,
+  "results": [
+    {
+      "featuriser": "raw",
+      "estimator": "iforest",
+      "scope": "pooled",
+      "pr_auc": 0.06701655758365027,
+      "roc_auc": 0.7150735941232091,
+      "precision_at_n": 0.09163987138263666,
+      "event_recall_at_1pct": 0.3333333333333333,
+      "n_features": 38,
+      "n_models": 1,
+      "seconds": 0.7
+    },
+    {
+      "featuriser": "win_stats",
+      "estimator": "iforest",
+      "scope": "pooled",
+      "pr_auc": 0.082534382387672,
+      "roc_auc": 0.7446868279028607,
+      "precision_at_n": 0.11709539121114684,
+      "event_recall_at_1pct": 0.10256410256410256,
+      "n_features": 190,
+      "n_models": 1,
+      "seconds": 2.6
+    }
+  ]
+}

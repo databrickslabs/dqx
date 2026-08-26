@@ -78,6 +78,31 @@ def _load_smd() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return np.vstack(values_list), np.concatenate(labels_list), np.concatenate(entity_list)
 
 
+def load_smd_split() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Return ``(train values, test values, test labels)`` keyed by entity, in file (time) order.
+
+    The counterpart to :func:`_load_smd`, and the honest one for any claim about generalisation.
+    ``_load_smd`` fits and scores the labelled *test* split, which measures separability; this loads
+    the **unlabelled train split as well**, so a model can be fitted on train and scored on test.
+    Train precedes test in time, so that is a chronological protocol for free.
+
+    Rows stay in file order, which for SMD is time order. Both splits are capped at the same
+    per-entity row limit the rest of the harness uses, so a run stays in minutes. The train split
+    carries no labels, which is exactly the semi-supervised setup DQX targets: learn what normal looks
+    like, then score unseen rows.
+    """
+    train, test, labels = {}, {}, {}
+    for entity in SMD_ENTITIES:
+        tr = np.loadtxt(_fetch(f"{SMD_BASE}/train/{entity}.txt", f"smd/train-{entity}.txt"), delimiter=",")
+        te = np.loadtxt(_fetch(f"{SMD_BASE}/test/{entity}.txt", f"smd/test-{entity}.txt"), delimiter=",")
+        lb = np.loadtxt(_fetch(f"{SMD_BASE}/test_label/{entity}.txt", f"smd/label-{entity}.txt"), delimiter=",")
+        take_test = min(len(te), len(lb), SMD_MAX_ROWS_PER_ENTITY)
+        train[entity] = tr[:SMD_MAX_ROWS_PER_ENTITY]
+        test[entity] = te[:take_test]
+        labels[entity] = lb[:take_test]
+    return train, test, labels
+
+
 def _load_nslkdd() -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     """Return ``(numeric values, labels, {grouping name: group labels})``.
 
