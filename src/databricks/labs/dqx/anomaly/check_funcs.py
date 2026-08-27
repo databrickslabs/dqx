@@ -156,12 +156,12 @@ def has_no_row_anomalies(
         DQX aligns scored rows back to the input using an internal row id and removes it before returning.
         Baseline conditioning is inferred from the trained model's metadata.
 
-        Rows whose group was never seen in training are reported (`is_new_baseline`) but are **not**
+        Rows whose group was never seen in training are reported (*is_new_baseline*) but are **not**
         flagged as violations: neither categorical encoder can represent an unseen value honestly
         — one-hot makes it look maximally normal, frequency encoding maximally extreme — so DQX
         cannot judge the row, and "could not judge" is not the same claim as "is anomalous". If an
         unrecognised group value is itself a problem worth failing on, that is a membership
-        question rather than an anomaly one: use `foreign_key` or `is_in_list` on the group column
+        question rather than an anomaly one: use *foreign_key* or *is_in_list* on the group column
         against your set of known values, which is the check built for it.
 
     Args:
