@@ -4,7 +4,10 @@ IsolationForest splits on one randomly chosen feature at a time, which is why it
 data and weak on multivariate metrics whose anomalies are *broken correlations* rather than extreme
 single values. Measured on SMD (28 machines, 38 metrics, fit on the train split and scored on the test
 split, no point adjustment) it catches 36% of incidents inside a 1%-of-rows alert budget; the
-Mahalanobis detector here catches 82%. See ``benchmarks/anomaly_conditioning/smd_bakeoff.py`` and the
+Mahalanobis detector here catches 82%. Refitting on training data that still contains anomalies -- what
+DQX actually does -- costs both of them a few points and does not change the conclusion: 33% against
+79%. That was the result that could have sunk the approach, because sample covariance is not robust and
+a few extreme rows inflate it along the very direction that needs to stay tight. See ``benchmarks/anomaly_conditioning/smd_bakeoff.py`` and the
 committed results next to it.
 
 The distance is the ordinary squared Mahalanobis distance from the training centre,

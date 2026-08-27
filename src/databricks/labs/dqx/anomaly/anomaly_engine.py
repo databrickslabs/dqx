@@ -88,8 +88,9 @@ class AnomalyEngine(DQEngineBase):
                 ``"tabular"`` -- IsolationForest, exactly the behaviour before this option existed.
                 ``"timeseries"`` selects a correlation-aware detector suited to multivariate metrics,
                 where anomalies are broken correlations rather than extreme single values; measured on
-                the SMD benchmark it surfaces 82% of incidents inside a 1%-of-rows alert budget against
-                36% for the tabular detector. It needs no timestamp column, and trains a single model
+                the SMD benchmark it surfaces 79% of incidents inside a 1%-of-rows alert budget against
+                33% for the tabular detector, both trained on data that still contains anomalies as DQX
+                does (82% against 36% on a clean training split). It needs no timestamp column, and trains a single model
                 rather than an ensemble because it is deterministic. There is no automatic option: DQX
                 never changes the algorithm on your behalf, because the choice cannot be verified
                 without labels. The resolved profile is logged on every run.

@@ -156,7 +156,9 @@ class MahalanobisTrainingStrategy(AnomalyTrainingStrategy):
     estimator differs. See ``timeseries_detector`` for why: IsolationForest splits one feature at a
     time, so anomalies that are broken *correlations* rather than extreme single values are close to
     invisible to it. Measured on SMD, incident coverage inside a 1%-of-rows alert budget is 0.359 for
-    IsolationForest and 0.821 here.
+    IsolationForest and 0.821 here on a clean training split, and 0.333 against 0.795 when the training
+    data itself contains anomalies -- which is the case that matters, because DQX fits a random sample of
+    the user's table rather than a curated one.
     """
 
     name = "mahalanobis"

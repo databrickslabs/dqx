@@ -73,20 +73,20 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> Non
 def _validate_explanation_flags(enable_contributions: bool) -> None:
     if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
-            "enable_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+            "enable_contributions=True requires the 'shap' dependency for the default tabular "
+            "detector. Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
         )
 
 
 def _resolve_ai_explanation_flag(enable_contributions: bool, enable_ai_explanation: bool) -> bool:
-    """AI explanations use SHAP contributions as their input, so they require
+    """AI explanations use the feature contributions as their input, so they require
     *enable_contributions*. Both default to True; if a caller turns contributions off (e.g. to
-    skip the SHAP cost) we disable explanations with a warning rather than raising, so the cheap
+    skip the attribution cost) we disable explanations with a warning rather than raising, so the cheap
     opt-out stays frictionless.
     """
     if enable_ai_explanation and not enable_contributions:
         logger.warning(
-            "AI explanations require SHAP contributions; disabling enable_ai_explanation because "
+            "AI explanations require feature contributions; disabling enable_ai_explanation because "
             "enable_contributions=False."
         )
         return False
@@ -144,7 +144,7 @@ def has_no_row_anomalies(
       - _dq_info[0].anomaly.is_anomaly: Boolean flag
       - _dq_info[0].anomaly.threshold: Severity percentile threshold used (0–100)
       - _dq_info[0].anomaly.model: Model name
-      - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100); populated
+      - _dq_info[0].anomaly.contributions: feature contributions as percentages (0–100); populated
         only for anomalous rows, null otherwise
       - _dq_info[0].anomaly.confidence_std: Ensemble std (if requested)
       - _dq_info[0].anomaly.is_new_baseline: True when the row's group was absent from training,
@@ -178,11 +178,13 @@ def has_no_row_anomalies(
         drift_threshold: Drift detection threshold, in standard deviations of the training
             baseline (default None, which disables drift detection). Set a positive value
             such as 3.0 to enable it.
-        enable_contributions: Include SHAP feature contributions for explainability (default True).
+        enable_contributions: Include per-feature contributions for explainability (default True).
             Per-feature contributions are added to _dq_info for anomalous rows only (severity at or
-            above the threshold; other rows get a null map), so the SHAP cost scales with the number
-            of anomalies rather than the table size. Requires the SHAP library (installed with the
-            anomaly extra). Set False to skip the SHAP cost entirely (this also disables AI
+            above the threshold; other rows get a null map), so the attribution cost scales with the
+            number of anomalies rather than the table size. How they are computed depends on the
+            detector: SHAP for the default tabular one (installed with the anomaly extra), an exact
+            leave-one-out decomposition for the timeseries one, which needs no SHAP at all. The emitted
+            map is identical either way. Set False to skip the cost entirely (this also disables AI
             explanations, since they use contributions as input).
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
@@ -193,7 +195,7 @@ def has_no_row_anomalies(
             endpoint is unreachable (e.g. no Foundation Model APIs in the workspace), explanations are
             skipped with a warning and scoring still completes. Output is in
             _dq_info[0].anomaly.ai_explanation, and is AI-generated from the anomaly signal (feature
-            names + SHAP + severity), not grounded in catalog metadata.
+            names + contributions + severity), not grounded in catalog metadata.
         ai_explanation_llm_model_config: LLM model configuration for AI explanations (named
             distinctly from the check's *model_name* to avoid confusion). Defaults to
             LLMModelConfig() (model_name='databricks/databricks-claude-sonnet-4-5'). Its *model_name*
@@ -211,7 +213,7 @@ def has_no_row_anomalies(
             LLMModelConfig instance is accepted. The simplest dict form sets only *model_name*
             to a Databricks Model Serving endpoint. See the AI Explanations section of the Row
             Anomaly Detection reference docs for a full example.
-        redact_columns: Column names to exclude from the LLM prompt. Filters SHAP contribution
+        redact_columns: Column names to exclude from the LLM prompt. Filters the contribution
             map keys, the top-2 pattern key, and — when the scored model is segmented — any
             matching segment key (emitted as ``key=<redacted>`` so sensitive segmentation values
             never reach the prompt).
@@ -234,7 +236,7 @@ def has_no_row_anomalies(
         >>> df_scored.filter(col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly"))
     """
     llm_model_config = _coerce_llm_model_config(ai_explanation_llm_model_config)
-    # AI explanations need SHAP contributions; if contributions are off, disable explanations
+    # AI explanations need the contributions map; if contributions are off, disable explanations
     # (with a warning) rather than failing — both default on, so this only triggers when a caller
     # explicitly opts out of contributions.
     enable_ai_explanation = _resolve_ai_explanation_flag(enable_contributions, enable_ai_explanation)

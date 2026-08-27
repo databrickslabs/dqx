@@ -3496,7 +3496,8 @@ Required arguments: `df`, `model_name`, `registry_table`. Optional parameters:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `columns` | list[str] | None | Columns to use for row anomaly detection (auto-discovered if omitted) |
-| `segment_by` | list[str] | None | Train separate models per segment. When both `columns` and `segment_by` are omitted, DQX may auto-discover segment columns (e.g. categorical, 2–50 distinct values) and train a segmented model. Use `segment_by=[]` to force a single global model. |
+| `baseline_by` | list[str] | None | Columns identifying the group a row belongs to, so each metric is judged against its own group's baseline rather than against the whole table. One model whatever the group count. Auto-discovered when both `columns` and `baseline_by` are omitted; pass `baseline_by=[]` to suppress discovery and compare against the whole table. |
+| `profile` | str | `"tabular"` | Which detector to train. `"tabular"` is Isolation Forest — the behaviour that predates this option. `"timeseries"` selects a correlation-aware detector for multivariate metrics whose anomalies are broken *correlations* rather than extreme single values; it needs no timestamp column and trains a single model rather than an ensemble. There is no automatic option: DQX never changes the algorithm on your behalf, because the choice cannot be verified without labels. See [Choosing a profile](/docs/guide/row_anomaly_detection#choosing-a-profile). |
 | `exclude_columns` | list[str] | None | Columns to exclude from training (e.g., IDs, labels, ground truth) |
 | `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
 | `params` | AnomalyParams | None | Optional. Advanced tuning parameters. See sections below for details. |
@@ -3512,9 +3513,8 @@ Pass an `AnomalyParams` object to the `params` argument to customize training be
 | `sample_fraction` | float | 0.3 | Fraction of data to sample for training (30%). Reduce for faster training on large datasets. |
 | `max_rows` | int | 1,000,000 | Maximum rows to use for training. Caps memory usage for very large datasets. |
 | `train_ratio` | float | 0.8 | Train/validation split ratio (80% train, 20% validation). |
-| `ensemble_size` | int or None | 3 | Number of models in ensemble. Set to None for single model. More models = more robust but slower training. Applies to a single global model only: **segmented training always trains one model per segment and ignores this setting**, so `confidence_std` is unavailable for segmented models. |
+| `ensemble_size` | int or None | 3 | Number of models in ensemble. Set to None for single model. More models = more robust but slower training. Ignored by `profile="timeseries"`: that detector is deterministic, so every ensemble member would be an identical model and the reported spread would be exactly zero. `confidence_std` is therefore unavailable for it. |
 | `baseline_by` | list[str] or None | None | Columns identifying the group a row belongs to, so each metric is judged against its own group's baseline rather than against the whole table. Adds one feature per metric — its signed log-ratio to that group's median — on a **single** model, so cost does not grow with the group count. Normally set by passing `baseline_by` to `train()`. See [Group-aware anomaly detection](/docs/guide/row_anomaly_detection#group-aware-anomaly-detection). |
-| `max_segment_models` | int | 50 | Ceiling on per-segment models one run will attempt, guarding the legacy `segment_by` path. Cost there is linear in the segment count and segmented training does not ensemble, so 90 segments measures roughly 88 minutes. Exceeding this raises rather than warns. Irrelevant to `baseline_by`. |
 
 #### IsolationForestConfig (Algorithm Parameters)
 

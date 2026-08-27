@@ -6,6 +6,8 @@ sidebar_position: 509
 
 ---
 
+import Admonition from '@theme/Admonition';
+
 # Anomaly Detection Quality
 
 How well does row anomaly detection actually detect? This page reports measured detection quality;
@@ -53,10 +55,68 @@ chance. Conditioned on the group, 0.6962.
 
 To compare against the whole table anyway, pass `baseline_by=[]`.
 
+## Which detector to use
+
+DQX ships two detectors, chosen with `profile`. They answer different questions, so neither replaces
+the other:
+
+| `profile` | detector | finds |
+|---|---|---|
+| `"tabular"` (default) | Isolation Forest | rows whose values, or combination of values, are unusual |
+| `"timeseries"` | correlation-aware | metrics that normally move together and stopped |
+
+The second exists because the first cannot see the second kind of problem. Isolation Forest splits on
+one feature at a time, so a row where every metric sits inside its usual range — but in a combination
+that never happens on healthy data — never gets separated by any single split.
+
+The **Server Machine Dataset** is exactly that kind of data — real machine telemetry with labelled
+incidents — so it shows the gap at its widest. Read the table as *which tool for which job*: it says
+`"timeseries"` is the right choice for telemetry, not that either detector is good or bad in general. On
+ordinary tabular data the ranking reverses, which is what the
+[tabular benchmarks](#plain-tabular-benchmarks) below measure.
+
+<!-- generated:profile:start -->
+| `profile` | detector | incidents surfaced (clean training split) | incidents surfaced (contaminated training) |
+|---|---|---|---|
+| `"tabular"` | Isolation Forest | 36% | 33% |
+| `"timeseries"` | correlation-aware | **82%** | **79%** |
+<!-- generated:profile:end -->
+
+Two columns, because they answer different questions. **Contaminated training is the one that describes
+your run**: DQX fits a random sample of your table with the anomalies still in it. The clean-split column
+is what a benchmark with a hand-curated training set would report — an upper bound you would not see in
+practice. The correlation-aware detector holds up across both, which is the part worth noting: covariance
+estimates are sensitive to exactly the extreme rows they are meant to find, so this was the result that
+could have ruled the approach out.
+
+### What "incidents surfaced" means
+
+Of the labelled incidents in the data, the share that produce **at least one alert while the alert budget
+is capped at 1% of all rows**.
+
+It counts *problems that reach a human* at an alert volume they will tolerate. Counting anomalous rows
+instead would let a single long incident dominate the result, and would reward a detector that alerts on
+everything. Fixing the budget prevents both.
+
+It is deliberately **not** point-adjusted F1, the metric most published time-series results use. Point
+adjustment credits an entire incident as detected from a single lucky row, and Kim et al.
+([AAAI 2022](https://arxiv.org/abs/2109.05257)) showed that random scores reach state-of-the-art under
+it. Published figures produced that way are not comparable with the ones above, in either direction.
+
+<Admonition type="warning" title="What neither detector does">
+Neither profile models seasonality, trend, or forecasting: a predictable weekly cycle reads as unusual
+until it is in the training data, and steady growth eventually reads as drift. With a *single* metric,
+`"timeseries"` has nothing to correlate against, and a threshold is the better tool. DQX also does not
+detect which profile you need — [Choosing a
+profile](/docs/guide/row_anomaly_detection#choosing-a-profile) explains why the obvious heuristic was
+measured and rejected.
+</Admonition>
+
 ## One model, not one per group
 
-The legacy `segment_by` trains a separate model per group. Conditioning expresses the grouping as
-features on a single model instead, and wins on both axes.
+The `segment_by` path, removed in this release, trained a separate model per group. Conditioning
+expresses the grouping as features on a single model instead, and won on both axes — which is why the
+comparison is recorded here rather than left to memory.
 
 <!-- generated:per-group:start -->
 | your anomalies are... | median ΔPR-AUC vs one-model-per-group |
