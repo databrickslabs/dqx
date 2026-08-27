@@ -53,7 +53,8 @@
 # MAGIC **What's included in `[anomaly]` extras:**
 # MAGIC - `scikit-learn` - Machine learning algorithms used for row anomaly detection
 # MAGIC - `mlflow` - Model tracking and registry
-# MAGIC - `shap` - Feature contributions for explainability
+# MAGIC - `shap` - Feature contributions for tree-based models (the `timeseries` detector computes its
+# MAGIC   own contributions and needs no SHAP)
 # MAGIC - `cloudpickle` - Model serialization
 # MAGIC
 # MAGIC **Note**: If you are using ML Runtime or Serverless compute, most dependencies are already pre-installed.
@@ -253,9 +254,8 @@ display(
     .filter(F.col("identity.model_name").contains(model_name_auto))
     .select(
         "identity.model_name",
-        "training.columns", 
-        "segmentation.segment_by",
-        "segmentation.segment_values",
+        "training.columns",
+        "grouping.baseline_by",
         "training.training_rows",
         "training.training_time",
         "identity.status"
@@ -417,7 +417,9 @@ display(df_quarantine)
 
 print("\n💡 Summary:")
 print("   • We trained on historical data and applied checks on new data.")
-print("   • Default threshold 95 flags the top 5% most unusual records.")
+print("   • Default threshold 95 flags rows above the 95th percentile of the *training* data.")
+print("   • So more than 5% of new rows can be flagged — that is the point: this data has")
+print("     anomalies injected into it, and the training data did not.")
 print("   • Threshold is a percentile cutoff — tune it based on your data and alert tolerance.")
 
 # COMMAND ----------
@@ -702,7 +704,9 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC - `baseline_by` (list[str]): columns identifying a row's group, so each metric is judged
 # MAGIC   against its own group's baseline rather than the whole table — catches values that are
 # MAGIC   ordinary globally but wrong in context. One model, whatever the group count.
-# MAGIC - `segment_by` (list[str]): legacy, trains one model per group; prefer `baseline_by`
+# MAGIC - `profile` (str): which detector to train — `"tabular"` (the default: Isolation Forest) or
+# MAGIC   `"timeseries"` for multivariate metrics whose anomalies are broken correlations rather than
+# MAGIC   extreme single values. No timestamp column needed. DQX never picks this for you.
 # MAGIC - `sample_fraction`, `max_rows`: training sample controls
 # MAGIC - `ensemble_size`: number of models in the ensemble
 # MAGIC - `expected_anomaly_rate`: expected anomaly rate for calibration
