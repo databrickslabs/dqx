@@ -31,10 +31,17 @@ sample is too small for a stable empirical covariance.
 """
 
 import logging
+import sys
+from typing import Any
 
+import cloudpickle
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, OutlierMixin
 from sklearn.covariance import LedoitWolf
+from sklearn.pipeline import Pipeline
+
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +54,9 @@ SMALL_SAMPLE_ROWS_PER_FEATURE = 10
 CONSTANT_FEATURE_TOLERANCE = 1e-12
 # Ridge added to the covariance diagonal, as a fraction of the average variance so it is scale-free.
 DEFAULT_RIDGE = 1e-6
+# Fallback expected anomaly rate, matching AnomalyEngine.train's expected_anomaly_rate default. Only
+# used if contamination somehow reached this point unset; production fills it in before training.
+DEFAULT_CONTAMINATION = 0.02
 
 
 class MahalanobisDetector(BaseEstimator, OutlierMixin):
@@ -129,7 +139,9 @@ class MahalanobisDetector(BaseEstimator, OutlierMixin):
                 f"(<{SMALL_SAMPLE_ROWS_PER_FEATURE} per feature): using Ledoit-Wolf shrinkage, "
                 "which is more stable but less sharp. More training data would detect better."
             )
+            self.used_shrinkage_ = True
             return np.atleast_2d(LedoitWolf(assume_centered=False).fit(standardised).covariance_)
+        self.used_shrinkage_ = False
         centred = standardised - standardised.mean(axis=0)
         return np.atleast_2d(np.cov(centred, rowvar=False))
 
@@ -201,3 +213,44 @@ class MahalanobisDetector(BaseEstimator, OutlierMixin):
         contributions = np.zeros((active_contributions.shape[0], self.n_features_in_), dtype=float)
         contributions[:, self.active_] = active_contributions
         return contributions
+
+
+# cloudpickle serialises classes **by reference** by default, which would make any pickled payload
+# containing this estimator require ``databricks.labs.dqx`` to be importable on every executor.
+# Contributions-disabled scoring deliberately needs nothing but sklearn and numpy on the workers today
+# — the ai_query explainer's docstring records that as a design goal — so this module is registered by
+# value and the class travels inside the pickle instead.
+cloudpickle.register_pickle_by_value(sys.modules[__name__])
+
+
+def fit_mahalanobis_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tuple[Pipeline, dict[str, Any]]:
+    """Fit the detector on pre-engineered pandas features, wrapped as DQX wraps every model.
+
+    Deliberately a sibling of ``core.fit_sklearn_model`` rather than a branch inside it: that keeps the
+    IsolationForest fit function literally untouched, so "the tabular path is unchanged" is a fact a
+    reviewer reads off the diff rather than a claim to verify.
+
+    The pipeline is single-step, matching the IsolationForest one, because standardisation lives inside
+    the estimator — so ``named_steps["model"]`` resolves identically for both algorithms.
+
+    *contamination* is read from ``algorithm_config``, which is where
+    ``training_service.apply_expected_anomaly_rate_if_default_contamination`` puts
+    *expected_anomaly_rate*. Reusing that field rather than adding a parallel one keeps one source of
+    truth for "how many anomalies do we expect"; the genuinely IsolationForest-specific fields beside it
+    (tree count, subsampling) are simply not read here.
+    """
+    algo_cfg = params.algorithm_config or IsolationForestConfig()
+    contamination = algo_cfg.contamination if algo_cfg.contamination else DEFAULT_CONTAMINATION
+
+    detector = MahalanobisDetector(contamination=contamination, ridge=DEFAULT_RIDGE)
+    pipeline = Pipeline([("model", detector)])
+    pipeline.fit(train_pandas)
+
+    hyperparams: dict[str, Any] = {
+        "contamination": contamination,
+        "ridge": DEFAULT_RIDGE,
+        "covariance": "ledoit_wolf" if detector.used_shrinkage_ else "empirical",
+        "informative_features": int(detector.active_.sum()),
+        "feature_scaling": "standardised_internally",
+    }
+    return pipeline, hyperparams

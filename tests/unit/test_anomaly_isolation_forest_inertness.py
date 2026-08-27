@@ -17,7 +17,13 @@ import pytest
 
 from databricks.labs.dqx.anomaly.core import fit_sklearn_model
 from databricks.labs.dqx.anomaly.scoring_strategies import resolve_scoring_strategy
+from databricks.labs.dqx.anomaly.training_strategies import (
+    IsolationForestTrainingStrategy,
+    MahalanobisTrainingStrategy,
+    resolve_training_profile,
+)
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.errors import InvalidParameterError
 
 # Fixed seed, fixed shape: the reference scores below were generated from exactly this frame.
 _TRAIN_SEED = 1234
@@ -128,3 +134,60 @@ def test_existing_algorithm_strings_still_resolve(algorithm: str):
     strategy = resolve_scoring_strategy(algorithm)
 
     assert strategy.supports(algorithm)
+
+
+@pytest.mark.parametrize("profile", [None, "auto", "tabular", "AUTO", "  Tabular  "])
+def test_tabular_profiles_select_isolation_forest_and_leave_params_untouched(profile: str | None):
+    """The default must resolve to today's behaviour, and must not perturb the caller's parameters.
+
+    Identity, not equality: returning a copy would be harmless here but would mean the resolver is
+    rewriting configuration on a path that is supposed to be a no-op, which is the kind of thing that
+    later grows a surprise. Case and whitespace are tolerated because this is user-typed.
+    """
+    params = _reference_params()
+
+    strategy, resolved = resolve_training_profile(profile, params)
+
+    assert isinstance(strategy, IsolationForestTrainingStrategy)
+    assert resolved is params
+
+
+def test_timeseries_profile_collapses_the_ensemble_without_mutating_the_caller():
+    """The detector is deterministic, so an ensemble would be N identical models. The caller's params
+    must survive unchanged even so -- the resolver returns a new object rather than editing theirs."""
+    params = _reference_params()
+    assert params.ensemble_size == 3
+
+    strategy, resolved = resolve_training_profile("timeseries", params)
+
+    assert strategy.name == "mahalanobis"
+    assert resolved.ensemble_size == 1
+    assert params.ensemble_size == 3, "the caller's params were mutated"
+
+
+def test_an_unknown_profile_is_rejected_by_name():
+    with pytest.raises(InvalidParameterError, match="Unknown profile"):
+        resolve_training_profile("timeseries-ish", _reference_params())
+
+
+@pytest.mark.parametrize("profile", [None, "auto", "tabular", "timeseries"])
+def test_an_injected_strategy_wins_over_every_profile(profile: str | None):
+    """``AnomalyTrainingService(spark, strategy=...)`` is how a caller substitutes a strategy, and how
+    existing tests substitute a double. If profile resolution overrode it, those tests would keep
+    passing while exercising entirely different code.
+
+    The precedence rule lives in this pure function rather than inside the service, so it is assertable
+    without a Spark session and without reaching past any boundary.
+    """
+    injected = MahalanobisTrainingStrategy()
+
+    strategy, _ = resolve_training_profile(profile, _reference_params(), injected)
+
+    assert strategy is injected
+
+
+def test_parameter_defaults_still_follow_the_profile_when_a_strategy_is_injected():
+    """An override replaces the strategy, not the profile's declared parameter defaults."""
+    _, resolved = resolve_training_profile("timeseries", _reference_params(), IsolationForestTrainingStrategy())
+
+    assert resolved.ensemble_size == 1

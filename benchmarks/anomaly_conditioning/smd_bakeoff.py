@@ -37,6 +37,7 @@ Run:  uv run python benchmarks/anomaly_conditioning/smd_bakeoff.py --seeds 2
 import argparse
 import json
 import time
+from collections.abc import Callable
 
 import numpy as np
 
@@ -100,7 +101,9 @@ def window_stats(values: np.ndarray, window: int = WINDOW) -> np.ndarray:
     return np.hstack([values, mean, std, lo, hi])
 
 
-FEATURISERS = {
+# Annotated so the values keep a callable type: an unannotated dict mixing a lambda with a
+# named function widens to object, and every call through it becomes untyped.
+FEATURISERS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "raw": lambda v: v,
     "win_stats": window_stats,
 }
@@ -204,7 +207,7 @@ def score_mahalanobis_ridge(train: np.ndarray, test: np.ndarray, seed: int) -> n
     return _mahalanobis_sq(train, test, shrinkage=0.0, ridge=1e-6)
 
 
-ESTIMATORS = {
+ESTIMATORS: dict[str, Callable[[np.ndarray, np.ndarray, int], np.ndarray]] = {
     "iforest": score_iforest,
     "pca_recon": score_pca_recon,
     "mlp_ae": score_mlp_autoencoder,

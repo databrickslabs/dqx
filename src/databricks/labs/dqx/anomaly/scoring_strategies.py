@@ -27,17 +27,29 @@ class AnomalyScoringStrategy(ABC):
         """Score the model."""
 
 
-class IsolationForestScoringStrategy(AnomalyScoringStrategy):
-    """IsolationForest scoring strategy (default)."""
+# Algorithms scored by one pooled sklearn-compatible model. All of them reach the model through
+# ``score_samples`` and are therefore indistinguishable to the scoring path — the estimator differs,
+# the scoring mechanics do not. Existing registry rows carry "IsolationForest" or
+# "IsolationForest_Ensemble_N", so prefix matching keeps them resolving unchanged.
+_GLOBAL_ALGORITHM_PREFIXES = ("IsolationForest", "Mahalanobis")
+
+
+class GlobalModelScoringStrategy(AnomalyScoringStrategy):
+    """Scoring for any algorithm represented by a single pooled model.
+
+    One class rather than one per algorithm on purpose: a second class whose body was also
+    ``return score_global_model(...)`` would read as design while testing as duplication. The strategy
+    interface still earns its place for a future path that genuinely scores differently.
+    """
 
     def supports(self, algorithm: str) -> bool:
-        return algorithm.startswith("IsolationForest")
+        return algorithm.startswith(_GLOBAL_ALGORITHM_PREFIXES)
 
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
         return score_global_model(df, record, config)
 
 
-_SCORING_STRATEGIES: list[AnomalyScoringStrategy] = [IsolationForestScoringStrategy()]
+_SCORING_STRATEGIES: list[AnomalyScoringStrategy] = [GlobalModelScoringStrategy()]
 
 
 def resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:

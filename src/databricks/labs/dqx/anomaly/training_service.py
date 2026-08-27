@@ -29,7 +29,11 @@ from databricks.labs.dqx.anomaly.model_registry import (
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
-from databricks.labs.dqx.anomaly.training_strategies import AnomalyTrainingStrategy, IsolationForestTrainingStrategy
+from databricks.labs.dqx.anomaly.training_strategies import (
+    PROFILE_AUTO,
+    AnomalyTrainingStrategy,
+    resolve_training_profile,
+)
 from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
     apply_feature_engineering_from_metadata,
@@ -59,9 +63,17 @@ class AnomalyTrainingService:
     """
 
     def __init__(self, spark: SparkSession, strategy: AnomalyTrainingStrategy | None = None) -> None:
-        """Initialize the training service."""
+        """Initialize the training service.
+
+        Args:
+            spark: Active Spark session.
+            strategy: Explicit training strategy. When given it overrides the profile, which is what
+                keeps an injected test double authoritative; when omitted the strategy is resolved from
+                the context's *profile* at training time. Kept as None rather than defaulted here so
+                those two cases stay distinguishable.
+        """
         self._spark = spark
-        self._strategy = strategy or IsolationForestTrainingStrategy()
+        self._strategy = strategy
 
     @staticmethod
     def _perform_auto_discovery(df_filtered: DataFrame) -> tuple[list[str], list[str] | None]:
@@ -196,6 +208,7 @@ class AnomalyTrainingService:
         exclude_columns: list[str] | None,
         expected_anomaly_rate: float,
         baseline_by: list[str] | None = None,
+        profile: str | None = None,
     ) -> AnomalyTrainingContext:
         """Build training context with all validated inputs."""
         validate_spark_version(self._spark)
@@ -258,6 +271,7 @@ class AnomalyTrainingService:
             exclude_columns=exclude_columns,
             auto_discovery_used=auto_discovery_used,
             baseline_by=baseline_by,
+            profile=profile,
         )
 
     def train(self, context: AnomalyTrainingContext) -> str:
@@ -317,11 +331,18 @@ class AnomalyTrainingService:
 
         train_df, val_df = train_validation_split(sampled_df, context.params)
 
-        result = self._strategy.train(
+        # An explicitly injected strategy wins over the profile, so a test double is never silently
+        # bypassed. Otherwise the profile decides, and may tighten parameters (the correlation-aware
+        # detector collapses the ensemble to one model); for the tabular profiles the returned params
+        # are the very same object, so nothing is perturbed.
+        strategy, params = resolve_training_profile(context.profile, context.params, self._strategy)
+        logger.info(f"profile={context.profile or PROFILE_AUTO} -> algorithm strategy '{strategy.name}'")
+
+        result = strategy.train(
             train_df,
             val_df,
             context.columns,
-            context.params,
+            params,
             context.model_name,
             allow_ensemble=True,
         )

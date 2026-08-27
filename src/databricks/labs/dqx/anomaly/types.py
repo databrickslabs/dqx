@@ -87,6 +87,11 @@ class AnomalyTrainingContext:
     exclude_columns: list[str] | None
     auto_discovery_used: bool
     baseline_by: list[str] | None = None
+    # Which kind of data the user says this is, which selects the detector. None means "auto", i.e.
+    # today's tabular behaviour plus permission for the profiler to advise otherwise. Appended last:
+    # a defaulted field cannot precede a non-defaulted one, and appending also keeps positional
+    # construction stable for anything building this directly.
+    profile: str | None = None
 
 
 @dataclass(frozen=True)
