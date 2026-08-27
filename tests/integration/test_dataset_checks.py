@@ -2851,6 +2851,33 @@ def test_dataset_compare_skips_map_col_from_either_schema(
     assertDataFrameEqual(actual, expected)
 
 
+@pytest.mark.parametrize("duplicate_side", ["source", "reference"])
+@pytest.mark.parametrize("duplicate_key", [1, None])
+def test_compare_datasets_rejects_duplicate_matching_keys(
+    spark: SparkSession, duplicate_side: str, duplicate_key: int | None
+):
+    duplicate_rows = [(duplicate_key, "A"), (duplicate_key, "B")]
+    unique_rows = [(duplicate_key, "A")]
+    df = spark.createDataFrame(duplicate_rows if duplicate_side == "source" else unique_rows, "id int, value string")
+    ref_df = spark.createDataFrame(
+        duplicate_rows if duplicate_side == "reference" else unique_rows, "id int, value string"
+    )
+    _, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
+
+    with pytest.raises(
+        InvalidParameterError,
+        match=rf"The {duplicate_side} dataset contains duplicate matching keys for columns: id\.",
+    ):
+        apply(df, spark, {"ref_df": ref_df})
+
+
+def test_compare_datasets_allows_duplicate_null_keys_when_null_safe_matching_disabled(spark: SparkSession):
+    df = spark.createDataFrame([(None, "A"), (None, "B")], "id int, value string")
+    _, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df", null_safe_row_matching=False)
+
+    assert apply(df, spark, {"ref_df": df}).count() == 2
+
+
 def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
     schema = "id long"
 

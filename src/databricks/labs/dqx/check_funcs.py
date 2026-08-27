@@ -2935,7 +2935,8 @@ def compare_datasets(
         the source DataFrame (can be a list of string column names or column expressions).
         The *columns* parameter is matched with *ref_columns* by position, so the order of
         the provided columns in both lists must be exactly aligned. Only simple column
-        expressions are supported, e.g. F.col("col_name").
+        expressions are supported, e.g. F.col("col_name"). The matching columns must uniquely
+        identify rows in both datasets.
       ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
       ref_table: Name of the reference table (used when reading from catalog).
       check_missing_records: Perform FULL OUTER JOIN between the DataFrames to also find
@@ -2947,6 +2948,8 @@ def compare_datasets(
         the list of columns used to determine row matches; it only controls which columns are
         skipped during the column value comparison.
       null_safe_row_matching: If True, treats nulls as equal when matching rows.
+        If False, rows containing nulls in a matching column cannot match and are excluded
+        from matching-key uniqueness validation.
       null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
@@ -2968,6 +2971,7 @@ def compare_datasets(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *abs_tolerance* or *rel_tolerance* is negative.
+            - if the matching columns do not uniquely identify rows in either dataset.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -2993,6 +2997,19 @@ def compare_datasets(
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+
+        match_count_col = f"__match_count_{unique_id}"
+        for dataset_name, dataset, matching_columns in (
+            ("source", df, pk_column_names),
+            ("reference", ref_df, ref_pk_column_names),
+        ):
+            matchable_rows = dataset if null_safe_row_matching else dataset.dropna(subset=matching_columns)
+            duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
+            if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
+                raise InvalidParameterError(
+                    f"The {dataset_name} dataset contains duplicate matching keys for columns: "
+                    f"{', '.join(matching_columns)}."
+                )
 
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {

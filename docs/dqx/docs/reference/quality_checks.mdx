@@ -1978,6 +1978,11 @@ The top-level `filter` condition is pushed down as `row_filter` to the check fun
 
 **Compare datasets check**
 
+The columns used for row matching must uniquely identify rows in both datasets. If either dataset contains duplicate
+matching-key combinations, the check raises `InvalidParameterError` instead of returning ambiguous, multiplied rows.
+When null-safe row matching is disabled, rows containing null matching keys are excluded from this uniqueness check
+because they cannot match.
+
 The `compare_datasets` check stores a detailed log of detected differences between datasets as a JSON string in the `message` field.
 This log follows the structure below:
 ```json
