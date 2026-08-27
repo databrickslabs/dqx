@@ -63,27 +63,43 @@ def format_shap_contributions(
     return contributions
 
 
-def compute_shap_values(
+def compute_row_attributions(
     model_local: Any,
     feature_matrix: pd.DataFrame,
     engineered_feature_cols: list[str],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute SHAP values for a model and feature matrix."""
+    """Per-feature attribution for each row, from whichever estimator the model wraps.
+
+    Two sources, one output shape. A tree model goes through ``SHAP.TreeExplainer``, which is
+    approximate and the only SHAP explainer fast enough to be worth running here. An estimator that
+    exposes ``feature_contributions`` supplies its own *exact* attribution instead -- the Mahalanobis
+    detector's leave-one-out decomposition, which needs no SHAP at all.
+
+    Dispatch is by duck typing rather than an ``isinstance`` check on purpose: this module is imported
+    at rule-registration time and by both scorers, so importing a concrete estimator here would drag it
+    into all of them and make the dependency direction harder to reason about.
+
+    Whatever the source, the values feed the same *format_shap_contributions*, so the emitted map has
+    identical keys, scaling and null handling either way, and everything downstream -- redaction,
+    human labels, the LLM prompt, the ``_dq_info`` schema -- is unaffected by which branch ran.
+    """
     scaler = getattr(model_local, "named_steps", {}).get("scaler")
-    tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
+    estimator = getattr(model_local, "named_steps", {}).get("model", model_local)
 
-    shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-    valid_indices = ~pd.isna(shap_data).any(axis=1)
+    feature_values = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+    valid_indices = ~pd.isna(feature_values).any(axis=1)
 
-    shap_values = np.array([])
+    attribution = np.array([])
     if valid_indices.any():
         if len(engineered_feature_cols) == 1:
-            shap_values = np.ones((len(shap_data[valid_indices]), 1))
+            attribution = np.ones((len(feature_values[valid_indices]), 1))
+        elif hasattr(estimator, "feature_contributions"):
+            attribution = estimator.feature_contributions(feature_values[valid_indices])
         else:
-            explainer = SHAP.TreeExplainer(tree_model)
-            shap_values = explainer.shap_values(shap_data[valid_indices])
+            explainer = SHAP.TreeExplainer(estimator)
+            attribution = explainer.shap_values(feature_values[valid_indices])
 
-    return shap_values, valid_indices
+    return attribution, valid_indices
 
 
 # Severity-gating margin for in-UDF SHAP computation. The UDF recomputes severity from raw
@@ -123,17 +139,17 @@ def compute_gated_shap_contributions(
     """
     num_rows = len(feature_matrix)
     if not quantile_points or threshold is None:
-        shap_values, valid_indices = compute_shap_values(model_local, feature_matrix, engineered_feature_cols)
-        return list(format_shap_contributions(shap_values, valid_indices, num_rows, engineered_feature_cols))
+        attribution, valid_indices = compute_row_attributions(model_local, feature_matrix, engineered_feature_cols)
+        return list(format_shap_contributions(attribution, valid_indices, num_rows, engineered_feature_cols))
 
     severity = severity_from_scores(np.asarray(scores, dtype=float), quantile_points)
     anomalous_positions = np.flatnonzero(severity >= (float(threshold) - _SEVERITY_GATE_EPSILON))
     contributions: list[dict[str, float | None] | None] = [None] * num_rows
     if anomalous_positions.size:
         subset = feature_matrix.iloc[anomalous_positions]
-        shap_values, valid_indices = compute_shap_values(model_local, subset, engineered_feature_cols)
+        attribution, valid_indices = compute_row_attributions(model_local, subset, engineered_feature_cols)
         subset_contributions = format_shap_contributions(
-            shap_values, valid_indices, len(subset), engineered_feature_cols
+            attribution, valid_indices, len(subset), engineered_feature_cols
         )
         for position, contribution in zip(anomalous_positions.tolist(), subset_contributions):
             contributions[position] = contribution
