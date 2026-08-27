@@ -5,7 +5,7 @@ import type { Token, RenderProps } from 'prism-react-renderer';
 export type VisualKey =
   | 'title' | 'known-unknowns' | 'dqx-rules' | 'trucks-dqm'
   | 'gap' | 'row-level' | 'features' | 'isolation-forest'
-  | 'shap' | 'summary' | 'coming-soon';
+  | 'baseline-groups' | 'correlation' | 'shap' | 'summary' | 'coming-soon';
 
 // ── Data ────────────────────────────────────────────────────────────
 
@@ -48,6 +48,29 @@ const TRUCK_CONFIGS: Array<{ bananaCount: number; label: string; isAnomaly: bool
 ];
 
 const BANANA_FEATURES = ['size', 'colour', 'shape', 'flavour', 'smell'] as const;
+
+// Baseline conditioning: one arriving size, judged three times. 18cm is unremarkable across the whole
+// crate -- it sits inside the combined range -- and clearly wrong for a lady finger. That is the whole
+// argument for `baseline_by` in one number.
+const ARRIVING_SIZE_CM = 18;
+const BANANA_VARIETIES: Array<{ name: string; emoji: string; scale: number; low: number; high: number }> = [
+  { name: 'Plantain', emoji: '🍌', scale: 1.3, low: 22, high: 30 },
+  { name: 'Cavendish', emoji: '🍌', scale: 1.0, low: 16, high: 22 },
+  { name: 'Lady finger', emoji: '🍌', scale: 0.72, low: 10, high: 14 },
+];
+
+// Correlation break: crate weight normally tracks the banana count, because bananas have a weight.
+// The last crate keeps both numbers inside their usual ranges and breaks the relationship between them.
+const CRATE_READINGS: Array<{ count: number; weight: number; broken?: boolean }> = [
+  { count: 30, weight: 3.6 },
+  { count: 34, weight: 4.1 },
+  { count: 28, weight: 3.4 },
+  { count: 36, weight: 4.3 },
+  { count: 31, weight: 3.7 },
+  { count: 35, weight: 4.2 },
+  { count: 29, weight: 3.5 },
+  { count: 33, weight: 1.6, broken: true },
+];
 
 const DQX_RULES_CODE = `from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null, is_in_range, is_in_list
@@ -560,6 +583,93 @@ function ComingSoonSlide() {
 
 // ── Export ───────────────────────────────────────────────────────────
 
+function BaselineGroups() {
+  const [activeIdx, setActiveIdx] = useState(BANANA_VARIETIES.length - 1);
+  useEffect(() => {
+    const id = setInterval(() => setActiveIdx(i => (i + 1) % BANANA_VARIETIES.length), 2200);
+    return () => clearInterval(id);
+  }, []);
+
+  const combinedLow = Math.min(...BANANA_VARIETIES.map(v => v.low));
+  const combinedHigh = Math.max(...BANANA_VARIETIES.map(v => v.high));
+
+  return (
+    <div className="bv-baseline" aria-hidden>
+      <p className="bv-baseline__intro">
+        A <strong>{ARRIVING_SIZE_CM}cm</strong> banana arrives. Is it odd?
+      </p>
+      <div className="bv-baseline__groups">
+        {BANANA_VARIETIES.map((variety, i) => {
+          const isOdd = ARRIVING_SIZE_CM < variety.low || ARRIVING_SIZE_CM > variety.high;
+          const isActive = i === activeIdx;
+          return (
+            <div
+              key={variety.name}
+              className={`bv-baseline__card ${isActive ? 'bv-baseline__card--active' : ''} ${
+                isOdd ? 'bv-baseline__card--odd' : 'bv-baseline__card--normal'
+              }`}
+            >
+              <span className="bv-baseline__emoji" style={{ fontSize: `${1.6 * variety.scale}rem` }}>
+                {variety.emoji}
+              </span>
+              <strong className="bv-baseline__name">{variety.name}</strong>
+              <small className="bv-baseline__range">
+                usually {variety.low}–{variety.high}cm
+              </small>
+              <span className="bv-baseline__verdict">{isOdd ? 'odd here' : 'normal here'}</span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="bv-baseline__whole">
+        Across the whole crate: {combinedLow}–{combinedHigh}cm — so {ARRIVING_SIZE_CM}cm looks fine, and a
+        model comparing against the whole crate never flags it.
+      </p>
+    </div>
+  );
+}
+
+function CorrelationBreak() {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const id = setInterval(() => setRevealed(r => !r), 2600);
+    return () => clearInterval(id);
+  }, []);
+
+  const maxCount = Math.max(...CRATE_READINGS.map(r => r.count));
+  const maxWeight = Math.max(...CRATE_READINGS.map(r => r.weight));
+
+  return (
+    <div className="bv-corr" aria-hidden>
+      <div className="bv-corr__chart">
+        {CRATE_READINGS.map((reading, i) => (
+          <div key={i} className={`bv-corr__col ${reading.broken && revealed ? 'bv-corr__col--flagged' : ''}`}>
+            <span className="bv-corr__bar bv-corr__bar--count" style={{ height: `${(reading.count / maxCount) * 100}%` }} />
+            <span
+              className="bv-corr__bar bv-corr__bar--weight"
+              style={{ height: `${(reading.weight / maxWeight) * 100}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="bv-corr__legend">
+        <span className="bv-corr__key bv-corr__key--count">bananas counted</span>
+        <span className="bv-corr__key bv-corr__key--weight">crate weight</span>
+      </div>
+      <p className="bv-corr__caption">
+        {revealed ? (
+          <>
+            The last crate: <strong>33 bananas, 1.6kg</strong>. Both numbers are ordinary on their own — and
+            33 bananas have never weighed 1.6kg.
+          </>
+        ) : (
+          <>Count and weight always rise and fall together. Until one crate stops.</>
+        )}
+      </p>
+    </div>
+  );
+}
+
 export default function SlideVisuals({ visual }: { visual: VisualKey }) {
   switch (visual) {
     case 'title': return <TitleCarousel />;
@@ -570,6 +680,8 @@ export default function SlideVisuals({ visual }: { visual: VisualKey }) {
     case 'row-level': return <RowLevelCycle />;
     case 'features': return <FeaturesSlide />;
     case 'isolation-forest': return <IsolationForest />;
+    case 'baseline-groups': return <BaselineGroups />;
+    case 'correlation': return <CorrelationBreak />;
     case 'shap': return <ShapCarousel />;
     case 'summary': return <SummarySlide />;
     case 'coming-soon': return <ComingSoonSlide />;

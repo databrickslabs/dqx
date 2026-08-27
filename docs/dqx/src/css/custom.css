@@ -702,6 +702,95 @@ button {
 .bv-iso__crowd { display: flex; flex-wrap: wrap; gap: 0.2rem; justify-content: center; font-size: 1.5rem; }
 .bv-iso__vs { font-size: 1.25rem; color: #a8a29e; }
 
+/* ── Baseline conditioning (`baseline_by`) ───────────────────────── */
+.bv-baseline { margin-top: 0.75rem; }
+.bv-baseline__intro { font-size: 0.9rem; color: #44403c; margin-bottom: 0.6rem; text-align: center; }
+.bv-baseline__groups {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.bv-baseline__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.5rem;
+  min-width: 8rem;
+  /* Transition only the properties the active cycle changes, so the border colour set by the
+     --odd / --normal modifiers is not animated on first paint. */
+  transition: transform 0.4s ease, box-shadow 0.4s ease;
+}
+.bv-baseline__card--normal { background: rgba(220, 252, 231, 0.8); border: 2px solid rgba(74, 222, 128, 0.5); }
+.bv-baseline__card--odd    { background: rgba(254, 243, 199, 0.8); border: 2px solid rgba(251, 191, 36, 0.6); }
+.bv-baseline__card--active { transform: translateY(-3px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+.bv-baseline__emoji { line-height: 1.2; }
+.bv-baseline__name { font-size: 0.85rem; color: #292524; }
+.bv-baseline__range { font-size: 0.72rem; color: #57534e; }
+.bv-baseline__verdict { font-size: 0.75rem; font-weight: 600; margin-top: 0.15rem; }
+.bv-baseline__card--normal .bv-baseline__verdict { color: #166534; }
+.bv-baseline__card--odd .bv-baseline__verdict { color: #92400e; }
+.bv-baseline__whole {
+  margin-top: 0.7rem;
+  font-size: 0.8rem;
+  color: #57534e;
+  text-align: center;
+}
+
+/* ── Correlation break (`profile="timeseries"`) ──────────────────── */
+.bv-corr { margin-top: 0.75rem; }
+.bv-corr__chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  height: 7rem;
+  padding: 0 0.25rem;
+  /* A narrow viewport must scroll the chart, not the page. */
+  overflow-x: auto;
+}
+.bv-corr__col {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 1.75rem;
+  height: 100%;
+  padding: 0.15rem;
+  border-radius: 0.25rem;
+  transition: background 0.4s ease;
+}
+.bv-corr__col--flagged { background: rgba(254, 243, 199, 0.9); outline: 2px solid rgba(251, 191, 36, 0.6); }
+.bv-corr__bar { flex: 1; border-radius: 2px 2px 0 0; transition: height 0.4s ease; }
+.bv-corr__bar--count  { background: #a8a29e; }
+.bv-corr__bar--weight { background: #fbbf24; }
+.bv-corr__legend {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #57534e;
+}
+.bv-corr__key { display: inline-flex; align-items: center; gap: 0.3rem; }
+.bv-corr__key::before {
+  content: '';
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 2px;
+}
+.bv-corr__key--count::before  { background: #a8a29e; }
+.bv-corr__key--weight::before { background: #fbbf24; }
+.bv-corr__caption {
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: #44403c;
+  text-align: center;
+  /* Both captions are close in length; a fixed floor stops the slide jumping as they swap. */
+  min-height: 2.6em;
+}
+
 /* ── SHAP carousel ────────────────────────────────────────────────── */
 .bv-shap { margin-top: 0.75rem; width: 100%; }
 .bv-shap__subtitle { font-size: 0.8rem; color: #78716c; text-align: center; margin: 0 0 0.5rem; }
