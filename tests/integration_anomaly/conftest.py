@@ -16,11 +16,18 @@ from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from databricks.labs.dqx.config import AnomalyConfig, AnomalyParams, InputConfig, IsolationForestConfig
+from databricks.labs.dqx.config import (
+    AnomalyConfig,
+    AnomalyParams,
+    InputConfig,
+    IsolationForestConfig,
+    LLMModelConfig,
+)
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.pytester.fixtures.baseline import factory
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
+    DEFAULT_AI_QUERY_ENDPOINT,
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
@@ -42,6 +49,49 @@ _MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": No
 # -----------------------------------------------------------------------------
 # Helper functions (reusable across tests)
 # -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# ai_query (LLM) endpoint probing — shared by every test that needs a live endpoint
+# -----------------------------------------------------------------------------
+
+AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", DEFAULT_AI_QUERY_ENDPOINT)
+
+
+def ai_query_llm_config(endpoint: str) -> LLMModelConfig:
+    """LLMModelConfig pointing at a Model Serving endpoint reached through SQL ``ai_query``."""
+    return LLMModelConfig(model_name=endpoint)
+
+
+def ai_query_endpoint_available(session: SparkSession) -> tuple[bool, str | None]:
+    """Cheap probe — does ai_query against the configured endpoint succeed?
+
+    Returns ``(available, error_message)``. The error message is surfaced in the skip reason so
+    a failing probe doesn't masquerade as 'endpoint not provisioned' — knowing why the probe
+    failed (auth, missing entitlement, wrong name) is what lets the user decide whether to set
+    DQX_AI_QUERY_TEST_ENDPOINT.
+    """
+    try:
+        session.sql(
+            f"SELECT ai_query('{AI_QUERY_TEST_ENDPOINT}', 'reply with the single word: ok', "
+            f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
+        ).collect()
+        return True, None
+    except Exception as exc:
+        return False, repr(exc)
+
+
+@pytest.fixture
+def ai_query_endpoint(ws, spark):
+    """Skip the test when the workspace cannot reach the configured ai_query endpoint."""
+    assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
+    available, error = ai_query_endpoint_available(spark)
+    if not available:
+        pytest.skip(
+            f"ai_query endpoint {AI_QUERY_TEST_ENDPOINT!r} not reachable; "
+            f"set DQX_AI_QUERY_TEST_ENDPOINT to override. Probe error: {error}"
+        )
+    return AI_QUERY_TEST_ENDPOINT
 
 
 def qualify_model_name(model_name: str, registry_table: str) -> str:
@@ -140,6 +190,7 @@ def train_model_with_params(
     params: AnomalyParams,
     expected_anomaly_rate: float = 0.02,
     baseline_by: list[str] | None = None,
+    profile: str | None = None,
 ) -> str:
     """Train a model with internal params (test-only)."""
     return engine.train(
@@ -150,6 +201,7 @@ def train_model_with_params(
         baseline_by=baseline_by,
         params=params,
         expected_anomaly_rate=expected_anomaly_rate,
+        profile=profile,
     )
 
 
@@ -785,7 +837,7 @@ def quick_model_factory(ws, make_random, make_schema):
     """
     Factory for training lightweight models with custom parameters.
 
-    Use when tests need specific training params (internal, e.g., AnomalyParams, segment_by).
+    Use when tests need specific training params (internal, e.g., AnomalyParams, profile).
     For simple 2D scoring tests, prefer function-scoped shared_2d_model instead.
 
     Returns a callable that accepts spark and training parameters.
@@ -801,6 +853,7 @@ def quick_model_factory(ws, make_random, make_schema):
         schema: str | None = None,
         baseline_by: list[str] | None = None,
         train_schema: str | None = None,
+        profile: str | None = None,
     ):
         """
         Train a quick test model.
@@ -812,6 +865,8 @@ def quick_model_factory(ws, make_random, make_schema):
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
             params (AnomalyParams | None): Internal training params (test-only)
             baseline_by (list[str] | None): Group columns for baseline-conditioned models
+            profile (str | None): Which detector to train ("tabular" / "timeseries"); None means
+                the default, so existing callers keep the IsolationForest path untouched.
             train_schema (str | None): Explicit DDL for train_data (needed when group columns
                 are not doubles)
             catalog (str): Catalog name
@@ -853,6 +908,7 @@ def quick_model_factory(ws, make_random, make_schema):
                 model_name=model_name,
                 registry_table=registry_table,
                 baseline_by=baseline_by,
+                profile=profile,
             )
         else:
             full_model_name = train_model_with_params(
@@ -863,6 +919,7 @@ def quick_model_factory(ws, make_random, make_schema):
                 columns=columns,
                 params=params,
                 baseline_by=baseline_by,
+                profile=profile,
             )
 
         return full_model_name, registry_table, columns

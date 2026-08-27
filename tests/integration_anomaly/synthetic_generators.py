@@ -252,6 +252,78 @@ def generate_group_conditional_data(
     return ["event_count"], train_df, test_df, incident_key
 
 
+def generate_correlated_multivariate_data(
+    spark,
+    *,
+    seed: int = 42,
+    n_train: int = 1200,
+    n_test: int = 600,
+    n_features: int = 8,
+    n_factors: int = 2,
+    noise_scale: float = 0.15,
+    anomaly_frac: float = 0.05,
+    n_broken_features: int = 3,
+) -> tuple[list[str], DataFrame, DataFrame, list[str]]:
+    """Generate the *correlation-break* anomaly that motivates ``profile="timeseries"``.
+
+    Metrics are driven by a small number of shared latent factors, so they move together the way
+    machine telemetry does -- CPU, memory and queue depth all rising when load rises. An anomaly here
+    is not a metric leaving its range; it is metrics that always moved together **stopping**.
+
+    The break is produced by permuting the broken columns' values **across the anomalous rows**, which
+    is the standard way to null out dependence while leaving every marginal distribution untouched.
+    That is the whole point of the fixture, and it is a stronger construction than shifting a value:
+
+    * Each broken column's values are the *same multiset* before and after, so no per-column statistic
+      can separate the anomalies -- not a threshold, not a z-score, not a quantile. A univariate
+      detector cannot do better than chance here, by construction rather than by tuning.
+    * Only the *joint* distribution changes, so a detector has to model correlation to see anything.
+
+    That makes this the fixture that distinguishes the two profiles rather than merely exercising one.
+    Isolation Forest splits one feature at a time, so it is close to blind to this; a correlation-aware
+    detector sees it as a large distance in the whitened space.
+
+    Returns ``(feature_columns, train_df, test_df, broken_columns)``. Both frames carry an
+    ``is_anomaly`` label (all zero in training). *broken_columns* names the columns whose correlation
+    was severed, so a test can assert the attribution points at them rather than merely being non-null.
+    """
+    rng = np.random.default_rng(seed)
+    feature_cols = [f"metric_{i}" for i in range(n_features)]
+
+    # Loadings are strictly positive so every metric rises and falls with the shared factors. Mixed
+    # signs would also be correlated, but positively-coupled telemetry is the case users recognise.
+    loadings = rng.uniform(0.6, 1.4, size=(n_factors, n_features))
+
+    def draw(n_rows: int) -> np.ndarray:
+        factors = rng.normal(0.0, 1.0, size=(n_rows, n_factors))
+        return factors @ loadings + rng.normal(0.0, noise_scale, size=(n_rows, n_features))
+
+    train_values = draw(n_train)
+    test_values = draw(n_test)
+
+    n_anomalies = max(2, int(n_test * anomaly_frac))
+    broken_columns = feature_cols[:n_broken_features]
+    labels = np.zeros(n_test)
+    labels[-n_anomalies:] = 1.0
+
+    # Permute within the anomalous block only. A derangement (no row keeps its own values) guarantees
+    # every anomalous row actually had its correlation severed -- a plain shuffle can leave rows fixed,
+    # which would plant unlabelled normal rows among the positives and understate any detector.
+    block = test_values[-n_anomalies:, :n_broken_features]
+    test_values[-n_anomalies:, :n_broken_features] = np.roll(block, shift=1, axis=0)
+
+    train_rows = np.hstack([train_values, np.zeros((n_train, 1))]).tolist()
+    test_rows = np.hstack([test_values, labels.reshape(-1, 1)]).tolist()
+
+    schema = ", ".join(f"{col} double" for col in feature_cols) + ", is_anomaly double"
+    return (
+        feature_cols,
+        spark.createDataFrame(train_rows, schema),
+        spark.createDataFrame(test_rows, schema),
+        broken_columns,
+    )
+
+
 def inject_missingness_spike(
     df: DataFrame,
     *,
