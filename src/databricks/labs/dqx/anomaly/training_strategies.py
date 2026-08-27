@@ -35,12 +35,19 @@ logger = logging.getLogger(__name__)
 # changing it would orphan every model already trained with this algorithm.
 MAHALANOBIS_ALGORITHM = "Mahalanobis"
 
-# The public profile vocabulary. "auto" is the default so that adding this option changes nothing for
-# any existing caller.
-PROFILE_AUTO = "auto"
+# The public profile vocabulary. It describes the *data a user has*, not the algorithm DQX picks for it.
+#
+# There is deliberately no "auto": DQX never selects the algorithm on a user's behalf. Choosing
+# correctly cannot be verified without labels, which an unsupervised tool does not have, and the one
+# cheap signal for "this looks temporal" was measured and rejected -- lag-1 autocorrelation is
+# confounded by any ordering correlated with the values, which sorted warehouse storage produces
+# routinely (see benchmarks/anomaly_conditioning/profile_advisory_gate.py). A value named "auto" would
+# therefore have promised a selection that never happens.
 PROFILE_TABULAR = "tabular"
 PROFILE_TIMESERIES = "timeseries"
-SUPPORTED_PROFILES = (PROFILE_AUTO, PROFILE_TABULAR, PROFILE_TIMESERIES)
+SUPPORTED_PROFILES = (PROFILE_TABULAR, PROFILE_TIMESERIES)
+# Unset means the tabular detector: exactly the behaviour that predates this option.
+DEFAULT_PROFILE = PROFILE_TABULAR
 
 
 class AnomalyTrainingStrategy(ABC):
@@ -222,17 +229,19 @@ def resolve_training_profile(
 
     The profiles describe the data a user has, not the algorithm DQX picks for it:
 
-    * ``auto`` (the default) — the tabular detector, exactly as before this option existed. Distinct
-      from ``tabular`` only in that the profiler may *advise* switching when the data looks temporal;
-      the choice itself is never made automatically, because it cannot be verified without labels and a
-      silent estimator change would move every score a user has calibrated thresholds against.
-    * ``tabular`` — the same detector, chosen deliberately. Suppresses that advice.
+    * ``tabular`` (the default, and what an unset profile means) — IsolationForest, exactly the
+      behaviour that predates this option.
     * ``timeseries`` — the correlation-aware detector, with the ensemble collapsed to a single model.
       Needs no time column: it models cross-metric correlation, not time.
-    """
-    requested = (profile or PROFILE_AUTO).strip().lower()
 
-    if requested in (PROFILE_AUTO, PROFILE_TABULAR):
+    There is no automatic option. DQX will not switch algorithms on a user's behalf: the choice cannot
+    be verified without labels, and a silent estimator change would move every score a user has
+    calibrated thresholds against. The resolved profile is logged on every run so the default is visible
+    rather than implicit.
+    """
+    requested = (profile or DEFAULT_PROFILE).strip().lower()
+
+    if requested == PROFILE_TABULAR:
         strategy: AnomalyTrainingStrategy = IsolationForestTrainingStrategy()
         resolved_params = params
     elif requested == PROFILE_TIMESERIES:

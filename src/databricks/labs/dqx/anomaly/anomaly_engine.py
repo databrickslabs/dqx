@@ -84,15 +84,15 @@ class AnomalyEngine(DQEngineBase):
             registry_table: Registry table (REQUIRED). Must be fully qualified Unity Catalog table as
                             'catalog.schema.table'.
             columns: Columns to use for row anomaly detection (auto-discovered if omitted).
-            profile: What kind of data this is, which selects the detector. Defaults to ``"auto"``,
-                which is the tabular detector -- exactly the behaviour before this option existed --
-                and additionally lets the profiler *advise* switching when the data looks temporal.
-                ``"tabular"`` is the same detector chosen deliberately, which suppresses that advice.
+            profile: What kind of data this is, which selects the detector. Defaults to
+                ``"tabular"`` -- IsolationForest, exactly the behaviour before this option existed.
                 ``"timeseries"`` selects a correlation-aware detector suited to multivariate metrics,
                 where anomalies are broken correlations rather than extreme single values; measured on
                 the SMD benchmark it surfaces 82% of incidents inside a 1%-of-rows alert budget against
                 36% for the tabular detector. It needs no timestamp column, and trains a single model
-                rather than an ensemble because it is deterministic.
+                rather than an ensemble because it is deterministic. There is no automatic option: DQX
+                never changes the algorithm on your behalf, because the choice cannot be verified
+                without labels. The resolved profile is logged on every run.
             baseline_by: Columns identifying the group a row belongs to, so a metric is judged
                       against its own group's baseline rather than against the whole table. Each
                       numeric metric gains its deviation from that baseline as an extra feature on

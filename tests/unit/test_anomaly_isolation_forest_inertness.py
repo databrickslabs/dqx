@@ -136,9 +136,9 @@ def test_existing_algorithm_strings_still_resolve(algorithm: str):
     assert strategy.supports(algorithm)
 
 
-@pytest.mark.parametrize("profile", [None, "auto", "tabular", "AUTO", "  Tabular  "])
+@pytest.mark.parametrize("profile", [None, "tabular", "TABULAR", "  Tabular  "])
 def test_tabular_profiles_select_isolation_forest_and_leave_params_untouched(profile: str | None):
-    """The default must resolve to today's behaviour, and must not perturb the caller's parameters.
+    """An unset profile must resolve to today's behaviour, and must not perturb the caller's params.
 
     Identity, not equality: returning a copy would be harmless here but would mean the resolver is
     rewriting configuration on a path that is supposed to be a no-op, which is the kind of thing that
@@ -170,7 +170,7 @@ def test_an_unknown_profile_is_rejected_by_name():
         resolve_training_profile("timeseries-ish", _reference_params())
 
 
-@pytest.mark.parametrize("profile", [None, "auto", "tabular", "timeseries"])
+@pytest.mark.parametrize("profile", [None, "tabular", "timeseries"])
 def test_an_injected_strategy_wins_over_every_profile(profile: str | None):
     """``AnomalyTrainingService(spark, strategy=...)`` is how a caller substitutes a strategy, and how
     existing tests substitute a double. If profile resolution overrode it, those tests would keep

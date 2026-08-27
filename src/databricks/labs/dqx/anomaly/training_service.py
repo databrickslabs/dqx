@@ -30,7 +30,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
 )
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from databricks.labs.dqx.anomaly.training_strategies import (
-    PROFILE_AUTO,
+    DEFAULT_PROFILE,
     AnomalyTrainingStrategy,
     resolve_training_profile,
 )
@@ -336,7 +336,7 @@ class AnomalyTrainingService:
         # detector collapses the ensemble to one model); for the tabular profiles the returned params
         # are the very same object, so nothing is perturbed.
         strategy, params = resolve_training_profile(context.profile, context.params, self._strategy)
-        logger.info(f"profile={context.profile or PROFILE_AUTO} -> algorithm strategy '{strategy.name}'")
+        logger.info(f"profile={context.profile or DEFAULT_PROFILE} -> algorithm strategy '{strategy.name}'")
 
         result = strategy.train(
             train_df,
