@@ -533,10 +533,18 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_llm_pk_detection")
 
 
-def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make_job, library_ref):
+@pytest.mark.parametrize(
+    "demo_notebook",
+    [
+        "dqx_demo_anomaly_tabular_transactions.py",
+        "dqx_demo_anomaly_timeseries_fleet.py",
+    ],
+)
+def test_run_dqx_anomaly_demo(ws, make_notebook, make_schema, make_job, library_ref, demo_notebook):
+    """Run the row anomaly detection demos: the tabular profile and the timeseries profile."""
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_row_anomaly_detection_demo.py"
+    path = Path(__file__).parent.parent.parent / "demos" / demo_notebook
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
@@ -549,18 +557,19 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
             "test_library_ref": library_ref,
         },
     )
-    job = make_job(tasks=[Task(task_key="dqx_row_anomaly_detection_demo", notebook_task=notebook_task)])
+    task_key = demo_notebook.removesuffix(".py")
+    job = make_job(tasks=[Task(task_key=task_key, notebook_task=notebook_task)])
 
-    # This demo trains two IsolationForest models and scores with contributions + AI explanations
-    # (on by default), so it is the slowest e2e demo and can exceed 30 minutes on a cold serverless
-    # start. Use a 45-minute wait (still well within the e2e CI job's 2h wrapper).
+    # These train a model and score with contributions + AI explanations (both on by default), which
+    # makes them among the slowest e2e demos; a cold serverless start can exceed 30 minutes. Use a
+    # 45-minute wait, still well within the e2e CI job's 2h wrapper.
     waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=45))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=45),
         callback=lambda r: validate_run_status(r, ws),
     )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_row_anomaly_detection_demo")
+    logging.info(f"Job run {run.run_id} completed successfully for {task_key}")
 
 
 def test_dbt_demo(make_schema, library_ref, debug_env, ws):
