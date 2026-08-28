@@ -104,10 +104,12 @@ adjustment credits an entire incident as detected from a single lucky row, and K
 it. Published figures produced that way are not comparable with the ones above, in either direction.
 
 <Admonition type="warning" title="What neither detector does">
-Neither profile models seasonality, trend, or forecasting: a predictable weekly cycle reads as unusual
-until it is in the training data, and steady growth eventually reads as drift. With a *single* metric,
-`"timeseries"` has nothing to correlate against, and a threshold is the better tool. DQX also does not
-detect which profile you need — [Choosing a
+Calendar seasonality *is* handled, by both profiles: a datetime column becomes cyclical hour-of-day,
+day-of-week and month features plus a weekend flag, so "quiet on Sundays" is learned rather than flagged.
+What is **not** modelled is **trend** — no feature represents elapsed time, so steady growth eventually
+reads as drift and calls for a retrain — nor cycles whose period is not one of those three, nor
+forecasting the next value. With a *single* metric, `"timeseries"` has nothing to correlate against and a
+threshold is the better tool. DQX also does not detect which profile you need — [Choosing a
 profile](/docs/guide/row_anomaly_detection#choosing-a-profile) explains why the obvious heuristic was
 measured and rejected.
 </Admonition>
