@@ -41,7 +41,45 @@ _PROMPT_INSTRUCTIONS = (
     "'might indicate'. Do not restate the input field names back to the user, and do not invent "
     "feature names, values, or baseline groups that are not present in the input."
 )
+# What a contribution means, per detector family. Keyed by the ``ModelIdentity.algorithm`` prefix that is
+# persisted in the registry, so a model trained by any version resolves as long as that string is stable.
+# The fallback is the value-based reading, which is what every algorithm before the correlation-aware one
+# meant and is the safer default: it claims less about relationships than the other way round would.
+_ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
+    (
+        "Mahalanobis",
+        "relationships between metrics. A high contribution means this metric departed from its usual "
+        "relationship with the others -- its own value may sit well inside its normal range. Describe the "
+        "pattern as a broken relationship between metrics, and do NOT call an individual metric abnormal, "
+        "high, low, or deviating unless the contributions are concentrated in a single metric.",
+    ),
+    (
+        "IsolationForest",
+        "individual feature values. A high contribution means this feature's own value was unusual for the "
+        "rows it was compared against.",
+    ),
+)
+_DEFAULT_ATTRIBUTION_SEMANTICS = _ATTRIBUTION_SEMANTICS[-1][1]
+
+
+def attribution_semantics(algorithm: str | None) -> str:
+    """What a high contribution means for *algorithm*, as a sentence for the prompt.
+
+    Falls back to the value-based reading when the algorithm is unknown or absent, which is both the
+    historical behaviour and the more conservative claim.
+    """
+    for prefix, meaning in _ATTRIBUTION_SEMANTICS:
+        if algorithm and algorithm.startswith(prefix):
+            return meaning
+    return _DEFAULT_ATTRIBUTION_SEMANTICS
+
+
 _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
+    (
+        "attribution_basis",
+        "What the feature_contributions below are measuring. Read them accordingly -- this decides "
+        "whether the pattern is 'these values were extreme' or 'these metrics stopped agreeing'.",
+    ),
     (
         "feature_contributions",
         "Mean contributions across the group, already named for a reader, e.g. 'amount vs its "
@@ -207,10 +245,18 @@ class ExplanationContext:
     # as human labels. Optional: a caller that builds the context directly without it falls back to
     # best-effort redaction of the baseline-relative feature only, and to raw engineered keys.
     feature_metadata: SparkFeatureMetadata | None = None
+    # The trained model's algorithm, from ``ModelIdentity.algorithm``. Decides how the prompt tells the
+    # model to read a contribution -- as an extreme value or as a broken relationship between metrics.
+    # Optional, and absent means the value-based reading, which is what every algorithm before the
+    # correlation-aware one meant.
+    algorithm: str | None = None
 
     @classmethod
     def from_scoring_config(
-        cls, config: "ScoringConfig", feature_metadata: SparkFeatureMetadata | None = None
+        cls,
+        config: "ScoringConfig",
+        feature_metadata: SparkFeatureMetadata | None = None,
+        algorithm: str | None = None,
     ) -> "ExplanationContext":
         return cls(
             severity_col=config.severity_col,
@@ -224,6 +270,7 @@ class ExplanationContext:
             redact_columns=tuple(config.redact_columns or ()),
             pattern_col=config.pattern_col,
             feature_metadata=feature_metadata,
+            algorithm=algorithm,
         )
 
 
@@ -437,6 +484,9 @@ def _build_ai_query_prompt_column(
     group_size_expr = F.concat(F.col("group_size").cast(StringType()), F.lit(" rows"))
     return F.concat(
         F.lit(_AI_QUERY_PROMPT_HEADER),
+        F.lit("attribution_basis: "),
+        F.lit(attribution_semantics(ctx.algorithm)),
+        F.lit("\n"),
         F.lit("feature_contributions: "),
         F.col("feature_contributions"),
         F.lit("\n"),

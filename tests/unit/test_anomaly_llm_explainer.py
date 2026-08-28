@@ -266,3 +266,63 @@ def test_probe_endpoint_reachable_rejects_non_databricks_provider():
     with pytest.raises(InvalidParameterError, match="require a Databricks serving endpoint"):
         llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name="openai/gpt-4"))
     assert not spark.queries
+
+
+def test_attribution_semantics_distinguishes_correlation_from_value_anomalies():
+    """The prompt must say what a contribution *measures*, because the two detectors differ.
+
+    Measured on a live workspace before this existed: with the correlation-aware detector the LLM wrote
+    "Abnormal coolant flow and bearing temperature" and advised "Inspect coolant system and bearing
+    sensors" for rows whose every reading sat *inside* its healthy range. The values were normal; only the
+    relationship between them had broken. Given per-feature importances and nothing else, the model cannot
+    tell the two situations apart -- they look identical in shape -- so it defaults to the value reading
+    and asserts something the data does not support.
+    """
+    correlation = llm_explainer.attribution_semantics("Mahalanobis")
+    assert "relationship" in correlation
+    assert "inside its normal range" in correlation
+    # The instruction that prevents the specific false claim observed.
+    assert "do NOT call an individual metric abnormal" in correlation
+
+    value_based = llm_explainer.attribution_semantics("IsolationForest")
+    assert "own value was unusual" in value_based
+    assert "relationship" not in value_based
+
+    assert correlation != value_based
+
+
+def test_attribution_semantics_falls_back_to_the_value_reading():
+    """Unknown or absent algorithms get the value-based reading.
+
+    That is both the historical behaviour and the more conservative claim: describing an extreme value
+    where a relationship broke understates the finding, whereas the reverse invents a relationship claim.
+    """
+    fallback = llm_explainer.attribution_semantics("IsolationForest")
+    for algorithm in (None, "", "SomeFutureAlgorithm"):
+        assert llm_explainer.attribution_semantics(algorithm) == fallback
+
+
+def test_attribution_semantics_matches_ensemble_algorithm_strings():
+    """Ensemble models persist as 'IsolationForest_Ensemble_3', so matching is by prefix.
+
+    A registry value that failed to match would silently fall back, which is safe but would lose the
+    distinction for every ensemble model -- i.e. the default configuration.
+    """
+    assert llm_explainer.attribution_semantics("IsolationForest_Ensemble_3") == llm_explainer.attribution_semantics(
+        "IsolationForest"
+    )
+
+
+def test_explanation_context_defaults_algorithm_to_none():
+    """The field is additive: a caller building the context directly keeps working, and gets the
+    conservative value-based reading."""
+    ctx = llm_explainer.ExplanationContext(
+        severity_col="s",
+        contributions_col="c",
+        score_std_col="std",
+        ai_explanation_col="ai",
+        threshold=95.0,
+        model_name="cat.sch.model",
+    )
+    assert ctx.algorithm is None
+    assert llm_explainer.attribution_semantics(ctx.algorithm) == llm_explainer.attribution_semantics("IsolationForest")
