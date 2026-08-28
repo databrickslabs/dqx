@@ -429,9 +429,16 @@ Being straight about the edges is more useful than a longer feature list:
 
 - **Trend.** Neither profile models "traffic has grown 40% this quarter". Nothing in the feature set
   represents elapsed time — a datetime column contributes only *where in the cycle* a row sits, never
-  *how far along* it is — so sustained growth gradually drifts away from the training baseline. Enable
-  `drift_threshold` to be told when that has happened, and retrain. For volume and freshness over time,
-  Databricks Data Quality Monitoring is the right tool.
+  *how far along* it is — so a steadily growing metric eventually sits outside the range it was trained
+  on, and ordinary rows start being flagged.
+
+  **What to do:** give the model a quantity that does not trend. `orders_per_customer` instead of
+  `daily_orders`, `revenue_per_order` instead of `cumulative_revenue` — a rate or a ratio stays
+  comparable as the business grows, and is usually the thing you actually wanted to watch. Where the
+  level itself matters, retrain on a schedule rather than waiting to be told: a gradual trend inflates
+  the spread of the training window it is measured against, which suppresses the drift signal, so
+  `drift_threshold` is not a reliable tripwire for this particular failure. For volume and freshness over
+  time, Databricks Data Quality Monitoring is the tool built for it.
 - **Cycles that are not hourly, daily, weekly, or monthly.** The calendar features cover those (see
   [What is handled automatically](#what-is-handled-automatically) below). A six-week promotional cycle, or
   a fiscal quarter that does not align to calendar months, is not one of them — pass the cycle as a

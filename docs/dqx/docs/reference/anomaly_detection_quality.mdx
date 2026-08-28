@@ -106,12 +106,14 @@ it. Published figures produced that way are not comparable with the ones above, 
 <Admonition type="warning" title="What neither detector does">
 Calendar seasonality *is* handled, by both profiles: a datetime column becomes cyclical hour-of-day,
 day-of-week and month features plus a weekend flag, so "quiet on Sundays" is learned rather than flagged.
-What is **not** modelled is **trend** — no feature represents elapsed time, so steady growth eventually
-reads as drift and calls for a retrain — nor cycles whose period is not one of those three, nor
-forecasting the next value. With a *single* metric, `"timeseries"` has nothing to correlate against and a
-threshold is the better tool. DQX also does not detect which profile you need — [Choosing a
-profile](/docs/guide/row_anomaly_detection#choosing-a-profile) explains why the obvious heuristic was
-measured and rejected.
+Cycles whose period is not one of those three are not, and neither is **trend** — a steadily growing
+metric leaves the range it was trained on, and DQX has no feature representing elapsed time to explain the
+growth away. Feed it a quantity that does not trend (a rate or a ratio rather than a running level), and
+retrain on a schedule; see [Trend](/docs/guide/row_anomaly_detection#what-neither-profile-covers) for what
+to do. Forecasting the next value is out of scope. With a *single* metric, `"timeseries"` has nothing to
+correlate against and a threshold is the better tool. DQX also does not detect which profile you need —
+[Choosing a profile](/docs/guide/row_anomaly_detection#choosing-a-profile) explains why the obvious
+heuristic was measured and rejected.
 </Admonition>
 
 ## One model, not one per group
