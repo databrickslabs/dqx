@@ -835,7 +835,7 @@ else:
 # MAGIC ```
 # MAGIC
 # MAGIC **Optional next steps:**
-# MAGIC - Add group conditioning (`group_by` for training), drift detection, and scheduled scoring.
+# MAGIC - Add baseline conditioning (`baseline_by` for training), drift detection, and scheduled scoring.
 # MAGIC - Automate retraining and alerting.
 
 # COMMAND ----------
@@ -845,8 +845,8 @@ else:
 # MAGIC
 # MAGIC ### 📚 Resources
 # MAGIC
-# MAGIC - [DQX Row Anomaly Detection Documentation](https://databrickslabs.github.io/dqx/guide/row_anomaly_detection)
-# MAGIC - [API Reference](https://databrickslabs.github.io/dqx/reference/quality_checks#has_no_row_anomalies)
+# MAGIC - [DQX Row Anomaly Detection Documentation](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection)
+# MAGIC - [API Reference](https://databrickslabs.github.io/dqx/docs/reference/quality_checks#row-anomaly-detection)
 # MAGIC - [Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection/#-table-quality-details)
 # MAGIC
 # MAGIC ### 🎉 You're Ready!
