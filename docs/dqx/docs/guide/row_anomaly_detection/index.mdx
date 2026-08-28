@@ -37,17 +37,17 @@ Use row anomaly detection to automatically find unusual rows in your data using 
   <Slide title="DQX fills that gap." visual="row-level">
     DQX learns what "normal" looks like from your good data, then checks every single row. No labels needed; it figures out what's unusual on its own. *"Is this banana weird?"*
   </Slide>
-  <Slide title="Normal for whom? Compare like with like." visual="baseline-groups">
-    A 30cm plantain is perfectly normal; a 30cm lady finger does not exist. `baseline_by` judges each row against **its own group's** normal instead of the whole table's, so a value that is unremarkable overall can still be flagged where it does not belong.
-  </Slide>
-  <Slide title="How does it work? Features & Isolation Forest." visual="features">
+  <Slide title="How does it work? Numbers, then a forest." visual="features">
     Each banana becomes a set of numbers: size, colour, spots, bend. An Isolation Forest then tries to separate each point from the rest. If a banana is easy to isolate, it's probably odd.
   </Slide>
   <Slide title="The odd banana stands alone." visual="isolation-forest">
     An unusual banana gets separated in just a few steps, so it sticks out. A normal banana is buried in the crowd and takes many steps to single out.
   </Slide>
-  <Slide title="When nothing is odd, but the combination is." visual="correlation">
-    Some problems are not extreme values at all — they are a *relationship* breaking. Count and weight always move together, until a crate holds 33 bananas and weighs 1.6kg. Splitting one number at a time cannot see that, so `profile="timeseries"` switches to a detector that models how metrics move together.
+  <Slide title="Normal for whom? Compare like with like." visual="baseline-groups">
+    A 30cm plantain is perfectly normal; a 30cm lady finger does not exist. `baseline_by` judges each row against **its own group's** normal instead of the whole table's, so a value that is unremarkable overall can still be flagged where it does not belong.
+  </Slide>
+  <Slide title="It went past looking completely normal." visual="correlation">
+    A banana packing line. Every piece of fruit passes the same gate and DQX scores it as it goes by. On this one, length and weight are each perfectly ordinary — and impossible together, because a banana that long has never weighed that little. Splitting one feature at a time never sees it, since neither value is out of range. `profile="timeseries"` reads the two **as a pair**, which is why it gets pulled while every single-column check waves it through. It needs no timestamp: it models how metrics relate to each other, not how they change over time.
   </Slide>
   <Slide title="Why was this banana flagged? Contributions explain." visual="shap">
     A score alone isn't enough. You want to know *why*. DQX breaks the score down per column: "too brown", "wrong size". So you can act on the insight straight away.
