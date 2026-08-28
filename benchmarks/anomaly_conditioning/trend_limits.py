@@ -40,14 +40,56 @@ to the growth. Both numerator and denominator scale together, so the ratio is bo
 
 At 200% growth, 99.2% of a batch in which nothing is wrong is flagged, and drift detection stays silent.
 
-## What the documentation says because of this
+## Fix 3: persist a fitted trend and subtract it -- this one works
 
-Not "enable drift_threshold and you will be warned" -- that would be a false safety guarantee, and a user
-relying on it gets burned without notice. Instead: model a quantity that does not trend (a rate or a
-ratio, not a running level), and where the level itself matters, retrain on a schedule.
+Both failures above share a cause, and it points straight at the fix. An elapsed-time *feature* fails
+because the model must learn the slope from data covering only the training range, then meet values outside
+it. A time-bucket `baseline_by` fails because a median **lookup table** has no entry for a future bucket. A
+fitted trend has neither problem: it is a *function* of time, so it extrapolates to any future t, and the
+model never sees time at all -- it sees the residual, which is stationary by construction.
 
-Fixing drift detection for this case is a separate change -- it needs a trend-aware statistic rather than
-a z-score against an inflated baseline -- and is deliberately not attempted here.
+That is exactly the shape of the existing `_rel_baseline` feature -- observed value minus its expected
+level. Only the source of the expected level changes, from a per-group median to a fitted line.
+
+    trend over window   raw     detrended    (correct answer ~2%)
+                   10%   19.6%       2.8%
+                   40%   80.2%       2.8%
+                  100%   95.8%       2.8%
+                  200%   99.2%       2.8%
+
+Flat at 2.8% however steep the trend, and it still finds real anomalies -- on a batch carrying a 3x spike
+in 5% of rows, both score 100% recall, but the raw feature emits 96.4% false positives against the
+detrended feature's 2.1%.
+
+### Where it breaks, which is the part a design has to answer
+
+**Extrapolation horizon.** Accuracy decays with distance beyond the training window: 2.8% at the boundary,
+3.4% one window out, 6.4% five windows out, 89.6% twenty-five windows out. Usable, but it needs a horizon
+cap and a warning past it -- the same shape of contract as ``is_new_baseline``.
+
+**Regime change.** When the trend itself changes, residuals blow up and 70-85% of rows flag. Arguably
+correct -- growth stalling *is* an anomaly -- but reporting a table-level event row by row is not useful.
+Note that detrending is the only one of the two that notices: when growth *reverses*, the raw feature
+flags just 6.0% because falling values look like a return to trained levels, while the detrended feature
+flags 85.2%.
+
+**Functional form.** Exponential growth fitted with a straight line barely helps: 95.8% against a raw
+99.8%. Business metrics compound, so a log-scale fit would be needed, which makes the form a choice rather
+than a default.
+
+**API cost.** It needs a time column. The current design deliberately requires none -- `"timeseries"`
+models cross-metric correlation, not time -- so this would add the first temporal parameter to the public
+surface.
+
+## What the documentation says today
+
+The docs describe what ships, and what ships has no trend handling. So: model a quantity that does not
+trend (a rate or a ratio, not a running level), and where the level itself matters, retrain on a schedule.
+What they must *not* say is "enable drift_threshold and you will be warned", which was the earlier claim
+and is measurably false.
+
+Neither the detrending transform nor a trend-aware drift statistic is attempted here. Both are real,
+scoped follow-ups rather than impossibilities, and this module exists so that stays clear.
 
 Run:  uv run python benchmarks/anomaly_conditioning/trend_limits.py
 """
@@ -103,6 +145,38 @@ def elapsed_time_feature_makes_it_worse() -> tuple[float, float]:
     return without, with_time
 
 
+def fit_trend(t: np.ndarray, values: np.ndarray) -> tuple[float, float]:
+    """Least-squares slope and intercept -- what a training run would persist."""
+    slope, intercept = np.polyfit(t, values, 1)
+    return float(slope), float(intercept)
+
+
+def detrended(t: np.ndarray, values: np.ndarray, slope: float, intercept: float) -> np.ndarray:
+    """The proposed feature: observed value minus the trend's expectation at this row's time."""
+    return values - (intercept + slope * t)
+
+
+def detrending_fixes_it(slope: float, gap: int = 0) -> tuple[float, float]:
+    """Fix 3, measured: raw versus detrended false-flag rate on a batch where nothing is wrong.
+
+    *gap* pushes the scored window further past the end of training, which is how the extrapolation
+    horizon is measured.
+    """
+    rng = np.random.default_rng(42)
+    t_train = np.arange(N_TRAIN, dtype=float)
+    train = _series(slope, 0, N_TRAIN, rng)
+    t_score = np.arange(N_TRAIN + gap, N_TRAIN + gap + N_SCORE, dtype=float)
+    score = _series(slope, N_TRAIN + gap, N_SCORE, rng)
+
+    raw = false_flag_rate(train, score)
+    fitted_slope, intercept = fit_trend(t_train, train)
+    residual_rate = false_flag_rate(
+        detrended(t_train, train, fitted_slope, intercept),
+        detrended(t_score, score, fitted_slope, intercept),
+    )
+    return raw, residual_rate
+
+
 def main() -> None:
     print("Does a trend break scoring, and does drift detection warn?\n")
     print(f"{'trend over window':>18} {'false flags':>12} {'drift score':>12}  warns?")
@@ -132,6 +206,20 @@ def main() -> None:
     print("  Not measurable, and not viable: every future bucket is an unseen group, whose score,")
     print("  severity and contributions are nulled. Such a model would score nothing. See the")
     print("  module docstring.")
+
+    print("\nFix 3 -- persist a fitted trend and subtract it (not implemented; this is the proposal):")
+    print(f"  {'trend over window':>18} {'raw':>10} {'detrended':>12}")
+    for slope in (0.005, 0.02, 0.05, 0.1):
+        raw, residual_rate = detrending_fixes_it(slope)
+        print(f"  {slope * N_TRAIN:>17.0f}% {raw:>10.1%} {residual_rate:>12.1%}")
+
+    print("\n  Extrapolation horizon, at 100% trend -- accuracy decays with distance past training:")
+    for gap in (0, N_TRAIN, N_TRAIN * 5, N_TRAIN * 25):
+        _, residual_rate = detrending_fixes_it(0.05, gap=gap)
+        windows = gap / N_TRAIN
+        print(f"  {windows:>17.0f} windows out {residual_rate:>10.1%}")
+    print("\n  So it works, and needs a horizon cap. See the module docstring for the other three")
+    print("  design questions it raises (regime change, functional form, and needing a time column).")
 
 
 if __name__ == "__main__":
