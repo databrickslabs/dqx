@@ -278,8 +278,10 @@ def select_baseline_columns(candidates: list[tuple[str, int, float]], total_coun
         groups = prospective
 
     if selected:
+        # Neutral wording on purpose: this policy is shared by the path that applies a discovered
+        # grouping and the advisory path that only reports one, so it must not claim application.
         logger.info(
-            f"Auto-detected baseline grouping {selected}: {groups} groups, "
+            f"Baseline grouping {selected}: {groups} groups, "
             f"~{int(total_count / groups)} rows/group (one model regardless of group count)"
         )
         skipped = [c[0] for c in candidates if c[0] not in selected]
@@ -290,6 +292,74 @@ def select_baseline_columns(candidates: list[tuple[str, int, float]], total_coun
                 f"groups): {skipped}"
             )
     return selected
+
+
+@dataclass(frozen=True)
+class BaselineSuggestion:
+    """A grouping the data would support, for advising a caller who did not ask for one."""
+
+    columns: list[str]
+    group_count: int
+    rows_per_group: int
+
+
+def suggest_baseline_columns(df: DataFrame, exclude: list[str]) -> BaselineSuggestion | None:
+    """Find a grouping the data would support, without selecting feature columns.
+
+    Deliberately narrower than :func:`auto_discover_columns`: the grouping decision needs null rates
+    and distinct counts on the categorical columns only, so this skips the numeric mean/stddev
+    aggregation a full profile computes and would then throw away.
+
+    Used to *advise*, never to apply. A caller who named *columns* has decided what to measure, and
+    DQX does not add engineered features they did not ask for.
+
+    Args:
+        df: DataFrame to scan.
+        exclude: Columns the caller already named as features. A column cannot be both what is
+            measured and what it is measured against.
+
+    Returns:
+        The grouping and its shape, or None when the data supports none.
+    """
+    excluded = set(exclude)
+    categorical_types = (StringType, IntegerType)
+    categorical = [
+        f.name for f in df.schema.fields if isinstance(f.dataType, categorical_types) and f.name not in excluded
+    ]
+    if not categorical:
+        return None
+
+    total_count = df.count()
+    if total_count == 0:
+        return None
+    null_counts, distinct_counts = compute_null_and_distinct_counts(df, categorical, categorical, approx=True, rsd=0.05)
+    distinct_counts.update(compute_exact_distinct_counts(df, categorical))
+
+    id_pattern = re.compile(r"(?i)(id|key)$")
+    candidates = []
+    for name in categorical:
+        distinct_count = distinct_counts.get(name)
+        if distinct_count is None:
+            continue
+        if _is_grouping_candidate(
+            distinct_count,
+            null_rate=null_counts.get(name, 0) / total_count,
+            is_id_column=id_pattern.search(name) is not None,
+            total_count=total_count,
+        ):
+            candidates.append((name, distinct_count, total_count / distinct_count))
+
+    candidates.sort(key=lambda candidate: candidate[1])
+    selected = select_baseline_columns(candidates, total_count)
+    if not selected:
+        return None
+
+    group_count = _count_group_combinations(selected, distinct_counts)
+    return BaselineSuggestion(
+        columns=selected,
+        group_count=group_count,
+        rows_per_group=int(total_count / group_count) if group_count else total_count,
+    )
 
 
 def _select_segment_columns(

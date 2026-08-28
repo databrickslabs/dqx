@@ -74,7 +74,11 @@ class AnomalyEngine(DQEngineBase):
 
             Auto-discovery behavior:
             - columns=None, baseline_by=None: Auto-discovers both the feature columns and a grouping
-            - columns specified, baseline_by=None: Uses the columns, still discovers a grouping
+            - columns specified, baseline_by=None: Uses the columns and compares against the whole
+              table. Naming the columns means you decided what to measure, so no grouping is added
+              on your behalf. If the data looks grouped, a warning names the grouping to pass.
+            - baseline_by=[]: Compares against the whole table, and suppresses both the grouping
+              discovery above and that warning
             - baseline_by specified: Conditions on that grouping
 
         Args:
@@ -99,7 +103,9 @@ class AnomalyEngine(DQEngineBase):
                       numeric metric gains its deviation from that baseline as an extra feature on
                       a single pooled model, so the cost does not grow with the group count. This
                       is what catches a value that is unremarkable across the table but wrong for
-                      its own group. Auto-discovered when omitted.
+                      its own group. Auto-discovered only when *columns* is also omitted; pass
+                      ``baseline_by=[]`` to compare against the whole table and suppress both that
+                      discovery and the advisory warning.
             params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Exclusions always take precedence over `columns` if both are provided.

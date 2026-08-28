@@ -51,7 +51,9 @@ group's daily volume collapses by 80% while the total across all groups stays fl
 that shape, a model comparing against the whole table scored PR-AUC 0.0028 against a 0.0026 base rate —
 chance. Conditioned on the group, 0.6962.
 
-To compare against the whole table anyway, pass `baseline_by=[]`.
+A grouping is discovered for you only when you let DQX pick the feature columns too. Name `columns` yourself
+and the comparison stays pooled, with a warning naming the grouping to pass if the data looks grouped. To
+compare against the whole table and silence that warning, pass `baseline_by=[]`.
 
 ## Which detector to use
 

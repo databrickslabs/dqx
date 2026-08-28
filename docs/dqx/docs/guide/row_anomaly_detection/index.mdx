@@ -427,11 +427,13 @@ Both profiles get the same feature engineering, so these need no configuration:
 
 Row anomaly detection was **Experimental** in earlier releases and is now **Beta**. This release replaces the old per-group model path (`segment_by`) with `baseline_by`, which measured better on detection, reliability, and cost. If you never used `segment_by`, nothing here affects you.
 
-If you did, three things change. The full detail is in the [migration guide](/docs/dev/anomaly_compatibility).
+If you did, here is the whole migration.
 
-- **Replace `segment_by` with `baseline_by`.** They are not the same. `segment_by` trained one model per group; `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change.
-- **Retrain your models.** A model trained before this release raises an error at scoring time until you retrain it.
-- **Your registry table is handled for you.** Retraining writes the new schema into your existing table in place.
+- **Replace `segment_by` with `baseline_by`.** They are not the same. `segment_by` trained one model per group; `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change. `AnomalyParams.max_segment_models` is gone too, since there is only ever one model now.
+- **Retrain your models.** A model trained before this release raises an error at scoring time until you retrain it, rather than scoring against a feature list that no longer matches.
+- **Your registry table is handled for you.** Retraining writes the new schema into your existing table in place. The `segmentation` column becomes `grouping`, and a table you never retrain into keeps the old column and will not be read.
+- **`_dq_info[].anomaly` changes shape.** The `segment` field is gone (it was always null once per-group models were), and `is_new_baseline` and `new_baseline_key` are added. Named-field queries keep working, but appending to a table that already holds `_dq_info` needs `mergeSchema`.
+- **Auto-discovered groupings may score differently** even with no configuration change, because a discovered grouping is now used as `baseline_by` and the policy that picks it is finer than the segmented one it replaced.
 
 ## How it works under the hood
 
@@ -443,7 +445,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains the detector your `profile` selects — an ensemble of Isolation Forest models by default, or a single correlation-aware model for `profile="timeseries"` — and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; each `train()` call registers one model under its name and archives the previously active version.
 4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Feature contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring. How they are computed depends on the detector — SHAP for Isolation Forest, an exact leave-one-out decomposition for the correlation-aware detector — but the output is the same map either way.
-5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping (categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group, for example region or product category), and this happens whether or not you passed `columns`, since what to measure and what to compare it against are independent questions. A discovered grouping is used as `baseline_by` (see [Group-aware anomaly detection](#group-aware-anomaly-detection)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`.
+5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping (categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group, for example region or product category). A discovered grouping is used as `baseline_by` (see [Group-aware anomaly detection](#group-aware-anomaly-detection)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`. When you *do* pass `columns`, you have decided what to measure, so DQX leaves the comparison pooled rather than adding a grouping you did not ask for. If your data looks grouped it says so in a warning naming the grouping to pass.
 
 ### Which algorithm, and why
 
@@ -610,7 +612,18 @@ See the **Training data requirements** tip under Quick start. In short: 1,000+ r
 <details>
 <summary><strong>Q: Why did auto-training choose a grouping?</strong></summary>
 
-When you train without specifying a grouping, DQX looks for one: columns that look like good dimensions (for example region or category) with low cardinality (2–50 distinct values), low null rate, and enough rows per group. That is intentional, because behaviour often does differ by group, and the user least likely to pass `baseline_by` explicitly is the one most likely to miss a contextual anomaly. A discovered grouping is used as `baseline_by`: each metric gains its deviation from that group's baseline, on a **single** model, so the discovery cannot turn into an hours-long run however many groups it finds. The grouping it chose is logged. To compare against the whole table instead, pass `baseline_by=[]`.
+When you let DQX pick the columns as well, it looks for a grouping too: columns that look like good dimensions (for example region or category) with low cardinality (2–50 distinct values), low null rate, and enough rows per group. That is intentional, because behaviour often does differ by group, and the user least likely to pass `baseline_by` explicitly is the one most likely to miss a contextual anomaly. A discovered grouping is used as `baseline_by`: each metric gains its deviation from that group's baseline, on a **single** model, so the discovery cannot turn into an hours-long run however many groups it finds. The grouping it chose is logged. To compare against the whole table instead, pass `baseline_by=[]`.
+
+Naming `columns` yourself changes this. Then DQX keeps the whole-table comparison and only *tells* you what it found:
+
+```
+WARNING  ['region'] looks like a grouping (3 groups, ~200 rows/group), but metrics are being
+         compared against the whole table, so a value that is ordinary overall yet wrong for its
+         own group will not be flagged. Pass baseline_by=['region'] to compare each row against
+         its own group, or baseline_by=[] to keep the whole-table comparison and silence this.
+```
+
+Two reasons it advises rather than acts. Your explicit column list is a decision, and adding engineered features on top of it would change the model you asked for. And a discovered grouping depends on the data, so if a column's cardinality shifts between retrains the feature set would change with it and move every score, drifting the threshold you calibrated. The warning is silent when the data has no usable grouping, so it only speaks when there is something to do.
 </details>
 
 <details>

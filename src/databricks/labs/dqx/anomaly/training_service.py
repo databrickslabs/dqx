@@ -28,7 +28,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     ModelIdentity,
     TrainingMetadata,
 )
-from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
+from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_baseline_columns
 from databricks.labs.dqx.anomaly.training_strategies import (
     DEFAULT_PROFILE,
     AnomalyTrainingStrategy,
@@ -48,6 +48,7 @@ from databricks.labs.dqx.anomaly.validation import (
 )
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import sanitize_for_logging
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +157,12 @@ class AnomalyTrainingService:
     ) -> tuple[list[str], list[str] | None]:
         """Fill in whichever of the feature columns and the grouping the caller left unspecified.
 
-        Returns ``(columns, baseline_by)``. A discovered grouping always becomes ``baseline_by``:
-        there is one model regardless of group count, so discovery cannot turn into an hours-long
-        run however many groups it finds.
+        Returns ``(columns, baseline_by)``.
+
+        Discovery of a grouping is reachable only when the feature columns were discovered too, so
+        naming *columns* keeps the whole-table comparison. A discovered grouping then becomes
+        ``baseline_by``: there is one model regardless of group count, so discovery cannot turn into
+        an hours-long run however many groups it finds.
         """
         if columns is None:
             columns, discovered = self._perform_auto_discovery(df_filtered)
@@ -170,32 +174,39 @@ class AnomalyTrainingService:
             return columns, discovered
 
         if declared_baseline_by is None:
-            # Grouping discovery used to be reachable only when the columns were discovered too, so
-            # naming your feature columns silently gave up any chance of conditioning. Those are
-            # independent questions. Costs one extra profiling pass for callers who pass explicit
-            # columns and no grouping.
-            return columns, self._discover_baseline_columns(df_filtered, columns)
+            # Naming *columns* keeps the pooled comparison, as it did before baseline_by existed.
+            # Explicit configuration wins: adding engineered baseline features the caller never
+            # asked for would also make the feature set data-dependent, so a retrain after a
+            # cardinality shift would silently move every score and drift their threshold.
+            # Discovery still runs here, but only to advise.
+            self._advise_baseline_columns(df_filtered, columns)
+            return columns, None
 
         return columns, declared_baseline_by
 
     @staticmethod
-    def _discover_baseline_columns(df_filtered: DataFrame, columns: list[str]) -> list[str] | None:
-        """Discover a baseline grouping when the caller named feature columns but no grouping.
+    def _advise_baseline_columns(df_filtered: DataFrame, columns: list[str]) -> None:
+        """Warn when the data looks grouped but the caller left the comparison pooled.
 
-        Kept separate from ``_perform_auto_discovery`` so that discovering a grouping does not
-        require also discovering the feature columns.
+        Advisory only, and silent when there is nothing to act on, which is what keeps it worth
+        reading: a warning that fires on every explicit-columns call is one nobody looks at.
 
-        Anything the caller named as a feature is excluded. When discovery picks the columns itself
-        the profiler already keeps the two lists disjoint, but here the feature list came from the
-        caller: a column they asked to have measured must not silently become the basis it is
-        measured against, which ``validate_baseline_columns`` would reject anyway.
+        Anything the caller named as a feature is excluded from the suggestion. A column they asked
+        to have measured must not be offered as the basis it is measured against, which
+        ``validate_baseline_columns`` would reject anyway.
         """
-        profile = auto_discover_columns(df_filtered)
-        discovered = [c for c in profile.recommended_segments if c not in set(columns)]
-        if not discovered:
-            return None
-        logger.info(f"Auto-detected {len(discovered)} baseline columns: {discovered}")
-        return discovered
+        suggestion = suggest_baseline_columns(df_filtered, exclude=columns)
+        if suggestion is None:
+            return
+        # Column names come from the caller's schema, so they are untrusted for logging (CWE-117).
+        safe_columns = [sanitize_for_logging(name) for name in suggestion.columns]
+        logger.warning(
+            f"{safe_columns} looks like a grouping ({suggestion.group_count} groups, "
+            f"~{suggestion.rows_per_group} rows/group), but metrics are being compared against the "
+            f"whole table, so a value that is ordinary overall yet wrong for its own group will not "
+            f"be flagged. Pass baseline_by={safe_columns} to compare each row against its own group, "
+            f"or baseline_by=[] to keep the whole-table comparison and silence this."
+        )
 
     def build_context(
         self,

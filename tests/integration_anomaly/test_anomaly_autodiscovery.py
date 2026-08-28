@@ -1,9 +1,11 @@
 """Integration tests for auto-discovery of anomaly detection columns and segments."""
 
+import logging
+
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
+from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_baseline_columns
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import SEGMENT_REGIONS
 from tests.integration_anomaly.conftest import qualify_model_name
@@ -125,12 +127,15 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
         assert set(model.training.columns) == {"amount", "discount"}
 
 
-def test_explicit_columns_still_get_baseline_discovery(spark: SparkSession, make_schema, make_random, anomaly_engine):
-    """Naming the feature columns does not turn off baseline discovery — they are independent choices.
+def test_explicit_columns_keep_the_pooled_comparison_but_warn(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """Naming the feature columns keeps the whole-table comparison, and says so.
 
-    Under the old segmented policy, passing explicit columns suppressed auto-segmentation. Baseline
-    conditioning has no reason to: there is one model regardless of group count, so a caller who
-    names the metrics still gets a grouping discovered for them. See databrickslabs/dqx#1484.
+    Explicit configuration wins: DQX does not add engineered baseline features the caller never
+    asked for, because a discovered grouping is data-dependent and a retrain after a cardinality
+    shift would silently move every score. What it does instead is name the grouping it found, so
+    the caller can opt in. Silence was the actual defect here, not the pooling.
     """
     # Create unique schema for test isolation
     schema = make_schema(catalog_name=TEST_CATALOG)
@@ -146,20 +151,87 @@ def test_explicit_columns_still_get_baseline_discovery(spark: SparkSession, make
     table_name = f"{TEST_CATALOG}.{schema.name}.explicit_cols_test_{suffix}"
     df.write.saveAsTable(table_name)
 
-    # Explicit feature column, no explicit grouping: the grouping is still discovered.
+    # Explicit feature column, no explicit grouping: pooled, with an advisory naming what it found.
     registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
-    anomaly_engine.train(
-        df=spark.table(table_name),
-        columns=["amount"],
-        model_name=qualify_model_name(f"test_explicit_{suffix}", registry_table),
-        registry_table=registry_table,
-    )
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount"],
+            model_name=qualify_model_name(f"test_explicit_{suffix}", registry_table),
+            registry_table=registry_table,
+        )
 
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 1
     assert models[0].training.columns == ["amount"]
-    assert models[0].grouping.baseline_by == ["region"]
+    assert not models[0].grouping.baseline_by
+
+    advisories = [r.message for r in caplog.records if "looks like a grouping" in r.message]
+    assert advisories, "an explicit-columns train over groupable data should name the grouping"
+    # The message has to carry the fix, not just the diagnosis, or the caller has to go and read docs.
+    assert "region" in advisories[0]
+    assert "baseline_by=['region']" in advisories[0]
+    assert "baseline_by=[]" in advisories[0]
+
+
+def test_no_advisory_when_the_data_has_no_grouping(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """The advisory stays quiet when there is nothing to act on.
+
+    This is what keeps it worth reading: a warning that fires on every explicit-columns call is one
+    callers learn to filter out, and then it is worth nothing when it does matter.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    # Numeric metrics only, so there is no categorical column to group on.
+    df = spark.createDataFrame([(100.0 + i, 5.0 + i % 7) for i in range(400)], "amount double, discount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.no_grouping_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "discount"],
+            model_name=qualify_model_name(f"test_nogroup_{suffix}", registry_table),
+            registry_table=registry_table,
+        )
+
+    assert not [r for r in caplog.records if "looks like a grouping" in r.message]
+
+
+def test_suggestion_never_offers_a_column_the_caller_measures(spark: SparkSession):
+    """A column cannot be both what is measured and what it is measured against.
+
+    ``validate_baseline_columns`` would reject the overlap anyway, so suggesting it would be advice
+    that fails if taken.
+    """
+    df = spark.createDataFrame(
+        [("US", "retail", 100.0 + i) for i in range(300)] + [("EU", "retail", 100.0 + i) for i in range(300)],
+        "region string, channel string, amount double",
+    )
+
+    suggestion = suggest_baseline_columns(df, exclude=["region"])
+
+    assert suggestion is None or "region" not in suggestion.columns
+
+
+def test_suggestion_reports_the_shape_the_warning_quotes(spark: SparkSession):
+    """The advisory quotes a group count and rows per group, so those have to be right."""
+    df = spark.createDataFrame(
+        [(region, 100.0 + i) for region in ("US", "EU", "APAC") for i in range(200)],
+        "region string, amount double",
+    )
+
+    suggestion = suggest_baseline_columns(df, exclude=["amount"])
+
+    assert suggestion is not None
+    assert suggestion.columns == ["region"]
+    assert suggestion.group_count == 3
+    assert suggestion.rows_per_group == 200
 
 
 def test_autodiscovery_excludes_high_null_numeric_columns(spark: SparkSession):
