@@ -572,8 +572,12 @@ its own phase.
 
 **Forecasting.** DQX judges rows against learned normal. It does not predict the next value and compare.
 
-**A single metric with `profile="timeseries"`.** That detector models how metrics move *together*, so
-with only one metric it has nothing to work with. Use a rule or a threshold.
+**A single metric on its own.** With nothing to compare it against, `profile="timeseries"` can only ask
+"is this value unusually high or low?" — which a simple range check already does, and
+[`has_no_outliers`](/docs/reference/quality_checks) does better. Give it something to compare against and
+that changes: include the timestamp and it can spot a value that is fine in general but wrong *for a
+Saturday*; add `baseline_by` and it can spot one that is wrong *for that region*. Context is what it needs,
+and a timestamp or a grouping column both count.
 
 **Anything you already have labels for.** Train a classifier — it will beat any unsupervised detector on
 the pattern it was taught. Anomaly detection is for the problems you cannot describe in advance.
