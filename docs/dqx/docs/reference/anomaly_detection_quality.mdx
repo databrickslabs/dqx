@@ -6,8 +6,6 @@ sidebar_position: 509
 
 ---
 
-import Admonition from '@theme/Admonition';
-
 # Anomaly Detection Quality
 
 How well does row anomaly detection actually detect? This page reports measured detection quality;
@@ -103,18 +101,9 @@ adjustment credits an entire incident as detected from a single lucky row, and K
 ([AAAI 2022](https://arxiv.org/abs/2109.05257)) showed that random scores reach state-of-the-art under
 it. Published figures produced that way are not comparable with the ones above, in either direction.
 
-<Admonition type="warning" title="What neither detector does">
-Calendar seasonality *is* handled, by both profiles: a datetime column becomes cyclical hour-of-day,
-day-of-week and month features plus a weekend flag, so "quiet on Sundays" is learned rather than flagged.
-Cycles whose period is not one of those three are not, and neither is **trend** — a steadily growing
-metric leaves the range it was trained on, and DQX has no feature representing elapsed time to explain the
-growth away. Feed it a quantity that does not trend (a rate or a ratio rather than a running level), and
-retrain on a schedule; see [Trend](/docs/guide/row_anomaly_detection#what-neither-profile-covers) for what
-to do. Forecasting the next value is out of scope. With a *single* metric, `"timeseries"` has nothing to
-correlate against and a threshold is the better tool. DQX also does not detect which profile you need —
-[Choosing a profile](/docs/guide/row_anomaly_detection#choosing-a-profile) explains why the obvious
-heuristic was measured and rejected.
-</Admonition>
+DQX does not detect which profile you need, and calendar seasonality is handled automatically by both.
+[Choosing a profile](/docs/guide/row_anomaly_detection#choosing-a-profile) covers both points, and the
+[FAQ](/docs/guide/row_anomaly_detection#frequently-asked-questions) lists what neither detector finds.
 
 ## One model, not one per group
 

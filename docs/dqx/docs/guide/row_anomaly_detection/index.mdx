@@ -419,35 +419,9 @@ Both profiles get the same feature engineering, so these need no configuration:
   sine/cosine pairs so that 23:00 and 00:00 are adjacent rather than maximally far apart. A quiet Sunday
   is therefore learned as normal *for a Sunday*, and the same volume on a Wednesday still stands out.
 - **Group context.** `baseline_by` judges each metric against its own group's baseline; see
-  [Group-aware anomaly detection](#group-aware-anomaly-detection).
+  [Group-aware anomaly detection](#group-aware-anomaly-detection) above.
 - **Categoricals, booleans and nulls.** One-hot or frequency encoding by cardinality, 0/1 mapping, and an
   explicit indicator for columns that contain nulls.
-
-### What neither profile covers
-
-Being straight about the edges is more useful than a longer feature list:
-
-- **Trend.** Neither profile models "traffic has grown 40% this quarter". Nothing in the feature set
-  represents elapsed time — a datetime column contributes only *where in the cycle* a row sits, never
-  *how far along* it is — so a steadily growing metric eventually sits outside the range it was trained
-  on, and ordinary rows start being flagged.
-
-  **What to do:** give the model a quantity that does not trend. `orders_per_customer` instead of
-  `daily_orders`, `revenue_per_order` instead of `cumulative_revenue` — a rate or a ratio stays
-  comparable as the business grows, and is usually the thing you actually wanted to watch. Where the
-  level itself matters, retrain on a schedule rather than waiting to be told: a gradual trend inflates
-  the spread of the training window it is measured against, which suppresses the drift signal, so
-  `drift_threshold` is not a reliable tripwire for this particular failure. For volume and freshness over
-  time, Databricks Data Quality Monitoring is the tool built for it.
-- **Cycles that are not hourly, daily, weekly, or monthly.** The calendar features cover those (see
-  [What is handled automatically](#what-is-handled-automatically) below). A six-week promotional cycle, or
-  a fiscal quarter that does not align to calendar months, is not one of them — pass the cycle as a
-  column and use `baseline_by`, which judges each row against its own phase of the cycle.
-- **Forecasting.** DQX judges rows against learned normal; it does not predict the next value and compare.
-- **Single-series anomaly detection.** With one metric and no others to correlate against, `"timeseries"`
-  has nothing to model. A rule or a threshold is the right tool.
-- **Labelled anomaly classification.** If you have labels, train a classifier — it will beat any
-  unsupervised detector on the pattern it was taught.
 
 ## Upgrading and breaking changes
 
@@ -576,6 +550,36 @@ Use row anomaly detection when you want to catch unusual combinations across col
 <summary><strong>Q: I upgraded and my `segment_by` code stopped working. What do I do?</strong></summary>
 
 `segment_by` has been removed. Replace it with `baseline_by`, which compares each metric against its own group's baseline on a single model instead of training one model per group, and retrain (models from earlier releases no longer load). Row anomaly detection was Experimental in earlier releases, which is what allowed this break, and it is now Beta. See [Upgrading and breaking changes](#upgrading-and-breaking-changes).
+</details>
+
+<details>
+<summary><strong>Q: Are there anomalies DQX will not find?</strong></summary>
+
+Yes, and they are worth knowing before you rely on it.
+
+**Trend.** DQX learns what normal looks like from a training window. A metric that grows steadily
+eventually sits outside that window, and ordinary rows start being flagged. Give the model a quantity
+that does not trend — `orders_per_customer` rather than `daily_orders`, `revenue_per_order` rather than
+`cumulative_revenue` — which stays comparable as the business grows and is usually what you wanted to
+watch anyway. Where the level itself matters, retrain on a schedule; a gradual trend inflates the spread
+of the window it is measured against, so `drift_threshold` will not reliably warn you about this
+particular case.
+
+**Cycles other than hourly, daily, weekly, or monthly.** Those four are handled automatically from a
+datetime column. A six-week promotional cycle, or a fiscal quarter that does not align to calendar
+months, is not — pass the cycle as a column and use `baseline_by`, which then judges each row against
+its own phase.
+
+**Forecasting.** DQX judges rows against learned normal. It does not predict the next value and compare.
+
+**A single metric with `profile="timeseries"`.** That detector models how metrics move *together*, so
+with only one metric it has nothing to work with. Use a rule or a threshold.
+
+**Anything you already have labels for.** Train a classifier — it will beat any unsupervised detector on
+the pattern it was taught. Anomaly detection is for the problems you cannot describe in advance.
+
+For volume, freshness and row counts over time, Databricks Data Quality Monitoring is the tool built for
+that job, and the two work well together.
 </details>
 
 <details>
