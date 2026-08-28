@@ -7,8 +7,9 @@ split, no point adjustment) it catches 36% of incidents inside a 1%-of-rows aler
 Mahalanobis detector here catches 82%. Refitting on training data that still contains anomalies -- what
 DQX actually does -- costs both of them a few points and does not change the conclusion: 33% against
 79%. That was the result that could have sunk the approach, because sample covariance is not robust and
-a few extreme rows inflate it along the very direction that needs to stay tight. See ``benchmarks/anomaly_conditioning/smd_bakeoff.py`` and the
-committed results next to it.
+a few extreme rows inflate it along the very direction that needs to stay tight. Detection quality on
+DQX's own synthetic fixtures is published in the benchmarks report and measured by
+``tests/perf/test_anomaly_benchmark.py``.
 
 The distance is the ordinary squared Mahalanobis distance from the training centre,
 ``d² = (x−μ)ᵀ Σ⁻¹ (x−μ)``, with three deliberate choices.

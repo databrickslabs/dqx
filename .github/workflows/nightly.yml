@@ -555,23 +555,6 @@ jobs:
             ${{ env.NEW_BASELINE }}
             ${{ env.UPDATED_BASELINE }}
 
-      - name: Refresh anomaly detection quality benchmarks
-        timeout-minutes: 90
-        continue-on-error: true
-        run: |
-          # Detection quality, not timing, so it does not go through pytest-benchmark. The baseline
-          # merge below is keep-old-on-conflict, which would freeze an extra_info payload at its first
-          # observation and publish a fossil for ever; this writes the numbers straight into the page
-          # instead, between markers, so the hand-written guidance around them survives.
-          #
-          # Scoped for CI: 5 seeds rather than 15, and the real datasets are ~250MB fetched from
-          # GitHub on a cold cache. continue-on-error because a third-party download failing should
-          # not fail the timing benchmarks that ran before it.
-          UV_FROZEN=1 uv run --all-extras python benchmarks/anomaly_conditioning/run_experiment.py \
-            --seeds 5 --datasets synthetic smd nslkdd tabular
-          LATEST=$(ls -t benchmarks/anomaly_conditioning/results/*.json | head -1)
-          UV_FROZEN=1 uv run --all-extras python benchmarks/anomaly_conditioning/emit_docs.py "$LATEST"
-
       - name: Create PR with updated baseline if changed
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -582,8 +565,6 @@ jobs:
           # Stage baseline and report
           git add $FINAL_BASELINE || true
           git add $BENCHMARK_REPORT || true
-          git add docs/dqx/docs/reference/anomaly_detection_quality.mdx || true
-          git add benchmarks/anomaly_conditioning/results || true
 
           # Check if there are actual changes
           if git diff --cached --quiet; then
@@ -604,13 +585,11 @@ jobs:
             EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number')
             if [ -z "$EXISTING_PR" ]; then
               gh pr create \
-                --title "Update performance and detection quality benchmarks" \
+                --title "Update performance benchmark baseline" \
                 --body "$(cat <<'EOF'
           ## Summary
           - Updated `tests/perf/.benchmarks/baseline.json` with latest nightly benchmark results
           - Regenerated `docs/dqx/docs/reference/benchmarks.mdx` report
-          - Refreshed the generated tables in `docs/dqx/docs/reference/anomaly_detection_quality.mdx`
-            and added a dated results file under `benchmarks/anomaly_conditioning/results/`
 
           ## Action required
           This commit is **not GPG-signed** (created by GitHub Actions).

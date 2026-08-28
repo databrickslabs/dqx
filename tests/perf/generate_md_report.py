@@ -75,14 +75,18 @@ for bench in check_benchmarks:
 # Anomaly benchmark section: timings plus indicative detection quality carried in extra_info.
 if anomaly_benchmarks:
     lines.append("\n## Anomaly Benchmarks\n")
-    provenance: dict = next((b.get("extra_info", {}) for b in anomaly_benchmarks if b.get("extra_info")), {})
-    if provenance.get("dataset"):
-        lines.append(
-            f"* Measured on {provenance['dataset']} "
-            f"({provenance.get('n_train_rows', 'n/a')} train / {provenance.get('n_test_rows', 'n/a')} test rows, "
-            f"{provenance.get('n_features', 'n/a')} features, "
-            f"{provenance.get('anomaly_frac', 'n/a')} anomaly fraction, seed {provenance.get('seed', 'n/a')})."
-        )
+    lines.append(
+        "* Every fixture is generated in-repo by `tests/integration_anomaly/synthetic_generators.py` "
+        "from a fixed seed. Nothing is downloaded and no third-party data is redistributed, so these "
+        "numbers carry no dataset licence conditions."
+    )
+    lines.append(
+        "* Each row states the fixture it was measured on. They are deliberately different problems: "
+        "one blends overlapping and heavy-tailed distributions, one breaks the correlation between "
+        "metrics that normally move together (`profile=\"timeseries\"`), and one collapses a single "
+        "group's volume while the overall total stays flat (`baseline_by`). Comparing quality numbers "
+        "*across* rows is meaningless."
+    )
     lines.append(
         "* Quality columns are **indicative and first-observed only**: the nightly baseline merge keeps "
         "existing entries on conflict, so `extra_info` is not refreshed once a benchmark has been "
@@ -90,14 +94,14 @@ if anomaly_benchmarks:
         "`tests/integration_anomaly/test_anomaly_quality.py`, not by this table."
     )
     lines.append(
-        "* These are synthetic distributions chosen to be moderately hard, not a general claim about "
-        "detection quality on your own data.\n"
+        "* Synthetic distributions chosen to be moderately hard, not a general claim about detection "
+        "quality on your own data.\n"
     )
     lines.append(
-        "| Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | Rounds | Ops/s | ROC-AUC | Precision | Recall | F1 | Precision@N |"
+        "| Test | Fixture | Rows (train/test) | Features | Anomaly rate | Mean (s) | Median (s) | Rounds | ROC-AUC | Precision | Recall | F1 | Precision@N |"
     )
     lines.append(
-        "|------|----------|------------|---------|---------|------------|--------|-------|---------|-----------|--------|----|-------------|"
+        "|------|---------|-------------------|----------|--------------|----------|------------|--------|---------|-----------|--------|----|-------------|"
     )
     for bench in anomaly_benchmarks:
         stats = bench["stats"]
@@ -112,15 +116,18 @@ if anomaly_benchmarks:
         recall_str = f"{recall:.6f}" if isinstance(recall, (int, float)) else "n/a"
         f1_str = f"{f1_score:.6f}" if isinstance(f1_score, (int, float)) else "n/a"
         precision_at_n_str = f"{precision_at_n:.6f}" if isinstance(precision_at_n, (int, float)) else "n/a"
+        anomaly_frac = extra.get("anomaly_frac")
+        anomaly_frac_str = f"{anomaly_frac:.4f}" if isinstance(anomaly_frac, (int, float)) else "n/a"
+        rows_str = f"{extra.get('n_train_rows', 'n/a')} / {extra.get('n_test_rows', 'n/a')}"
         lines.append(
             f"| {bench['name']} "
+            f"| {extra.get('dataset', 'n/a')} "
+            f"| {rows_str} "
+            f"| {extra.get('n_features', 'n/a')} "
+            f"| {anomaly_frac_str} "
             f"| {stats['mean']:.6f} "
             f"| {stats['median']:.6f} "
-            f"| {stats['min']:.6f} "
-            f"| {stats['max']:.6f} "
-            f"| {stats['stddev']:.6f} "
             f"| {stats['rounds']} "
-            f"| {stats['ops']:.2f} "
             f"| {roc_auc_str} "
             f"| {precision_str} "
             f"| {recall_str} "

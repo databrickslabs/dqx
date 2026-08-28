@@ -125,7 +125,7 @@ What it is reliably good at, and what it is not:
 - **Good at unusual _combinations_ across columns**: several values that are each individually fine but wrong together. Rules struggle to express that, and it is where anomaly detection earns its place.
 - **Weaker than a plain rule when a single column is extreme in isolation.** A range check or an outlier rule catches that more reliably and more cheaply, so reach for a rule there. You can run both.
 
-On DQX's own benchmarks (ten classical tabular datasets) it beats a random baseline on every one and a simple "largest z-score across columns" baseline on most. The exceptions are exactly the single-extreme-value case above. The full measured results, the datasets, and what the numbers do *not* mean are in [Anomaly detection quality](/docs/reference/anomaly_detection_quality).
+Measured across ten classical tabular anomaly-detection datasets, it beats a random baseline on every one and a simple "largest z-score across columns" baseline on most. The exceptions are exactly the single-extreme-value case above. Detection quality on DQX's own synthetic fixtures, alongside training and scoring times, is published in [Benchmarks](/docs/reference/benchmarks).
 
 <Admonition type="tip" title="Judge it on your own data">
 Whatever a benchmark says, measure on **your** data before relying on a number. Train on a slice you consider good, score a slice you understand, and check that the rows it flags are ones you would actually want flagged.
@@ -382,16 +382,19 @@ on a healthy machine.
 Measured on the Server Machine Dataset — real machine telemetry with labelled incidents — this is the
 share of incidents each detector surfaces while the alert budget is capped at 1% of rows:
 
-<!-- generated:profile:start -->
 | `profile` | Incidents surfaced |
 |---|---|
 | `"tabular"` | 33% |
 | `"timeseries"` | **79%** |
-<!-- generated:profile:end -->
+
+An incident counts as surfaced if the detector flags at least one of its rows, so this measures whether
+you would have been paged, not how many rows you would have had to read. Both detectors were trained on
+data that still contained the anomalies, which is what DQX does when it fits a sample of your table; on a
+curated clean training split the same comparison is 36% against 82%.
 
 That is telemetry, which is what `"timeseries"` is for — on ordinary tabular data the ranking reverses.
-See [Anomaly detection quality](/docs/reference/anomaly_detection_quality#which-detector-to-use) for both
-detectors measured on both kinds of data, and what this metric counts.
+Detection quality on DQX's own synthetic fixtures is published in
+[Benchmarks](/docs/reference/benchmarks).
 
 <Admonition type="info" title="Why not choose for you?">
 DQX does not detect which profile you need. Getting it right cannot be verified without labelled

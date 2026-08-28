@@ -465,7 +465,7 @@ print("   detector produced the contributions, so the explanation describes the 
 # MAGIC ### 📚 Resources
 # MAGIC
 # MAGIC - [Choosing a profile](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection#choosing-a-profile)
-# MAGIC - [Anomaly detection quality](https://databrickslabs.github.io/dqx/docs/reference/anomaly_detection_quality) — how the numbers above were measured
+# MAGIC - [Benchmarks](https://databrickslabs.github.io/dqx/docs/reference/benchmarks#anomaly-benchmarks) — measured detection quality and timings
 # MAGIC - [Row Anomaly Detection guide](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection)
 # MAGIC
 # MAGIC ### 🎉 You're Ready!

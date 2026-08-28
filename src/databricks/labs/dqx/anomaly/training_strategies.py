@@ -41,8 +41,8 @@ MAHALANOBIS_ALGORITHM = "Mahalanobis"
 # correctly cannot be verified without labels, which an unsupervised tool does not have, and the one
 # cheap signal for "this looks temporal" was measured and rejected -- lag-1 autocorrelation is
 # confounded by any ordering correlated with the values, which sorted warehouse storage produces
-# routinely (see benchmarks/anomaly_conditioning/profile_advisory_gate.py). A value named "auto" would
-# therefore have promised a selection that never happens.
+# routinely -- three of ten classical tabular benchmarks scored above the weakest genuine time-series
+# entity. A value named "auto" would therefore have promised a selection that never happens.
 PROFILE_TABULAR = "tabular"
 PROFILE_TIMESERIES = "timeseries"
 SUPPORTED_PROFILES = (PROFILE_TABULAR, PROFILE_TIMESERIES)
