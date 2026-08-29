@@ -348,9 +348,8 @@ jobs:
   # submission — the stale-view sweeper assertion plants an orphan and expects the very next submit to
   # reap it, which only holds at interval 0. The production `dev` target keeps the 600s throttle, so a
   # bare `dev` deploy here left that assertion failing deterministically while every PR (dev-coverage)
-  # passed. Coverage is still NOT uploaded on purpose: this job has no merge/upload steps, so the
-  # remotely collected data is simply discarded at teardown — reusing the target is only about the
-  # sweep interval, not about reporting coverage from the nightly run.
+  # passed. Coverage is merged and uploaded under the `mcp` flag (mirroring mcp.yml) so the `main`
+  # baseline contains mcp-server coverage.
   mcp-tests:
     environment: tool
     runs-on:
@@ -392,9 +391,21 @@ jobs:
           #
           # Selects the dev-coverage bundle target (ci_deploy.sh), which sets the app's
           # DQX_SWEEP_INTERVAL_SECONDS=0 so the stale-view sweeper assertion is deterministic (see the
-          # job comment above). "1" means "enabled, derive the directory". Unlike mcp.yml, this job has
-          # no coverage merge/upload steps, so the collected data is discarded at teardown.
+          # job comment above). "1" means "enabled, derive the directory". Like mcp.yml, the steps
+          # below merge and upload the remotely collected coverage under the `mcp` flag.
           DQX_MCP_COVERAGE_DIR: "1"
+
+      - name: Merge remote coverage and convert to XML
+        if: always()
+        uses: ./.github/actions/merge-mcp-coverage
+
+      - name: Publish test coverage
+        if: always()
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-combined.xml
+          flags: mcp
 
   # Performance benchmarks:
   # 1. run tests and generate a new perf baseline

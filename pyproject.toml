@@ -110,7 +110,7 @@ packages = ["src/databricks"]
 only-include = ["src", "README.md", "LICENSE", "NOTICE"]
 
 [tool.hatch.version]
-path = "src/databricks/labs/dqx/__about__.py"
+path = "src/databricks/labs/dqx/__version__.py"
 
 [dependency-groups]
 dev = [
