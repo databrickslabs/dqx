@@ -44,7 +44,7 @@ def _make_demo_df(spark):
                 str(uuid.UUID(int=i)),
                 # Free-form names 3..30 chars — length_stability ~= 0.1
                 ("A" * (3 + (i % 27))),
-                "The quick brown fox jumps over the lazy dog " * (1 + i % 3),
+                "The quick brown fox jumps over the lazy dog " * (1 + i),
             )
         )
     return spark.createDataFrame(rows, schema=schema)
@@ -66,8 +66,8 @@ def test_profile_without_semantic_registry_matches_pre_feature_output(spark, ws)
     profiler = DQProfiler(ws)
     _stats, profiles = profiler.profile(df, options={"sample_fraction": None, "llm_primary_key_detection": False})
     assert profiles, "expected the pre-feature profiler to emit at least one profile"
-    for profile in profiles:
-        assert profile.semantic_type is None
+    tagged = [(p.column, p.name, p.semantic_type) for p in profiles if p.semantic_type is not None]
+    assert not tagged, f"expected all profiles to have semantic_type=None, got tagged: {tagged}"
 
 
 def test_default_semantic_registry_classifies_grounded_columns(spark, ws):
@@ -78,39 +78,52 @@ def test_default_semantic_registry_classifies_grounded_columns(spark, ws):
     by_column = _profile_by_column(profiles)
 
     vehicle_names = {p.name for p in by_column.get("vehicle_type", [])}
-    assert "is_in" in vehicle_names
-    assert "min_max" not in vehicle_names
-    assert all(p.semantic_type == "enum" for p in by_column.get("vehicle_type", []) if p.name == "is_in")
+    assert "is_in" in vehicle_names, f"expected 'is_in' profile on vehicle_type, got: {vehicle_names}"
+    assert "min_max" not in vehicle_names, f"unexpected 'min_max' profile on vehicle_type, got: {vehicle_names}"
+    vehicle_is_in_semantic_types = [p.semantic_type for p in by_column.get("vehicle_type", []) if p.name == "is_in"]
+    assert all(
+        st == "enum" for st in vehicle_is_in_semantic_types
+    ), f"expected all vehicle_type is_in profiles tagged semantic_type='enum', got: {vehicle_is_in_semantic_types}"
 
     for measurement_col in ("cargo_weight", "deal_value"):
         names = {profile.name for profile in by_column.get(measurement_col, [])}
-        assert "min_max" in names
-        assert "is_in" not in names
-        for profile in by_column.get(measurement_col, []):
-            if profile.name == "min_max":
-                assert profile.semantic_type == "measurement"
+        assert "min_max" in names, f"expected 'min_max' profile on {measurement_col}, got: {names}"
+        assert "is_in" not in names, f"unexpected 'is_in' profile on {measurement_col}, got: {names}"
+        min_max_semantic_types = [
+            profile.semantic_type for profile in by_column.get(measurement_col, []) if profile.name == "min_max"
+        ]
+        assert all(st == "measurement" for st in min_max_semantic_types), (
+            f"expected all {measurement_col} min_max profiles tagged semantic_type='measurement', "
+            f"got: {min_max_semantic_types}"
+        )
 
     user_id_names = {p.name for p in by_column.get("user_id", [])}
-    assert "min_max" not in user_id_names
-    assert "is_in" not in user_id_names
+    assert "min_max" not in user_id_names, f"unexpected 'min_max' profile on user_id key column, got: {user_id_names}"
+    assert "is_in" not in user_id_names, f"unexpected 'is_in' profile on user_id key column, got: {user_id_names}"
 
     order_id_names = {p.name for p in by_column.get("order_id", [])}
-    assert "is_in" not in order_id_names
-    assert "min_max" not in order_id_names
+    assert "is_in" not in order_id_names, f"unexpected 'is_in' profile on order_id key column, got: {order_id_names}"
+    assert (
+        "min_max" not in order_id_names
+    ), f"unexpected 'min_max' profile on order_id key column, got: {order_id_names}"
 
-    user_name_profiles = by_column.get("user_name", [])
-    assert all(profile.name != "is_in" for profile in user_name_profiles)
     # user_name has variable length → falls through to text (not key). text emits no additional
     # rules; only null_or_empty candidates remain.
-    for profile in user_name_profiles:
-        if profile.semantic_type is not None:
-            assert profile.semantic_type == "text"
+    user_name_profiles = by_column.get("user_name", [])
+    user_name_names = {p.name for p in user_name_profiles}
+    assert "is_in" not in user_name_names, f"unexpected 'is_in' profile on user_name, got: {user_name_names}"
+    user_name_semantic_types = {p.semantic_type for p in user_name_profiles if p.semantic_type is not None}
+    assert user_name_semantic_types <= {
+        "text"
+    }, f"expected user_name profiles tagged only with 'text' semantic_type, got: {user_name_semantic_types}"
 
     work_desc_profiles = by_column.get("work_description", [])
-    assert all(profile.name != "is_in" for profile in work_desc_profiles)
-    for profile in work_desc_profiles:
-        if profile.semantic_type is not None:
-            assert profile.semantic_type == "text"
+    work_desc_names = {p.name for p in work_desc_profiles}
+    assert "is_in" not in work_desc_names, f"unexpected 'is_in' profile on work_description, got: {work_desc_names}"
+    work_desc_semantic_types = {p.semantic_type for p in work_desc_profiles if p.semantic_type is not None}
+    assert work_desc_semantic_types <= {
+        "text"
+    }, f"expected work_description profiles tagged only with 'text' semantic_type, got: {work_desc_semantic_types}"
 
 
 def test_registry_without_enum_falls_through_to_measurement(spark, ws):
@@ -122,8 +135,8 @@ def test_registry_without_enum_falls_through_to_measurement(spark, ws):
     by_column = _profile_by_column(profiles)
     vehicle_names = {p.name for p in by_column.get("vehicle_type", [])}
     # vehicle_type is StringType, so it now falls through to text (no min_max, no is_in).
-    assert "is_in" not in vehicle_names
-    assert "min_max" not in vehicle_names
+    assert "is_in" not in vehicle_names, f"unexpected 'is_in' profile on vehicle_type, got: {vehicle_names}"
+    assert "min_max" not in vehicle_names, f"unexpected 'min_max' profile on vehicle_type, got: {vehicle_names}"
 
 
 def test_prepend_custom_detector_takes_precedence(spark, ws):
@@ -140,8 +153,12 @@ def test_prepend_custom_detector_takes_precedence(spark, ws):
     by_column = _profile_by_column(profiles)
     vehicle_names = {p.name for p in by_column.get("vehicle_type", [])}
     # forced_text emits "text" — same gate as DEFAULT_TEXT_DETECTOR — so is_in and min_max are skipped
-    assert "is_in" not in vehicle_names
-    assert "min_max" not in vehicle_names
+    assert (
+        "is_in" not in vehicle_names
+    ), f"unexpected 'is_in' profile on vehicle_type when forced_text prepended, got: {vehicle_names}"
+    assert (
+        "min_max" not in vehicle_names
+    ), f"unexpected 'min_max' profile on vehicle_type when forced_text prepended, got: {vehicle_names}"
 
 
 def test_profile_table_populates_metadata_from_unity_catalog(spark, ws, make_schema, make_random):
@@ -175,9 +192,15 @@ def test_profile_table_populates_metadata_from_unity_catalog(spark, ws, make_sch
     )
 
     vehicle_metadata = next((m for m in captured if m.get("column_comment") == "kind of vehicle"), None)
-    assert vehicle_metadata is not None
-    assert vehicle_metadata.get("table_name") == table_name
-    assert vehicle_metadata.get("table_comment") == "demo table with vehicle types"
+    assert (
+        vehicle_metadata is not None
+    ), f"expected captured metadata for vehicle_type with column_comment='kind of vehicle', got: {captured}"
+    assert (
+        vehicle_metadata.get("table_name") == table_name
+    ), f"expected table_name={table_name!r}, got: {vehicle_metadata.get('table_name')!r}"
+    assert (
+        vehicle_metadata.get("table_comment") == "demo table with vehicle types"
+    ), f"expected table_comment='demo table with vehicle types', got: {vehicle_metadata.get('table_comment')!r}"
 
 
 def test_enum_detector_values_reused_by_is_in_builder(spark, ws):
@@ -197,8 +220,13 @@ def test_enum_detector_values_reused_by_is_in_builder(spark, ws):
     profiler = DQProfiler(ws, semantic_registry=registry)
     _stats, profiles = profiler.profile(df, options={"sample_fraction": None, "llm_primary_key_detection": False})
 
-    assert invocations == ["vehicle_type"]
+    assert invocations == [
+        "vehicle_type"
+    ], f"expected enum detector invoked exactly once for vehicle_type, got invocations: {invocations}"
     is_in_profiles = [p for p in profiles if p.column == "vehicle_type" and p.name == "is_in"]
-    assert len(is_in_profiles) == 1
+    assert (
+        len(is_in_profiles) == 1
+    ), f"expected exactly one 'is_in' profile for vehicle_type, got {len(is_in_profiles)}: {is_in_profiles}"
     is_in = is_in_profiles[0]
-    assert set(is_in.parameters["in"]) == {"car", "truck", "van"}
+    values = set(is_in.parameters["in"])
+    assert values == {"car", "truck", "van"}, f"expected is_in values {{car, truck, van}}, got: {values}"
