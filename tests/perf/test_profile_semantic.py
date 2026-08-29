@@ -25,19 +25,22 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.semantic import SemanticRegistry
 
 
-BENCHMARK_ROWS = 10_000_000  # 10M rows keeps benchmark runtime bounded while still exercising Spark aggregates
+# 100K rows is smaller than the DEFAULT_ROWS used elsewhere in tests/perf because the legacy
+# *is_in* profile builder does an unconditional *df.select(col).distinct().collect()* on every
+# column. Our worst-case fixtures deliberately produce ~1.0 distinctness, so the collect returns
+# roughly BENCHMARK_ROWS rows to the driver — at DEFAULT_ROWS this exceeds the Spark Connect
+# message limit / driver memory and the no-registry baseline fails with PythonException. 100K
+# keeps the collect under a few MB while still letting the semantic-detection chain exercise
+# its full worst-case path (enum + key aggregates fire, then fall through to the trailing
+# fallback detector).
+BENCHMARK_ROWS = 100_000
 BENCHMARK_COLUMNS = 4
 
 # Wide-range random integers force key-density rejection: cardinality is ~BENCHMARK_ROWS but
 # max-min+1 is 2*10^9, so density = BENCHMARK_ROWS / 2*10^9 ≪ KEY_MIN_DENSITY_RATIO and the
-# chain falls through to measurement. The upper bound must stay below int32 max (2_147_483_647)
+# chain falls through to measurement. The upper bound stays below int32 max (2_147_483_647)
 # because dbldatagen samples via double then casts to int; a larger max triggers CAST_OVERFLOW.
 INT_WIDE_RANGE_OPTS = {"minValue": 1, "maxValue": 2_000_000_000, "random": True}
-
-# Dash-separated word tokens (mirroring the DEFAULT_EMAIL_TEMPLATE style in conftest) produce
-# variable-length free-form strings, driving length_stability (min_len / max_len) well below
-# KEY_MIN_LENGTH_STABILITY_RATIO so key rejects and text matches.
-TEXT_VARIABLE_LENGTH_TEMPLATE = r"\w-\w-\w-\w"
 
 PROFILE_OPTIONS = {
     # sample_fraction=None profiles the full dataset so numbers reflect the real cost,
@@ -75,7 +78,6 @@ def test_benchmark_profile_semantic_integer_measurement(benchmark, ws, generated
         {
             "n_rows": BENCHMARK_ROWS,
             "n_columns": BENCHMARK_COLUMNS,
-            "template": TEXT_VARIABLE_LENGTH_TEMPLATE,
         }
     ],
     indirect=True,
