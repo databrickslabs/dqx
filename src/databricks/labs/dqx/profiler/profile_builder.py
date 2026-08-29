@@ -3,7 +3,7 @@ import decimal
 import logging
 from collections.abc import Callable
 import math
-from typing import Any
+from typing import Any, Literal, Mapping
 
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
@@ -11,6 +11,7 @@ from pyspark.sql import types as T, functions as F
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
+from databricks.labs.dqx.profiler.semantic import DQProfileContext
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_DISTINCT_RATIO,
@@ -45,74 +46,101 @@ PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
 logger = logging.getLogger(__name__)
 
 
-def register_profile_builder(profile_type: str) -> Callable:
+def register_profile_builder(
+    profile_type: str,
+    *,
+    type: Literal["legacy", "context"] | None = None,
+) -> Callable:
+    """Register a profile builder in *PROFILE_BUILDER_REGISTRY*.
+
+    Args:
+        profile_type: Registry key (e.g. *min_max*).
+        type: Callback shape.
+            * *None* (default) or *"legacy"* — builder is a 5-argument callback
+              matching the *ProfileBuilder* type alias. Registered as
+              *DQProfileBuilder(name=..., builder=fn)*. Backward-compatible path.
+            * *"context"* — builder is a single-argument callback matching
+              *ContextualProfileBuilder*. Registered as
+              *DQProfileBuilder(name=..., contextual_builder=fn)*.
+    """
+
     def wrapper(builder_func: Callable) -> Callable:
-        PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(name=profile_type, builder=builder_func)
+        if type == "context":
+            PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(
+                name=profile_type, contextual_builder=builder_func
+            )
+        else:
+            PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(name=profile_type, builder=builder_func)
         return builder_func
 
     return wrapper
 
 
-@register_profile_builder("null_or_empty")
-def make_null_or_empty_profile(
-    _: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("null_or_empty", type="context")
+def make_null_or_empty_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
-    Creates an 'is_not_null_or_empty', 'is_not_null', or 'is_not_empty' profile by checking the input column type,
-    profiled metrics, and profiler options.
+    Creates an *is_not_null_or_empty*, *is_not_null*, or *is_not_empty* profile by checking
+    the input column type, profiled metrics, and profiler options.
 
     Args:
-        column_name: Input column name
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options).
 
     Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        A DQProfile if the correct conditions are met, otherwise None.
     """
-    if _is_text(column_type):
-        return _make_null_or_empty_profile(column_name, profiler_metrics, profiler_options)
+    if _is_text(ctx.column_type):
+        return _make_null_or_empty_profile(ctx.column_name, ctx.metrics, ctx.options)
 
-    return _make_null_profile(column_name, profiler_metrics, profiler_options)
+    return _make_null_profile(ctx.column_name, ctx.metrics, ctx.options)
 
 
-@register_profile_builder("is_in")
-def make_is_in_profile(
-    df: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("is_in", type="context")
+def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
-    Creates an 'is_in' profile by checking the input column type, profiled metrics, and profiler options.
+    Creates an *is_in* profile.
+
+    When a semantic registry is configured and the column was classified as *enum*,
+    the distinct values collected by the enum detector are reused (no extra Spark
+    action). Columns classified as other semantic types (*key*, *measurement*,
+    *text*, user-defined) are skipped. When no semantic type is present (default
+    path), applicability follows today's byte-identical rules.
 
     Args:
-        df: Single-column DataFrame
-        column_name: Input column name
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options, semantic_type).
 
     Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        A DQProfile if the correct conditions are met, otherwise None.
     """
-    if not _supports_distinct(column_type):
+    if not _supports_distinct(ctx.column_type):
         return None
 
-    total_count = profiler_metrics.get("count", 0)
+    total_count = ctx.metrics.get("count", 0)
     if total_count == 0:
         return None
 
-    max_in_count = profiler_options.get(PROFILE_OPTION_MAX_IN_COUNT, 0)
-    max_distinct_ratio = profiler_options.get(PROFILE_OPTION_DISTINCT_RATIO, 0.0)
+    semantic_type = ctx.semantic_type
+    if semantic_type is not None and semantic_type.name != "enum":
+        # A non-enum semantic type was assigned; do not emit an is_in candidate that would
+        # contradict the semantic classification.
+        return None
 
-    col = df.columns[0]
-    distinct_values = [row[0] for row in df.select(col).distinct().collect()]
+    if semantic_type is not None and semantic_type.name == "enum":
+        values = semantic_type.properties.get("values", ())
+        distinct_values = list(values) if isinstance(values, tuple) else list(values)
+        if not distinct_values:
+            return None
+        return DQProfile(
+            name="is_in",
+            column=ctx.column_name,
+            parameters={"in": distinct_values},
+            filter=ctx.options.get(PROFILE_OPTION_FILTER, None),
+        )
+
+    max_in_count = ctx.options.get(PROFILE_OPTION_MAX_IN_COUNT, 0)
+    max_distinct_ratio = ctx.options.get(PROFILE_OPTION_DISTINCT_RATIO, 0.0)
+
+    col = ctx.df.columns[0]
+    distinct_values = [row[0] for row in ctx.df.select(col).distinct().collect()]
     distinct_count = len(distinct_values)
     if distinct_count == 0:
         # The df passed here has nulls already dropped by the caller. If distinct_count is 0,
@@ -124,48 +152,44 @@ def make_is_in_profile(
     if distinct_count < max_in_count and distinct_ratio < max_distinct_ratio:
         return DQProfile(
             name="is_in",
-            column=column_name,
+            column=ctx.column_name,
             parameters={"in": distinct_values},
-            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
+            filter=ctx.options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
 
 
-@register_profile_builder("min_max")
-def make_min_max_profile(
-    df: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("min_max", type="context")
+def make_min_max_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
-    Creates a 'min_max' profile by checking the input column type, profiled metrics, and profiler options.
+    Creates a *min_max* profile.
+
+    Gated on semantic type when semantic profiling is enabled: skipped unless
+    *ctx.semantic_type* is *None* or its name is *"measurement"*.
 
     Args:
-        df: Single-column DataFrame
-        column_name: Input column name (used for DQProfile output)
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler (includes summary stats)
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options, semantic_type).
 
     Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        A DQProfile if the correct conditions are met, otherwise None.
     """
-    if profiler_metrics.get("count_non_null", 0) == 0:
+    if ctx.metrics.get("count_non_null", 0) == 0:
         return None
 
-    if not _supports_min_max(column_type):
+    if not _supports_min_max(ctx.column_type):
         return None
 
-    if _remove_outliers(column_name, profiler_options):
+    if ctx.semantic_type is not None and ctx.semantic_type.name != "measurement":
+        return None
+
+    if _remove_outliers(ctx.column_name, ctx.options):
         return _make_min_max_profile_with_outlier_removal(
-            df, column_name, column_type, profiler_metrics, profiler_options
+            ctx.df, ctx.column_name, ctx.column_type, dict(ctx.metrics), dict(ctx.options)
         )
 
     return _make_min_max_profile_without_outlier_removal(
-        df, column_name, column_type, profiler_metrics, profiler_options
+        ctx.df, ctx.column_name, ctx.column_type, dict(ctx.metrics), dict(ctx.options)
     )
 
 
@@ -183,7 +207,7 @@ def _is_text(column_type: T.DataType) -> bool:
 
 
 def _make_null_or_empty_profile(
-    column_name: str, profiler_metrics: dict[str, Any], profiler_options: dict[str, Any]
+    column_name: str, profiler_metrics: Mapping[str, Any], profiler_options: Mapping[str, Any]
 ) -> DQProfile | None:
     """
     Creates an 'is_not_null_or_empty', 'is_not_null', or 'is_not_empty' profile for text type columns.
@@ -256,7 +280,7 @@ def _make_null_or_empty_profile(
 
 
 def _make_null_profile(
-    column_name: str, profiler_metrics: dict[str, Any], profiler_options: dict[str, Any]
+    column_name: str, profiler_metrics: Mapping[str, Any], profiler_options: Mapping[str, Any]
 ) -> DQProfile | None:
     """
     Builds an 'is_not_null' profile for non-text columns.
@@ -319,7 +343,7 @@ def _supports_min_max(column_type: T.DataType) -> bool:
     )
 
 
-def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool:
+def _remove_outliers(column_name: str, profiler_options: Mapping[str, Any]) -> bool:
     """
     Checks if outliers should be removed when generating 'min_max' profiles.
 
@@ -340,7 +364,7 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
     return column_name in outlier_columns
 
 
-def _is_has_no_outliers_enabled(column_name: str, profiler_options: dict[str, Any]) -> bool:
+def _is_has_no_outliers_enabled(column_name: str, profiler_options: Mapping[str, Any]) -> bool:
     """
     Checks if *has_no_outliers* profiling is enabled for given column.
 
@@ -776,45 +800,43 @@ def _round_decimal(value: decimal.Decimal, rounding_direction: str) -> decimal.D
     return value
 
 
-@register_profile_builder("has_no_outliers")
-def make_has_no_outliers_profile(
-    df: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("has_no_outliers", type="context")
+def make_has_no_outliers_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
     Creates a *has_no_outliers* profile using the same MAD method as the *has_no_outliers* check rule.
 
     A profile is returned when all the following conditions are met:
-    - The column type is child of `pyspark.sql.types.NumericType`.
+    - The column type is child of *pyspark.sql.types.NumericType*.
     - The DataFrame is non-empty.
     - The fraction of outliers (values outside *median* ± 3.5 × MAD) is at or below *outliers_ratio*.
     - Profile generation is enabled at configuration level for all columns or given column.
+    - When semantic profiling is enabled, the semantic type is unset or *measurement*.
 
     Args:
-        df: The DataFrame to create the profile for.
-        column_name: Input column name
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options, semantic_type).
 
     Returns:
         A DQProfile if all conditions are met, otherwise None.
     """
+    column_name = ctx.column_name
+    column_type = ctx.column_type
+    profiler_options = ctx.options
+
     if not isinstance(column_type, T.NumericType):
+        return None
+
+    if ctx.semantic_type is not None and ctx.semantic_type.name != "measurement":
         return None
 
     if not _is_has_no_outliers_enabled(column_name, profiler_options):
         return None
 
-    total_non_null_count = profiler_metrics.get("count_non_null", 0)
+    total_non_null_count = ctx.metrics.get("count_non_null", 0)
     if total_non_null_count == 0:
         logger.info(f"Column '{column_name}' has no non-null values. Skipping `has_no_outliers` profile generation")
         return None
 
-    bounds = calculate_median_absolute_deviation_bounds(df, column_name)
+    bounds = calculate_median_absolute_deviation_bounds(ctx.df, column_name)
     if bounds is None:
         logger.info(
             f"MAD bounds were not calculated for column '{column_name}'. Skipping `has_no_outliers` profile generation"
@@ -838,7 +860,7 @@ def make_has_no_outliers_profile(
     below_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
     above_upper_bound_expr = F.col(column_name) > get_limit_expr(upper_bound)
     outside_bounds_expr = below_lower_bound_expr | above_upper_bound_expr
-    outliers_count = df.filter(outside_bounds_expr).count()
+    outliers_count = ctx.df.filter(outside_bounds_expr).count()
 
     outliers_ratio = float(outliers_count) / total_non_null_count
     outliers_ratio_threshold = profiler_options.get(
@@ -853,7 +875,7 @@ def make_has_no_outliers_profile(
             name="has_no_outliers",
             description=f"Column {safe_column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
             column=column_name,
-            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
+            filter=ctx.options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
