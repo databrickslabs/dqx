@@ -35,7 +35,7 @@ class DQProfile:
 
 # Legacy 5-argument callback shape used by pre-semantic profile builders. Kept for backward
 # compatibility with user-authored builders registered via @register_profile_builder without
-# type="context". Prefer *ContextualProfileBuilder* for new code.
+# kind="context". Prefer *ContextualProfileBuilder* for new code.
 ProfileBuilder = Callable[
     [DataFrame, str, DataType, dict[str, Any], dict[str, Any]],
     DQProfile | None,
@@ -58,7 +58,7 @@ class DQProfileBuilder(BaseModel):
         builder: Legacy 5-argument callback. Left in place for backward
             compatibility so existing user-authored builders keep working
             when wrapped in *DQProfileBuilder* or registered via
-            *@register_profile_builder* without *type="context"*. Does not
+            *@register_profile_builder* without *kind="context"*. Does not
             receive semantic-type information — prefer *contextual_builder*
             for new code.
         contextual_builder: Preferred single-argument callback receiving a

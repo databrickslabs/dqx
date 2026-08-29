@@ -14,15 +14,18 @@ import pyspark.sql.types as T
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.profile import DQProfile
-from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES, validate_profile_options
+from databricks.labs.dqx.profiler.common import TEXT_TYPES
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, validate_profile_options
 from databricks.labs.dqx.profiler.semantic import (
     DQProfileContext,
+    DQSemanticType,
     SemanticRegistry,
 )
 from databricks.labs.dqx.profiler.profile_options import (
@@ -456,14 +459,15 @@ class DQProfiler(DQEngineBase):
         """
         try:
             table = self.ws.tables.get(location)
-        # TODO (IK): Specify exception
-        except Exception as exc:  # noqa: BLE001 — SDK raises many concrete types; degrade gracefully
+        except DatabricksError as exc:
             safe_location = str(location).replace("\n", " ").replace("\r", " ")
             logger.warning(f"Could not fetch table metadata for {safe_location}: {exc}")
             return {}
 
         columns: dict[str, dict[str, Any]] = {}
         for col in table.columns or []:
+            if col.name is None:
+                continue
             col_entry: dict[str, Any] = {}
             if col.comment is not None:
                 col_entry["column_comment"] = col.comment
@@ -597,23 +601,7 @@ class DQProfiler(DQEngineBase):
         without triggering a second Spark action.
         """
         metadata_map = dict(column_metadata) if column_metadata else {}
-        detector_ctx = DQProfileContext(
-            df=column_df,
-            column_name=field_name,
-            column_type=field_type,
-            metrics=metrics,
-            options=opts,
-            metadata=metadata_map,
-            semantic_type=None,
-        )
-
-        semantic_type = None
-        if self._semantic_registry is not None:
-            for detector in self._semantic_registry.detectors:
-                match = detector.detect(detector_ctx)
-                if match is not None:
-                    semantic_type = match
-                    break
+        semantic_type = self._detect_semantic_type(column_df, field_name, field_type, metrics, opts, metadata_map)
 
         # Reconstruct via the constructor (not model_copy) so validators run — same rationale as
         # SemanticRegistry.prepend/replace.
@@ -632,6 +620,8 @@ class DQProfiler(DQEngineBase):
                 profile = profile_type.contextual_builder(builder_ctx)
             elif profile_type.builder is not None:
                 profile = profile_type.builder(column_df, field_name, field_type, dict(metrics), dict(opts))
+            else:
+                continue
 
             if not profile:
                 continue
@@ -645,6 +635,32 @@ class DQProfiler(DQEngineBase):
                     metrics["min"] = profile.parameters.get("min")
                 if profile.parameters.get("max") is not None:
                     metrics["max"] = profile.parameters.get("max")
+
+    def _detect_semantic_type(
+        self,
+        column_df: DataFrame,
+        field_name: str,
+        field_type: T.DataType,
+        metrics: dict[str, Any],
+        opts: dict[str, Any],
+        metadata_map: dict[str, Any],
+    ) -> DQSemanticType | None:
+        if self._semantic_registry is None:
+            return None
+        detector_ctx = DQProfileContext(
+            df=column_df,
+            column_name=field_name,
+            column_type=field_type,
+            metrics=metrics,
+            options=opts,
+            metadata=metadata_map,
+            semantic_type=None,
+        )
+        for detector in self._semantic_registry.detectors:
+            match = detector.detect(detector_ctx)
+            if match is not None:
+                return match
+        return None
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]

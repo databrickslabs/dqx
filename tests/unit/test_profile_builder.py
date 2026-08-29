@@ -17,7 +17,7 @@ from databricks.labs.dqx.profiler.profile_builder import (
     register_profile_builder,
     validate_profile_options,
 )
-from databricks.labs.dqx.profiler.semantic import DQProfileContext, DQSemanticType
+from databricks.labs.dqx.profiler.semantic import DQProfileContext, DQSemanticType, EnumProperties
 
 
 @pytest.fixture
@@ -97,8 +97,8 @@ def test_register_profile_builder_returns_original_function():
 
 
 def test_register_profile_builder_context_type_uses_contextual_slot():
-    @register_profile_builder("_test_ctx", type="context")
-    def _ctx_builder(ctx):
+    @register_profile_builder("_test_ctx", kind="context")
+    def _ctx_builder(_ctx):
         return None
 
     try:
@@ -110,7 +110,7 @@ def test_register_profile_builder_context_type_uses_contextual_slot():
 
 
 def test_register_profile_builder_legacy_type_uses_builder_slot():
-    @register_profile_builder("_test_legacy_kw", type="legacy")
+    @register_profile_builder("_test_legacy_kw", kind="legacy")
     def _legacy_builder(*_):
         return None
 
@@ -386,7 +386,7 @@ def test_is_in_reuses_enum_values_without_extra_spark_action(mock_df):
             T.StringType(),
             {"count": 100, "count_non_null": 100},
             {"max_in_count": 10, "distinct_ratio": 0.1},
-            semantic_type=DQSemanticType(name="enum", properties={"values": ("car", "truck", "van")}),
+            semantic_type=DQSemanticType(name="enum", properties=EnumProperties(values={"car", "truck", "van"})),
         )
     )
     assert profile is not None

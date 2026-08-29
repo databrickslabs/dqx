@@ -3,6 +3,13 @@ import re
 from decimal import Decimal
 from typing import Any
 
+from pyspark.sql import types as T
+
+
+# Type alias for annotations; use TEXT_TYPES for isinstance() checks.
+TextType = T.CharType | T.StringType | T.VarcharType
+TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
+
 
 def val_to_str(value: Any, include_sql_quotes: bool = True):
     """

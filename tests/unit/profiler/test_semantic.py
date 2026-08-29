@@ -13,6 +13,9 @@ from databricks.labs.dqx.profiler.semantic import (
     DQProfileContext,
     DQSemanticType,
     DQSemanticTypeDetector,
+    EnumProperties,
+    KeyProperties,
+    MeasurementProperties,
     SemanticRegistry,
     default_semantic_detectors,
 )
@@ -23,21 +26,28 @@ from databricks.labs.dqx.profiler.semantic import (
 # ---------------------------------------------------------------------------
 
 
-def test_dq_semantic_type_tuple_property_round_trips():
-    sem = DQSemanticType(name="enum", properties={"values": (1, 2, 3)})
-    assert sem.properties["values"] == (1, 2, 3)
-    assert isinstance(sem.properties["values"], tuple)
+def test_dq_semantic_type_set_property_round_trips():
+    sem = DQSemanticType(name="enum", properties=EnumProperties(values={1, 2, 3}))
+    typed = sem.get_typed_properties(EnumProperties)
+    assert typed is not None
+    assert typed.values == {1, 2, 3}
+    assert isinstance(typed.values, set)
+
+
+def test_dq_semantic_type_get_typed_properties_wrong_type_returns_none():
+    sem = DQSemanticType(name="enum", properties=EnumProperties(values={1, 2, 3}))
+    assert sem.get_typed_properties(KeyProperties) is None
 
 
 def test_dq_semantic_type_frozen_blocks_field_reassignment():
-    sem = DQSemanticType(name="enum")
+    sem = DQSemanticType(name="enum", properties=EnumProperties(values={1}))
     with pytest.raises(ValidationError):
         sem.name = "x"  # type: ignore[misc]
 
 
 def test_dq_semantic_type_rejects_unsupported_property_value():
     with pytest.raises(ValidationError):
-        DQSemanticType(name="enum", properties={"values": {"nested": "dict"}})  # type: ignore[arg-type]
+        EnumProperties(values={"nested": "dict"})  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +72,7 @@ def test_semantic_registry_default_matches_helper():
 
 
 def test_semantic_registry_empty_constructor_has_empty_detectors():
-    assert SemanticRegistry().detectors == ()
+    assert not SemanticRegistry().detectors
 
 
 def test_semantic_registry_prepend_returns_new_instance():
@@ -131,7 +141,7 @@ def test_chain_first_match_wins_and_stops():
     calls: list[str] = []
 
     def make_detector(name: str, match: bool):
-        def _detect(ctx):
+        def _detect(_ctx):
             calls.append(name)
             return DQSemanticType(name=name) if match else None
 
@@ -180,7 +190,8 @@ def test_measurement_detector_positive_numeric_column():
     result = DEFAULT_MEASUREMENT_DETECTOR.detect(ctx)
     assert result is not None
     assert result.name == "measurement"
-    assert "distribution" in result.properties
+    assert isinstance(result.properties, MeasurementProperties)
+    assert result.properties.distribution in {"constant", "uniform", "normal", "exponential", "unknown"}
 
 
 def test_measurement_detector_rejects_string_column():
@@ -209,7 +220,8 @@ def test_key_detector_numeric_dense_positive():
     result = DEFAULT_KEY_DETECTOR.detect(ctx)
     assert result is not None
     assert result.name == "key"
-    assert result.properties.get("signal") == "density"
+    assert isinstance(result.properties, KeyProperties)
+    assert result.properties.signal == "density"
 
 
 def test_key_detector_numeric_sparse_negative_falls_through():
@@ -268,8 +280,9 @@ def test_enum_detector_positive_low_cardinality():
     result = DEFAULT_ENUM_DETECTOR.detect(ctx)
     assert result is not None
     assert result.name == "enum"
-    assert isinstance(result.properties["values"], tuple)
-    assert set(result.properties["values"]) == {"car", "truck", "van"}
+    typed = result.get_typed_properties(EnumProperties)
+    assert typed is not None
+    assert typed.values == {"car", "truck", "van"}
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +317,8 @@ def test_key_detector_string_uniform_length_positive():
     result = DEFAULT_KEY_DETECTOR.detect(ctx)
     assert result is not None
     assert result.name == "key"
-    assert result.properties.get("signal") == "length_stability"
+    assert isinstance(result.properties, KeyProperties)
+    assert result.properties.signal == "length_stability"
 
 
 def test_key_detector_string_variable_length_negative():

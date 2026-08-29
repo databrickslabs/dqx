@@ -83,12 +83,12 @@ def test_default_semantic_registry_classifies_grounded_columns(spark, ws):
     assert all(p.semantic_type == "enum" for p in by_column.get("vehicle_type", []) if p.name == "is_in")
 
     for measurement_col in ("cargo_weight", "deal_value"):
-        names = {p.name for p in by_column.get(measurement_col, [])}
+        names = {profile.name for profile in by_column.get(measurement_col, [])}
         assert "min_max" in names
         assert "is_in" not in names
-        for p in by_column.get(measurement_col, []):
-            if p.name == "min_max":
-                assert p.semantic_type == "measurement"
+        for profile in by_column.get(measurement_col, []):
+            if profile.name == "min_max":
+                assert profile.semantic_type == "measurement"
 
     user_id_names = {p.name for p in by_column.get("user_id", [])}
     assert "min_max" not in user_id_names
@@ -99,18 +99,18 @@ def test_default_semantic_registry_classifies_grounded_columns(spark, ws):
     assert "min_max" not in order_id_names
 
     user_name_profiles = by_column.get("user_name", [])
-    assert all(p.name != "is_in" for p in user_name_profiles)
+    assert all(profile.name != "is_in" for profile in user_name_profiles)
     # user_name has variable length → falls through to text (not key). text emits no additional
     # rules; only null_or_empty candidates remain.
-    for p in user_name_profiles:
-        if p.semantic_type is not None:
-            assert p.semantic_type == "text"
+    for profile in user_name_profiles:
+        if profile.semantic_type is not None:
+            assert profile.semantic_type == "text"
 
     work_desc_profiles = by_column.get("work_description", [])
-    assert all(p.name != "is_in" for p in work_desc_profiles)
-    for p in work_desc_profiles:
-        if p.semantic_type is not None:
-            assert p.semantic_type == "text"
+    assert all(profile.name != "is_in" for profile in work_desc_profiles)
+    for profile in work_desc_profiles:
+        if profile.semantic_type is not None:
+            assert profile.semantic_type == "text"
 
 
 def test_registry_without_enum_falls_through_to_measurement(spark, ws):
@@ -165,7 +165,6 @@ def test_profile_table_populates_metadata_from_unity_catalog(spark, ws, make_sch
 
     def _spy_detect(ctx):
         captured.append(dict(ctx.metadata))
-        return None
 
     spy = DQSemanticTypeDetector(name="spy", detect=_spy_detect)
     registry = SemanticRegistry(detectors=(spy, *default_semantic_detectors()))

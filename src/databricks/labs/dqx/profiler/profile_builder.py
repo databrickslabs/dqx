@@ -1,9 +1,9 @@
 import datetime
 import decimal
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import math
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
@@ -11,7 +11,8 @@ from pyspark.sql import types as T, functions as F
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
-from databricks.labs.dqx.profiler.semantic import DQProfileContext
+from databricks.labs.dqx.profiler.common import TEXT_TYPES
+from databricks.labs.dqx.profiler.semantic import DQProfileContext, EnumProperties
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_DISTINCT_RATIO,
@@ -31,10 +32,6 @@ from databricks.labs.dqx.profiler.profile_options import (
     DEFAULT_PROFILE_OPTIONS,
 )
 
-# Type alias for annotations; use TEXT_TYPES for isinstance() checks.
-TextType = T.CharType | T.StringType | T.VarcharType
-TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
-
 # Matched pair for serializing timestamp min/max through the Spark fallback: Spark renders with six
 # fractional-second digits and Python parses them back. Kept together as constants so the two patterns
 # can never drift apart (a mismatch would raise ValueError at parse time).
@@ -49,13 +46,13 @@ logger = logging.getLogger(__name__)
 def register_profile_builder(
     profile_type: str,
     *,
-    type: Literal["legacy", "context"] | None = None,
+    kind: Literal["legacy", "context"] | None = None,
 ) -> Callable:
     """Register a profile builder in *PROFILE_BUILDER_REGISTRY*.
 
     Args:
         profile_type: Registry key (e.g. *min_max*).
-        type: Callback shape.
+        kind: Callback shape.
             * *None* (default) or *"legacy"* — builder is a 5-argument callback
               matching the *ProfileBuilder* type alias. Registered as
               *DQProfileBuilder(name=..., builder=fn)*. Backward-compatible path.
@@ -65,7 +62,7 @@ def register_profile_builder(
     """
 
     def wrapper(builder_func: Callable) -> Callable:
-        if type == "context":
+        if kind == "context":
             PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(
                 name=profile_type, contextual_builder=builder_func
             )
@@ -76,7 +73,7 @@ def register_profile_builder(
     return wrapper
 
 
-@register_profile_builder("null_or_empty", type="context")
+@register_profile_builder("null_or_empty", kind="context")
 def make_null_or_empty_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
     Creates an *is_not_null_or_empty*, *is_not_null*, or *is_not_empty* profile by checking
@@ -94,7 +91,7 @@ def make_null_or_empty_profile(ctx: DQProfileContext) -> DQProfile | None:
     return _make_null_profile(ctx.column_name, ctx.metrics, ctx.options)
 
 
-@register_profile_builder("is_in", type="context")
+@register_profile_builder("is_in", kind="context")
 def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
     Creates an *is_in* profile.
@@ -125,10 +122,11 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
         return None
 
     if semantic_type is not None and semantic_type.name == "enum":
-        values = semantic_type.properties.get("values", ())
-        distinct_values = list(values) if isinstance(values, tuple) else list(values)
-        if not distinct_values:
+        enum_props = semantic_type.get_typed_properties(EnumProperties)
+        if enum_props is None or not enum_props.values:
             return None
+        # Sort so the emitted rule is deterministic across runs — EnumProperties.values is a set.
+        distinct_values = sorted(enum_props.values)
         return DQProfile(
             name="is_in",
             column=ctx.column_name,
@@ -160,7 +158,7 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
     return None
 
 
-@register_profile_builder("min_max", type="context")
+@register_profile_builder("min_max", kind="context")
 def make_min_max_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
     Creates a *min_max* profile.
@@ -389,7 +387,7 @@ def _is_profile_enabled(
     profile_enabled_option_name: str,
     profile_allow_columns_option_name: str,
     profile_deny_columns_option_name: str,
-    profiler_options: dict[str, Any],
+    profiler_options: Mapping[str, Any],
 ) -> bool:
     """
     Checks if a profiler builder is enabled for the given column.
@@ -800,7 +798,7 @@ def _round_decimal(value: decimal.Decimal, rounding_direction: str) -> decimal.D
     return value
 
 
-@register_profile_builder("has_no_outliers", type="context")
+@register_profile_builder("has_no_outliers", kind="context")
 def make_has_no_outliers_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
     Creates a *has_no_outliers* profile using the same MAD method as the *has_no_outliers* check rule.

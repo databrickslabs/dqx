@@ -13,6 +13,8 @@ class-creation time without quoted forward refs or *model_rebuild()*.
 
 Public surface:
     * models: *DQSemanticType*, *DQProfileContext*, *DQSemanticTypeDetector*
+    * properties: *DQSemanticTypeProperties*, *EnumProperties*, *KeyProperties*,
+      *MeasurementProperties*
     * registry: *SemanticRegistry*
     * detectors: *DEFAULT_ENUM_DETECTOR*, *DEFAULT_KEY_DETECTOR*,
       *DEFAULT_MEASUREMENT_DETECTOR*, *DEFAULT_TEXT_DETECTOR*,
@@ -23,7 +25,7 @@ Public surface:
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pyspark.sql import DataFrame
@@ -31,16 +33,63 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql.types import DataType
 
+from databricks.labs.dqx.profiler.common import TEXT_TYPES
 from databricks.labs.dqx.profiler.profile_options import PROFILE_OPTION_MAX_IN_COUNT
 
 logger = logging.getLogger(__name__)
 
 
 Scalar = str | int | float | bool
-PropertyValue = Scalar | tuple[Scalar, ...]
 
 
-# TODO (IK): Make properties `BaseModel` too.
+class DQSemanticTypeProperties(BaseModel):
+    """Base class for detector-specific properties emitted alongside a *DQSemanticType*.
+
+    Extension pattern: user-defined detectors subclass this and pass an instance
+    as the *properties* field of the *DQSemanticType* they emit. The model is
+    frozen and forbids extra fields, matching *DQSemanticType* itself.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class EnumProperties(DQSemanticTypeProperties):
+    """Properties for the built-in *enum* semantic type.
+
+    Attributes:
+        values: Collected distinct values. Homogeneous by construction — the
+            enum detector only fires on a single scalar column type, so the
+            set carries a single scalar type per instance.
+    """
+
+    values: set[str] | set[int]
+
+
+class KeyProperties(DQSemanticTypeProperties):
+    """Properties for the built-in *key* semantic type.
+
+    Attributes:
+        signal: Which secondary signal fired alongside distinctness — *density*
+            for numeric keys, *length_stability* for string keys.
+    """
+
+    signal: Literal["density", "length_stability"]
+
+
+class MeasurementProperties(DQSemanticTypeProperties):
+    """Properties for the built-in *measurement* semantic type.
+
+    Attributes:
+        distribution: Best-effort distribution family guess. *unknown* when
+            statistics were insufficient to classify.
+    """
+
+    distribution: Literal["constant", "uniform", "normal", "exponential", "unknown"] = "unknown"
+
+
+_PropertiesT = TypeVar("_PropertiesT", bound=DQSemanticTypeProperties)
+
+
 class DQSemanticType(BaseModel):
     """Classification of a column's semantic meaning.
 
@@ -48,18 +97,30 @@ class DQSemanticType(BaseModel):
         name: Globally unique identifier (e.g. *key*, *enum*, *measurement*).
             Used in generated check metadata and for detector lookup.
         description: Optional human-readable description.
-        properties: Detector-specific properties (e.g. distribution family,
-            enum values). Sequence values must be *tuple* (the model's value
-            type is *Scalar | tuple[Scalar, ...]*), so individual entries
-            are immutable; the *frozen* model config blocks reassignment of
-            the *properties* field itself.
+        properties: Detector-specific properties as a *DQSemanticTypeProperties*
+            subclass instance, or *None* when the detector emits no properties.
+            The *frozen* model config blocks reassignment of the field itself;
+            each properties subclass is frozen too, so the returned instance
+            is fully immutable.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     description: str | None = None
-    properties: Mapping[str, PropertyValue] = Field(default_factory=dict)
+    properties: DQSemanticTypeProperties | None = None
+
+    def get_typed_properties(self, properties_type: type[_PropertiesT]) -> _PropertiesT | None:
+        """Return *self.properties* narrowed to *properties_type*, or *None* when the type does not match.
+
+        Args:
+            properties_type: Concrete *DQSemanticTypeProperties* subclass to cast to.
+
+        Returns:
+            The properties instance typed as *properties_type* when it is an
+            instance of that class, else *None*.
+        """
+        return self.properties if isinstance(self.properties, properties_type) else None
 
 
 class DQProfileContext(BaseModel):
@@ -130,27 +191,12 @@ KEY_MIN_DENSITY_RATIO = 0.99
 KEY_MIN_LENGTH_STABILITY_RATIO = 0.95
 
 
-# TODO (IK): Use standard PySpark numeric types for this.
-_NUMERIC_TYPES: tuple[type[DataType], ...] = (
-    T.IntegerType,
-    T.LongType,
-    T.ShortType,
-    T.DoubleType,
-    T.FloatType,
-    T.DecimalType,
-    T.ByteType,
-)
-
-# TODO (IK): Reuse `TEXT_TYPES` from profile_builder.py
-_TEXT_TYPES: tuple[type[DataType], ...] = (T.StringType, T.CharType, T.VarcharType)
-
-
 def _is_numeric(column_type: DataType) -> bool:
-    return isinstance(column_type, _NUMERIC_TYPES)
+    return isinstance(column_type, T.NumericType)
 
 
 def _is_text(column_type: DataType) -> bool:
-    return isinstance(column_type, _TEXT_TYPES)
+    return isinstance(column_type, TEXT_TYPES)
 
 
 def _detect_enum(ctx: DQProfileContext) -> DQSemanticType | None:
@@ -158,7 +204,7 @@ def _detect_enum(ctx: DQProfileContext) -> DQSemanticType | None:
 
     The detector is the sole owner of the enum value collection: when it
     fires it runs a single distinct-collect on *ctx.df* and hands the result
-    to downstream builders through *ctx.semantic_type.properties["values"]*.
+    to downstream builders through *ctx.semantic_type.properties.values*.
     """
     column_type = ctx.column_type
     if not (_is_text(column_type) or isinstance(column_type, (T.IntegerType, T.LongType, T.ShortType))):
@@ -181,13 +227,9 @@ def _detect_enum(ctx: DQProfileContext) -> DQSemanticType | None:
 
     col = ctx.df.columns[0]
     distinct_rows = ctx.df.select(col).distinct().collect()
-    distinct_values = [row[0] for row in distinct_rows]
-    try:
-        sorted_distinct = sorted(distinct_values)
-    except TypeError:
-        sorted_distinct = distinct_values
+    distinct_values = {row[0] for row in distinct_rows}
 
-    return DQSemanticType(name="enum", properties={"values": tuple(sorted_distinct)})
+    return DQSemanticType(name="enum", properties=EnumProperties(values=distinct_values))
 
 
 def _detect_key(ctx: DQProfileContext) -> DQSemanticType | None:
@@ -216,39 +258,47 @@ def _detect_key(ctx: DQProfileContext) -> DQSemanticType | None:
     column_type = ctx.column_type
 
     if isinstance(column_type, (T.IntegerType, T.LongType, T.ShortType)):
-        min_value = ctx.metrics.get("min")
-        max_value = ctx.metrics.get("max")
-        if min_value is None or max_value is None:
-            return None
-        span = max_value - min_value + 1
-        if span <= 0:
-            return None
-        density = cardinality / span
-        if density < KEY_MIN_DENSITY_RATIO:
-            return None
-        return DQSemanticType(name="key", properties={"signal": "density"})
+        return _detect_numeric_key(ctx, cardinality)
 
     if _is_text(column_type):
-        col = ctx.df.columns[0]
-        agg = ctx.df.select(
-            F.min(F.length(F.col(col))).alias("min_len"),
-            F.max(F.length(F.col(col))).alias("max_len"),
-        ).first()
-        if agg is None:
-            return None
-        min_len = agg["min_len"]
-        max_len = agg["max_len"]
-        if min_len is None or max_len is None:
-            return None
-        if max_len == 0:
-            # Empty-string-only column — division by zero would follow. Not a key.
-            return None
-        length_stability = min_len / max_len
-        if length_stability < KEY_MIN_LENGTH_STABILITY_RATIO:
-            return None
-        return DQSemanticType(name="key", properties={"signal": "length_stability"})
+        return _detect_text_key(ctx)
 
     return None
+
+
+def _detect_numeric_key(ctx: DQProfileContext, cardinality: int) -> DQSemanticType | None:
+    min_value = ctx.metrics.get("min")
+    max_value = ctx.metrics.get("max")
+    if min_value is None or max_value is None:
+        return None
+    span = max_value - min_value + 1
+    if span <= 0:
+        return None
+    density = cardinality / span
+    if density < KEY_MIN_DENSITY_RATIO:
+        return None
+    return DQSemanticType(name="key", properties=KeyProperties(signal="density"))
+
+
+def _detect_text_key(ctx: DQProfileContext) -> DQSemanticType | None:
+    col = ctx.df.columns[0]
+    agg = ctx.df.select(
+        F.min(F.length(F.col(col))).alias("min_len"),
+        F.max(F.length(F.col(col))).alias("max_len"),
+    ).first()
+    if agg is None:
+        return None
+    min_len = agg["min_len"]
+    max_len = agg["max_len"]
+    if min_len is None or max_len is None:
+        return None
+    if max_len == 0:
+        # Empty-string-only column — division by zero would follow. Not a key.
+        return None
+    length_stability = min_len / max_len
+    if length_stability < KEY_MIN_LENGTH_STABILITY_RATIO:
+        return None
+    return DQSemanticType(name="key", properties=KeyProperties(signal="length_stability"))
 
 
 def _detect_measurement(ctx: DQProfileContext) -> DQSemanticType | None:
@@ -263,7 +313,7 @@ def _detect_measurement(ctx: DQProfileContext) -> DQSemanticType | None:
     min_value = ctx.metrics.get("min")
     max_value = ctx.metrics.get("max")
 
-    distribution = "unknown"
+    distribution: Literal["constant", "uniform", "normal", "exponential", "unknown"] = "unknown"
     if mean is not None and stddev is not None and min_value is not None and max_value is not None:
         try:
             span = float(max_value) - float(min_value)
@@ -284,7 +334,7 @@ def _detect_measurement(ctx: DQProfileContext) -> DQSemanticType | None:
         else:
             distribution = "normal"
 
-    return DQSemanticType(name="measurement", properties={"distribution": distribution})
+    return DQSemanticType(name="measurement", properties=MeasurementProperties(distribution=distribution))
 
 
 def _detect_text(ctx: DQProfileContext) -> DQSemanticType | None:
