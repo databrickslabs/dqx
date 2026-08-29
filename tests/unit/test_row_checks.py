@@ -1,5 +1,10 @@
+import re
+from collections.abc import Callable
 from typing import cast
+
 import pytest
+from pyspark.sql import Column
+
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
@@ -9,9 +14,11 @@ from databricks.labs.dqx.check_funcs import (
     is_not_greater_than,
     is_not_less_than,
     is_in_list,
+    is_not_in_list,
     is_not_null_and_is_in_list,
     is_aggr_not_greater_than,
     has_valid_string_case,
+    has_json_keys,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
     is_valid_national_id,
@@ -335,3 +342,87 @@ def test_is_valid_language_code_unsupported_code_format():
 def test_is_valid_language_code_case_insensitive_auto_name():
     result = is_valid_language_code("a", case_sensitive=False)
     assert get_column_name_or_alias(result) == "a_is_not_a_valid_language_code"
+
+
+@pytest.mark.parametrize(
+    "check_func, kwargs, expected_error, expected_message",
+    [
+        (
+            is_not_null_and_is_in_list,
+            {"column": "a", "allowed": None},
+            MissingParameterError,
+            "allowed list is not provided.",
+        ),
+        (is_in_list, {"column": "a", "allowed": None}, MissingParameterError, "allowed list is not provided."),
+        (
+            is_in_list,
+            {"column": "a", "allowed": "not_a_list"},
+            InvalidParameterError,
+            "allowed parameter must be a list",
+        ),
+        (is_not_in_list, {"column": "a", "forbidden": None}, MissingParameterError, "forbidden list is not provided."),
+        (
+            is_not_in_list,
+            {"column": "a", "forbidden": "not_a_list"},
+            InvalidParameterError,
+            "forbidden parameter must be a list",
+        ),
+        (is_not_in_list, {"column": "a", "forbidden": []}, InvalidParameterError, "forbidden list must not be empty."),
+        (
+            is_equal_to,
+            {"column": "a", "value": 1, "abs_tolerance": -1.0},
+            InvalidParameterError,
+            "tolerances if provided must be non-negative",
+        ),
+        (
+            is_equal_to,
+            {"column": "a", "value": 1, "rel_tolerance": -1.0},
+            InvalidParameterError,
+            "tolerances if provided must be non-negative",
+        ),
+        (
+            is_not_equal_to,
+            {"column": "a", "value": 1, "abs_tolerance": -1.0},
+            InvalidParameterError,
+            "tolerances if provided must be non-negative",
+        ),
+        (
+            is_not_equal_to,
+            {"column": "a", "value": 1, "rel_tolerance": -1.0},
+            InvalidParameterError,
+            "tolerances if provided must be non-negative",
+        ),
+        (
+            is_ipv4_address_in_cidr,
+            {"column": "a", "cidr_block": 123},
+            InvalidParameterError,
+            "'cidr_block' must be a string",
+        ),
+        (
+            is_ipv6_address_in_cidr,
+            {"column": "a", "cidr_block": 123},
+            InvalidParameterError,
+            "'cidr_block' must be a string",
+        ),
+        (
+            has_json_keys,
+            {"column": "a", "keys": []},
+            InvalidParameterError,
+            "The 'keys' parameter must be a non-empty list of strings.",
+        ),
+        (
+            has_json_keys,
+            {"column": "a", "keys": ["valid", 1]},
+            InvalidParameterError,
+            "All keys must be of type string.",
+        ),
+    ],
+)
+def test_row_check_rejects_invalid_arguments(
+    check_func: Callable[..., Column],
+    kwargs: dict[str, object],
+    expected_error: type[Exception],
+    expected_message: str,
+):
+    with pytest.raises(expected_error, match=re.escape(expected_message)):
+        check_func(**kwargs)

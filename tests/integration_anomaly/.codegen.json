@@ -1,6 +1,6 @@
 {
   "version": {
-    "src/databricks/labs/dqx/__about__.py": "__version__ = \"$VERSION\""
+    "src/databricks/labs/dqx/__version__.py": "__version__ = \"$VERSION\""
   },
   "toolchain": {
     "required": ["make", "uv"],
