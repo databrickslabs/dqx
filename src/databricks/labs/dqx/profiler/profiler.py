@@ -603,8 +603,6 @@ class DQProfiler(DQEngineBase):
         metadata_map = dict(column_metadata) if column_metadata else {}
         semantic_type = self._detect_semantic_type(column_df, field_name, field_type, metrics, opts, metadata_map)
 
-        # Reconstruct via the constructor (not model_copy) so validators run — same rationale as
-        # SemanticRegistry.prepend/replace.
         builder_ctx = DQProfileContext(
             df=column_df,
             column_name=field_name,

@@ -14,7 +14,6 @@ from databricks.labs.dqx.profiler.semantic import (
     DQSemanticType,
     DQSemanticTypeDetector,
     EnumProperties,
-    KeyProperties,
     MeasurementProperties,
     SemanticRegistry,
     default_semantic_detectors,
@@ -36,7 +35,7 @@ def test_dq_semantic_type_set_property_round_trips():
 
 def test_dq_semantic_type_get_typed_properties_wrong_type_returns_none():
     sem = DQSemanticType(name="enum", properties=EnumProperties(values={1, 2, 3}))
-    assert sem.get_typed_properties(KeyProperties) is None
+    assert sem.get_typed_properties(MeasurementProperties) is None
 
 
 def test_dq_semantic_type_frozen_blocks_field_reassignment():
@@ -220,8 +219,7 @@ def test_key_detector_numeric_dense_positive():
     result = DEFAULT_KEY_DETECTOR.detect(ctx)
     assert result is not None
     assert result.name == "key"
-    assert isinstance(result.properties, KeyProperties)
-    assert result.properties.signal == "density"
+    assert result.properties is None
 
 
 def test_key_detector_numeric_sparse_negative_falls_through():
@@ -317,8 +315,7 @@ def test_key_detector_string_uniform_length_positive():
     result = DEFAULT_KEY_DETECTOR.detect(ctx)
     assert result is not None
     assert result.name == "key"
-    assert isinstance(result.properties, KeyProperties)
-    assert result.properties.signal == "length_stability"
+    assert result.properties is None
 
 
 def test_key_detector_string_variable_length_negative():

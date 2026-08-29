@@ -116,12 +116,11 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
         return None
 
     semantic_type = ctx.semantic_type
-    if semantic_type is not None and semantic_type.name != "enum":
-        # A non-enum semantic type was assigned; do not emit an is_in candidate that would
-        # contradict the semantic classification.
-        return None
-
-    if semantic_type is not None and semantic_type.name == "enum":
+    if semantic_type is not None:
+        if semantic_type.name != "enum":
+            # A non-enum semantic type was assigned; do not emit an is_in candidate that would
+            # contradict the semantic classification.
+            return None
         enum_props = semantic_type.get_typed_properties(EnumProperties)
         if enum_props is None or not enum_props.values:
             return None

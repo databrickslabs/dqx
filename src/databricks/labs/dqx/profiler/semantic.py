@@ -13,8 +13,7 @@ class-creation time without quoted forward refs or *model_rebuild()*.
 
 Public surface:
     * models: *DQSemanticType*, *DQProfileContext*, *DQSemanticTypeDetector*
-    * properties: *DQSemanticTypeProperties*, *EnumProperties*, *KeyProperties*,
-      *MeasurementProperties*
+    * properties: *DQSemanticTypeProperties*, *EnumProperties*, *MeasurementProperties*
     * registry: *SemanticRegistry*
     * detectors: *DEFAULT_ENUM_DETECTOR*, *DEFAULT_KEY_DETECTOR*,
       *DEFAULT_MEASUREMENT_DETECTOR*, *DEFAULT_TEXT_DETECTOR*,
@@ -63,17 +62,6 @@ class EnumProperties(DQSemanticTypeProperties):
     """
 
     values: set[str] | set[int]
-
-
-class KeyProperties(DQSemanticTypeProperties):
-    """Properties for the built-in *key* semantic type.
-
-    Attributes:
-        signal: Which secondary signal fired alongside distinctness — *density*
-            for numeric keys, *length_stability* for string keys.
-    """
-
-    signal: Literal["density", "length_stability"]
 
 
 class MeasurementProperties(DQSemanticTypeProperties):
@@ -277,7 +265,7 @@ def _detect_numeric_key(ctx: DQProfileContext, cardinality: int) -> DQSemanticTy
     density = cardinality / span
     if density < KEY_MIN_DENSITY_RATIO:
         return None
-    return DQSemanticType(name="key", properties=KeyProperties(signal="density"))
+    return DQSemanticType(name="key")
 
 
 def _detect_text_key(ctx: DQProfileContext) -> DQSemanticType | None:
@@ -298,7 +286,7 @@ def _detect_text_key(ctx: DQProfileContext) -> DQSemanticType | None:
     length_stability = min_len / max_len
     if length_stability < KEY_MIN_LENGTH_STABILITY_RATIO:
         return None
-    return DQSemanticType(name="key", properties=KeyProperties(signal="length_stability"))
+    return DQSemanticType(name="key")
 
 
 def _detect_measurement(ctx: DQProfileContext) -> DQSemanticType | None:
