@@ -2903,6 +2903,7 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    allow_duplicate_keys: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -2935,8 +2936,8 @@ def compare_datasets(
         the source DataFrame (can be a list of string column names or column expressions).
         The *columns* parameter is matched with *ref_columns* by position, so the order of
         the provided columns in both lists must be exactly aligned. Only simple column
-        expressions are supported, e.g. F.col("col_name"). The matching columns must uniquely
-        identify rows in both datasets.
+        expressions are supported, e.g. F.col("col_name"). By default, the matching columns must
+        uniquely identify rows in both datasets.
       ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
       ref_table: Name of the reference table (used when reading from catalog).
       check_missing_records: Perform FULL OUTER JOIN between the DataFrames to also find
@@ -2957,6 +2958,11 @@ def compare_datasets(
         For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
         For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
+      allow_duplicate_keys: If True, duplicate matching-key groups are paired deterministically
+        by ordering rows on their compared values and adding a per-group row number to the join key.
+        This ordered pairing is more expensive and does not attempt to minimize the number of
+        reported column changes. If False (default), duplicate matching keys raise
+        *InvalidParameterError*.
 
 
     Returns:
@@ -2971,7 +2977,9 @@ def compare_datasets(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *abs_tolerance* or *rel_tolerance* is negative.
-            - if the matching columns do not uniquely identify rows in either dataset.
+            - if either DataFrame is streaming; dataset comparison requires bounded inputs.
+            - if *allow_duplicate_keys* is False and the matching columns do not uniquely identify
+              rows in either dataset.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -2998,18 +3006,8 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
-        match_count_col = f"__match_count_{unique_id}"
-        for dataset_name, dataset, matching_columns in (
-            ("source", df, pk_column_names),
-            ("reference", ref_df, ref_pk_column_names),
-        ):
-            matchable_rows = dataset if null_safe_row_matching else dataset.dropna(subset=matching_columns)
-            duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
-            if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
-                raise InvalidParameterError(
-                    f"The {dataset_name} dataset contains duplicate matching keys for columns: "
-                    f"{', '.join(matching_columns)}."
-                )
+        if df.isStreaming or ref_df.isStreaming:
+            raise InvalidParameterError("compare_datasets only supports batch DataFrames")
 
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {
@@ -3034,15 +3032,42 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
+        join_columns = pk_column_names
+        ref_join_columns = ref_pk_column_names
+        if allow_duplicate_keys:
+            row_number_col = f"__match_row_number_{unique_id}"
+            order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+            df = df.withColumn(
+                row_number_col,
+                F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
+            )
+            ref_df = ref_df.withColumn(
+                row_number_col,
+                F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
+            )
+            join_columns = [*pk_column_names, row_number_col]
+            ref_join_columns = [*ref_pk_column_names, row_number_col]
+        else:
+            match_count_col = f"__match_count_{unique_id}"
+            for dataset_name, dataset, matching_columns in (
+                ("source", df, pk_column_names),
+                ("reference", ref_df, ref_pk_column_names),
+            ):
+                matchable_rows = dataset if null_safe_row_matching else dataset.dropna(subset=matching_columns)
+                duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
+                if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
+                    raise InvalidParameterError(
+                        f"The {dataset_name} dataset contains duplicate matching keys for columns: "
+                        f"{', '.join(matching_columns)}."
+                    )
+
         # apply filter before aliasing to avoid ambiguity
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        results = _match_rows(
-            df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
-        )
+        results = _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
         results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance

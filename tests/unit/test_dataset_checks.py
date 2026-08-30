@@ -1,5 +1,8 @@
+from unittest.mock import create_autospec
+
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window, has_no_gaps_per_time_window
@@ -143,6 +146,18 @@ def test_compare_datasets_invalid_tolerance_exceptions(abs_tolerance, rel_tolera
                 "rel_tolerance": rel_tolerance,
             },
         )
+
+
+def test_compare_datasets_rejects_streaming_dataframes():
+    _, apply = check_funcs.compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
+    streaming_df = create_autospec(DataFrame, instance=True)
+    streaming_df.isStreaming = True
+    ref_df = create_autospec(DataFrame, instance=True)
+    ref_df.isStreaming = False
+    spark = create_autospec(SparkSession, instance=True)
+
+    with pytest.raises(InvalidParameterError, match="compare_datasets only supports batch DataFrames"):
+        apply(streaming_df, spark, {"ref_df": ref_df})
 
 
 def test_sql_query_empty_merge_columns():

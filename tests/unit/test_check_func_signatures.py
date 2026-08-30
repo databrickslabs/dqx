@@ -126,6 +126,7 @@ EXPECTED_PARAMETER_ORDER = {
         "row_filter",
         "abs_tolerance",
         "rel_tolerance",
+        "allow_duplicate_keys",
     ),
     "is_data_fresh_per_time_window": (
         "column",

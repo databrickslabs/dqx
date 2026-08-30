@@ -2878,6 +2878,62 @@ def test_compare_datasets_allows_duplicate_null_keys_when_null_safe_matching_dis
     assert apply(df, spark, {"ref_df": df}).count() == 2
 
 
+def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
+    ref_df = spark.createDataFrame([(1, "A"), (1, "C")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", allow_duplicate_keys=True
+    )
+
+    actual = {
+        row["value"]: row["violation"]
+        for row in apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    }
+
+    assert actual["A"] is None
+    assert json.loads(actual["B"]) == {
+        "row_missing": False,
+        "row_extra": False,
+        "changed": {"value": {"df": "B", "ref": "C"}},
+    }
+
+
+def test_compare_datasets_pairs_duplicate_keys_without_cartesian_fanout(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", allow_duplicate_keys=True
+    )
+
+    actual = apply(df, spark, {"ref_df": df}).select("id", "value", condition.alias("violation"))
+
+    assert actual.count() == 2
+    assert all(row["violation"] is None for row in actual.collect())
+
+
+def test_compare_datasets_reports_unpaired_duplicate_as_extra(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
+    ref_df = spark.createDataFrame([(1, "A")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        check_missing_records=True,
+        allow_duplicate_keys=True,
+    )
+
+    actual = {
+        row["value"]: row["violation"]
+        for row in apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    }
+
+    assert actual["A"] is None
+    assert json.loads(actual["B"]) == {
+        "row_missing": False,
+        "row_extra": True,
+        "changed": {"value": {"df": "B"}},
+    }
+
+
 def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
     schema = "id long"
 
