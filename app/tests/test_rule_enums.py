@@ -15,14 +15,13 @@ from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 from databricks_labs_dqx_app.backend.models import (
     BatchSaveRulesIn,
-    RuleSource,
-    RuleStatus,
     SaveRulesIn,
     SetStatusIn,
 )
+from databricks_labs_dqx_app.backend.rule_enums import RuleSource, RuleStatus
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
-_EXPECTED_SOURCE_VALUES = {"ui", "sql", "profiler", "import", "ai"}
+_EXPECTED_SOURCE_VALUES = {"ui", "sql", "profiler", "import", "ai", "registry"}
 _EXPECTED_STATUS_VALUES = {"draft", "pending_approval", "approved", "rejected"}
 
 

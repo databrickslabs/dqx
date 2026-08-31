@@ -24,7 +24,7 @@ The deploying user (you) needs the permissions below. They are **all** consumed 
 | 4 | **Databricks Apps: Can Manage** workspace permission | You, in the workspace | `bundle deploy` of the App resource | App creation rejected |
 | 5 | **Databricks Database (Lakebase): Manager** entitlement | You, in the workspace | `bundle deploy` of the `postgres_projects` / `postgres_roles` resources | `Error: User does not have permission to create database instances` |
 | 6 | **USE CATALOG** + **CREATE SCHEMA** on `<catalog_name>` | Your user or an admin group you're in | `bundle deploy` of the `schemas` and `volumes` resources | `Error: User does not have CREATE_SCHEMA on catalog '<catalog>'` |
-| 7 | **MANAGE** on `<catalog_name>` (or be the catalog owner) | Your user or an admin group you're in | The one-time `GRANT USE CATALOG` prerequisite (the bundle can't grant catalog-level access on a catalog it doesn't manage — see [The USE CATALOG prerequisite](#the-use-catalog-prerequisite)) | `Error: User does not have privilege MANAGE on catalog '<catalog>'` |
+| 7 | **MANAGE** on `<catalog_name>` (or be the catalog owner) | Your user or an admin group you're in | The one-time `GRANT USE CATALOG` to the **task-runner SP** and **`account users`** (the bundle auto-grants it for the app SP via the wheels-volume `uc_securable` binding, but can't grant catalog-level access to arbitrary principals on a catalog it doesn't manage — see [The USE CATALOG prerequisite](#the-use-catalog-prerequisite)) | `Error: User does not have privilege MANAGE on catalog '<catalog>'` |
 | 8 | **Service Principal: User** role on the task-runner SP | Your user, on the SP you'll use as `dqx_service_principal_application_id` | `bundle deploy` of the `jobs.dqx_task_runner` resource (sets `run_as.service_principal_name`) | `Error: User is not authorized to use this service principal` |
 | 9 | **Service Principal: Manager** role on the task-runner SP, *or* a pre-shared OAuth client secret | Your user, on the same SP | Only needed if you want to **mint a fresh OAuth secret yourself** for the task-runner (e.g. via `databricks service-principal-secrets-proxy create <sp-id>`) | `Error: User is not authorized to perform this operation` when minting a new secret |
 | 10 | **Account admin** (one-time, post-deploy) | Account level | Updating the app's OAuth custom-app integration to include the `all-apis` scope (see [Expand OAuth Scopes](#optional-expand-oauth-scopes)) | Some app features (job submission, advanced SCIM lookups) return 403 |
@@ -91,15 +91,17 @@ What this means in practice:
 
 ### The USE CATALOG prerequisite
 
-`bundle deploy` applies every schema- and volume-level grant natively (via `grants:` on the resources). The **one** privilege it cannot grant is `USE CATALOG` on your chosen catalog — the bundle does not manage the (pre-existing, user-selected) catalog, so it has no handle to grant catalog-level access on it. Grant it once per catalog (the app SP's client id is shown by `databricks apps get dqx-studio` after the first deploy):
+`bundle deploy` applies every schema- and volume-level grant natively (via `grants:` on the resources). The one privilege the bundle cannot declare directly is `USE CATALOG` on your chosen catalog — the bundle does not manage the (pre-existing, user-selected) catalog, so it has no handle to grant catalog-level access on it. Two things reduce this to a single manual step:
+
+- **App SP is automatic** — the app resource binds the wheels volume as a `uc_securable` under `resources.apps.dqx-studio.resources`. Databricks Apps auto-grants `USE CATALOG` on the parent catalog and `USE SCHEMA` on the parent schema to the app service principal when that binding is applied. No SQL required for the app SP.
+- **Task-runner SP + OBO end users are still manual** — the auto-grant only reaches the app SP. The task-runner job's `run_as` SP and the `account users` group (used by the OBO dry-run / preview path) still need `USE CATALOG` granted once per catalog:
 
 ```sql
 GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
-GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
 ```
 
-This is the **only** manual grant in the whole deployment. Everything else (ALL PRIVILEGES on the schemas + volume for both SPs, USE SCHEMA + CREATE TABLE on the tmp schema for `account users`, the deployer's dashboard SELECT, and warehouse `CAN_USE`) is declared in `databricks.yml` and applied by `bundle deploy`.
+That's the only manual grant left in the deployment. Everything else (ALL PRIVILEGES on the schemas + volume for both SPs, USE SCHEMA + CREATE TABLE on the tmp schema for `account users`, the deployer's dashboard SELECT, and warehouse `CAN_USE`) is declared in `databricks.yml` and applied by `bundle deploy`.
 
 ## Step 4: Configure `databricks.yml`
 
@@ -153,7 +155,8 @@ All target-level variables, their defaults, and what they control:
 | `lakebase_project_id` | `dqx-studio-db` | No | Lakebase Postgres project id for OLTP state. Declared as `resources.postgres_projects.dqx_studio` with `lifecycle.prevent_destroy: true`. Autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling). |
 | `lakebase_branch` | `dqx` | No | Project branch the app uses; auto-created with a `primary` endpoint on first deploy. |
 | `lakebase_endpoint` | `projects/<project>/branches/<branch>/endpoints/primary` | No | Endpoint resource path (`DQX_LAKEBASE_ENDPOINT`) driving host resolution + OAuth. Derived from project + branch. Set to `-` (and remove the postgres_projects/roles blocks) to disable Lakebase. |
-| `lakebase_database_name` | `databricks_postgres` | No | Logical Postgres database inside the Lakebase instance the app connects to. Defaults to `databricks_postgres` (always present, no provisioning step). All DQX tables live in a dedicated `dqx_studio` Postgres schema inside this database, so multiple apps can safely share the same `databricks_postgres` on one Lakebase instance. Override only if you've manually created a different logical DB you want to use. |
+| `lakebase_database_name` | `databricks_postgres` | No | Logical Postgres database inside the Lakebase instance the app connects to. Defaults to `databricks_postgres` (always present, no provisioning step). Override only if you've manually created a different logical DB you want to use. |
+| `lakebase_schema_name` | `dqx_studio` | No | Postgres schema inside that database where OLTP tables live (`DQX_LAKEBASE_SCHEMA`). Created by the app on first start. Isolate per target (e.g. `dqx_studio_v2`) when two apps share a Lakebase project — otherwise migrations fail with `must be owner of table …` against tables owned by another app SP. |
 | `lakebase_min_cu` / `lakebase_max_cu` | `0.5` / `1` | No | Autoscaling compute-unit range for the project endpoint. Raise the max if Lakebase queries queue in the app logs. |
 | `lakebase_suspend_timeout` | `300s` | No | Idle window before the endpoint scales to zero (60s–604800s). The app pre-pings and reconnects transparently on the next request after suspension. |
 
@@ -172,7 +175,7 @@ make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
 3. `databricks bundle run` — starts the app.
 
-Remember the one manual prerequisite: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) on your catalog to the app SP, task-runner SP, and `account users` (the bundle can't grant it because it doesn't manage the catalog).
+Remember the one manual prerequisite: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) on your catalog to the **task-runner SP** and **`account users`**. The app SP itself is handled automatically now, via the wheels-volume `uc_securable` binding on the app resource.
 
 > **First start**: The app runs both Delta and Lakebase database migrations on startup, and uploads DQX wheels to the UC volume. If the task-runner job runs before the app has started at least once, it will fail to find its wheels. Wait for `"Uploaded databricks_labs_dqx-<version>..."` in the logs before triggering runs. If Lakebase is enabled, also wait for `"Lakebase OLTP routing enabled"` before opening the UI — when Lakebase is configured and init fails, the app refuses to start (logged as `"Lakebase initialisation failed ... Refusing to start"`) and the Apps platform will restart the container. Silent fallback to Delta is intentionally disallowed because it would split OLTP writes across two physical stores and orphan prior Lakebase data on every flap. To intentionally run on Delta only, unset `DQX_LAKEBASE_ENDPOINT`.
 
@@ -216,10 +219,11 @@ GRANT USE SCHEMA, CREATE TABLE ON SCHEMA <catalog>.dqx_studio_tmp TO `account us
 -- (bundle uses ${workspace.current_user.userName}).
 GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.dqx_studio TO `<deployer>`;
 
--- USE CATALOG is the ONLY grant the bundle cannot apply (it doesn't manage the
--- catalog) — you must run this once per catalog. See "The USE CATALOG prerequisite".
+-- USE CATALOG on the app SP is auto-granted by Databricks Apps at deploy time,
+-- because the bundle binds the wheels volume as a uc_securable under the app
+-- resource (see "The USE CATALOG prerequisite"). USE CATALOG for the task-runner
+-- SP and `account users` (OBO dry-run / preview) is the only manual grant left.
 GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
-GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<job-sp-id>`;
 ```
 
@@ -251,7 +255,7 @@ Lakebase OAuth tokens expire after one hour. The app's `PgExecutor` runs a backg
 
 ## (Optional) Expand OAuth Scopes
 
-> **Most deployments don't need this step.** The OAuth scopes configured automatically by DABs (`sql`, `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`, `serving.serving-endpoints`) plus the identity scopes Databricks Apps grants implicitly are sufficient for all DQX Studio features on a standard workspace.
+> **Most deployments don't need this step.** The OAuth scopes configured automatically by DABs (`sql`, `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`, `serving.serving-endpoints`, `dashboards.genie`) plus the identity scopes Databricks Apps grants implicitly are sufficient for all DQX Studio features on a standard workspace. `dashboards.genie` is required because the in-app Ask Genie chat runs as the signed-in user (on-behalf-of), so answers respect that user's own table permissions; without it the chat falls back to the app service principal and row-level answers stay empty.
 >
 > Only follow this section if, after deploying, you see specific features returning `403` / permission errors in the app logs that look like missing OAuth scopes (for example, REST calls the baseline scopes do not cover). Expanding scopes requires **account admin** access.
 
@@ -361,8 +365,9 @@ The app deliberately refuses to start when Lakebase is configured (`DQX_LAKEBASE
 1. Confirm the Lakebase project + endpoint exist and are running (Compute → Database Instances in the workspace UI). If missing, re-run `databricks bundle deploy`; if the endpoint is still `STARTING`, wait and the next restart will succeed. (A suspended endpoint is fine — the app's pre-ping pool wakes it on connect.)
 2. Confirm the app SP's Postgres role exists on the project branch — it's created by the `postgres_roles.app_sp` resource. Redeploy if the role is missing.
 3. If the failure is specifically a Postgres `permission denied for database databricks_postgres` (or `permission denied to create schema`), the app SP can connect but lacks `CREATE` on the system `databricks_postgres` database — that privilege comes from the `DATABRICKS_SUPERUSER` membership in `postgres_roles.app_sp`. Confirm that block deployed (CLI ≥ 1.4.0), or run a one-time `GRANT CREATE ON DATABASE databricks_postgres TO "<app-sp-client-id>"` against the project endpoint.
-4. Confirm OAuth token issuance is healthy — Lakebase tokens currently expire after one hour; a misconfigured OAuth integration or revoked SP credential will surface here.
-5. If you intentionally want to run on Delta only (no Lakebase), remove the `postgres_projects` / `postgres_roles` blocks and set `lakebase_endpoint: "-"`, then redeploy. The app will start in legacy UC-only mode and OLTP tables will live on Delta.
+4. If the failure is `must be owner of table <name>` during startup migrations, the Lakebase `dqx_studio` schema objects are owned by a Postgres role other than the app's service principal — most often the human deployer after local dev (`make app-start-dev`) or `seed_demo.py` against the same Lakebase project. Postgres requires table ownership for `ALTER TABLE`; the app SP's `DATABRICKS_SUPERUSER` membership grants broad DML but does not let a non-owner add columns. **`make app-deploy` runs `scripts/post_deploy_lakebase_migrations.sh` after `bundle deploy`**, applying pending migrations as the deployer (who owns the objects) before the app starts. Re-run `make app-deploy` if you hit this after pulling new migrations. Avoid pointing local dev at production Lakebase endpoints.
+5. Confirm OAuth token issuance is healthy — Lakebase tokens currently expire after one hour; a misconfigured OAuth integration or revoked SP credential will surface here.
+6. If you intentionally want to run on Delta only (no Lakebase), remove the `postgres_projects` / `postgres_roles` blocks and set `lakebase_endpoint: "-"`, then redeploy. The app will start in legacy UC-only mode and OLTP tables will live on Delta.
 
 **`databricks bundle deploy` fails with `"already exists"` on the first deploy of a target:**
 A schema, volume, or Lakebase project of the same name was created out-of-band. Either rename it via the corresponding variable (`schema_name`, `wheels_volume_name`, `lakebase_project_id`) or `databricks bundle deployment bind <key> <existing-id> -t <target>` to adopt the existing resource, then redeploy.

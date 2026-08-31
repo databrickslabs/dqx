@@ -16,8 +16,6 @@ We also smoke-test the FastAPI endpoint via ``TestClient`` to make sure
 the route wiring + Pydantic serialization round-trip is intact.
 """
 
-from __future__ import annotations
-
 import inspect
 from decimal import Decimal
 
@@ -31,11 +29,12 @@ from databricks_labs_dqx_app.backend.routes.v1.check_functions import (
     _HIDDEN_FROM_SINGLE_TABLE,
     _category_for,
     _classify_param_kind,
+    _family_for_column_param,
     _first_doc_line,
+    _friendly_label,
     _introspect_check_functions,
     _serialize_default,
 )
-
 
 # ---------------------------------------------------------------------------
 # _classify_param_kind — collapse Python type hints to UI input kinds
@@ -103,6 +102,51 @@ class TestClassifyParamKind:
 
     def test_unannotated_param_falls_back_to_string(self) -> None:
         assert _classify_param_kind("opaque", inspect.Parameter.empty) == "string"
+
+
+# ---------------------------------------------------------------------------
+# _family_for_column_param — item 10 typed slot families
+# ---------------------------------------------------------------------------
+
+
+class TestFamilyForColumnParam:
+    """The app's own semantic reading of each check's column family."""
+
+    @pytest.mark.parametrize(
+        ("fn_name", "expected"),
+        [
+            ("regex_match", "text"),
+            ("is_valid_date", "text"),
+            ("is_valid_timestamp", "text"),
+            ("is_valid_ipv4_address", "text"),
+            ("has_valid_json_schema", "text"),
+            ("is_older_than_n_days", "temporal"),
+            ("is_older_than_col2_for_n_days", "temporal"),
+            ("is_not_in_future", "temporal"),
+            ("is_data_fresh", "temporal"),
+            ("has_no_outliers", "numeric"),
+            ("is_not_null_and_not_empty_array", "any"),
+        ],
+    )
+    def test_typed_checks_imply_their_family(self, fn_name: str, expected: str) -> None:
+        assert _family_for_column_param(fn_name) == expected
+
+    @pytest.mark.parametrize(
+        "fn_name",
+        [
+            "is_not_null",
+            "is_in_range",
+            "is_not_less_than",
+            "is_in_list",
+            "foreign_key",
+            "is_unique",
+            "some_unknown_future_check",
+        ],
+    )
+    def test_polymorphic_or_unknown_checks_stay_any(self, fn_name: str) -> None:
+        """Polymorphic comparison/null/list checks (and unknown ones) must not
+        be over-restricted — they stay ``any`` so apply-time picking is open."""
+        assert _family_for_column_param(fn_name) == "any"
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +292,7 @@ class TestIntrospectCheckFunctions:
     def test_is_not_null_has_single_required_column_param(self) -> None:
         fn = self._by_name("is_not_null")
         assert fn.rule_type == "row"
+        assert fn.rule_testable is True
         assert fn.category == "Null & Empty"
         assert len(fn.params) == 1
         param = fn.params[0]
@@ -280,6 +325,28 @@ class TestIntrospectCheckFunctions:
         # widget with the string ``"true"`` as its default.
         assert params_by_name["nulls_distinct"].kind == "boolean"
         assert params_by_name["nulls_distinct"].default == "true"
+
+    def test_column_param_carries_implied_family(self) -> None:
+        """A typed check's column slot advertises its family; a non-column
+        parameter carries no family (None)."""
+        fn = self._by_name("regex_match")
+        params_by_name = {p.name: p for p in fn.params}
+        assert params_by_name["column"].family == "text"
+        # ``regex`` is a plain string PARAMETER, not a column slot.
+        assert params_by_name["regex"].family is None
+
+    def test_temporal_check_types_all_its_column_slots(self) -> None:
+        fn = self._by_name("is_older_than_col2_for_n_days")
+        col_families = {p.name: p.family for p in fn.params if p.kind == "column"}
+        assert col_families == {"column1": "temporal", "column2": "temporal"}
+
+    def test_array_check_types_its_column_slot_as_any(self) -> None:
+        fn = self._by_name("is_not_null_and_not_empty_array")
+        assert fn.params[0].family == "any"
+
+    def test_polymorphic_check_column_stays_any(self) -> None:
+        fn = self._by_name("is_not_null")
+        assert fn.params[0].family == "any"
 
     def test_internal_row_filter_param_is_hidden(self) -> None:
         """``row_filter`` is auto-injected by the engine — surfacing it in
@@ -321,6 +388,75 @@ class TestIntrospectCheckFunctions:
         second = _introspect_check_functions()
         # Same tuple object thanks to lru_cache.
         assert first is second
+
+
+# ---------------------------------------------------------------------------
+# _friendly_label — human-readable labels
+# ---------------------------------------------------------------------------
+
+
+class TestFriendlyLabel:
+    """``_friendly_label`` should produce title-cased labels with acronym fixups
+    and curated overrides for the is_aggr_* family."""
+
+    def test_plain_check_is_title_cased(self) -> None:
+        assert _friendly_label("is_not_null") == "Is Not Null"
+
+    def test_aggr_equal_override(self) -> None:
+        assert _friendly_label("is_aggr_equal") == "Is Aggregate Equal"
+
+    def test_aggr_not_equal_override(self) -> None:
+        assert _friendly_label("is_aggr_not_equal") == "Is Aggregate Not Equal"
+
+    def test_aggr_not_greater_than_override(self) -> None:
+        assert _friendly_label("is_aggr_not_greater_than") == "Is Aggregate Not Greater Than"
+
+    def test_aggr_not_less_than_override(self) -> None:
+        assert _friendly_label("is_aggr_not_less_than") == "Is Aggregate Not Less Than"
+
+    def test_ip_acronym_upcased(self) -> None:
+        # is_valid_ipv4_address → "Is Valid Ipv4 Address" without fixup,
+        # with fixup the IP token should be upper-cased.
+        label = _friendly_label("is_valid_ipv4_address")
+        assert "IP" in label
+
+    def test_sql_acronym_upcased(self) -> None:
+        label = _friendly_label("sql_expression")
+        assert label.startswith("SQL")
+
+    def test_json_acronym_upcased(self) -> None:
+        label = _friendly_label("is_valid_json")
+        assert "JSON" in label
+
+
+class TestIntrospectCheckFunctionsLabel:
+    """Every introspected function should carry a non-empty label."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self) -> None:
+        _introspect_check_functions.cache_clear()
+
+    def _by_name(self, name: str) -> CheckFunctionDef:
+        for fn in _introspect_check_functions():
+            if fn.name == name:
+                return fn
+        pytest.fail(f"Check function {name!r} not found in introspected registry")
+
+    def test_is_not_null_has_label(self) -> None:
+        fn = self._by_name("is_not_null")
+        assert fn.label == "Is Not Null"
+
+    def test_is_aggr_equal_has_friendly_label(self) -> None:
+        fn = self._by_name("is_aggr_equal")
+        assert fn.label == "Is Aggregate Equal"
+
+    def test_is_valid_ipv4_address_has_ip_in_label(self) -> None:
+        fn = self._by_name("is_valid_ipv4_address")
+        assert "IP" in fn.label
+
+    def test_all_functions_have_non_empty_label(self) -> None:
+        for fn in _introspect_check_functions():
+            assert fn.label, f"{fn.name!r} has an empty label"
 
 
 # ---------------------------------------------------------------------------

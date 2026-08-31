@@ -1,0 +1,1311 @@
+"""Monitored Table service (Phase 3B — CRUD + profiling READ path).
+
+Manages the LIVE ``dq_monitored_tables`` bindings and their
+``dq_applied_rules`` links, per
+``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §3.1 and §7.
+
+This is Layer 2 of the Rules Registry: a thin binding recording that a
+table is under active governance, plus the live link between a published
+registry rule (``dq_rules``) and that table's column mapping. Applying new
+rules, mapping columns, and materializing into ``dq_quality_rules`` (Phase
+3C) are explicitly out of scope here — this module only covers register/
+list/get/delete of the binding + applied rules, and a READ-ONLY path over
+the existing ``dq_profiling_results`` Delta table (never written here; the
+profiler job owns writes to that table).
+
+Mirrors :class:`~databricks_labs_dqx_app.backend.services.registry_service.RegistryService`'s
+shape (dialect-portable SQL via the executor helpers, Python-side
+filtering over JSON metadata) but operates on the monitored-table tables.
+"""
+
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, cast, get_args
+from uuid import uuid4
+
+from databricks_labs_dqx_app.backend.registry_models import (
+    ORIGIN_KEY,
+    RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+    RESERVED_MAPPED_COLUMNS_KEY,
+    RESERVED_RULE_METADATA_KEYS,
+    SCHEDULE_KIND_DEFAULT,
+    AppliedRule,
+    ColumnMappingGroup,
+    MonitoredTable,
+    MonitoredTableStatus,
+    ScheduleKind,
+    get_rule_dimension,
+    get_rule_name,
+    get_rule_pass_threshold,
+    get_rule_severity,
+    normalize_schedule_sample_size,
+    parse_schedule_sample_size,
+)
+from databricks.sdk import WorkspaceClient
+
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+
+logger = logging.getLogger(__name__)
+
+# Keys that must never surface as free-text "custom tags" on a list row —
+# reserved registry metadata plus applied-rule-only bookkeeping keys.
+_CUSTOM_TAG_EXCLUDED_KEYS: frozenset[str] = frozenset(
+    {
+        *RESERVED_RULE_METADATA_KEYS,
+        RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+        RESERVED_MAPPED_COLUMNS_KEY,
+        ORIGIN_KEY,
+    }
+)
+
+# Display / list sort order for severity labels (most severe first).
+_SEVERITY_RANK: dict[str, int] = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+
+
+def _severity_list_sort_key(label: str) -> tuple[int, str]:
+    return (_SEVERITY_RANK.get(label.lower(), len(_SEVERITY_RANK)), label.lower())
+
+
+def _parse_snapshot_check_count(state_text: object) -> int | None:
+    """Parse check_count from a frozen dq_monitored_table_versions.state_json text.
+
+    Mirrors MonitoredTableVersions.snapshot_counts_many: prefer the cached
+    *check_count* int, else fall back to the *rule_refs* length; None when
+    there is no snapshot (draft binding) or the text won't parse.
+    """
+    if not isinstance(state_text, str) or not state_text:
+        return None
+    try:
+        state = json.loads(state_text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    cc = state.get("check_count")
+    if isinstance(cc, int):
+        return cc
+    refs = state.get("rule_refs")
+    return len(refs) if isinstance(refs, list) else None
+
+
+class DuplicateMonitoredTableError(ValueError):
+    """Raised by :meth:`MonitoredTableService.register` for an already-bound ``table_fqn``."""
+
+
+@dataclass
+class BulkRegisterResult:
+    """Summary returned by :meth:`MonitoredTableService.bulk_register`."""
+
+    registered: list[str] = field(default_factory=list)
+    skipped_existing: list[str] = field(default_factory=list)
+    invalid: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AppliedRuleSummary:
+    """An ``AppliedRule`` joined (in Python, over the JSON ``user_metadata`` blob) with its
+    registry rule's descriptive tags — used by :meth:`MonitoredTableService.get`.
+    """
+
+    applied_rule: AppliedRule
+    rule_name: str | None = None
+    rule_dimension: str | None = None
+    rule_severity: str | None = None
+    rule_pass_threshold: int | None = None
+    rule_source: str | None = None
+
+
+@dataclass
+class MonitoredTableDetail:
+    """A monitored table binding plus its applied rules — :meth:`MonitoredTableService.get`."""
+
+    table: MonitoredTable
+    applied_rules: list[AppliedRuleSummary] = field(default_factory=list)
+
+
+@dataclass
+class MonitoredTableSummary:
+    """A monitored table binding plus lightweight list-view counters.
+
+    The ``score*`` fields carry the cached DQ score LEFT-JOINed from
+    ``dq_score_cache`` (P3.4) — all ``None`` when the table has never been
+    scored. ``score_computed_at`` is the executor's ``ts_text`` string.
+    """
+
+    table: MonitoredTable
+    applied_rule_count: int = 0
+    applied_check_count: int | None = None
+    check_count: int = 0
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
+    # Distinct dimension / severity tags across the binding's applied rules
+    # (effective severity honours per-application ``severity_override``).
+    dimensions: list[str] = field(default_factory=list)
+    severities: list[str] = field(default_factory=list)
+    # Distinct free-text custom tags (key=value) across applied registry rules,
+    # excluding reserved metadata keys. Used by the Table Spaces "Add tables"
+    # picker to filter by custom tag value.
+    custom_tags: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class LatestProfile:
+    """A read-only projection of the most recent ``dq_profiling_results`` row for a table."""
+
+    run_id: str
+    source_table_fqn: str
+    status: str | None = None
+    rows_profiled: int | None = None
+    columns_profiled: int | None = None
+    duration_seconds: float | None = None
+    summary: dict[str, Any] = field(default_factory=dict)
+    generated_rules: list[dict[str, Any]] = field(default_factory=list)
+    profiled_at: str | None = None
+
+
+class MonitoredTableService:
+    """Manages Monitored Tables (``dq_monitored_tables`` / ``dq_applied_rules``) in the OLTP store.
+
+    ``profiling_sql`` is a separate executor because ``dq_profiling_results``
+    is always a Delta analytical table (written by the profiler job),
+    independent of whether the OLTP tables live in Lakebase Postgres or the
+    Delta OLTP-fallback baseline.
+    """
+
+    VALID_STATUSES: frozenset[str] = frozenset(get_args(MonitoredTableStatus))
+
+    def __init__(
+        self,
+        sql: OltpExecutorProtocol,
+        profiling_sql: SqlExecutor,
+        permissions: PermissionsService | None = None,
+        sp_ws: WorkspaceClient | None = None,
+    ) -> None:
+        self._sql = sql
+        self._profiling_sql = profiling_sql
+        self._perms = permissions
+        self._sp_ws = sp_ws
+        self._table = sql.fqn("dq_monitored_tables")
+        self._versions_table = sql.fqn("dq_monitored_table_versions")
+        self._applied_table = sql.fqn("dq_applied_rules")
+        self._rules_table = sql.fqn("dq_rules")
+        self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._score_cache_table = sql.fqn("dq_score_cache")
+        self._profiling_table = profiling_sql.fqn("dq_profiling_results")
+        # ``dq_validation_runs`` is always Delta (written by the runner job),
+        # same schema as ``dq_profiling_results`` — the ``last_run_at``
+        # write-on-complete derivation reads it off the same executor.
+        self._validation_runs_table = profiling_sql.fqn("dq_validation_runs")
+        self._select_cols = self._build_select_cols()
+        self._applied_select_cols = self._build_applied_select_cols()
+
+    def _build_select_cols(self, prefix: str = "") -> str:
+        created_at = self._sql.ts_text(f"{prefix}created_at")
+        updated_at = self._sql.ts_text(f"{prefix}updated_at")
+        last_profiled_at = self._sql.ts_text(f"{prefix}last_profiled_at")
+        last_run_at = self._sql.ts_text(f"{prefix}last_run_at")
+        return (
+            f"{prefix}binding_id, {prefix}table_fqn, {prefix}owner, {prefix}status, "
+            f"{prefix}version, {prefix}schedule_cron, {prefix}schedule_tz, "
+            f"{last_profiled_at} AS last_profiled_at, "
+            f"{last_run_at} AS last_run_at, "
+            f"{prefix}created_by, {created_at} AS created_at, "
+            f"{prefix}updated_by, {updated_at} AS updated_at, "
+            # schedule_kind (B2-52) appended last so existing positional indices
+            # in ``_row_to_table`` stay stable (schedule_kind=row[13]).
+            f"{prefix}schedule_kind, "
+            # owner_display_name appended after schedule_kind (row[14]).
+            f"{prefix}owner_display_name, "
+            # lifecycle rationale (row[15..16]).
+            f"{prefix}pending_rationale, {prefix}last_decision_rationale, "
+            # schedule_sample_size appended last (row[17]).
+            f"{prefix}schedule_sample_size"
+        )
+
+    def _build_applied_select_cols(self) -> str:
+        column_mapping = self._sql.select_json_text("column_mapping")
+        user_metadata = self._sql.select_json_text("user_metadata")
+        created_at = self._sql.ts_text("created_at")
+        return (
+            "id, binding_id, rule_id, pinned_version, severity_override, "
+            f"{column_mapping} AS column_mapping_json, {user_metadata} AS user_metadata_json, "
+            f"mapping_hash, created_by, {created_at} AS created_at, "
+            # row_filter (10) + pass_threshold (11) appended last so existing
+            # positional indices in ``_row_to_applied_rule`` stay stable.
+            "row_filter, pass_threshold"
+        )
+
+    # ------------------------------------------------------------------
+    # Register
+    # ------------------------------------------------------------------
+
+    def register(
+        self,
+        table_fqn: str,
+        user_email: str,
+        owner: str | None = None,
+        owner_display_name: str | None = None,
+    ) -> MonitoredTable:
+        """Register *table_fqn* under Rules Registry governance (status ``draft``).
+
+        Raises :class:`DuplicateMonitoredTableError` if the table is already
+        monitored (``table_fqn`` is unique).
+        """
+        validate_fqn(table_fqn)
+        existing = self._get_by_table_fqn(table_fqn)
+        if existing is not None:
+            raise DuplicateMonitoredTableError(
+                f"Table '{table_fqn}' is already monitored (binding_id={existing.binding_id})."
+            )
+        now = datetime.now(timezone.utc)
+        # Default the owner to the creator when none was resolved, so a
+        # freshly registered table always has an accountable owner (mirrors
+        # table spaces). The route prefers the UC table owner and passes it
+        # here as ``owner``; this fallback covers the owner-unavailable case.
+        # An explicit owner always wins.
+        resolved_owner = owner or user_email
+        # Resolve the owner's display name at write time when the caller did
+        # not supply one (best-effort; group/unresolvable → NULL).
+        if owner_display_name is None:
+            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
+        binding = MonitoredTable(
+            binding_id=uuid4().hex[:16],
+            table_fqn=table_fqn,
+            owner=resolved_owner,
+            owner_display_name=owner_display_name,
+            status="draft",
+            last_profiled_at=None,
+            created_by=user_email,
+            created_at=now,
+            updated_by=user_email,
+            updated_at=now,
+        )
+        self._insert(binding)
+        if self._perms is not None:
+            self._perms.seed_default_grants(
+                ObjectType.MONITORED_TABLE.value,
+                binding.binding_id,
+                owner_email=user_email,
+                grantor=user_email,
+            )
+        logger.info("Registered monitored table %s (binding_id=%s)", table_fqn, binding.binding_id)
+        return binding
+
+    def bulk_register(self, table_fqns: list[str], user_email: str, owner: str | None = None) -> BulkRegisterResult:
+        """Register many *table_fqns* under Rules Registry governance in one pass.
+
+        Unlike :meth:`register`, already-monitored tables are skipped
+        gracefully (reported in ``skipped_existing``) rather than raising
+        :class:`DuplicateMonitoredTableError`, and syntactically invalid FQNs
+        are reported in ``invalid`` rather than aborting the whole batch.
+        Input order is preserved and duplicates are deduped. Existence is
+        checked with a single ``IN (...)`` query rather than one round-trip
+        per FQN.
+        """
+        deduped = list(dict.fromkeys(table_fqns))
+        valid: list[str] = []
+        invalid: list[str] = []
+        for fqn in deduped:
+            try:
+                validate_fqn(fqn)
+                valid.append(fqn)
+            except ValueError:
+                invalid.append(fqn)
+        if not valid:
+            return BulkRegisterResult(registered=[], skipped_existing=[], invalid=invalid)
+
+        existing = self._get_existing_table_fqns(valid)
+        skipped_existing = [fqn for fqn in valid if fqn in existing]
+        to_register = [fqn for fqn in valid if fqn not in existing]
+
+        # Bulk register defaults every binding's owner to the creator (no
+        # per-table UC owner lookup — see route docstring for the cost
+        # trade-off). An explicit shared owner always wins. Resolve the
+        # shared owner's display name once (best-effort) rather than per row.
+        resolved_owner = owner or user_email
+        resolved_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
+        registered: list[str] = []
+        for fqn in to_register:
+            now = datetime.now(timezone.utc)
+            binding = MonitoredTable(
+                binding_id=uuid4().hex[:16],
+                table_fqn=fqn,
+                owner=resolved_owner,
+                owner_display_name=resolved_display_name,
+                status="draft",
+                last_profiled_at=None,
+                created_by=user_email,
+                created_at=now,
+                updated_by=user_email,
+                updated_at=now,
+            )
+            self._insert(binding)
+            if self._perms is not None:
+                self._perms.seed_default_grants(
+                    ObjectType.MONITORED_TABLE.value,
+                    binding.binding_id,
+                    owner_email=user_email,
+                    grantor=user_email,
+                )
+            registered.append(fqn)
+
+        logger.info(
+            "Bulk-registered %d monitored table(s), skipped %d existing, rejected %d invalid",
+            len(registered),
+            len(skipped_existing),
+            len(invalid),
+        )
+        return BulkRegisterResult(registered=registered, skipped_existing=skipped_existing, invalid=invalid)
+
+    def _get_existing_table_fqns(self, table_fqns: list[str]) -> set[str]:
+        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
+        sql = f"SELECT table_fqn FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0] for row in rows if row and row[0] is not None}
+
+    def _insert(self, binding: MonitoredTable) -> None:
+        # schedule_kind MUST be written explicitly: the Delta CHECK constraint
+        # chk_dq_monitored_tables_schedule_kind rejects a NULL value on insert
+        # (``NULL IN (...)`` is not treated as passing here), so omitting the
+        # column — which defaults it to NULL — fails registration. The binding
+        # always carries a concrete enum (SCHEDULE_KIND_DEFAULT on the model).
+        sql = (
+            f"INSERT INTO {self._table} "
+            "(binding_id, table_fqn, owner, owner_display_name, status, version, created_by, "
+            "created_at, updated_by, updated_at, schedule_kind) "
+            "VALUES "
+            f"('{escape_sql_string(binding.binding_id)}', '{escape_sql_string(binding.table_fqn)}', "
+            f"{self._opt_str(binding.owner)}, {self._opt_str(binding.owner_display_name)}, "
+            f"'{escape_sql_string(binding.status)}', 0, "
+            f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now(), "
+            f"'{escape_sql_string(binding.schedule_kind)}')"
+        )
+        self._sql.execute(sql)
+
+    # ------------------------------------------------------------------
+    # List / Get
+    # ------------------------------------------------------------------
+
+    def count(self) -> int:
+        """Total monitored table bindings, any status (homepage stat card)."""
+        return self._sql.count(self._table)
+
+    def list_monitored_tables(
+        self,
+        *,
+        status: str | None = None,
+        owner: str | None = None,
+        catalog: str | None = None,
+        schema: str | None = None,
+        name: str | None = None,
+    ) -> list[MonitoredTableSummary]:
+        """List monitored tables, optionally filtered.
+
+        ``status`` and ``owner`` are pushed down into SQL; ``catalog``,
+        ``schema``, and ``name`` filter over ``table_fqn`` in Python
+        (matching how :class:`RegistryService.list_rules` handles
+        JSON-blob metadata filters).
+
+        The cached DQ score columns are LEFT-JOINed from ``dq_score_cache``
+        in the same round-trip (P3.4) — never recomputed here; a page load
+        must not touch the warehouse. NULLs (no cache row yet) surface as
+        ``None`` score fields on the summary.
+
+        ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
+        binding row — denormalized on run/profiler completion by
+        :meth:`refresh_run_timestamps` — so this path, too, never touches the
+        warehouse (T-perf: the earlier derive-on-read over ``dq_profiling_results``
+        put a SQL-warehouse hop on every list load).
+        """
+        clauses: list[str] = []
+        if status:
+            clauses.append(f"mt.status = '{escape_sql_string(status)}'")
+        if owner:
+            clauses.append(f"mt.owner = '{escape_sql_string(owner)}'")
+        score_computed_at = self._sql.ts_text("sc.computed_at")
+        state_json_text = self._sql.select_json_text("v.state_json")
+        sql = (
+            f"SELECT {self._build_select_cols('mt.')}, "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at, "
+            f"{state_json_text} AS version_state_json "
+            f"FROM {self._table} mt "
+            f"LEFT JOIN {self._score_cache_table} sc "
+            f"ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn "
+            f"LEFT JOIN {self._versions_table} v "
+            f"ON v.binding_id = mt.binding_id AND v.version = mt.version"
+        )
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
+        rows = self._sql.query(sql)
+        # Base columns end with schedule_sample_size (index 17), so the
+        # score-cache LEFT-JOIN columns follow at 18..21, and the
+        # version_state_json at 22.
+        tables = [
+            (
+                self._row_to_table(row),
+                parse_cached_score(row[18], row[19], row[20], row[21]),
+                _parse_snapshot_check_count(row[22]),
+            )
+            for row in rows
+        ]
+        if catalog:
+            tables = [(t, s, c) for t, s, c in tables if self._fqn_part(t.table_fqn, 0) == catalog]
+        if schema:
+            tables = [(t, s, c) for t, s, c in tables if self._fqn_part(t.table_fqn, 1) == schema]
+        if name:
+            needle = name.lower()
+            tables = [(t, s, c) for t, s, c in tables if needle in t.table_fqn.lower()]
+        applied_counts = self._applied_rule_counts([t.binding_id for t, _, _c in tables])
+        check_counts = self._materialized_check_counts([t.table_fqn for t, _, _c in tables])
+        bindings_with_rules = [bid for bid in applied_counts if applied_counts[bid] > 0]
+        tag_facets = self._applied_rule_tag_facets(bindings_with_rules) if bindings_with_rules else {}
+        empty_facets: tuple[list[str], list[str], list[tuple[str, str]]] = ([], [], [])
+        return [
+            MonitoredTableSummary(
+                table=t,
+                applied_rule_count=applied_counts.get(t.binding_id, 0),
+                applied_check_count=snap_check_count,
+                check_count=check_counts.get(t.table_fqn, 0),
+                score=cached.score,
+                failed_tests=cached.failed_tests,
+                total_tests=cached.total_tests,
+                score_computed_at=cached.computed_at,
+                dimensions=tag_facets.get(t.binding_id, empty_facets)[0],
+                severities=tag_facets.get(t.binding_id, empty_facets)[1],
+                custom_tags=tag_facets.get(t.binding_id, empty_facets)[2],
+            )
+            for t, cached, snap_check_count in tables
+        ]
+
+    @staticmethod
+    def _fqn_part(table_fqn: str, index: int) -> str | None:
+        parts = table_fqn.split(".")
+        return parts[index] if len(parts) > index else None
+
+    def _applied_rule_counts(self, binding_ids: list[str]) -> dict[str, int]:
+        """Applied-rule counts for all *binding_ids* in ONE grouped query (no per-binding round-trip)."""
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        sql = (
+            f"SELECT binding_id, COUNT(*) FROM {self._applied_table} "  # noqa: S608
+            f"WHERE binding_id IN ({in_list}) GROUP BY binding_id"
+        )
+        rows = self._sql.query(sql)
+        return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
+
+    def _applied_rule_tag_facets(
+        self, binding_ids: list[str]
+    ) -> dict[str, tuple[list[str], list[str], list[tuple[str, str]]]]:
+        """Distinct dimension / severity / custom-tag facets per binding (one join).
+
+        Effective severity is ``severity_override`` when set, otherwise the
+        registry rule's reserved ``severity`` tag. Custom tags are the
+        free-text ``user_metadata`` entries on the applied registry rule
+        (excluding reserved keys). Bindings with no tagged applied rules
+        still appear in the result with empty lists.
+        """
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        user_metadata = self._sql.select_json_text("r.user_metadata")
+        sql = (
+            f"SELECT ar.binding_id, ar.severity_override, {user_metadata} "
+            f"FROM {self._applied_table} ar "
+            f"LEFT JOIN {self._rules_table} r ON ar.rule_id = r.rule_id "
+            f"WHERE ar.binding_id IN ({in_list})"
+        )
+        rows = self._sql.query(sql)
+        dims: dict[str, set[str]] = {}
+        sevs: dict[str, set[str]] = {}
+        custom: dict[str, set[tuple[str, str]]] = {}
+        for row in rows:
+            if not row or not row[0]:
+                continue
+            binding_id = str(row[0])
+            override = (row[1] or "").strip() if isinstance(row[1], str) else ""
+            metadata = self._parse_json_dict(row[2])
+            dimension = get_rule_dimension(metadata)
+            if dimension:
+                dims.setdefault(binding_id, set()).add(dimension)
+            severity = override or (get_rule_severity(metadata) or "")
+            if severity:
+                sevs.setdefault(binding_id, set()).add(severity)
+            for key, value in metadata.items():
+                if key in _CUSTOM_TAG_EXCLUDED_KEYS or not isinstance(value, str) or not value:
+                    continue
+                custom.setdefault(binding_id, set()).add((key, value))
+        out: dict[str, tuple[list[str], list[str], list[tuple[str, str]]]] = {}
+        for binding_id in binding_ids:
+            out[binding_id] = (
+                sorted(dims.get(binding_id, set())),
+                sorted(sevs.get(binding_id, set()), key=_severity_list_sort_key),
+                sorted(custom.get(binding_id, set())),
+            )
+        return out
+
+    def _materialized_check_counts(self, table_fqns: list[str]) -> dict[str, int]:
+        """Count active ``dq_quality_rules`` rows per *table_fqns* entry, regardless of authoring source.
+
+        One grouped query for all listed tables (no per-table round-trip); a
+        table with zero active rows is simply absent from the result.
+
+        ``dq_quality_rules`` holds every check for a table — authored
+        directly (``source`` in ``ui``/``sql``/``profiler``/``import``/``ai``)
+        as well as materialized from a Rules Registry application
+        (``source = 'registry'``). This must count all of them, not just
+        registry-sourced rows, matching dqlake's `BindingOutBrief.check_count`
+        semantics (which counts every check on a binding with no provenance
+        filter). ``rejected`` rows are excluded since they're no longer
+        active, mirroring :data:`RulesCatalogService.VALID_STATUSES`'s
+        terminal "dead" state.
+        """
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        sql = (
+            f"SELECT table_fqn, COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
+            f"WHERE table_fqn IN ({in_list}) AND status != 'rejected' GROUP BY table_fqn"
+        )
+        rows = self._sql.query(sql)
+        return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
+
+    # ------------------------------------------------------------------
+    # Write-on-complete: denormalize last_run_at / last_profiled_at (T-perf)
+    # ------------------------------------------------------------------
+
+    def refresh_run_timestamps(self, table_fqns: list[str]) -> int:
+        """Recompute + write ``last_run_at`` / ``last_profiled_at`` into the OLTP rows.
+
+        Write-on-complete (T-perf / B2-15): called OFF the page-load path at
+        run and profiler completion (and the scheduler's startup reconcile) so
+        the list/detail read paths read plain indexed OLTP columns and never
+        touch the warehouse.
+
+        Both values are derived from their Delta source, so this is idempotent
+        and self-healing — calling it at either completion event heals both
+        columns:
+
+        - ``last_run_at`` = newest terminal ``dq_validation_runs`` ``created_at``
+          for the table (either trigger surface — MT-direct or via a table
+          space — since both write ``source_table_fqn`` = the member table).
+        - ``last_profiled_at`` = newest SUCCESS ``dq_profiling_results``
+          ``created_at`` (the same row :meth:`get_latest_profile` trusts).
+
+        Two batched Delta lookups cover every listed table (no per-table
+        round-trip), then one OLTP ``UPDATE`` per table that has a value
+        (tables with neither are skipped, so a reconcile over a fresh install
+        writes nothing). The binding's ``updated_*`` audit columns are
+        deliberately left untouched — this is a pure denormalization, not a
+        lifecycle edit, so completing a run never reorders the list or rewrites
+        provenance. Returns the number of rows written.
+        """
+        valid: list[str] = []
+        for fqn in dict.fromkeys(table_fqns):
+            try:
+                validate_fqn(fqn)
+            except ValueError:
+                logger.warning("Dropping invalid table FQN from run-timestamp refresh")
+                continue
+            valid.append(fqn)
+        if not valid:
+            return 0
+        last_run = self._latest_validation_run_at_map(valid)
+        last_profiled = self._latest_profiled_at_map(valid)
+        written = 0
+        for fqn in valid:
+            run_at = last_run.get(fqn)
+            profiled_at = last_profiled.get(fqn)
+            if run_at is None and profiled_at is None:
+                continue
+            self._write_run_timestamps(fqn, run_at, profiled_at)
+            written += 1
+        return written
+
+    def _write_run_timestamps(
+        self, table_fqn: str, last_run_at: datetime | None, last_profiled_at: datetime | None
+    ) -> None:
+        """Write the denormalized timestamps for ONE table (both backends).
+
+        ``CAST('<iso>' AS TIMESTAMP)`` parses on Delta and Postgres alike
+        (mirrors :class:`ScoreCacheService`'s timestamp writes); a ``None``
+        value is written as SQL ``NULL``.
+        """
+        e = escape_sql_string(table_fqn)
+        self._sql.execute(
+            f"UPDATE {self._table} SET "  # noqa: S608
+            f"last_run_at = {self._opt_timestamp(last_run_at)}, "
+            f"last_profiled_at = {self._opt_timestamp(last_profiled_at)} "
+            f"WHERE table_fqn = '{e}'"
+        )
+
+    def _latest_validation_run_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
+        """Newest terminal ``dq_validation_runs`` timestamp per table.
+
+        The unified "last run" source (B2-15): covers BOTH trigger surfaces
+        (MT-direct runs and product/table-space fan-outs) because every
+        submitted run writes ``source_table_fqn`` = the member table. RUNNING
+        placeholders and ad-hoc ``preview`` runs are excluded so the value
+        tracks only history-visible runs. One grouped query over every listed
+        table; tables that have never run are absent from the result.
+        """
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        last_run_at = self._profiling_sql.ts_text("MAX(created_at)")
+        sql = (
+            f"SELECT source_table_fqn, {last_run_at} AS last_run_at "  # noqa: S608
+            f"FROM {self._validation_runs_table} "
+            f"WHERE source_table_fqn IN ({in_list}) "
+            f"AND UPPER(status) <> 'RUNNING' AND COALESCE(run_type, 'dryrun') <> 'preview' "
+            f"GROUP BY source_table_fqn"
+        )
+        return self._grouped_timestamp_map(self._profiling_sql.query(sql))
+
+    def _latest_profiled_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
+        """Newest SUCCESS profiling timestamp per table, from ``dq_profiling_results``.
+
+        The ``last_profiled_at`` source for :meth:`refresh_run_timestamps`'
+        write-on-complete: the most recent successful profiler run for the
+        table — the same row :meth:`get_latest_profile` trusts. One grouped
+        query covers every listed table (no per-table round-trip); tables never
+        profiled are simply absent from the result.
+        """
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        last_profiled_at = self._profiling_sql.ts_text("MAX(created_at)")
+        sql = (
+            f"SELECT source_table_fqn, {last_profiled_at} AS last_profiled_at "  # noqa: S608
+            f"FROM {self._profiling_table} "
+            f"WHERE source_table_fqn IN ({in_list}) AND status = 'SUCCESS' "
+            f"GROUP BY source_table_fqn"
+        )
+        return self._grouped_timestamp_map(self._profiling_sql.query(sql))
+
+    def _grouped_timestamp_map(self, rows: list[list[str]]) -> dict[str, datetime]:
+        """Parse ``(fqn, ts_text)`` rows into ``{fqn: datetime}``, dropping unparsable ones."""
+        result: dict[str, datetime] = {}
+        for row in rows:
+            ts = self._parse_timestamp(row[1])
+            if row[0] and ts is not None:
+                result[row[0]] = ts
+        return result
+
+    def get(self, binding_id: str) -> MonitoredTableDetail | None:
+        """Get a monitored table binding plus its applied rules (with joined rule tags)."""
+        table = self._get(binding_id)
+        if table is None:
+            return None
+        # ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
+        # row (denormalized on completion by :meth:`refresh_run_timestamps`) —
+        # no warehouse hop on the detail load (About tab reads last_profiled_at).
+        applied_rules = self._list_applied_rules(binding_id)
+        return MonitoredTableDetail(table=table, applied_rules=applied_rules)
+
+    def get_by_table_fqn(self, table_fqn: str) -> MonitoredTableDetail | None:
+        """Like :meth:`get`, but keyed by the bound table's FQN.
+
+        Used by the dq-results endpoints to attribute a table's check
+        results (keyed by ``input_location``) back to the binding's
+        applied-rule metadata. None when the table is not monitored.
+        """
+        table = self._get_by_table_fqn(table_fqn)
+        if table is None:
+            return None
+        return MonitoredTableDetail(table=table, applied_rules=self._list_applied_rules(table.binding_id))
+
+    def get_binding_ids_by_table_fqn(self, table_fqns: list[str]) -> dict[str, str]:
+        """Batched ``table_fqn -> binding_id`` lookup in ONE ``IN (...)`` query.
+
+        Used by the dq-results global endpoint to enrich its ``by_table``
+        rows with a link target without a per-table round-trip (the
+        table_fqn column is unique, so at most one binding per FQN).
+        Tables that are not monitored are simply absent from the result.
+
+        Inputs may be warehouse-sourced (``dq_metrics.input_location``), so
+        anything failing :func:`validate_fqn` is silently dropped before
+        interpolation — an unmonitorable name can never match anyway.
+        """
+        candidates: list[str] = []
+        for fqn in table_fqns:
+            try:
+                validate_fqn(fqn)
+            except ValueError:
+                logger.warning("Dropping invalid table FQN from binding-id lookup")
+                continue
+            candidates.append(fqn)
+        if not candidates:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
+        sql = f"SELECT table_fqn, binding_id FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
+
+    def _get(self, binding_id: str) -> MonitoredTable | None:
+        e = escape_sql_string(binding_id)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE binding_id = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        return self._row_to_table(rows[0])
+
+    def _get_by_table_fqn(self, table_fqn: str) -> MonitoredTable | None:
+        e = escape_sql_string(table_fqn)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE table_fqn = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        return self._row_to_table(rows[0])
+
+    def get_version_freezes(self, binding_id: str) -> list[tuple[int, datetime | None]]:
+        """The binding's ``(version, frozen_at)`` approval history.
+
+        One entry per frozen approved rule-set snapshot in
+        ``dq_monitored_table_versions`` (``created_at`` is when that
+        version was first approved). Feeds the results trend's
+        version-increment markers. Returns an empty list for a binding
+        with no approved versions.
+        """
+        e = escape_sql_string(binding_id)
+        created_at = self._sql.ts_text("created_at")
+        sql = (
+            f"SELECT version, {created_at} AS created_at "  # noqa: S608
+            f"FROM {self._versions_table} WHERE binding_id = '{e}' ORDER BY version"
+        )
+        out: list[tuple[int, datetime | None]] = []
+        for row in self._sql.query(sql):
+            if row[0] in (None, ""):
+                continue
+            out.append((int(row[0]), self._parse_timestamp(row[1])))
+        return out
+
+    def _list_applied_rules(self, binding_id: str) -> list[AppliedRuleSummary]:
+        e = escape_sql_string(binding_id)
+        sql = (
+            f"SELECT {self._applied_select_cols} FROM {self._applied_table} "  # noqa: S608
+            f"WHERE binding_id = '{e}' ORDER BY created_at"
+        )
+        rows = self._sql.query(sql)
+        applied_rules = [self._row_to_applied_rule(row) for row in rows]
+        summaries: list[AppliedRuleSummary] = []
+        for applied_rule in applied_rules:
+            name, dimension, severity, pass_threshold, source = self._rule_tags(applied_rule.rule_id)
+            summaries.append(
+                AppliedRuleSummary(
+                    applied_rule=applied_rule,
+                    rule_name=name,
+                    rule_dimension=dimension,
+                    rule_severity=severity,
+                    rule_pass_threshold=pass_threshold,
+                    rule_source=source,
+                )
+            )
+        return summaries
+
+    def list_applied_rules_many(self, binding_ids: list[str]) -> dict[str, list[AppliedRule]]:
+        """Applied rules for all *binding_ids* in ONE grouped query (no per-binding round-trip).
+
+        Unlike :meth:`_list_applied_rules`, this returns bare
+        :class:`AppliedRule` rows WITHOUT the per-rule descriptive-tag join
+        (name/dimension/severity): callers that only need the applications
+        themselves — e.g. the draft check-count render — must not pay one
+        ``dq_rules`` lookup per applied rule. Each binding's list preserves
+        ``created_at`` order to match :meth:`_list_applied_rules`; a binding
+        with no applied rows is simply absent from the result. An empty input
+        issues no query.
+        """
+        if not binding_ids:
+            return {}
+        distinct = sorted({b for b in binding_ids if b})
+        if not distinct:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in distinct)
+        sql = (
+            f"SELECT {self._applied_select_cols} FROM {self._applied_table} "  # noqa: S608
+            f"WHERE binding_id IN ({in_list}) ORDER BY binding_id, created_at"
+        )
+        rows = self._sql.query(sql)
+        grouped: dict[str, list[AppliedRule]] = {}
+        for row in rows:
+            applied = self._row_to_applied_rule(row)
+            grouped.setdefault(applied.binding_id, []).append(applied)
+        return grouped
+
+    def _rule_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None, int | None, str | None]:
+        """Look up name/dimension/severity/pass_threshold/source for *rule_id* from ``dq_rules``.
+
+        Returns ``(None, None, None, None, None)`` if the rule row is missing (e.g. a
+        registry rule was hard-deleted out from under an application) —
+        callers display a graceful blank rather than failing the whole
+        monitored-table detail view.
+        """
+        e = escape_sql_string(rule_id)
+        user_metadata = self._sql.select_json_text("user_metadata")
+        sql = f"SELECT source, {user_metadata} FROM {self._rules_table} WHERE rule_id = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        if not rows or not rows[0]:
+            return None, None, None, None, None
+        source = rows[0][0] if rows[0][0] else None
+        metadata = self._parse_json_dict(rows[0][1])
+        return (
+            get_rule_name(metadata),
+            get_rule_dimension(metadata),
+            get_rule_severity(metadata),
+            get_rule_pass_threshold(metadata),
+            source,
+        )
+
+    # ------------------------------------------------------------------
+    # Submit-for-review lifecycle (draft -> pending_approval -> approved/rejected)
+    # ------------------------------------------------------------------
+
+    def set_status(
+        self,
+        binding_id: str,
+        status: str,
+        user_email: str,
+        *,
+        rationale: str | None = None,
+        set_rationale: bool = False,
+    ) -> MonitoredTable:
+        """Set a monitored table binding's own review-lifecycle status flag.
+
+        Only flips the binding row's ``status`` column — it never touches
+        ``dq_applied_rules`` or the materialized ``dq_quality_rules`` rows.
+        The route layer (``routes/v1/monitored_tables.py``) orchestrates the
+        binding status alongside the materializer and the per-rule
+        submit/approve/reject transitions so the binding's status stays a
+        faithful roll-up of its materialized checks.
+
+        When ``set_rationale`` is True (submit / approve / reject / revert
+        routes), also updates ``pending_rationale`` / ``last_decision_rationale``
+        for the target status. Roll-up callers leave ``set_rationale=False`` so
+        incidental status sync does not wipe an author's pending rationale.
+
+        Raises:
+            ValueError: *status* is not a member of :data:`MonitoredTableStatus`.
+            RuntimeError: *binding_id* does not exist.
+        """
+        if status not in self.VALID_STATUSES:
+            raise ValueError(
+                f"Invalid monitored table status {status!r}; expected one of {sorted(self.VALID_STATUSES)}"
+            )
+        table = self._get(binding_id)
+        if table is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        updates: dict[str, Any] = {
+            "status": status,
+            "updated_by": user_email,
+            "updated_at": RawSql("now()"),
+        }
+        if set_rationale:
+            if status == "pending_approval":
+                updates["pending_rationale"] = rationale
+                table.pending_rationale = rationale
+            elif status in ("approved", "rejected"):
+                updates["pending_rationale"] = None
+                updates["last_decision_rationale"] = rationale
+                table.pending_rationale = None
+                table.last_decision_rationale = rationale
+            elif status == "draft":
+                # Author revoke — drop the pending banner without recording a decision.
+                updates["pending_rationale"] = None
+                table.pending_rationale = None
+        self._sql.update(self._table, updates=updates, where={"binding_id": binding_id})
+        table.status = cast(MonitoredTableStatus, status)
+        table.updated_by = user_email
+        logger.info(
+            "Set monitored table %s (binding_id=%s) status to %s (by %s)",
+            table.table_fqn,
+            binding_id,
+            status,
+            user_email,
+        )
+        return table
+
+    def update_schedule(
+        self,
+        binding_id: str,
+        schedule_cron: str | None,
+        schedule_tz: str | None,
+        user_email: str,
+        schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT,
+        schedule_sample_size: int | None = None,
+    ) -> MonitoredTable:
+        """Set (or clear) the binding's run schedule (P21 item 14).
+
+        Schedule is operational config that is orthogonal to the rule-review
+        lifecycle, so — unlike a Table Space edit — this deliberately does NOT
+        flip the binding's ``status`` back to ``draft``: an approved table stays
+        approved (and thus schedulable) after its cadence changes. Only the
+        ``schedule_*`` columns and the ``updated_*`` audit fields move.
+
+        Pass ``schedule_cron=None`` to remove the schedule; ``schedule_tz`` and
+        ``schedule_sample_size`` are forced to NULL alongside it so a cleared
+        schedule never leaves a dangling timezone or run scope behind.
+
+        *schedule_sample_size* is the rows a due run reads; None or 0 means the
+        whole table, which is what every schedule did before the column existed.
+
+        Raises:
+            RuntimeError: *binding_id* does not exist.
+        """
+        table = self._get(binding_id)
+        if table is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        cron = schedule_cron or None
+        tz = schedule_tz if cron is not None else None
+        kind = schedule_kind if schedule_kind in get_args(ScheduleKind) else SCHEDULE_KIND_DEFAULT
+        sample = normalize_schedule_sample_size(schedule_sample_size) if cron is not None else None
+        e = escape_sql_string(binding_id)
+        self._sql.execute(
+            f"UPDATE {self._table} SET schedule_cron = {self._opt_str(cron)}, "
+            f"schedule_tz = {self._opt_str(tz)}, "
+            f"schedule_kind = {self._opt_str(kind)}, "
+            f"schedule_sample_size = {sample if sample is not None else 'NULL'}, "
+            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
+            f"WHERE binding_id = '{e}'"
+        )
+        table.schedule_cron = cron
+        table.schedule_tz = tz
+        table.schedule_kind = kind
+        table.schedule_sample_size = sample
+        table.updated_by = user_email
+        logger.info(
+            "Updated monitored table %s (binding_id=%s) schedule (cron=%s, tz=%s, kind=%s, sample=%s, by %s)",
+            table.table_fqn,
+            binding_id,
+            cron,
+            tz,
+            kind,
+            sample,
+            user_email,
+        )
+        return table
+
+    def update_owner(self, binding_id: str, owner: str, user_email: str) -> MonitoredTable:
+        """Set the binding's owner (stored in the ``owner`` column).
+
+        Owner is operational metadata orthogonal to the rule-review lifecycle, so
+        this does NOT flip the binding's ``status``. Only ``owner`` and the
+        ``updated_*`` audit fields move.
+
+        Raises:
+            RuntimeError: *binding_id* does not exist.
+            ValueError: *owner* is blank after trimming.
+        """
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("Owner must not be empty")
+        table = self._get(binding_id)
+        if table is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        e = escape_sql_string(binding_id)
+        self._sql.execute(
+            f"UPDATE {self._table} SET owner = {self._opt_str(owner)}, "
+            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
+            f"WHERE binding_id = '{e}'"
+        )
+        table.owner = owner
+        table.updated_by = user_email
+        logger.info(
+            "Set monitored table %s (binding_id=%s) owner to %s (by %s)",
+            table.table_fqn,
+            binding_id,
+            owner,
+            user_email,
+        )
+        return table
+
+    def list_materialized_rule_statuses(self, binding_id: str) -> list[tuple[str, str]]:
+        """Return ``(rule_id, status)`` for every ``dq_quality_rules`` row this binding materialized.
+
+        Resolves the binding's materialized rows through the SAME
+        ``dq_quality_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
+        ``dq_applied_rules.binding_id`` linkage the materializer maintains
+        (:meth:`Materializer.materialize_binding` /
+        :meth:`Materializer._cleanup_orphans`), rather than matching on
+        ``table_fqn`` — two bindings can never share this precise link. Used
+        by the submit/approve/reject route orchestration to drive the
+        per-rule status transitions and to roll the binding status up from
+        its checks.
+        """
+        applied_ids = self._applied_rule_ids(binding_id)
+        if not applied_ids:
+            return []
+        placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
+        sql = (
+            f"SELECT rule_id, status FROM {self._quality_rules_table} "  # noqa: S608
+            f"WHERE applied_rule_id IN ({placeholders})"
+        )
+        rows = self._sql.query(sql)
+        return [(row[0], row[1]) for row in rows if row and row[0]]
+
+    def rollup_status(self, binding_id: str, user_email: str) -> MonitoredTable | None:
+        """Roll a binding's own status up from its materialized checks' statuses.
+
+        Mirrors the submit/approve/reject route orchestration's
+        ``_rollup_binding_status`` (``routes/v1/monitored_tables.py``): any
+        check still ``pending_approval`` keeps the binding
+        ``pending_approval``; otherwise if any check is ``approved`` the
+        binding is ``approved``; with neither it falls back to ``draft``.
+
+        Exposed as a service method (not just a route helper) because a
+        registry-rule REPUBLISH re-materializes a follower binding's checks
+        out-of-band of any binding-level transition: with auto-upgrade OFF a
+        changed follower check silently drops to ``pending_approval``
+        (materializer Behaviour B), and without this roll-up the binding would
+        keep claiming ``approved`` while its frozen snapshot serves the stale
+        version and the table-level approve path (which requires
+        ``pending_approval``) stays blocked — the exact "the rule updated but
+        the run still uses the old checks" gap (P23 item 1).
+
+        No-op (returns the binding unchanged) when the binding has no
+        materialized checks or the rolled-up status already matches, so it is
+        safe to call unconditionally after a re-materialization. Returns
+        ``None`` when *binding_id* does not exist.
+        """
+        table = self._get(binding_id)
+        if table is None:
+            return None
+        statuses = {status for _, status in self.list_materialized_rule_statuses(binding_id)}
+        if not statuses:
+            return table
+        if "pending_approval" in statuses:
+            target = "pending_approval"
+        elif "approved" in statuses:
+            target = "approved"
+        else:
+            target = "draft"
+        if target == table.status:
+            return table
+        return self.set_status(binding_id, target, user_email)
+
+    def _applied_rule_ids(self, binding_id: str) -> list[str]:
+        e = escape_sql_string(binding_id)
+        sql = f"SELECT id FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608
+        rows = self._sql.query(sql)
+        return [row[0] for row in rows if row and row[0]]
+
+    # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
+    def delete(self, binding_id: str, user_email: str) -> None:
+        """Delete a monitored table binding and its applied rules.
+
+        TODO(Phase 3C): once the materializer exists, de-materialize (or at
+        minimum orphan-flag) any ``dq_quality_rules`` rows whose
+        ``applied_rule_id`` references an application under this binding
+        before deleting the rows here — otherwise materialized runner rows
+        are left pointing at applications that no longer exist. Not
+        implemented yet because the materializer itself doesn't exist.
+        """
+        binding = self._get(binding_id)
+        if binding is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        self._sql.delete(self._applied_table, where={"binding_id": binding_id})
+        self._sql.delete(self._table, where={"binding_id": binding_id})
+        logger.info("Deleted monitored table %s (binding_id=%s, by %s)", binding.table_fqn, binding_id, user_email)
+
+    # ------------------------------------------------------------------
+    # Profiling READ (reuses dq_profiling_results — never written here)
+    # ------------------------------------------------------------------
+
+    def get_latest_profile(self, table_fqn: str) -> LatestProfile | None:
+        """Read the most recent successful ``dq_profiling_results`` row for *table_fqn*.
+
+        Read-only: this service never writes to ``dq_profiling_results``
+        (owned by the profiler job — see ``routes/v1/profiler.py``). Mirrors
+        the row shape read by ``get_profile_run_results``.
+        """
+        e = escape_sql_string(table_fqn)
+        cols = (
+            "run_id, source_table_fqn, rows_profiled, columns_profiled, duration_seconds, "
+            "summary_json, generated_rules_json, status, "
+            "CAST(created_at AS STRING) AS created_at"
+        )
+        sql = (
+            f"SELECT {cols} FROM {self._profiling_table} "  # noqa: S608
+            f"WHERE source_table_fqn = '{e}' AND status = 'SUCCESS' "
+            f"ORDER BY created_at DESC LIMIT 1"
+        )
+        rows = self._profiling_sql.query_dicts(sql)
+        if not rows:
+            return None
+        row = rows[0]
+        summary_json = row.get("summary_json") or "{}"
+        rules_json = row.get("generated_rules_json") or "[]"
+        try:
+            summary = json.loads(summary_json)
+        except json.JSONDecodeError:
+            summary = {}
+        try:
+            generated_rules = json.loads(rules_json)
+        except json.JSONDecodeError:
+            generated_rules = []
+        return LatestProfile(
+            run_id=row.get("run_id") or "",
+            source_table_fqn=row.get("source_table_fqn") or table_fqn,
+            status=row.get("status"),
+            rows_profiled=int(v) if (v := row.get("rows_profiled")) else None,
+            columns_profiled=int(v) if (v := row.get("columns_profiled")) else None,
+            duration_seconds=float(v) if (v := row.get("duration_seconds")) else None,
+            summary=summary if isinstance(summary, dict) else {},
+            generated_rules=generated_rules if isinstance(generated_rules, list) else [],
+            profiled_at=row.get("created_at"),
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _opt_str(value: str | None) -> str:
+        return f"'{escape_sql_string(value)}'" if value else "NULL"
+
+    @staticmethod
+    def _opt_timestamp(value: datetime | None) -> str:
+        """SQL literal for a nullable timestamp column write.
+
+        ``CAST('<iso>' AS TIMESTAMP)`` parses identically on Delta and
+        Postgres; ``None`` becomes ``NULL``. The ISO string never contains a
+        quote, but it is escaped anyway for uniformity with the other writers.
+        """
+        if value is None:
+            return "NULL"
+        return f"CAST('{escape_sql_string(value.isoformat())}' AS TIMESTAMP)"
+
+    @classmethod
+    def _parse_status(cls, value: str | None, *, binding_id: str) -> MonitoredTableStatus:
+        """Validate *value* against :data:`MonitoredTableStatus`'s allowed members and narrow it."""
+        if value not in cls.VALID_STATUSES:
+            raise ValueError(
+                f"Monitored table {binding_id!r} has invalid status {value!r}; "
+                f"expected one of {sorted(cls.VALID_STATUSES)}"
+            )
+        return cast(MonitoredTableStatus, value)
+
+    @staticmethod
+    def _parse_schedule_kind(value: str | None) -> ScheduleKind:
+        """Narrow a stored ``schedule_kind`` to :data:`ScheduleKind`.
+
+        Legacy rows (converged by migration v14/v18) carry NULL until the
+        service next writes them, and the Delta CHECK permits NULL — so an
+        empty/None/unknown value falls back to the default rather than raising,
+        keeping list reads resilient.
+        """
+        if value in get_args(ScheduleKind):
+            return cast(ScheduleKind, value)
+        return SCHEDULE_KIND_DEFAULT
+
+    @staticmethod
+    def _parse_timestamp(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            logger.warning("Unparsable timestamp %r; treating as None", value)
+            return None
+
+    @staticmethod
+    def _parse_json_dict(raw: str | None) -> dict[str, Any]:
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw, strict=False)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _parse_column_mapping(raw: str | None) -> list[ColumnMappingGroup]:
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw, strict=False)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        groups: list[ColumnMappingGroup] = []
+        for item in parsed:
+            if isinstance(item, dict):
+                groups.append({str(k): str(v) for k, v in item.items()})
+        return groups
+
+    def _row_to_table(self, row: list[str]) -> MonitoredTable:
+        binding_id = row[0]
+        return MonitoredTable(
+            binding_id=binding_id,
+            table_fqn=row[1],
+            owner=row[2],
+            status=self._parse_status(row[3], binding_id=binding_id),
+            version=int(row[4]) if row[4] not in (None, "") else 0,
+            schedule_cron=row[5] or None,
+            schedule_tz=row[6] or None,
+            last_profiled_at=self._parse_timestamp(row[7]),
+            last_run_at=self._parse_timestamp(row[8]),
+            created_by=row[9],
+            created_at=self._parse_timestamp(row[10]),
+            updated_by=row[11],
+            updated_at=self._parse_timestamp(row[12]),
+            schedule_kind=self._parse_schedule_kind(row[13] if len(row) > 13 else None),
+            owner_display_name=row[14] if len(row) > 14 else None,
+            pending_rationale=row[15] if len(row) > 15 else None,
+            last_decision_rationale=row[16] if len(row) > 16 else None,
+            schedule_sample_size=parse_schedule_sample_size(row[17] if len(row) > 17 else None),
+        )
+
+    def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:
+        return AppliedRule(
+            id=row[0],
+            binding_id=row[1],
+            rule_id=row[2],
+            pinned_version=int(row[3]) if row[3] not in (None, "") else None,
+            severity_override=row[4],
+            column_mapping=self._parse_column_mapping(row[5]),
+            user_metadata=self._parse_json_dict(row[6]),
+            mapping_hash=row[7],
+            created_by=row[8],
+            created_at=self._parse_timestamp(row[9]),
+            row_filter=self._parse_applied_row_filter(row[10] if len(row) > 10 else None),
+            pass_threshold=self._parse_applied_pass_threshold(row[11] if len(row) > 11 else None),
+        )
+
+    @staticmethod
+    def _parse_applied_row_filter(raw: object) -> str | None:
+        """Coerce a stored applied-rule ``row_filter`` cell to a non-empty str, or None."""
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        return text or None
+
+    @staticmethod
+    def _parse_applied_pass_threshold(raw: object) -> int | None:
+        """Coerce a stored applied-rule ``pass_threshold`` cell to an int in [0, 100], or None."""
+        if raw is None or raw == "":
+            return None
+        if not isinstance(raw, (int, float, str, bytes, bytearray)):
+            return None
+        try:
+            return max(0, min(100, int(raw)))
+        except (TypeError, ValueError):
+            return None
