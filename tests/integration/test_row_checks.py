@@ -4487,6 +4487,44 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_comparison_checks_with_nulls_failing(spark):
+    schema = "a: int"
+    test_df = spark.createDataFrame([[1], [5], [None]], schema)
+
+    actual = test_df.select(
+        is_equal_to("a", 1, allow_nulls=False),
+        is_not_equal_to("a", 5, allow_nulls=False),
+        is_not_less_than("a", 1, allow_nulls=False),
+        is_not_greater_than("a", 1, allow_nulls=False),
+        is_in_range("a", 1, 2, allow_nulls=False),
+        is_not_in_range("a", 4, 6, allow_nulls=False),
+    )
+
+    expected_schema = (
+        "a_is_null_or_not_equal_to_value: string, a_is_null_or_equal_to_value: string, "
+        "a_is_null_or_less_than_limit: string, a_is_null_or_greater_than_limit: string, "
+        "a_is_null_or_not_in_range: string, a_is_null_or_in_range: string"
+    )
+    null_message = "Column 'a' value is null"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None, None, None],
+            [
+                "Value '5' in Column 'a' is not equal to value: 1",
+                "Value '5' in Column 'a' is equal to value: 5",
+                None,
+                "Value '5' in Column 'a' is greater than limit: 1",
+                "Value '5' in Column 'a' not in range: [1, 2]",
+                "Value '5' in Column 'a' in range: [4, 6]",
+            ],
+            [null_message] * 6,
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_equal_to(spark, set_utc_timezone):
     schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
