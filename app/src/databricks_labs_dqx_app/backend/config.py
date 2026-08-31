@@ -29,6 +29,7 @@ class AppConfig(BaseSettings):
     catalog: str = Field(default="dqx")
     schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
     tmp_schema_name: str = Field(default="dqx_studio_tmp", validation_alias="DQX_TMP_SCHEMA")
+    genie_schema_name: str = Field(default="genie", validation_alias="DQX_GENIE_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
     # Production deploys bind ``job_id`` and ``wheels_volume`` from
@@ -58,24 +59,23 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_ADMIN_GROUP",
         description="Databricks workspace group name for bootstrap Admin access",
     )
+    # Registered Databricks App slug — the unique per-workspace name the app is
+    # registered under (e.g. "dqx-studio"). Distinct from ``app_name`` which is
+    # the human-readable display title ("DQX Studio"). Used by the
+    # privileged-principals endpoint to call ``apps.get_permissions(slug)``.
+    # Resolution order: DQX_APP_NAME env var → DATABRICKS_APP_NAME (injected by
+    # the Apps runtime) → "dqx-studio" (default matching the bundle var default).
+    app_slug_name: str = Field(
+        default_factory=lambda: (
+            os.environ.get("DQX_APP_NAME") or os.environ.get("DATABRICKS_APP_NAME") or "dqx-studio"
+        ),
+        validation_alias="DQX_APP_NAME",
+        description="Registered Databricks App slug used for app-permissions lookups.",
+    )
     profiler_max_sample_limit: int = Field(default=100_000)
     profiler_default_sample_limit: int = Field(default=50_000)
     dryrun_max_sample_size: int = Field(default=10_000)
     dryrun_default_sample_size: int = Field(default=1_000)
-
-    # ------------------------------------------------------------------
-    # Embedded dashboard (Insights page)
-    # ------------------------------------------------------------------
-    # The Insights page renders a Databricks AI/BI dashboard inside an
-    # iframe. Admins set the dashboard ID via the Configuration page,
-    # which writes to ``dq_app_settings`` and overrides this default.
-    # When unset, this env var lets the bundle ship a starter
-    # dashboard ID so the page works out-of-the-box.
-    default_dashboard_id: str = Field(
-        default="",
-        validation_alias="DQX_DEFAULT_DASHBOARD_ID",
-        description="Fallback dashboard ID for the Insights page when no admin override is set.",
-    )
 
     # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
@@ -200,6 +200,16 @@ class AppConfig(BaseSettings):
 
 
 conf = AppConfig()
+
+
+# Maximum number of sample table rows fed into an AI/LLM prompt (e.g. the AI
+# rule generator's optional sample-row context). Mirrors the 500-row sample the
+# "ask a question about this data" path already uses
+# (services.table_data_service.TableDataService.PREVIEW_LIMIT), so every place
+# that samples table data for an AI/LLM question caps at the same 500 rows.
+# Still a hard, finite bound (OWASP LLM04/LLM06): it limits prompt size and the
+# volume of raw data echoed into a model call.
+AI_SAMPLE_ROW_LIMIT = 500
 
 
 def get_sql_warehouse_path() -> str:

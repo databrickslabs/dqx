@@ -24,19 +24,18 @@ future migration authors from silently breaking the contract:
    raw ``CREATE SCHEMA prod-east.dqx_studio``.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from databricks_labs_dqx_app.backend.migrations import (
+    ANALYTICAL_TABLE_NAMES,
     MIGRATIONS,
+    OLTP_TABLE_NAMES,
     MigrationRunner,
     _validate_template_safe,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-
 
 # ---------------------------------------------------------------------------
 # Template scanner: positive + negative + live regression
@@ -136,6 +135,108 @@ class TestLiveMigrationsAreTemplateSafe:
 
 
 # ---------------------------------------------------------------------------
+# Baseline shape — the schema is CREATE-only
+# ---------------------------------------------------------------------------
+
+
+def _statements(template: str) -> list[str]:
+    """Split a migration template the way ``_apply`` does, whitespace-normalized."""
+    return [" ".join(stmt.split()) for stmt in template.split(";") if stmt.strip()]
+
+
+def _oltp_baseline() -> str:
+    return " ".join(next(m for m in MIGRATIONS if m.oltp_fallback).sql_template.split())
+
+
+class TestBaselineOnlyCatalogue:
+    """The catalogue is two baselines and the schema is expressed as CREATE TABLE.
+
+    There are no external installs to upgrade yet, so a shape change is
+    edited into the baseline rather than appended as an ALTER. These tests
+    pin that decision: an ``ADD COLUMN``, ``DROP COLUMN``, or backfill
+    ``UPDATE`` creeping back in would mean the schema is once again split
+    across a replay chain — and ``DROP COLUMN`` in particular is rejected
+    outright by Delta tables without the column-mapping feature, which is
+    how the previous chain broke in CI.
+    """
+
+    def test_catalogue_is_exactly_the_two_baselines(self) -> None:
+        assert [(m.version, m.oltp_fallback) for m in MIGRATIONS] == [(1, False), (2, True)]
+
+    def test_every_statement_creates_a_table_or_adds_a_constraint(self) -> None:
+        # ADD CONSTRAINT is the one unavoidable ALTER: Delta accepts only
+        # PK/FK inline in CREATE TABLE, so CHECKs follow their table.
+        for migration in MIGRATIONS:
+            for stmt in _statements(migration.sql_template):
+                creates = stmt.startswith("CREATE TABLE IF NOT EXISTS")
+                constrains = stmt.startswith("ALTER TABLE") and "ADD CONSTRAINT" in stmt
+                assert creates or constrains, f"v{migration.version} statement is neither: {stmt[:120]}"
+
+    def test_no_table_is_created_by_both_baselines(self) -> None:
+        assert not set(ANALYTICAL_TABLE_NAMES) & set(OLTP_TABLE_NAMES)
+
+    def test_analytical_baseline_owns_the_spark_written_tables(self) -> None:
+        assert ANALYTICAL_TABLE_NAMES == (
+            "dq_profiling_results",
+            "dq_validation_runs",
+            "dq_quarantine_records",
+            "dq_metrics",
+        )
+
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "dq_rules",
+            "dq_monitored_tables",
+            "dq_data_products",
+            "dq_pending_applications",
+            "dq_tag_auto_suppressions",
+            "dq_object_grants",
+            "dq_score_cache",
+            "dq_rule_embeddings",
+        ],
+    )
+    def test_oltp_tables_come_from_the_fallback_baseline(self, table: str) -> None:
+        # The reset feature and physical routing derive the table set from the
+        # CREATE statements, so every OLTP table must land in that bucket only.
+        assert table in OLTP_TABLE_NAMES
+
+
+class TestOltpBaselineShape:
+    """Columns that earlier revisions bolted on by ALTER now ship on CREATE.
+
+    Counts are asserted per column so a table dropping one is caught, not
+    just a global "the word appears somewhere" check. Three owner-bearing
+    tables: ``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``.
+    """
+
+    def test_owner_columns_replace_steward(self) -> None:
+        sql = _oltp_baseline()
+        assert "steward" not in sql
+        assert sql.count("owner STRING,") == 3
+        assert sql.count("owner_display_name STRING,") == 3
+        # dq_rules clusters on owner now that steward is gone.
+        assert "CLUSTER BY (status, fingerprint, owner)" in sql
+
+    def test_rationale_columns_ship_on_create(self) -> None:
+        sql = _oltp_baseline()
+        assert sql.count("pending_rationale STRING,") == 3
+        assert sql.count("last_decision_rationale STRING,") == 3
+        # dq_rules_history keeps the per-transition note under a bare name.
+        assert sql.count(" rationale STRING,") == 1
+
+    def test_sticky_object_notes_are_gone(self) -> None:
+        assert "notes" not in _oltp_baseline()
+
+    def test_both_schedulable_scopes_carry_the_schedule_columns(self) -> None:
+        sql = _oltp_baseline()
+        assert sql.count("schedule_sample_size INT,") == 2
+        assert sql.count("schedule_kind STRING,") == 2
+        assert "chk_dq_monitored_tables_schedule_kind" in sql
+        assert "chk_dq_data_products_schedule_kind" in sql
+
+
+# ---------------------------------------------------------------------------
 # Identifier-quoting contract — review item #8.
 # ---------------------------------------------------------------------------
 
@@ -228,3 +329,26 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
         assert "prod-east.dqx_studio" not in " ".join(
             captured
         ), "Found raw (un-quoted) interpolation — hyphenated catalogs would emit parse-invalid DDL"
+
+
+# ---------------------------------------------------------------------------
+# Quarantine table liquid-clustering keys
+# ---------------------------------------------------------------------------
+
+
+class TestQuarantineClustering:
+    """dq_quarantine_records is liquid-clustered by (run_id, source_table_fqn)."""
+
+    def test_quarantine_clustered_by_run_id_then_source_table_fqn(self) -> None:
+        from databricks_labs_dqx_app.backend.migrations import MIGRATIONS
+
+        v1 = next(m for m in MIGRATIONS if m.version == 1)
+        sql = v1.sql_template
+        assert "dq_quarantine_records" in sql
+        assert (
+            "CLUSTER BY (run_id, source_table_fqn)" in sql
+        ), "quarantine table must be liquid-clustered by (run_id, source_table_fqn)"
+        # Guard against a stray leftover single-key clause.
+        assert "dq_quarantine_records" not in sql or "CLUSTER BY (run_id)" not in sql.replace(
+            "CLUSTER BY (run_id, source_table_fqn)", ""
+        )

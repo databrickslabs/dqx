@@ -6,8 +6,6 @@ with a ``unittest.mock.MagicMock`` (or ``create_autospec``) so the
 suite runs offline in <1s.
 """
 
-from __future__ import annotations
-
 import os
 from typing import Any
 from unittest.mock import MagicMock, create_autospec
@@ -49,6 +47,99 @@ async def _reset_app_cache():
 # ---------------------------------------------------------------------------
 
 
+def wire_crud_builder_methods(mock: MagicMock, *, dialect: str = "delta") -> MagicMock:
+    """Wire the CRUD-builder shortcuts on *mock* to delegate to ``execute``/``query``.
+
+    Every service that once emitted raw f-string SQL now goes through
+    :meth:`OltpExecutorProtocol.insert` / ``update`` / ``delete`` /
+    ``count`` / ``select_rows`` / ``select_dicts``. In a
+    :func:`create_autospec` mock those methods are independent
+    :class:`MagicMock` attributes by default, so a test that asserts on
+    ``sql.execute.call_args_list`` would see an empty list — the calls
+    now land on the CRUD-shortcut mocks instead.
+
+    This helper wires each shortcut to build the SQL string via the
+    same free-function builders the real executor uses
+    (:func:`_build_insert` etc.) and forward to the mocked
+    ``execute``/``query``/``query_dicts``. Tests keep asserting on
+    ``sql.execute.call_args`` — the migration is transparent to them.
+
+    *dialect* selects the identifier-quoting flavour: ``"delta"``
+    (backticks, matches :meth:`SqlExecutor.q`) or ``"postgres"``
+    (ANSI double-quotes, matches :meth:`PgExecutor.q`). Delta is the
+    default because the vast majority of tests today mock
+    :class:`SqlExecutor`.
+    """
+    from databricks_labs_dqx_app.backend.sql_executor import (
+        _build_count,
+        _build_delete,
+        _build_insert,
+        _build_select,
+        _build_update,
+        _render_value,
+    )
+
+    def _quote_ansi(ident: str) -> str:
+        return '"' + ident.replace('"', '""') + '"'
+
+    def _quote_delta(ident: str) -> str:
+        return "`" + ident.replace("`", "``") + "`"
+
+    quote = _quote_ansi if dialect == "postgres" else _quote_delta
+    # Only replace ``q``'s behaviour when the test hasn't already set
+    # one — a couple of legacy fixtures (``test_run_sets._mock_sql``)
+    # attach their own quote lambdas.
+    if not getattr(mock.q, "side_effect", None):
+        mock.q.side_effect = quote
+
+    def _insert(table, *, values, timeout_seconds=120):
+        mock.execute(
+            _build_insert(table, values, mock.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _update(table, *, updates, where, timeout_seconds=120):
+        mock.execute(
+            _build_update(table, updates, where, mock.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _delete(table, *, where, timeout_seconds=120):
+        mock.execute(
+            _build_delete(table, where, mock.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _count(table, *, where=None, timeout_seconds=120):
+        rows = mock.query(
+            _build_count(table, where, mock.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+        if rows and rows[0] and rows[0][0] is not None:
+            return int(rows[0][0])
+        return 0
+
+    def _select_rows(table, columns, *, where=None, timeout_seconds=120):
+        return mock.query(
+            _build_select(table, columns, where, mock.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _select_dicts(table, columns, *, where=None, timeout_seconds=120):
+        return mock.query_dicts(
+            _build_select(table, columns, where, mock.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    mock.insert.side_effect = _insert
+    mock.update.side_effect = _update
+    mock.delete.side_effect = _delete
+    mock.count.side_effect = _count
+    mock.select_rows.side_effect = _select_rows
+    mock.select_dicts.side_effect = _select_dicts
+    return mock
+
+
 @pytest.fixture
 def sql_executor_mock() -> MagicMock:
     """Spec-bound mock of ``SqlExecutor`` so misuse fails loudly."""
@@ -58,6 +149,8 @@ def sql_executor_mock() -> MagicMock:
     mock.catalog = "dqx_test"
     mock.schema = "dqx_app_test"
     mock.warehouse_id = "test-warehouse"
+    mock.dialect = "delta"
+    wire_crud_builder_methods(mock)
     return mock
 
 
@@ -148,6 +241,13 @@ def make_scheduler():
         distinct_sql: bool = False,
         distinct_tmp_sql: bool = False,
         oltp_spec: list[str] | None = None,
+        data_product_service: Any | None = None,
+        binding_run_service: Any | None = None,
+        score_cache_service: Any | None = None,
+        monitored_table_service: Any | None = None,
+        metadata_dim_service: Any | None = None,
+        tag_reconcile_service: Any | None = None,
+        reconcile_scores_on_start: bool = False,
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -194,6 +294,13 @@ def make_scheduler():
             tmp_schema=tmp_schema if tmp_schema is not None else f"{schema}_tmp",
             job_id="test-job-0",
             oltp_sql=oltp,
+            data_product_service=data_product_service,
+            binding_run_service=binding_run_service,
+            score_cache_service=score_cache_service,
+            monitored_table_service=monitored_table_service,
+            metadata_dim_service=metadata_dim_service,
+            tag_reconcile_service=tag_reconcile_service,
+            reconcile_scores_on_start=reconcile_scores_on_start,
         )
 
         mocks = SimpleNamespace(oltp=oltp)
