@@ -1,0 +1,711 @@
+import { findRefs } from "./columnRefs";
+import { isColumnRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
+import { operatorValidForFamily, VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
+import { INPUT_VIEW_SLOT } from "./refTableColumns";
+import { stripSqlLineComments } from "./sqlComments";
+import type { RuleSlotFamily } from "@/lib/api";
+
+// Client-side compilation of a low-code AST to SQL. Ported from dqlake's
+// `ui/lib/lowcodeCompile.ts` (which itself mirrors the backend lowcode
+// compiler rows.py + joins.py + compile_v2.py).
+//
+// Unlike dqlake — which kept the predicate, joins and group-by as SEPARATE
+// fields consumed by its own runner — DQX's runner consumes ONE SQL string
+// with sql_check semantics. `compileLowcodeBody` therefore FOLDS the row
+// predicate, joins and group-by into a single body payload:
+//
+//   • no joins & no group-by  →  { predicate }        (sql_expression path)
+//   • joins and/or group-by   →  { sql_query, merge_columns? }  (sql_query path)
+//
+// The compiled `NOT (<predicate>)` condition is what the materializer's
+// existing sql-mode path runs; polarity is applied by `render_check`'s
+// `negate` argument, exactly as for a hand-written sql-mode rule.
+
+const AGG_SQL: Record<string, (col: string, param?: number | null) => string> = {
+  count: (c) => `COUNT(${c})`,
+  count_distinct: (c) => `COUNT(DISTINCT ${c})`,
+  approx_count_distinct: (c) => `APPROX_COUNT_DISTINCT(${c})`,
+  null_rate: (c) => `(SUM(CASE WHEN ${c} IS NULL THEN 1 ELSE 0 END) * 1.0 / NULLIF(COUNT(*), 0))`,
+  sum: (c) => `SUM(${c})`,
+  avg: (c) => `AVG(${c})`,
+  min: (c) => `MIN(${c})`,
+  max: (c) => `MAX(${c})`,
+  stddev: (c) => `STDDEV_POP(${c})`,
+  stddev_samp: (c) => `STDDEV_SAMP(${c})`,
+  variance: (c) => `VAR_POP(${c})`,
+  var_samp: (c) => `VAR_SAMP(${c})`,
+  median: (c) => `MEDIAN(${c})`,
+  percentile: (c, p) => `PERCENTILE(${c}, ${p ?? 0.5})`,
+  percentile_approx: (c, p) => `PERCENTILE_APPROX(${c}, ${p ?? 0.5})`,
+  bool_and: (c) => `BOOL_AND(${c})`,
+  bool_or: (c) => `BOOL_OR(${c})`,
+  any_value: (c) => `ANY_VALUE(${c})`,
+  mode: (c) => `MODE(${c})`,
+};
+
+// Qualified refs (containing a dot) name a joined-table column and are
+// validated + backtick-quoted per part. Plain refs name a declared slot and
+// stay wrapped as `{{name}}` placeholders the materializer substitutes with
+// the real column. When `qualify` is set (the rule has joins), an own-table
+// column is prefixed with the `{{input_view}}` marker so it is unambiguous
+// against a joined table sharing the column name: `{{input_view}}.{{col}}`.
+// Only valid in QUERY TEXT (predicate / join ON) — never for merge_columns,
+// which the library passes verbatim to a bare-name join. Mirrors `_ref` /
+// `_quote_ident_path` in `backend/lowcode_compile.py`.
+
+/** Validate + backtick-quote a dotted identifier path for SQL emission. */
+export function quoteIdentPath(path: string): string {
+  const parts = path.split(".");
+  if (!parts.length || parts.some((p) => !p)) {
+    throw new Error(`Invalid identifier path: ${JSON.stringify(path)}`);
+  }
+  return parts
+    .map((part) => {
+      // Mirror sql_utils.validate_identifier: reject backticks, backslashes,
+      // and C0/C1 controls; then backtick-quote (doubling any leftover `).
+      if (part.length > 255 || /[`\\\x00-\x1f\x7f]/.test(part)) {
+        throw new Error(`Invalid identifier: '${part}'`);
+      }
+      return `\`${part.replaceAll("`", "``")}\``;
+    })
+    .join(".");
+}
+
+const ref = (c: string, qualify = false): string =>
+  c.includes(".") ? quoteIdentPath(c) : qualify ? `{{input_view}}.{{${c}}}` : `{{${c}}}`;
+
+function quote(v: unknown): string {
+  if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+  if (typeof v === "number") return String(v);
+  if (v === null || v === undefined) return "NULL";
+  const s = String(v).replaceAll("'", "''");
+  return `'${s}'`;
+}
+
+// A comparison RHS is EITHER a column reference (item 42 — emit ref(), so a
+// plain name becomes {{name}} and a joined-table col emits raw) OR a literal
+// (quote() as before). This is the only place the literal-vs-column decision
+// is made for scalar operands.
+function valueSql(value: unknown, qualify = false): string {
+  return isColumnRef(value) ? ref(value.$col, qualify) : quote(value);
+}
+
+// Split a comma-separated group-by / column-ref string at TOP-LEVEL commas
+// only — commas nested inside parentheses (e.g. `COALESCE({{c}}, 'XX')`) or
+// inside single-quoted string literals are NOT split points. The structured
+// GroupByField only ever emits clean single-token column refs, but a rule
+// hydrated from a legacy raw group-by string (or a dqlake import) may still
+// carry an expression; a naive `split(",")` would shred it into invalid
+// merge-column fragments, so we parse structurally instead.
+export function splitTopLevelCommas(value: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let inQuote = false;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (inQuote) {
+      // Doubled '' is an escaped quote inside the literal — stay in-quote.
+      if (ch === "'" && value[i + 1] === "'") {
+        i++;
+        continue;
+      }
+      if (ch === "'") inQuote = false;
+      continue;
+    }
+    if (ch === "'") inQuote = true;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      out.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+// The distinct input-side merge keys for a set of joins: the `{{column_ref}}`
+// tokens each (non-CROSS) join equates against its target table. These are the
+// only columns present on BOTH the joined result and the monitored input table,
+// so they are what a joins-only row-level `sql_query` merges its per-row result
+// back on (see `compileLowcodeBody`).
+function joinKeyRefs(joins: JoinAst[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const j of joins ?? []) {
+    if (j.join_type === "CROSS" || !j.target_table) continue;
+    for (const k of j.keys ?? []) {
+      if (!k.column_ref) continue;
+      const token = ref(k.column_ref);
+      if (seen.has(token)) continue;
+      seen.add(token);
+      out.push(token);
+    }
+  }
+  return out;
+}
+
+// The SELECT-list projection for one BARE merge key when the query has joins.
+// A bare own-column key (`{{col}}`) is ambiguous in a joined SELECT, so qualify
+// the SOURCE to the input view while ALIASING back to the bare name that
+// `merge_columns` joins on: `{{input_view}}.{{col}} AS {{col}}`. A joined-table
+// (dotted) key is already qualified — returned as-is. Mirrors
+// `_select_key_projection` in `backend/lowcode_compile.py`.
+function selectKeyProjection(bareKey: string): string {
+  const m = /^\{\{(.+?)\}\}$/.exec(bareKey);
+  if (m && !m[1].includes(".")) return `{{input_view}}.${bareKey} AS ${bareKey}`;
+  return bareKey;
+}
+
+function aggExpr(
+  spec: { aggregate?: string; column_ref?: string; aggregate_param?: number | null },
+  qualify = false,
+): string {
+  const agg = spec.aggregate;
+  const col = spec.column_ref;
+  if (!agg || !(agg in AGG_SQL)) return "";
+  if (!col) return "";
+  return AGG_SQL[agg](ref(col, qualify), spec.aggregate_param);
+}
+
+function rowSql(left: string, operator: string, value: unknown, qualify = false): string {
+  const op = operator;
+  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value, qualify)}`;
+  if (op === "equals") return `${left} = ${valueSql(value, qualify)}`;
+  if (op === "not equals") return `${left} != ${valueSql(value, qualify)}`;
+  // Spark string builtins take a plain literal (via `quote`), so `%` / `_` in
+  // the operand stay literal — unlike `LIKE` patterns which treat them as
+  // wildcards (keep in lock-step with backend `lowcode_compile._row_sql`).
+  if (op === "contains") return `contains(${left}, ${quote(value)})`;
+  if (op === "does not contain") return `NOT contains(${left}, ${quote(value)})`;
+  if (op === "starts with") return `startswith(${left}, ${quote(value)})`;
+  if (op === "ends with") return `endswith(${left}, ${quote(value)})`;
+  if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
+  if (op === "between") {
+    const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
+    return `${left} BETWEEN ${valueSql(lo, qualify)} AND ${valueSql(hi, qualify)}`;
+  }
+  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map((v) => valueSql(v, qualify)).join(", ")})`;
+  if (op === "not in")
+    return `${left} NOT IN (${((value as unknown[]) ?? []).map((v) => valueSql(v, qualify)).join(", ")})`;
+  if (op === "is null") return `${left} IS NULL`;
+  if (op === "is not null") return `${left} IS NOT NULL`;
+  if (op === "is true") return `${left} = TRUE`;
+  if (op === "is false") return `${left} = FALSE`;
+  if (op === "before") return `${left} < ${valueSql(value, qualify)}`;
+  if (op === "after") return `${left} > ${valueSql(value, qualify)}`;
+  if (op === "on or before") return `${left} <= ${valueSql(value, qualify)}`;
+  if (op === "on or after") return `${left} >= ${valueSql(value, qualify)}`;
+  if (op === "is in last") {
+    const obj = (value && typeof value === "object" ? value : {}) as { number?: number; unit?: string };
+    return `${left} >= current_timestamp() - INTERVAL '${obj.number ?? 0} ${obj.unit ?? "days"}'`;
+  }
+  if (op === "is a valid" || op === "is not a valid") {
+    const asType = VALIDITY_SQL_TYPE[String(value)];
+    if (!asType) return "";
+    const nullCheck = op === "is a valid" ? "IS NOT NULL" : "IS NULL";
+    return `TRY_CAST(${left} AS ${asType}) ${nullCheck}`;
+  }
+  if (op === "has leading or trailing whitespace") return `${left} != TRIM(${left})`;
+  if (op === "has no leading or trailing whitespace") return `${left} = TRIM(${left})`;
+  // --- Length ------------------------------------------------------------
+  if (op === "has length") return `length(${left}) = ${quote(value)}`;
+  if (op === "is longer than") return `length(${left}) > ${quote(value)}`;
+  if (op === "is shorter than") return `length(${left}) < ${quote(value)}`;
+  if (op === "length between") {
+    const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
+    return `length(${left}) BETWEEN ${valueSql(lo, qualify)} AND ${valueSql(hi, qualify)}`;
+  }
+  if (op === "is not empty") return `length(trim(${left})) > 0`;
+  if (op === "is empty") return `length(trim(${left})) = 0`;
+  // --- Text pattern / format --------------------------------------------
+  if (op === "does not match regex") return `NOT (${left} RLIKE ${quote(value)})`;
+  if (op === "contains only digits") return `${left} RLIKE '^[0-9]+$'`;
+  if (op === "is uppercase") return `${left} = upper(${left})`;
+  if (op === "is lowercase") return `${left} = lower(${left})`;
+  // The `\\.` in these TS literals emits a single backslash-dot (`\.`) into the
+  // SQL — the literal-dot RLIKE escape. These patterns are hardcoded (not user
+  // input), so they are NOT run through quote().
+  if (op === "is a valid uuid")
+    return `${left} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
+  if (op === "is a valid ipv4")
+    return `${left} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'`;
+  // --- Numeric predicates -----------------------------------------------
+  if (op === "is positive") return `${left} > 0`;
+  if (op === "is negative") return `${left} < 0`;
+  if (op === "is non-negative") return `${left} >= 0`;
+  if (op === "is a whole number") return `${left} = round(${left})`;
+  if (op === "is a multiple of") return `mod(${left}, ${quote(value)}) = 0`;
+  // --- Temporal predicates ----------------------------------------------
+  if (op === "is in the future") return `${left} > current_timestamp()`;
+  if (op === "is in the past") return `${left} < current_timestamp()`;
+  if (op === "is today") return `to_date(${left}) = current_date()`;
+  // --- AI (Foundation Model) checks — per-row cost + latency ------------
+  if (op === "has positive sentiment") return `ai_analyze_sentiment(${left}) = 'positive'`;
+  if (op === "has negative sentiment") return `ai_analyze_sentiment(${left}) = 'negative'`;
+  // --- Luhn checksum (credit cards / IMEI / national ids) ---------------
+  // Databricks has a built-in luhn_check(numStr) -> BOOLEAN (DBR 13.3+). It
+  // returns false for ANY non-digit character, so normalize formatted inputs
+  // (spaces/dashes) first. The leading length guard is MANDATORY: an empty
+  // digit string (all-non-digit or empty input) trivially passes Luhn, so
+  // without it such rows would be wrongly marked valid.
+  if (op === "passes luhn check") {
+    const digits = `regexp_replace(${left}, '[^0-9]', '')`;
+    return `length(${digits}) > 0 AND luhn_check(${digits})`;
+  }
+  return "";
+}
+
+function compileRow(row: AnyRow, qualify = false): string {
+  if (row.kind === "row") {
+    if (!row.column_ref) return "";
+    return rowSql(ref(row.column_ref, qualify), row.operator, row.value, qualify);
+  }
+  const left = aggExpr(row, qualify);
+  if (!left) return "";
+  const op = row.operator;
+  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) {
+    const right =
+      row.value && typeof row.value === "object" && "aggregate" in (row.value as Record<string, unknown>)
+        ? aggExpr(row.value as { aggregate?: string; column_ref?: string }, qualify)
+        : quote(row.value);
+    return `${left} ${op} ${right}`;
+  }
+  if (op === "is null") return `${left} IS NULL`;
+  if (op === "is not null") return `${left} IS NOT NULL`;
+  if (op === "between") {
+    const [lo, hi] = Array.isArray(row.value) ? (row.value as unknown[]) : [null, null];
+    return `${left} BETWEEN ${quote(lo)} AND ${quote(hi)}`;
+  }
+  return "";
+}
+
+/** Compile the row stack into a single boolean WHERE/HAVING expression (the
+ *  "pass" condition — IF this holds THEN the row passes, by default). */
+export function compileAstToSql(ast: LowcodeAstV2, qualify = false): string {
+  if (!ast.rows?.length) return "";
+  const parts: string[] = [];
+  ast.rows.forEach((row, i) => {
+    const frag = compileRow(row, qualify);
+    if (!frag) return;
+    if (i === 0) parts.push(frag);
+    else parts.push(`${row.combinator ?? "AND"} ${frag}`);
+  });
+  return parts.join(" ");
+}
+
+/** Compile the joins into a `LEFT JOIN … ON …` FROM-clause fragment.
+ *
+ *  `qualifyOwnKeys` (default true, set by the low-code {@link compileLowcodeBody})
+ *  qualifies the own side of each ON condition to the input view so it is
+ *  unambiguous against a joined table sharing the key name. {@link buildSqlBody}
+ *  (the raw-SQL editor path) passes false: there the author owns their SQL text
+ *  and the ON own-side stays a bare `{{slot}}`, matching the predicate they typed.
+ */
+export function compileJoinsToSql(joins: JoinAst[], qualifyOwnKeys = true): string {
+  if (!joins?.length) return "";
+  const typeSql: Record<string, string> = {
+    INNER: "INNER JOIN",
+    LEFT: "LEFT JOIN",
+    RIGHT: "RIGHT JOIN",
+    FULL: "FULL OUTER JOIN",
+    "LEFT SEMI": "LEFT SEMI JOIN",
+    "LEFT ANTI": "LEFT ANTI JOIN",
+    CROSS: "CROSS JOIN",
+  };
+  return joins
+    .filter((j) => j.target_table && (j.join_type === "CROSS" || j.keys?.length))
+    .map((j) => {
+      // Quote the join target so a crafted table name cannot smuggle SQL past
+      // is_sql_query_safe (which allows SELECT / subqueries by design).
+      const quotedTarget = quoteIdentPath(j.target_table);
+      const head = `${typeSql[j.join_type] ?? "INNER JOIN"} ${quotedTarget}`;
+      if (j.join_type === "CROSS") return head;
+      // Own side of the ON condition is qualified to the input view (query text,
+      // join context) — the joined side is table-qualified and identifier-quoted.
+      // The raw-SQL path opts out (qualifyOwnKeys=false) to keep the author's bare {{slot}}.
+      const conds = j.keys
+        .filter((k) => k.joined_column && k.column_ref)
+        .map(
+          (k) =>
+            `${quotedTarget}.${quoteIdentPath(k.joined_column)} = ${ref(k.column_ref, qualifyOwnKeys)}`,
+        );
+      return `${head} ON ${conds.join(" AND ")}`;
+    })
+    .join(" ");
+}
+
+/** Map a Rules-Registry slot family (lowercase) to the low-code builder's
+ *  UPPERCASE Family vocabulary. */
+export function slotFamilyToLowcode(family: RuleSlotFamily | string): Family {
+  switch (family) {
+    case "numeric":
+      return "NUMERIC";
+    case "text":
+      return "TEXTUAL";
+    case "temporal":
+      return "TEMPORAL";
+    case "boolean":
+      return "BOOLEAN";
+    default:
+      return "ANY";
+  }
+}
+
+/** A column available to the low-code builder — a declared `{{slot}}` (plain
+ *  name) or a joined-table column (qualified `<table>.<col>`). */
+export interface LowcodeColumnRef {
+  name: string;
+  family: Family;
+}
+
+/**
+ * Whether *row* is stranded (left referencing an incompatible slot) by retyping
+ * the slot *retypedName* to *newFamily*. A row is stranded when EITHER:
+ *
+ *   • it uses *retypedName* as its LHS `column_ref` and its operator is no
+ *     longer offered for *newFamily* (e.g. "contains" after switching the
+ *     column to numeric), OR
+ *   • it uses *retypedName* as a `{ $col }` RHS value (item 42, column-vs-column
+ *     comparison) and the retype breaks the family match — a column comparison
+ *     only makes sense same-family. We resolve the LHS column's family via
+ *     *lhsFamilyLookup*; the row is stranded when *newFamily* differs from the
+ *     LHS family. When the LHS family can't be resolved, we conservatively
+ *     treat any change away from *oldFamily* as stranding.
+ *
+ * Pure — no component state. Aggregated rows are not family-operator gated here
+ * (mirrors `clearStrandedRows`) so they're never reported stranded.
+ */
+export function rowStrandedByRetype(
+  row: AnyRow,
+  retypedName: string,
+  newFamily: Family,
+  oldFamily: Family,
+  lhsFamilyLookup: (name: string) => Family | undefined,
+): boolean {
+  if (row.kind !== "row") return false;
+  if (row.column_ref === retypedName && !operatorValidForFamily(row.operator, newFamily)) return true;
+  if (isColumnRef(row.value) && row.value.$col === retypedName) {
+    const lhsFamily = lhsFamilyLookup(row.column_ref);
+    if (lhsFamily === undefined) return newFamily !== oldFamily;
+    if (lhsFamily === "ANY" || newFamily === "ANY") return false;
+    return newFamily !== lhsFamily;
+  }
+  return false;
+}
+
+function groupByTokenToRefName(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const m = /^\{\{(.+?)\}\}$/.exec(trimmed);
+  return m ? m[1] : trimmed;
+}
+
+/**
+ * Drop any `{{slot}}` / `<table>.<col>` token from a comma-joined group-by
+ * `value` that no longer names a declared column (e.g. the column was
+ * removed from "Columns Used" after being picked as a group-by key). Parses
+ * every raw token in `value` first — unlike the UI's rendering-only parser,
+ * this must NOT pre-filter by `declaredColumns`, or a stale token is
+ * silently dropped from consideration and never detected as stale.
+ *
+ * Returns `value` unchanged (same reference) when nothing is stale, so
+ * callers can skip a state update and avoid an effect loop.
+ */
+export function pruneStaleGroupByRefs(value: string, declaredColumns: LowcodeColumnRef[]): string {
+  const declaredSet = new Set(declaredColumns.map((c) => c.name));
+  const refs = value.split(",").map(groupByTokenToRefName).filter(Boolean);
+  const stillValid = refs.filter((ref) => declaredSet.has(ref));
+  if (stillValid.length === refs.length) return value;
+  return stillValid.map((name) => (name.includes(".") ? name : `{{${name}}}`)).join(", ");
+}
+
+export interface CompiledLowcodeBody {
+  /** Simple row stack (no joins, no group-by): the sql_expression predicate. */
+  predicate?: string;
+  /** Advanced (joins and/or group-by): the full sql_query referencing `{{input_view}}`. */
+  sql_query?: string;
+  /** Group-by columns to join aggregate results back on (row-level check). */
+  merge_columns?: string[];
+}
+
+/** Whether a check reports a verdict per input row or one verdict for the whole
+ *  dataset. See {@link bodyGranularity} for how a compiled body determines it. */
+export type RuleGranularity = "row" | "dataset";
+
+/**
+ * The granularity a compiled body will ACTUALLY run at — the single source of
+ * truth for any UI indicator, so the label can never drift from what DQX does.
+ *
+ * A `predicate` becomes `sql_expression`, which DQX evaluates per row. A
+ * `sql_query` is row-level only when `merge_columns` tell DQX which keys to join
+ * the verdict back on; without them DQX routes it to the dataset-level branch,
+ * which requires the query to collapse to exactly one row.
+ */
+export function bodyGranularity(body: CompiledLowcodeBody): RuleGranularity {
+  if (body.predicate !== undefined) return "row";
+  return body.merge_columns !== undefined && body.merge_columns.length > 0 ? "row" : "dataset";
+}
+
+/**
+ * Classify what the SQL editor currently holds, which decides whether
+ * granularity is the author's choice at all:
+ *
+ *   • "predicate" — a bare boolean expression. Compiles to `sql_expression`, so
+ *     it is row-level by construction and there is nothing to choose.
+ *   • "query" — a full `SELECT` or a predicate carrying JOIN clauses. Compiles
+ *     to `sql_query`, where `merge_columns` genuinely is a decision.
+ *
+ * Scans with line comments stripped so a `-- mentions join` note can't
+ * misclassify an otherwise plain predicate.
+ */
+export function sqlEditorShape(sqlPredicate: string): "predicate" | "query" {
+  const scan = stripSqlLineComments(sqlPredicate).trim();
+  if (!scan) return "predicate";
+  if (/^select\b/i.test(scan)) return "query";
+  return SQL_JOIN_RE.test(scan) ? "query" : "predicate";
+}
+
+/**
+ * Whether a hand-written query reads columns of the table under test without
+ * ever reading the table itself.
+ *
+ * DQX runs a `sql_query` body verbatim after swapping `{{input_view}}` for a
+ * temp view over the monitored data, and `{{slot}}` placeholders resolve to
+ * bare column identifiers. So a `SELECT` that names them with no FROM on
+ * `{{input_view}}` has no relation to resolve them against: it fails with
+ * UNRESOLVED_COLUMN at run time, exactly as it does in the Test tab.
+ *
+ * Reading only reference tables IS legitimate — a dataset-level verdict about
+ * another table needs no input view — so a missing `{{input_view}}` only counts
+ * as an error once the query also reaches for a column of the table under test.
+ *
+ * Only a whole `SELECT` the author typed can be wrong here: every other shape
+ * (a bare predicate, or a predicate carrying JOIN clauses) is assembled by
+ * `buildSqlBody`, which writes `FROM {{input_view}}` itself.
+ */
+export function queryOmitsInputView(sqlPredicate: string, columnSlotNames: string[]): boolean {
+  const scan = stripSqlLineComments(sqlPredicate);
+  if (!/^\s*select\b/i.test(scan)) return false;
+  const refs = new Set(findRefs(scan));
+  if (refs.has(INPUT_VIEW_SLOT)) return false;
+  return columnSlotNames.some((name) => refs.has(name));
+}
+
+/**
+ * Fold the row predicate, joins and group-by into the single body payload the
+ * materializer's existing sql-mode path consumes.
+ *
+ * Composition rule: the row stack compiles to the pass-condition `P`; the
+ * emitted fail-condition is `NOT (P)`. Every folded form is ROW-LEVEL — DQX's
+ * `sql_query` check joins the per-row result back onto the monitored table via
+ * `merge_columns`, which MUST be columns that exist on the input DataFrame
+ * (see the `sql_query` docstring / `quality_checks.mdx`).
+ *
+ *   • no joins & no group-by  →  `{ predicate: P }`  (sql_expression path)
+ *   • group-by present        →  `SELECT <gb>, (NOT (P)) AS condition
+ *                                  FROM {{input_view}} [<joins>] GROUP BY <gb>`
+ *                                 with `merge_columns` = the group-by columns.
+ *   • joins only (no gb)      →  `SELECT <keys>, (NOT (P)) AS condition
+ *                                  FROM {{input_view}} <joins>` with
+ *                                 `merge_columns` = the input-side join keys.
+ *                                 DQX collapses join fan-out internally by
+ *                                 grouping on `merge_columns` and taking the
+ *                                 max condition (fail if any joined row
+ *                                 violates), matching the canonical join
+ *                                 example in `quality_checks.mdx`.
+ *
+ * Group-by / merge keys are always clean single-token column refs (the
+ * structured GroupByField and the join-key pickers only ever emit
+ * `{{slot}}` / `<table>.<col>` tokens), split at top-level commas so an
+ * expression such as `COALESCE({{c}}, 'XX')` in a legacy raw group-by string
+ * is never shredded into invalid fragments. Only the degenerate case with no
+ * usable row key (e.g. a CROSS-join-only rule with no group-by) falls back to
+ * the dataset-level single-row query. Polarity is NOT baked in — `render_check`'s
+ * `negate` applies it, uniform with a hand-written sql-mode rule.
+ */
+/**
+ * Whether a low-code rule folds joins and/or group-by into a dataset-level
+ * `sql_query` (rather than a plain row predicate). Derived from
+ * `compileLowcodeBody`'s own classification so the two can never drift.
+ *
+ * Only the row predicate is testable via the Rules Registry "Test" tab, so an
+ * advanced rule would produce a MISLEADING verdict (it tests the row predicate
+ * in isolation, ignoring the joins/grouping that define its real semantics).
+ * The Test tab therefore hides its surface for such rules, and the run route
+ * rejects them as belt-and-braces.
+ */
+export function lowcodeHasAdvancedShape(ast: LowcodeAstV2, groupBy: string): boolean {
+  return compileLowcodeBody(ast, groupBy).sql_query !== undefined;
+}
+
+export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): CompiledLowcodeBody {
+  const joinsSql = compileJoinsToSql(ast.joins);
+  const hasJoins = Boolean(joinsSql);
+  // Own-table columns in the PREDICATE are qualified to the input view only when
+  // the rule has joins; merge_columns / GROUP BY stay bare (see below).
+  const predicate = compileAstToSql(ast, hasJoins);
+  const gbColumns = splitTopLevelCommas(groupBy ?? "");
+
+  if (!joinsSql && gbColumns.length === 0) {
+    return { predicate };
+  }
+
+  const failCond = `NOT (${predicate})`;
+  const from = `{{input_view}}${joinsSql ? ` ${joinsSql}` : ""}`;
+
+  if (gbColumns.length > 0) {
+    // GROUP BY / merge_columns stay BARE. When joins are present the SELECT
+    // projection qualifies the source and aliases back to the bare name so the
+    // projected/grouped column is an unambiguous bare identifier.
+    const selectList = hasJoins ? gbColumns.map(selectKeyProjection).join(", ") : gbColumns.join(", ");
+    const gbList = gbColumns.join(", ");
+    return {
+      sql_query: `SELECT ${selectList}, (${failCond}) AS condition FROM ${from} GROUP BY ${gbList}`,
+      merge_columns: gbColumns,
+    };
+  }
+
+  // Joins only: run row-level, merging the per-row result back on the
+  // input-side join keys (the only columns present on the input table).
+  // merge_columns stay BARE (see joinKeyRefs); the SELECT projection qualifies
+  // each own key to the input view and aliases it back to the bare name.
+  const keyRefs = joinKeyRefs(ast.joins);
+  if (keyRefs.length > 0) {
+    const selectList = keyRefs.map(selectKeyProjection).join(", ");
+    return {
+      sql_query: `SELECT ${selectList}, (${failCond}) AS condition FROM ${from}`,
+      merge_columns: keyRefs,
+    };
+  }
+
+  // No usable row key (e.g. CROSS-join-only) — dataset-level single-row query.
+  return { sql_query: `SELECT (${failCond}) AS condition FROM ${from}` };
+}
+
+/**
+ * Build the SQL-mode rule body (`{ predicate }` or `{ sql_query, merge_columns? }`)
+ * from the SQL editor's raw predicate + declared joins.
+ *
+ * The body TYPE is derived from join presence (mirroring
+ * {@link compileLowcodeBody}'s classification — no separate stored flag):
+ *
+ *   • joins declared     →  compile predicate + joins into a `sql_query`
+ *                           (`merge_columns` = input-side join keys, or absent
+ *                           for a CROSS-join-only dataset-level query);
+ *   • no joins, but the  →  emit the CURRENT editor text as `sql_query`,
+ *     editor holds a         preserving the loaded body's `merge_columns`
+ *     loaded cross-table      (*sqlQueryPassthrough* non-null). This is the
+ *     query                   CRIT-2 fix: joins are not round-trippable from a
+ *                            raw `sql_query` string, so a cross-table rule
+ *                            reopens with `sqlJoins = []` and its whole
+ *                            `SELECT … FROM {{input_view}} … JOIN …` sitting in
+ *                            the predicate editor. Without this branch that body
+ *                            would be mis-emitted as `{ predicate: <full SELECT> }`,
+ *                            flipping the rule into a broken `sql_expression`.
+ *                            Using the CURRENT predicate text (not a frozen
+ *                            snapshot) means editing the query — the literal
+ *                            "edit + resave" case — keeps it a valid `sql_query`;
+ *   • otherwise          →  a plain single-table `{ predicate }`.
+ *
+ * *sqlQueryPassthrough* is non-null exactly while the editor still holds a rule
+ * loaded as a cross-table `sql_query` (see `loadedSqlQueryRef`). It carries the
+ * loaded `merge_columns` to preserve (dropping them would flip the runtime from
+ * a row-level merge to a dataset-level single-row query). The caller drops it
+ * the moment the author changes the rule TYPE (the decision-point re-pick), so
+ * an intentional conversion to another mode is honoured; re-declaring joins
+ * takes the recompile branch above regardless.
+ *
+ * *granularity* / *mergeColumns* carry the SQL-mode row/dataset toggle. They
+ * apply only to the `sql_query` branches — a bare predicate is `sql_expression`
+ * and row-level by construction. Row-level attaches (and, where we generate the
+ * SELECT, projects) the author's merge keys; dataset-level attaches none.
+ * Omitting *granularity* preserves the loaded body's merge columns, keeping
+ * pre-toggle callers and stored rules behaving exactly as before.
+ */
+export function buildSqlBody(params: {
+  sqlPredicate: string;
+  sqlJoins: JoinAst[];
+  sqlQueryPassthrough?: { merge_columns?: string[] } | null;
+  granularity?: RuleGranularity;
+  mergeColumns?: string[];
+}): CompiledLowcodeBody {
+  const { sqlPredicate, sqlJoins, sqlQueryPassthrough, granularity, mergeColumns } = params;
+  // Raw-SQL editor path: the author owns the predicate text, so keep the ON
+  // own-side bare (don't qualify) — the predicate they wrote uses bare {{slot}}s.
+  const joinsSql = compileJoinsToSql(sqlJoins, false);
+  const pred = sqlPredicate.trim();
+  // Merge keys for whichever `sql_query` branch we land in. An explicit
+  // granularity (the SQL-mode toggle) wins: row-level carries the author's keys,
+  // dataset-level deliberately carries none. With no toggle state — an older
+  // caller, or a rule loaded before the toggle existed — fall back to preserving
+  // whatever the loaded body had, which is the pre-toggle behaviour.
+  const queryMerge =
+    granularity === undefined
+      ? (sqlQueryPassthrough?.merge_columns ?? [])
+      : granularity === "dataset"
+        ? []
+        : (mergeColumns ?? []);
+  const withMerge = (sql_query: string): CompiledLowcodeBody =>
+    queryMerge.length > 0 ? { sql_query, merge_columns: queryMerge } : { sql_query };
+  if (joinsSql) {
+    const failCond = `NOT (${pred})`;
+    const from = `{{input_view}} ${joinsSql}`;
+    // The structured-join keys are the natural row keys; an explicit toggle
+    // still overrides them (dataset-level omits merge columns entirely).
+    const keyRefs = granularity === undefined ? joinKeyRefs(sqlJoins) : queryMerge;
+    if (keyRefs.length > 0) {
+      return {
+        sql_query: `SELECT ${keyRefs.join(", ")}, (${failCond}) AS condition FROM ${from}`,
+        merge_columns: keyRefs,
+      };
+    }
+    // CROSS-join-only: dataset-level single-row query (no usable row key).
+    return { sql_query: `SELECT (${failCond}) AS condition FROM ${from}` };
+  }
+  if (sqlQueryPassthrough && pred) {
+    // The editor holds a loaded cross-table sql_query. Persist the CURRENT text
+    // as sql_query (so edits are saved, not corrupted), preserving merge_columns.
+    return withMerge(pred);
+  }
+  // Item 55: a SQL rule authored with a JOIN (per the predicate placeholder's
+  // "LEFT JOIN catalog.schema.table a ON a.column = {{region}}" hint) must
+  // become a cross-table `sql_query` check, NOT a bare `sql_expression` — the
+  // latter can't run a join. Detect it on the comment-stripped text so a `--`
+  // note can't trip the scan, then:
+  //   • a full `SELECT … FROM … JOIN …` is already a query → persist as-is;
+  //   • a bare boolean predicate followed by JOIN clause(s) is wrapped into
+  //     `SELECT <keys>, (NOT (<pred>)) AS condition FROM {{input_view}} <joins>`
+  //     (same NOT-condition convention as the structured-joins branch above).
+  //
+  // The merge keys come from the granularity toggle. Projecting them into the
+  // SELECT list is what makes row-level actually work: DQX joins the verdict
+  // back on those columns, so they must appear in the query's output. Picking
+  // dataset-level projects none, and the author is told to aggregate — such a
+  // query must collapse to exactly one row or DQX raises at runtime.
+  const scan = stripSqlLineComments(pred).trim();
+  if (/^select\b/i.test(scan)) {
+    return withMerge(pred);
+  }
+  const joinMatch = SQL_JOIN_RE.exec(scan);
+  if (joinMatch) {
+    const boolExpr = scan.slice(0, joinMatch.index).trim();
+    const joinClause = scan.slice(joinMatch.index).trim();
+    if (boolExpr) {
+      const selectList = queryMerge.length > 0 ? `${queryMerge.join(", ")}, ` : "";
+      return withMerge(`SELECT ${selectList}(NOT (${boolExpr})) AS condition FROM {{input_view}} ${joinClause}`);
+    }
+  }
+  // A bare boolean predicate compiles to `sql_expression`, which is row-level by
+  // construction — a dataset-level choice cannot apply here, and the UI locks the
+  // toggle to row-level for this shape.
+  return { predicate: pred };
+}
+
+/** Matches a JOIN clause introducer (typed forms + bare `JOIN`) as a whole
+ *  word, used to detect that a SQL predicate is really a cross-table query
+ *  (item 55). Bare `JOIN` is included since it's valid SQL (defaults to INNER);
+ *  a plain boolean predicate practically never contains the standalone token. */
+const SQL_JOIN_RE =
+  /\b(?:inner|left(?:\s+(?:outer|semi|anti))?|right(?:\s+outer)?|full(?:\s+outer)?|cross)\s+join\b|\bjoin\b/i;

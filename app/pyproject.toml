@@ -8,8 +8,10 @@ dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
-    # Keep in lockstep with the pin in tasks/pyproject.toml.
-    "databricks-labs-dqx[llm,datacontract]==0.15.0",
+    # Resolved from the parent checkout via [tool.uv.sources] below (the app runs the
+    # vendored source, not a published release), so it is intentionally unpinned — the
+    # co-developed version comes from the checkout, not a version specifier here.
+    "databricks-labs-dqx[llm,datacontract]",
     "databricks-sdk~=0.120",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",
@@ -56,6 +58,16 @@ app-module = "databricks_labs_dqx_app.backend.app:app"
 [tool.uv]
 exclude-newer-package = { "databricks-sdk" = false }
 
+# Rules Registry co-develops the DQX library with this app: local symbols
+# (e.g. llm helpers) are not yet in the published 0.15.0 wheel. Non-editable
+# path dep avoids namespace-package shadowing with databricks-sdk (see prior
+# Studio notes). Deploys under the #1300 uv-run source model cannot follow this
+# path out of the app directory, so build_app.py vendors the library into
+# .build/_vendor/dqx and retargets the copied pyproject/lock. Drop this source
+# (and the vendoring becomes a no-op) once a dqx release carries the additions.
+[tool.uv.sources]
+databricks-labs-dqx = { path = "../" }
+
 [build-system]
 requires = ["hatchling==1.29.0"]
 build-backend = "hatchling.build"
@@ -66,12 +78,13 @@ artifacts = [
     "src/databricks_labs_dqx_app/__dist__",
     "src/databricks_labs_dqx_app/_metadata.py",
     "src/databricks_labs_dqx_app/_version.py",
+    "src/databricks_labs_dqx_app/backend/marketplace/packs/*.yaml",
 ]
 exclude = ["src/databricks_labs_dqx_app/ui"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 # ---------------------------------------------------------------------------
