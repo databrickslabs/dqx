@@ -148,16 +148,20 @@ def test_compare_datasets_invalid_tolerance_exceptions(abs_tolerance, rel_tolera
         )
 
 
-def test_compare_datasets_rejects_streaming_dataframes():
-    _, apply = check_funcs.compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
-    streaming_df = create_autospec(DataFrame, instance=True)
-    streaming_df.isStreaming = True
+@pytest.mark.parametrize("streaming_side", ["source", "reference"])
+@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True])
+def test_compare_datasets_rejects_streaming_dataframes(streaming_side: str, raise_on_duplicate_keys: bool):
+    _, apply = check_funcs.compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", raise_on_duplicate_keys=raise_on_duplicate_keys
+    )
+    df = create_autospec(DataFrame, instance=True)
+    df.isStreaming = streaming_side == "source"
     ref_df = create_autospec(DataFrame, instance=True)
-    ref_df.isStreaming = False
+    ref_df.isStreaming = streaming_side == "reference"
     spark = create_autospec(SparkSession, instance=True)
 
     with pytest.raises(InvalidParameterError, match="compare_datasets only supports batch DataFrames"):
-        apply(streaming_df, spark, {"ref_df": ref_df})
+        apply(df, spark, {"ref_df": ref_df})
 
 
 def test_sql_query_empty_merge_columns():

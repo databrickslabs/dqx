@@ -2903,7 +2903,7 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
-    allow_duplicate_keys: bool = False,
+    raise_on_duplicate_keys: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -2912,6 +2912,11 @@ def compare_datasets(
     Only columns that are common across both datasets will be compared. Mismatched columns are ignored.
     Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
+
+    By default, duplicate matching-key groups are paired lazily using a per-group row number.
+    Rows are ordered by the string representation of their compared values, with nulls first.
+    Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
+    Cartesian fan-out but does not attempt to minimize the number of reported column changes.
 
     The log containing detailed differences is written to the message field of the check result as a JSON string.
 
@@ -2936,8 +2941,7 @@ def compare_datasets(
         the source DataFrame (can be a list of string column names or column expressions).
         The *columns* parameter is matched with *ref_columns* by position, so the order of
         the provided columns in both lists must be exactly aligned. Only simple column
-        expressions are supported, e.g. F.col("col_name"). By default, the matching columns must
-        uniquely identify rows in both datasets.
+        expressions are supported, e.g. F.col("col_name").
       ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
       ref_table: Name of the reference table (used when reading from catalog).
       check_missing_records: Perform FULL OUTER JOIN between the DataFrames to also find
@@ -2958,11 +2962,9 @@ def compare_datasets(
         For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
         For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
-      allow_duplicate_keys: If True, duplicate matching-key groups are paired deterministically
-        by ordering rows on their compared values and adding a per-group row number to the join key.
-        This ordered pairing is more expensive and does not attempt to minimize the number of
-        reported column changes. If False (default), duplicate matching keys raise
-        *InvalidParameterError*.
+      raise_on_duplicate_keys: If True, require unique matching keys in both datasets and raise
+        *InvalidParameterError* on duplicates. This validation eagerly executes Spark jobs before
+        the comparison join. If False (default), pair duplicate-key rows lazily by compared values.
 
 
     Returns:
@@ -2978,7 +2980,7 @@ def compare_datasets(
             - if the number of *columns* and *ref_columns* do not match.
             - if *abs_tolerance* or *rel_tolerance* is negative.
             - if either DataFrame is streaming; dataset comparison requires bounded inputs.
-            - if *allow_duplicate_keys* is False and the matching columns do not uniquely identify
+            - if *raise_on_duplicate_keys* is True and the matching columns do not uniquely identify
               rows in either dataset.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
@@ -3034,7 +3036,7 @@ def compare_datasets(
 
         join_columns = pk_column_names
         ref_join_columns = ref_pk_column_names
-        if allow_duplicate_keys:
+        if not raise_on_duplicate_keys:
             row_number_col = f"__match_row_number_{unique_id}"
             order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
             df = df.withColumn(
@@ -3068,7 +3070,8 @@ def compare_datasets(
         ref_df = ref_df.alias("ref_df")
 
         results = _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
-        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        # The row number distinguishes a present null-key row from a missing side of the join.
+        results = _add_row_diffs(results, join_columns, ref_join_columns, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
         )

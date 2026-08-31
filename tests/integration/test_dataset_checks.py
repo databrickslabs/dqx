@@ -2862,7 +2862,7 @@ def test_compare_datasets_rejects_duplicate_matching_keys(
     ref_df = spark.createDataFrame(
         duplicate_rows if duplicate_side == "reference" else unique_rows, "id int, value string"
     )
-    _, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
+    _, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df", raise_on_duplicate_keys=True)
 
     with pytest.raises(
         InvalidParameterError,
@@ -2871,19 +2871,36 @@ def test_compare_datasets_rejects_duplicate_matching_keys(
         apply(df, spark, {"ref_df": ref_df})
 
 
-def test_compare_datasets_allows_duplicate_null_keys_when_null_safe_matching_disabled(spark: SparkSession):
+@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True])
+def test_compare_datasets_allows_duplicate_null_keys_when_null_safe_matching_disabled(
+    spark: SparkSession, raise_on_duplicate_keys: bool
+):
     df = spark.createDataFrame([(None, "A"), (None, "B")], "id int, value string")
-    _, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df", null_safe_row_matching=False)
+    _, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        null_safe_row_matching=False,
+        raise_on_duplicate_keys=raise_on_duplicate_keys,
+    )
 
     assert apply(df, spark, {"ref_df": df}).count() == 2
+
+
+def test_compare_datasets_is_lazy_by_default(spark: SparkSession):
+    df = spark.range(1).select(F.raise_error("comparison was evaluated").cast("int").alias("id"))
+    _, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
+
+    # Building the comparison plan must not evaluate either dataset's matching keys.
+    actual = apply(df, spark, {"ref_df": df})
+
+    assert actual.columns[0] == "id"
 
 
 def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSession):
     df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
     ref_df = spark.createDataFrame([(1, "A"), (1, "C")], "id int, value string")
-    condition, apply = compare_datasets(
-        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", allow_duplicate_keys=True
-    )
+    condition, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
 
     actual = {
         row["value"]: row["violation"]
@@ -2898,27 +2915,37 @@ def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSe
     }
 
 
-def test_compare_datasets_pairs_duplicate_keys_without_cartesian_fanout(spark: SparkSession):
-    df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
-    condition, apply = compare_datasets(
-        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", allow_duplicate_keys=True
-    )
+@pytest.mark.parametrize("duplicate_key", [1, None])
+@pytest.mark.parametrize("compare_values", [False, True])
+def test_compare_datasets_pairs_duplicate_keys_without_cartesian_fanout(
+    spark: SparkSession, duplicate_key: int | None, compare_values: bool
+):
+    df = spark.createDataFrame([(duplicate_key, "A"), (duplicate_key, "B")], "id int, value string")
+    ref_df = spark.createDataFrame([(duplicate_key, "B"), (duplicate_key, "A")], "id int, value string")
+    if not compare_values:
+        df, ref_df = df.select("id"), ref_df.select("id")
+    condition, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
 
-    actual = apply(df, spark, {"ref_df": df}).select("id", "value", condition.alias("violation"))
+    actual = apply(df, spark, {"ref_df": ref_df}).select(*df.columns, condition.alias("violation"))
 
     assert actual.count() == 2
     assert all(row["violation"] is None for row in actual.collect())
 
 
-def test_compare_datasets_reports_unpaired_duplicate_as_extra(spark: SparkSession):
-    df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
-    ref_df = spark.createDataFrame([(1, "A")], "id int, value string")
+@pytest.mark.parametrize("duplicate_key", [1, None])
+@pytest.mark.parametrize("duplicate_side", ["source", "reference"])
+def test_compare_datasets_reports_unpaired_duplicate(
+    spark: SparkSession, duplicate_key: int | None, duplicate_side: str
+):
+    df = spark.createDataFrame([(duplicate_key, "A"), (duplicate_key, "B")], "id int, value string")
+    ref_df = spark.createDataFrame([(duplicate_key, "A")], "id int, value string")
+    if duplicate_side == "reference":
+        df, ref_df = ref_df, df
     condition, apply = compare_datasets(
         columns=["id"],
         ref_columns=["id"],
         ref_df_name="ref_df",
         check_missing_records=True,
-        allow_duplicate_keys=True,
     )
 
     actual = {
@@ -2926,11 +2953,12 @@ def test_compare_datasets_reports_unpaired_duplicate_as_extra(spark: SparkSessio
         for row in apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
     }
 
+    assert len(actual) == 2
     assert actual["A"] is None
-    assert json.loads(actual["B"]) == {
-        "row_missing": False,
-        "row_extra": True,
-        "changed": {"value": {"df": "B"}},
+    assert json.loads(actual["B" if duplicate_side == "source" else None]) == {
+        "row_missing": duplicate_side == "reference",
+        "row_extra": duplicate_side == "source",
+        "changed": {"value": {"df" if duplicate_side == "source" else "ref": "B"}},
     }
 
 
@@ -3006,9 +3034,8 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
                 "name": None,
                 compare_status_column: json.dumps(
                     {
-                        # We cannot reliably determine whether a row is missing or extra if all keys are null on both sides
                         "row_missing": True,
-                        "row_extra": True,
+                        "row_extra": False,
                         "changed": {"name": {"ref": "Marcin"}},
                     },
                     separators=(",", ":"),
@@ -3101,15 +3128,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
             {
                 "id": None,
                 "name": "Marcin",
-                compare_status_column: json.dumps(
-                    {
-                        # We cannot reliably determine whether a row is missing or extra if all keys are null on both sides
-                        "row_missing": True,
-                        "row_extra": True,
-                        "changed": {},
-                    },
-                    separators=(",", ":"),
-                ),
+                compare_status_column: None,
             },
         ],
         expected_schema,
