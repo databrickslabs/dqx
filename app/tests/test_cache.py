@@ -1,7 +1,5 @@
 """Tests for ``CacheFactory`` — get/set, TTL, single-flight, retry."""
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest
