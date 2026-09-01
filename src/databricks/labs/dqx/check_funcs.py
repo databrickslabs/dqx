@@ -49,6 +49,25 @@ _EMAIL_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _EMAIL_QTEXT = r"[\x21\x23-\x5B\x5D-\x7E]"  # printable ASCII except '"' (0x22) and '\' (0x5C)
 _EMAIL_QPAIR = r"\\[\x09\x20-\x7E]"  # quoted-pair: '\' + VCHAR or WSP; valid only inside a quoted part
 
+# URL helpers (RFC 3986 absolute-URI grammar). Every repetition below is over alternatives whose first
+# characters are disjoint ('%' starts only pct-encoded, '/' only a new path segment), so matching is
+# deterministic and there is no catastrophic backtracking; ReDoS-safe.
+_URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*"  # RFC 3986 §3.1
+_URL_PCT_ENCODED = r"%[0-9A-Fa-f]{2}"  # RFC 3986 §2.1
+_URL_UNRESERVED_SUB_DELIMS = r"[A-Za-z0-9\-._~!$&'()*+,;=]"  # unreserved (§2.3) + sub-delims (§2.2)
+_URL_USERINFO = rf"(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED}|:)*"  # §3.2.1
+# reg-name (§3.2.2) also covers IPv4address, since digits and '.' are unreserved.
+_URL_HOST = rf"(?:\[[A-Fa-f0-9:.]+\]|(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED})*)"
+_URL_AUTHORITY = rf"(?:{_URL_USERINFO}@)?{_URL_HOST}(?::\d*)?"  # §3.2
+_URL_PCHAR = rf"(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED}|[:@])"  # §3.3
+_URL_PATH_ABEMPTY = rf"(?:/{_URL_PCHAR}*)*"  # §3.3; each iteration consumes at least the '/'
+# path-absolute ("/" with an optional non-empty first segment, e.g. "/" or "/a/b"), path-rootless
+# ("a/b"), or path-empty. The two alternatives keep the leading-slash case (which may be followed by
+# no segment) distinct from the rootless case (which requires a non-empty first segment); their first
+# characters are disjoint ('/' is not a pchar), so this stays unambiguous and ReDoS-safe.
+_URL_PATH_NO_AUTHORITY = rf"(?:/(?:{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?|{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?"
+_URL_QUERY_OR_FRAGMENT = rf"(?:{_URL_PCHAR}|[/?])*"  # §3.4, §3.5
+
 # Curated aggregate functions for data quality checks
 # These are univariate (single-column) aggregate functions suitable for DQ monitoring
 # Maps function names to human-readable display names for error messages
@@ -123,6 +142,20 @@ class DQPattern(Enum):
     # Indian Permanent Account Number (PAN): three letters, a holder-type letter,
     # another letter, four digits, and a final letter.
     PAN_IN = r"\A[A-Z]{3}[ABCFGHJLPT][A-Z]\d{4}[A-Z]\z"
+
+    # RFC 3986 §4.3 absolute-URI: scheme ":" hier-part [ "?" query ] [ "#" fragment ]. A scheme is
+    # required, so relative references ("/path", "example.com") are rejected. Any syntactically valid
+    # scheme is accepted, which includes non-network schemes such as "javascript:" and "data:" - this
+    # validates URL *syntax*, not safety. Note that RFC 3986 permits an empty host ("file:///path"),
+    # so host presence is not enforced here.
+    # \A...\z anchors (not ^...$) so a trailing newline is rejected under Java regex - see IPV4_ADDRESS.
+    URL = (
+        rf"\A{_URL_SCHEME}:"
+        rf"(?://{_URL_AUTHORITY}{_URL_PATH_ABEMPTY}|{_URL_PATH_NO_AUTHORITY})"
+        rf"(?:\?{_URL_QUERY_OR_FRAGMENT})?"
+        rf"(?:#{_URL_QUERY_OR_FRAGMENT})?"
+        rf"\z"
+    )
 
     # Canonical UUID form per RFC 9562: 8-4-4-4-12 hex groups. UUID validates the shape
     # only, so RFC-defined Nil/Max sentinels and legacy variant GUIDs pass; UUID_STRICT
@@ -1171,6 +1204,40 @@ def is_valid_email(column: str | Column) -> Column:
         Column object for condition
     """
     return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
+
+
+@register_rule("row")
+def is_valid_url(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid URLs.
+
+    Validates against the RFC 3986 §4.3 *absolute-URI* grammar: *scheme ":" hier-part* with an
+    optional *"?" query* and *"#" fragment*. A scheme is required, so relative references such as
+    */path* or *example.com* are rejected. Sub-delimiters (*!$&'()*+,;=*) are permitted unencoded
+    inside a path, query, or fragment; any character outside the *unreserved* and *sub-delims* sets
+    (spaces, or gen-delimiters such as *[* and *]* outside their structural role) must be
+    percent-encoded to be accepted.
+
+    Any syntactically valid scheme is accepted, which keeps non-network URLs such as *s3://*,
+    *ftp://*, *mailto:* and *urn:* valid alongside *http://* and *https://*. Two consequences are
+    worth noting:
+
+    * This validates URL *syntax*, not safety or reachability. Script-bearing schemes
+      (*javascript:alert(1)*) and inline payloads (*data:text/plain,hello*) are syntactically valid
+      URLs and pass. Do not rely on this check to sanitize untrusted input before rendering or
+      fetching it; gate the scheme explicitly for that, for example with *is_in_list* on an extracted
+      scheme column or a *sql_expression* check.
+    * RFC 3986 permits an empty host, so *file:///path* passes. Host presence is not enforced.
+
+    Validation is purely syntactic: it does not verify that the host resolves or that the resource
+    exists. Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.URL)
 
 
 @register_rule("row")

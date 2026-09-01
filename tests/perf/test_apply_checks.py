@@ -2227,6 +2227,32 @@ def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
 
 
 @pytest.mark.parametrize(
+    "column",
+    [
+        "col1_url_standard",
+        "col2_url_with_path_and_query",
+        "col3_url_with_userinfo_and_port",
+        "col4_url_with_pct_encoding",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_url")
+def test_benchmark_is_valid_url(benchmark, ws, generated_url_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_url",
+            criticality="warn",
+            check_func=check_funcs.is_valid_url,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_url_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
     "case, generated_string_df",
     [
         pytest.param(
