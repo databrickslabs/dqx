@@ -2970,6 +2970,7 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    raise_on_duplicate_keys: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -2978,6 +2979,17 @@ def compare_datasets(
     Only columns that are common across both datasets will be compared. Mismatched columns are ignored.
     Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
+
+    By default, duplicate matching-key groups are paired lazily using a per-group row number.
+    Rows are ordered by the string representation of their compared values, with nulls first.
+    Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
+    Cartesian fan-out but does not attempt to minimize the number of reported column changes.
+
+    This lazy pairing adds two *row_number* window computations (one per dataset) that sort both
+    datasets on the compared columns, which can be costly on large inputs. When the matching keys
+    are known to be unique, set *raise_on_duplicate_keys* to True to skip the windows and pair rows
+    with a single join instead; this is the more efficient option on large datasets, at the cost of
+    an eager uniqueness check that raises if duplicates are present.
 
     The log containing detailed differences is written to the message field of the check result as a JSON string.
 
@@ -3014,6 +3026,8 @@ def compare_datasets(
         the list of columns used to determine row matches; it only controls which columns are
         skipped during the column value comparison.
       null_safe_row_matching: If True, treats nulls as equal when matching rows.
+        If False, rows containing nulls in a matching column cannot match and are excluded
+        from matching-key uniqueness validation.
       null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
@@ -3021,6 +3035,13 @@ def compare_datasets(
         For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
         For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
+      raise_on_duplicate_keys: Controls duplicate-key handling, which is also a performance trade-off.
+        If True, require unique matching keys in both datasets: uniqueness is validated with a lightweight
+        aggregation (an eager Spark job) and rows are then paired with a single join, avoiding the per-group
+        row-number windows. This is the more efficient option when keys are known to be unique, but raises
+        *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
+        by compared values using per-group row-number windows; this is robust to duplicates but sorts both
+        datasets on the compared columns.
 
 
     Returns:
@@ -3035,6 +3056,9 @@ def compare_datasets(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *abs_tolerance* or *rel_tolerance* is negative.
+            - if either DataFrame is streaming; dataset comparison requires bounded inputs.
+            - if *raise_on_duplicate_keys* is True and the matching columns do not uniquely identify
+              rows in either dataset.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -3061,6 +3085,12 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
+        if df.isStreaming or ref_df.isStreaming:
+            raise InvalidParameterError(
+                "compare_datasets requires bounded batch DataFrames and does not support streaming inputs. "
+                "Compare bounded snapshots, or run the comparison inside foreachBatch on each micro-batch."
+            )
+
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {
             field.name
@@ -3084,16 +3114,50 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
+        # A per-group sequence number is appended to the join keys so that _add_row_diffs can tell a
+        # present row whose matching-key value is null (matched via null-safe equality) apart from a
+        # missing side of the join. Without it, both look "null" and the row is wrongly flagged as both
+        # missing and extra. Both the lazy and eager paths need this signal.
+        row_number_col = f"__match_row_number_{unique_id}"
+        if not raise_on_duplicate_keys:
+            order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+            df = df.withColumn(
+                row_number_col,
+                F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
+            )
+            ref_df = ref_df.withColumn(
+                row_number_col,
+                F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
+            )
+        else:
+            match_count_col = f"__match_count_{unique_id}"
+            for dataset_name, dataset, matching_columns in (
+                ("source", df, pk_column_names),
+                ("reference", ref_df, ref_pk_column_names),
+            ):
+                matchable_rows = dataset if null_safe_row_matching else dataset.dropna(subset=matching_columns)
+                duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
+                if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
+                    raise InvalidParameterError(
+                        f"The {dataset_name} dataset contains duplicate matching keys for columns: "
+                        f"{', '.join(matching_columns)}."
+                    )
+            # Matching keys are unique here, so every group's sequence number is 1; a constant non-null
+            # marker gives _add_row_diffs the same present-vs-missing signal without a window shuffle.
+            df = df.withColumn(row_number_col, F.lit(1))
+            ref_df = ref_df.withColumn(row_number_col, F.lit(1))
+
+        join_columns = [*pk_column_names, row_number_col]
+        ref_join_columns = [*ref_pk_column_names, row_number_col]
+
         # apply filter before aliasing to avoid ambiguity
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        results = _match_rows(
-            df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
-        )
-        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
+        results = _add_row_diffs(results, join_columns, ref_join_columns, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
         )
@@ -4020,15 +4084,21 @@ def _add_row_diffs(
     """
     Adds flags to the DataFrame indicating missing or extra rows during comparison.
 
-    A row is considered missing if it exists in the reference DataFrame but not in the source DataFrame.
-    This is determined by checking if all primary key columns in the source DataFrame (df) are null.
-    A row is extra if it exists in the source DataFrame but not in the reference DataFrame.
-    This is determined by checking if all primary key columns in the reference DataFrame (ref_df) are null.
+    A row is missing if it exists in the reference DataFrame but not in the source DataFrame, and extra if it
+    exists in the source DataFrame but not in the reference DataFrame. This is determined by checking whether
+    all join-key columns on the respective side are null (df for missing, ref_df for extra), since an
+    unmatched side of the outer join is null-filled.
+
+    Important: *pk_column_names* and *ref_pk_column_names* are the full join-key lists, not just the real
+    matching keys. Callers must append a non-null sentinel column (e.g. a per-group row number) to both
+    lists. The sentinel is what distinguishes a present row whose matching-key value is legitimately null
+    (matched via null-safe equality) from a null-filled absent join side; without it, such a matched row is
+    wrongly flagged as both missing and extra. See the caller in *compare_datasets*.
     """
     row_missing_condition = F.lit(True)
     row_extra_condition = F.lit(True)
 
-    # check for existence against all pk columns
+    # a side is absent only if every join-key column on that side (including the non-null sentinel) is null
     for df_col_name, ref_col_name in zip(pk_column_names, ref_pk_column_names):
         row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
         row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
