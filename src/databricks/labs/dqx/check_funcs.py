@@ -4084,15 +4084,21 @@ def _add_row_diffs(
     """
     Adds flags to the DataFrame indicating missing or extra rows during comparison.
 
-    A row is considered missing if it exists in the reference DataFrame but not in the source DataFrame.
-    This is determined by checking if all primary key columns in the source DataFrame (df) are null.
-    A row is extra if it exists in the source DataFrame but not in the reference DataFrame.
-    This is determined by checking if all primary key columns in the reference DataFrame (ref_df) are null.
+    A row is missing if it exists in the reference DataFrame but not in the source DataFrame, and extra if it
+    exists in the source DataFrame but not in the reference DataFrame. This is determined by checking whether
+    all join-key columns on the respective side are null (df for missing, ref_df for extra), since an
+    unmatched side of the outer join is null-filled.
+
+    Important: *pk_column_names* and *ref_pk_column_names* are the full join-key lists, not just the real
+    matching keys. Callers must append a non-null sentinel column (e.g. a per-group row number) to both
+    lists. The sentinel is what distinguishes a present row whose matching-key value is legitimately null
+    (matched via null-safe equality) from a null-filled absent join side; without it, such a matched row is
+    wrongly flagged as both missing and extra. See the caller in *compare_datasets*.
     """
     row_missing_condition = F.lit(True)
     row_extra_condition = F.lit(True)
 
-    # check for existence against all pk columns
+    # a side is absent only if every join-key column on that side (including the non-null sentinel) is null
     for df_col_name, ref_col_name in zip(pk_column_names, ref_pk_column_names):
         row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
         row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
