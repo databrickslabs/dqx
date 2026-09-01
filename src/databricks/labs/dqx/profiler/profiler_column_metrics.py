@@ -43,7 +43,7 @@ def register_profile_column_metric(
 
 
 @register_profile_column_metric("empty_count")
-def empty_count(field: T.StructField, column_label: str) -> Column | None:
+def empty_count(field: T.StructField, column_label: str) -> Column:
     """
     Profiling column metric for empty count. Applicable for text columns only, otherwise returns literal *0* for
     backward compatibility.
@@ -52,7 +52,7 @@ def empty_count(field: T.StructField, column_label: str) -> Column | None:
 
 
 @register_profile_column_metric("count_distinct")
-def count_distinct(_field: T.StructField, column_label: str) -> Column | None:
+def count_distinct(_field: T.StructField, column_label: str) -> Column:
     """
     Profiling column metric for count distinct. Applicable for all columns.
     """
@@ -60,7 +60,7 @@ def count_distinct(_field: T.StructField, column_label: str) -> Column | None:
 
 
 @register_profile_column_metric("count_non_null")
-def count_non_null(_field: T.StructField, column_label: str) -> Column | None:
+def count_non_null(_field: T.StructField, column_label: str) -> Column:
     """
     Profiling column metric for count not null values. Applicable for all columns.
     """

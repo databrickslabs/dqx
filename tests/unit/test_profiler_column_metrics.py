@@ -1,5 +1,6 @@
 import pytest
 import pyspark.sql.types as T
+from pyspark.sql import functions as F
 
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     PROFILE_COLUMN_METRIC_REGISTRY,
@@ -23,15 +24,15 @@ def test_register_profile_column_metric_registers_under_explicit_type():
 
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])
-def test_empty_count_returns_column_for_text_types(column_type):
+def test_empty_count_returns_count_if_expression_for_text_types(column_type):
     field = T.StructField("col", column_type)
-    assert empty_count(field, "col") is not None
+    assert str(empty_count(field, "col")) != str(F.lit(0))
 
 
 @pytest.mark.parametrize("column_type", [T.IntegerType(), T.DoubleType(), T.LongType(), T.DateType()])
 def test_empty_count_returns_literal_zero_for_non_text_types(column_type):
     field = T.StructField("col", column_type)
-    assert empty_count(field, "col") is not None
+    assert str(empty_count(field, "col")) == str(F.lit(0))
 
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.IntegerType(), T.DoubleType(), T.DateType()])

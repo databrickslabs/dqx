@@ -4,11 +4,16 @@ from decimal import Decimal
 
 import pytest
 import pyspark.sql.types as T
+from pyspark.sql import functions as F
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
+from databricks.labs.dqx.profiler.profiler_column_metrics import (
+    PROFILE_COLUMN_METRIC_REGISTRY,
+    register_profile_column_metric,
+)
 
 from tests.constants import TEST_CATALOG
 
@@ -221,6 +226,31 @@ def test_profiler_high_null_ratio_column_skips_is_not_null(spark, ws):
     )
 
     assert not [p for p in profiles if p.name == "is_not_null" and p.column == "sparse"]
+
+
+def test_profiler_uses_registered_custom_column_metric(spark, ws):
+    # Verifies the register_profile_column_metric extension point end-to-end:
+    # a user-registered metric is executed against each column during profiling and its
+    # aggregated value is exposed under the registered key in the returned summary_stats.
+    metric_key = "p50"
+
+    @register_profile_column_metric(metric_key)
+    def _p50(_field, column_label):
+        return F.percentile_approx(F.col(column_label), 0.5)
+
+    try:
+        schema = T.StructType([T.StructField("amount", T.IntegerType())])
+        input_df = spark.createDataFrame([[10], [20], [30], [40], [50]], schema=schema)
+
+        profiler = DQProfiler(ws)
+        summary_stats, _ = profiler.profile(
+            input_df,
+            options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+        )
+
+        assert summary_stats["amount"][metric_key] == 30
+    finally:
+        PROFILE_COLUMN_METRIC_REGISTRY.pop(metric_key, None)
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):
@@ -2387,6 +2417,25 @@ def test_profiler_count_distinct_computed(spark, ws):
 
     assert stats["color"]["count_distinct"] == 2
     assert stats["value"]["count_distinct"] == 3
+
+
+def test_profiler_empty_count_computed(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("label", T.StringType()),
+            T.StructField("value", T.IntegerType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [["a", 1], ["", 2], ["", 3], ["b", 4]],
+        schema=schema,
+    )
+
+    profiler = DQProfiler(ws)
+    stats, _ = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+
+    assert stats["label"]["empty_count"] == 2
+    assert stats["value"]["empty_count"] == 0
 
 
 def test_profiler_generates_has_no_outliers_for_clean_numeric_data(spark, ws):

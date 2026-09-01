@@ -441,7 +441,8 @@ class DQProfiler(DQEngineBase):
         """
         for field in self.get_columns_or_fields(df_cols):
             column_df, column_label = self._prepare_column_df(df, field, opts)
-            metrics = self._build_column_metrics(column_df, column_label, field, summary_stats, total_count)
+            field_summary_stats = summary_stats.get(field.name, {})
+            metrics = self._build_column_metrics(column_df, column_label, field, field_summary_stats, total_count)
             summary_stats[field.name] = metrics
 
             self._build_profiles_for_column(column_df, field, metrics, opts, dq_rules)
@@ -464,7 +465,7 @@ class DQProfiler(DQEngineBase):
         column_df: DataFrame,
         column_label: str,
         field: T.StructField,
-        summary_stats: dict[str, Any],
+        field_summary_stats: dict[str, Any],
         total_count: int,
     ) -> dict[str, Any]:
         field_metric_aggregations = []
@@ -479,7 +480,6 @@ class DQProfiler(DQEngineBase):
             if field_aggregation_row:
                 field_aggregation_stats = field_aggregation_row.asDict()
 
-        field_summary_stats = summary_stats.get(field.name, {})
         metrics: dict[str, Any] = {**field_summary_stats, **field_aggregation_stats}
         metrics["count"] = total_count
         metrics["count_null"] = total_count - metrics.get("count_non_null", 0)
