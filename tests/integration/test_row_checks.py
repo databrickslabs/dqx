@@ -891,6 +891,36 @@ def test_col_sql_expression(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_sql_expression_with_leading_comment(spark):
+    # Regression guard for the DQX Studio "SQL Explain" feature, which prepends
+    # the AI explanation to a rule predicate as `-- ...` comment lines (a blank
+    # line, then the logic). Spark's SQL lexer skips `--` line comments, so
+    # F.expr must evaluate a comment-prefixed expression identically to the bare
+    # expression AS LONG AS the terminating newline is preserved (it is — the
+    # app substitutes slots with str.replace, never collapsing whitespace). A
+    # comment whose prose contains a word like "delete" must not affect the
+    # result. If this ever fails, leading comments do NOT survive F.expr and the
+    # Studio must fall back to stripping comments before persisting.
+    test_df = spark.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 2, 3]], SCHEMA + ", c: string")
+
+    commented_expr = "-- delete stale rows where a is not str2\n-- second explanation line\n\na = 'str2'"
+    actual = test_df.select(
+        sql_expression(commented_expr, name="commented", msg="a is not str2"),
+    )
+
+    checked_schema = "commented: string"
+    expected = spark.createDataFrame(
+        [
+            ["a is not str2"],
+            [None],
+            ["a is not str2"],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_sql_expression_long_name(spark):
     long_col_name = "a" * 300
     normalized_col_name = "a" * 255
@@ -2237,64 +2267,84 @@ def test_col_is_valid_uuid_strict(spark):
     assertDataFrameEqual(actual, expected)
 
 
-def test_col_is_valid_national_id(spark):
-    schema_ssn = "a: string"
-    test_df = spark.createDataFrame(
-        [
-            # Valid - separators must be consistent (all '-', all ' ', or none)
-            ["123-45-6789"],
-            ["123456789"],
-            ["123 45 6789"],
-            ["899-45-6789"],  # area boundary just below 900
-            ["667-45-6789"],  # area just above 666
-            ["001-01-0001"],  # minimal valid area / group / serial
-            # Invalid - excluded number ranges
-            ["000-45-6789"],  # area 000
-            ["666-45-6789"],  # area 666
-            ["900-45-6789"],  # area 9xx (ITIN range, rejected)
-            ["123-00-6789"],  # group 00
-            ["123-45-0000"],  # serial 0000
-            # Invalid - separator / structure
-            ["123-45 6789"],  # mixed separators
-            ["12-45-6789"],  # area too short
-            ["1234-45-6789"],  # area too long
-            ["abc-de-fghi"],  # non-numeric
-            [""],  # empty string
-            [None],  # Null - passes (no violation reported)
-        ],
-        schema_ssn,
-    )
-
-    actual = test_df.select(is_valid_national_id("a", country="US"))
+@pytest.mark.parametrize(
+    "country, pattern_name, cases",
+    [
+        pytest.param(
+            "US",
+            "SSN_US",
+            [
+                # Valid - separators must be consistent (all '-', all ' ', or none)
+                ("123-45-6789", False),
+                ("123456789", False),
+                ("123 45 6789", False),
+                ("899-45-6789", False),  # area boundary just below 900
+                ("667-45-6789", False),  # area just above 666
+                ("001-01-0001", False),  # minimal valid area / group / serial
+                # Invalid - excluded number ranges
+                ("000-45-6789", True),  # area 000
+                ("666-45-6789", True),  # area 666
+                ("900-45-6789", True),  # area 9xx (ITIN range, rejected)
+                ("123-00-6789", True),  # group 00
+                ("123-45-0000", True),  # serial 0000
+                # Invalid - separator / structure
+                ("123-45 6789", True),  # mixed separators
+                ("12-45-6789", True),  # area too short
+                ("1234-45-6789", True),  # area too long
+                ("abc-de-fghi", True),  # non-numeric
+                ("", True),
+                (None, False),
+            ],
+            id="us-ssn",
+        ),
+        pytest.param(
+            "GB",
+            "NINO_GB",
+            [
+                ("AB123456A", False),
+                ("AB 12 34 56 A", False),
+                ("BX586745C", False),
+                ("DF123456A", True),  # invalid first letter
+                ("BG123456A", True),  # unallocated prefix
+                ("AB123456E", True),  # invalid suffix
+                ("", True),
+                ("AB123456A\n", True),
+                (" AB123456A", True),
+                ("AB123456A ", True),
+                (None, False),
+            ],
+            id="gb-nino",
+        ),
+        pytest.param(
+            "IN",
+            "PAN_IN",
+            [
+                ("ABCPD1234F", False),
+                ("AACTA1234A", False),
+                ("ABCZD1234F", True),  # Z is not a valid holder type
+                ("AB12E1234F", True),  # letters and digits in the wrong positions
+                ("ABCPD12345", True),  # final character must be a letter
+                ("", True),
+                ("ABCPD1234F\n", True),
+                (" ABCPD1234F", True),
+                ("ABCPD1234F ", True),
+                (None, False),
+            ],
+            id="in-pan",
+        ),
+    ],
+)
+def test_col_is_valid_national_id(spark, country, pattern_name, cases):
+    test_df = spark.createDataFrame([[value] for value, _ in cases], "a: string")
+    actual = test_df.select(is_valid_national_id("a", country=country))
 
     def violation(value: str) -> str:
-        return f"Value '{value}' in Column 'a' does not match pattern 'SSN_US'"
+        return f"Value '{value}' in Column 'a' does not match pattern '{pattern_name}'"
 
-    checked_schema = "a_does_not_match_pattern_ssn_us: string"
-    checked_data = [
-        # Valid (no violation reported)
-        [None],
-        [None],
-        [None],
-        [None],
-        [None],
-        [None],
-        # Invalid - excluded number ranges
-        [violation("000-45-6789")],
-        [violation("666-45-6789")],
-        [violation("900-45-6789")],
-        [violation("123-00-6789")],
-        [violation("123-45-0000")],
-        # Invalid - separator / structure
-        [violation("123-45 6789")],
-        [violation("12-45-6789")],
-        [violation("1234-45-6789")],
-        [violation("abc-de-fghi")],
-        [violation("")],
-        # Null passes
-        [None],
-    ]
-    expected = spark.createDataFrame(checked_data, checked_schema)
+    expected = spark.createDataFrame(
+        [[violation(value) if is_invalid else None] for value, is_invalid in cases],
+        f"a_does_not_match_pattern_{pattern_name.lower()}: string",
+    )
 
     assertDataFrameEqual(actual, expected)
 

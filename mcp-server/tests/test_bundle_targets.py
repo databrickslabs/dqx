@@ -140,7 +140,7 @@ class TestCoverageTargetMirrorsBase:
         )
 
     def test_dqx_version_is_the_single_source_and_matches_the_repo(self):
-        """`dqx_version` is the one value a release bump edits, and it must match __about__.py.
+        """`dqx_version` is the one value a release bump edits, and it must match __version__.py.
 
         The wheel filename and the published pin both derive from ``${var.dqx_version}`` (see the two
         tests below), so this is the only literal that can drift from the repo. sync_versions.py
@@ -151,9 +151,9 @@ class TestCoverageTargetMirrorsBase:
         reported = re.search(r"^\s*dqx_version:\s*\n\s*default:\s*\"([^\"]+)\"", text, re.MULTILINE)
         assert reported, "dqx_version variable not found in databricks.yml"
 
-        about = (_BUNDLE.parent.parent / "src" / "databricks" / "labs" / "dqx" / "__about__.py").read_text()
-        version = re.search(r'__version__\s*=\s*"([^"]+)"', about)
-        assert version, "could not read __version__ from src/databricks/labs/dqx/__about__.py"
+        version_content = (_BUNDLE.parent.parent / "src" / "databricks" / "labs" / "dqx" / "__version__.py").read_text()
+        version = re.search(r'__version__\s*=\s*"([^"]+)"', version_content)
+        assert version, "could not read __version__ from src/databricks/labs/dqx/__version__.py"
 
         assert reported.group(1) == version.group(1), (
             f"dqx_version is {reported.group(1)!r} but the repo is at {version.group(1)!r}. Run "

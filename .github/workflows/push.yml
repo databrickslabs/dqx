@@ -54,7 +54,24 @@ jobs:
 
       - name: Run unit tests
         if: env.IS_FORK_PR != 'true'
-        run: make test
+        env:
+          # Lets the watchdog's SIGABRT print a stack for every thread of every process.
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          # This step has hung *after* the last test completed, inside pytest-xdist's session
+          # teardown. No pytest timeout covers that phase (--timeout only guards a test's
+          # setup/call/teardown), so the job emitted minutes of silence and then died on the
+          # runner's shutdown signal with nothing to debug. Abort before the runner reclaims the
+          # VM instead, so faulthandler shows where each thread is parked. The budget has to
+          # clear a normal run (dependency sync dominates, tests are ~1min) while still landing
+          # before the shutdown signal.
+          ( sleep 480
+            echo "::error::unit tests still running after 8m - dumping thread stacks"
+            pkill -ABRT -f '[p]ython'
+          ) &
+          watchdog=$!
+          trap 'kill "$watchdog" 2>/dev/null || true' EXIT
+          make test
 
       - name: Publish unit test coverage
         # 3.12 only to avoid duplicate uploads.
@@ -167,6 +184,7 @@ jobs:
       labels: linux-ubuntu-latest
     permissions:
       id-token: write
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 

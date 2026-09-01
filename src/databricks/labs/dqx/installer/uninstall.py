@@ -4,7 +4,7 @@ from databricks.labs.blueprint.entrypoint import is_in_debug
 from databricks.labs.blueprint.tui import Prompts
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.installer.install import InstallationService
 
 

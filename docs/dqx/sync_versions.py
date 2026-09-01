@@ -1,8 +1,9 @@
-"""Propagate the DQX version (source of truth: ``src/databricks/labs/dqx/__about__.py``) to the
-places that must track it: versioned GitHub source URLs in the docs, and the pinned
-``databricks-labs-dqx==<version>`` dependency in the DQX Studio app and the MCP server.
+"""Propagate the DQX version (source of truth: ``src/databricks/labs/dqx/__version__.py``) to the
+places that must track it: versioned GitHub source URLs in the docs, and the ``dqx_version`` bundle
+variable in the DQX Studio app's and the MCP server's ``databricks.yml`` (the derived
+``databricks-labs-dqx==${{var.dqx_version}}`` pin and in-repo wheel filename follow from it).
 
-Runs as part of ``make fmt`` — bump ``__about__.py``, run ``make fmt``, and the new version
+Runs as part of ``make fmt`` — bump ``__version__.py``, run ``make fmt``, and the new version
 propagates everywhere. Idempotent: re-running with an unchanged version rewrites nothing.
 """
 
@@ -10,12 +11,12 @@ import re
 from pathlib import Path
 
 
-def get_dqx_version(about_path: Path) -> str:
-    """Extract the version string from the __about__.py file."""
-    content = about_path.read_text(encoding="utf-8")
+def get_dqx_version(version_path: Path) -> str:
+    """Extract the version string from the __version__.py file."""
+    content = version_path.read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"(?P<version>[\d.]+)"', content)
     if not match:
-        raise ValueError(f"Version not found in {about_path}")
+        raise ValueError(f"Version not found in {version_path}")
     return match.group("version")
 
 
@@ -40,18 +41,22 @@ def update_mdx_files(mdx_dir: Path, version: str):
 
 
 def update_dqx_pins(version: str):
-    """Bump the pinned ``databricks-labs-dqx`` version in registry-install files that can move ahead of
-    a release (currently just the MCP server's ``databricks.yml`` — see the ``pin_files`` note below).
+    """Bump the pinned ``databricks-labs-dqx`` version in the bundle files that track it.
 
-    Running this as part of ``make fmt`` keeps those references in lockstep with __about__.py: bump
-    __about__.py, run ``make fmt``, and the new version propagates. Any extras (e.g.
+    Running this as part of ``make fmt`` keeps those references in lockstep with __version__.py: bump
+    __version__.py, run ``make fmt``, and the new version propagates. Any extras (e.g.
     ``[llm,datacontract]``) are preserved.
 
-    The MCP server's ``databricks.yml`` goes one step further: its ``dqx_version`` bundle variable is
-    the single value a release edits, and the ``==`` pin and the in-repo wheel filename both derive
-    from it via ``${var.dqx_version}``. So the literal ``==<version>`` pin regex below intentionally
-    does NOT match there (it has no digits to rewrite); the ``dqx_version`` default is bumped instead,
-    and DAB propagates it to the pin and the wheel name.
+    The MCP server's and the DQX Studio app's ``databricks.yml`` both express the version through a
+    single ``dqx_version`` bundle variable: the ``==`` production pin and the in-repo wheel filename
+    both derive from it via ``${var.dqx_version}``. So the literal ``==<version>`` pin regex below
+    intentionally does NOT match there (it has no digits to rewrite); the ``dqx_version`` default is
+    bumped instead, and DAB propagates it to the derived pin and wheel name.
+
+    The Studio app is safe to bump on ``make fmt`` even though the production pin resolves from the
+    registry: production deploys happen at/after release when the version is published, and a
+    development deploy overrides ``dqx_task_dependency`` to a locally-built wheel (see
+    ``app/target.dev.yml.example``), so neither CI nor a dev deploy resolves the not-yet-published pin.
     """
     # Match ``databricks-labs-dqx`` with optional extras, pinned with a LITERAL ``==<version>``. Only
     # the version digits are rewritten; the package name and any extras are kept verbatim. A pin that
@@ -64,13 +69,13 @@ def update_dqx_pins(version: str):
     var_pattern = re.compile(r'(dqx_version:\s*\n\s*default:\s*")\d+\.\d+\.\d+(")')
     var_replacement = rf"\g<1>{version}\g<2>"
 
-    # Only files that resolve a PUBLISHED databricks-labs-dqx at build/CI time belong here. The DQX
-    # Studio app + task-runner pins (app/pyproject.toml, app/tasks/pyproject.toml, app/databricks.yml)
-    # are intentionally excluded: they install from the registry via the app's frozen uv.lock, exercised
-    # by app CI (uv sync), so pinning a not-yet-published version would break CI — they are bumped at
-    # release-publish time, not by make fmt. Add such files here as releases make new versions available.
+    # Bundle files whose ``dqx_version`` variable is the single source the derived pin + wheel name
+    # hang off. The app/tasks + app pyproject.toml deps are deliberately NOT listed: the task runner's
+    # dep is provided by the job env spec (unpinned there), and the app's dep resolves from the parent
+    # checkout via [tool.uv.sources] (also unpinned) — so neither carries a version to rewrite.
     pin_files = [
         Path("mcp-server/databricks.yml"),
+        Path("app/databricks.yml"),
     ]
 
     for pin_file in pin_files:
@@ -85,10 +90,10 @@ def update_dqx_pins(version: str):
 
 
 def main():
-    about_file = Path("src/databricks/labs/dqx/__about__.py")
+    version_file = Path("src/databricks/labs/dqx/__version__.py")
     mdx_dir = Path("docs/dqx/docs")
 
-    version = get_dqx_version(about_file)
+    version = get_dqx_version(version_file)
     update_mdx_files(mdx_dir, version)
     update_dqx_pins(version)
 

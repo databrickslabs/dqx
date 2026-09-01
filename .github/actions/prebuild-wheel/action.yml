@@ -19,7 +19,7 @@ runs:
         ')"
         test -n "$NEW_VERSION" || { echo "failed to compute unreleased version"; exit 1; }
 
-        VERSION_FILE="src/databricks/labs/dqx/__about__.py"
+        VERSION_FILE="src/databricks/labs/dqx/__version__.py"
         sed -i "s/^__version__ = .*/__version__ = \"${NEW_VERSION}\"/" "$VERSION_FILE"
 
         make build

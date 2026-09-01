@@ -9,7 +9,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.checks_storage import is_table_location
 from databricks.labs.dqx.contexts.global_context import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.profiler.profiler import DQProfiler
