@@ -2918,6 +2918,12 @@ def compare_datasets(
     Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
     Cartesian fan-out but does not attempt to minimize the number of reported column changes.
 
+    This lazy pairing adds two *row_number* window computations (one per dataset) that sort both
+    datasets on the compared columns, which can be costly on large inputs. When the matching keys
+    are known to be unique, set *raise_on_duplicate_keys* to True to skip the windows and pair rows
+    with a single join instead; this is the more efficient option on large datasets, at the cost of
+    an eager uniqueness check that raises if duplicates are present.
+
     The log containing detailed differences is written to the message field of the check result as a JSON string.
 
     Examples:
@@ -2962,9 +2968,13 @@ def compare_datasets(
         For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
         For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
-      raise_on_duplicate_keys: If True, require unique matching keys in both datasets and raise
-        *InvalidParameterError* on duplicates. This validation eagerly executes Spark jobs before
-        the comparison join. If False (default), pair duplicate-key rows lazily by compared values.
+      raise_on_duplicate_keys: Controls duplicate-key handling, which is also a performance trade-off.
+        If True, require unique matching keys in both datasets: uniqueness is validated with a lightweight
+        aggregation (an eager Spark job) and rows are then paired with a single join, avoiding the per-group
+        row-number windows. This is the more efficient option when keys are known to be unique, but raises
+        *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
+        by compared values using per-group row-number windows; this is robust to duplicates but sorts both
+        datasets on the compared columns.
 
 
     Returns:
@@ -3009,7 +3019,10 @@ def compare_datasets(
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
         if df.isStreaming or ref_df.isStreaming:
-            raise InvalidParameterError("compare_datasets only supports batch DataFrames")
+            raise InvalidParameterError(
+                "compare_datasets requires bounded batch DataFrames and does not support streaming inputs. "
+                "Compare bounded snapshots, or run the comparison inside foreachBatch on each micro-batch."
+            )
 
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {

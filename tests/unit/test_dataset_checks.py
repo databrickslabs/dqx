@@ -160,7 +160,7 @@ def test_compare_datasets_rejects_streaming_dataframes(streaming_side: str, rais
     ref_df.isStreaming = streaming_side == "reference"
     spark = create_autospec(SparkSession, instance=True)
 
-    with pytest.raises(InvalidParameterError, match="compare_datasets only supports batch DataFrames"):
+    with pytest.raises(InvalidParameterError, match="does not support streaming inputs"):
         apply(df, spark, {"ref_df": ref_df})
 
 

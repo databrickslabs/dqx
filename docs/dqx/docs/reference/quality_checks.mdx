@@ -1986,6 +1986,9 @@ does not search for the pairing that produces the fewest differences. Unique-key
 
 Set `raise_on_duplicate_keys: true` to require unique matching keys in both datasets. This opt-in validation eagerly
 executes Spark jobs and raises `InvalidParameterError` if either dataset contains duplicate matching-key combinations.
+When the matching keys are known to be unique, this is also the more efficient option: it validates uniqueness with a
+lightweight aggregation and then pairs rows with a single join, skipping the per-group row-number windows (and their
+sort of both datasets) used by the default lazy pairing.
 When null-safe row matching is disabled, rows containing null matching keys are excluded from this uniqueness check
 because they cannot match. `compare_datasets` requires bounded batch DataFrames.
 
