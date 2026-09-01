@@ -14,6 +14,7 @@ Why a ``.pth`` and not ``sitecustomize.py``: see README.md.
 """
 
 import atexit
+import collections
 import io
 import os
 import shutil
@@ -49,7 +50,17 @@ _data_file = ""
 # own story is readable from the volume: a Databricks job's retained output carries neither raw
 # stderr nor records logged before the task configures logging, which left three separate
 # investigations of lost coverage with nothing to read.
-_messages: list[str] = []
+#
+# Bounded, because the whole buffer is re-uploaded on every flush: unbounded, a long-lived app
+# checkpointing all suite long would ship a quadratic amount of breadcrumb traffic. The cap is far
+# above what a healthy process emits (a handful of lines), so it only ever truncates a pathological
+# repeating failure — and then the tail, which is the part worth reading, is what survives.
+_MAX_MESSAGES = 400
+_messages: collections.deque[str] = collections.deque(maxlen=_MAX_MESSAGES)
+# Last breadcrumb text actually uploaded, so an unchanged one is not re-shipped. Together with the
+# quiet routine copy below this keeps a long-lived app's breadcrumb traffic flat instead of growing
+# with the run: in steady state nothing new is logged, so nothing is re-uploaded.
+_last_breadcrumb = ""
 _lock = threading.Lock()
 # Set by flush_at_task_end. The checkpoint exists only because nothing else reliably persists a
 # runner's data; once the wrapping entry point has done so deterministically there is nothing left
@@ -136,6 +147,9 @@ def _instance_key() -> str:
     return f"{role}.{label}.{os.getpid()}.{uuid4().hex[:8]}"
 
 
+_announced_copies: set[str] = set()
+
+
 def _persist(local_path: str, remote_path: str) -> None:
     """Copy the saved data file to the UC volume.
 
@@ -147,7 +161,11 @@ def _persist(local_path: str, remote_path: str) -> None:
     try:
         os.makedirs(os.path.dirname(remote_path), exist_ok=True)
         shutil.copyfile(local_path, remote_path)
-        _log(f"copied -> {remote_path}")
+        # Announced once per destination. A periodic checkpoint copies to the same path every tick,
+        # and logging each one grew the breadcrumb — which is re-uploaded whole — with run length.
+        if remote_path not in _announced_copies:
+            _announced_copies.add(remote_path)
+            _log(f"copied -> {remote_path}")
         return
     except OSError as exc:
         _log(f"FUSE copy unavailable ({exc}); using the Files API")
@@ -158,7 +176,9 @@ def _persist(local_path: str, remote_path: str) -> None:
     ws.files.create_directory(os.path.dirname(remote_path))  # upload does not create parents
     with open(local_path, "rb") as handle:
         ws.files.upload(remote_path, handle, overwrite=True)
-    _log(f"uploaded -> {remote_path}")
+    if remote_path not in _announced_copies:
+        _announced_copies.add(remote_path)
+        _log(f"uploaded -> {remote_path}")
 
 
 def _persist_text(remote_path: str, text: str) -> None:
@@ -190,7 +210,19 @@ def _write_breadcrumb() -> None:
     destination = _destination_dir()
     if not destination:
         return
-    _persist_text(f"{destination}/dqxcov-log.{_key}.txt", "\n".join(_messages) + "\n")
+    # Snapshot under the lock rather than joining the live buffer: _log appends from whichever thread
+    # is running, and building the text outside the lock would race it. The join happens while
+    # evaluating _persist_text's argument, i.e. OUTSIDE that function's own try — so an exception here
+    # would escape _write_breadcrumb, propagate out of _flush's finally, and (see _checkpoint_loop)
+    # take the checkpoint thread with it permanently.
+    global _last_breadcrumb  # noqa: PLW0603 — module-level singleton, mirrors the other hooks
+    with _lock:
+        snapshot = list(_messages)
+    text = "\n".join(snapshot) + "\n"
+    if text == _last_breadcrumb:
+        return
+    _last_breadcrumb = text
+    _persist_text(f"{destination}/dqxcov-log.{_key}.txt", text)
 
 
 def _flush(final: bool) -> None:
@@ -205,8 +237,9 @@ def _flush(final: bool) -> None:
     try:
         _flush_locked(final)
     finally:
-        # In a finally so the breadcrumb is published on every path, including the guarded
-        # already-finalized return — otherwise the last message never reaches the volume.
+        # In a finally so the breadcrumb is published even when the flush itself gets nowhere — the
+        # "no destination could be resolved" return and the caught-exception path both land here, and
+        # those are exactly the cases worth being able to read afterwards.
         _write_breadcrumb()
 
 
@@ -240,7 +273,12 @@ def _checkpoint_loop() -> None:
         time.sleep(_CHECKPOINT_SECONDS)
         if _checkpoint_stopped:
             return
-        _flush(final=False)
+        try:
+            _flush(final=False)
+        except Exception as exc:  # noqa: BLE001 — the thread must outlive any single bad tick
+            # Without this, one escaped exception ends the thread for the life of the process and
+            # silently reinstates the atexit-only failure this whole mechanism exists to avoid.
+            _log(f"checkpoint tick failed (non-fatal): {exc!r}")
 
 
 def flush_at_task_end() -> None:

@@ -178,9 +178,7 @@ def _decode_jwt_claims(token: str) -> dict:
 
 
 @contextlib.contextmanager
-def deploy_mcp_app(
-    host: str, get_token: Callable[[], str], run_id_sink: list[int] | None = None
-) -> Iterator[dict[str, str]]:
+def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str, str]]:
     """Deploy ONE isolated MCP app, yield {url, service_principal}, and tear it down.
 
     A context manager (not a fixture) so a single test owns exactly one deploy — the acceptance
@@ -239,7 +237,6 @@ def deploy_mcp_app(
             deployment["app_name"],
             started_at,
             deployment.get("tmp_schema") or "",
-            expected_run_ids=run_id_sink,
         )
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
@@ -355,32 +352,16 @@ class McpClient:
     — ``call`` handles both.
     """
 
-    def __init__(
-        self,
-        url: str,
-        get_token: Callable[[], str],
-        job_id: str = "",
-        workspace_host: str = "",
-        run_id_sink: list[int] | None = None,
-    ):
+    def __init__(self, url: str, get_token: Callable[[], str], job_id: str = "", workspace_host: str = ""):
         self._url = url
         self._get_token = get_token  # mint a fresh bearer per request (no expiry over a long run)
         # Used only to build clickable job/run URLs when something fails — never for auth.
         self._job_id = job_id
         self._workspace_host = (workspace_host or os.environ.get("DATABRICKS_HOST", "")).rstrip("/")
-        # Every run this client submits, in order. Coverage collection needs the exact set: each
-        # runner run ships its own data file, so this is the only way to tell a file that was never
-        # written from one that was never expected. See collect_remote_coverage.
-        self._run_id_sink = run_id_sink if run_id_sink is not None else []
 
     @property
     def url(self) -> str:
         return self._url
-
-    @property
-    def submitted_run_ids(self) -> list[int]:
-        """Runner runs this client submitted, in call order."""
-        return self._run_id_sink
 
     def current_token(self) -> str:
         """Mint the bearer this client sends — for 401 diagnostics only."""
@@ -393,11 +374,8 @@ class McpClient:
         payload = _tool_payload(
             _mcp_request(self._url, self._get_token(), "tools/call", {"name": name, "arguments": arguments or {}})
         )
-        run_id = payload.get("run_id")
-        if payload.get("status") == "submitted" and run_id:
-            self._run_id_sink.append(int(run_id))
-        if poll and payload.get("status") == "submitted" and run_id:
-            return self.wait(run_id, timeout=timeout)
+        if poll and payload.get("status") == "submitted" and payload.get("run_id"):
+            return self.wait(payload["run_id"], timeout=timeout)
         return payload
 
     def wait(self, run_id: int, *, timeout: float = 300.0, interval: float = 0.0) -> dict:
@@ -449,9 +427,7 @@ class McpClient:
         return f"\n  run URL: {self._workspace_host}/#job/{self._job_id}/run/{run_id}"
 
 
-def collect_remote_coverage(
-    app_name: str, since: float, tmp_schema: str = "", expected_run_ids: list[int] | None = None
-) -> list[str]:
+def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -> list[str]:
     """CI/test-only: stop the app (forcing its final flush) and download this run's data files.
 
     No-op unless DQX_MCP_COVERAGE_DIR is set. On a coverage-enabled deploy the app and every runner
@@ -469,11 +445,6 @@ def collect_remote_coverage(
     deployment, so without that bound `coverage combine` silently merges every prior run's data —
     which is how a report ends up citing lines that the current source no longer has.
 
-    *expected_run_ids* is every runner run the suite submitted. Each runner process writes its own
-    data file, so a missing file means that whole operation's body is reported as unexecuted — which
-    reads as a coverage regression in source nobody touched. Comparing the collected files against
-    the expected set is the only way to tell "never written" from "never expected", so pass it: the
-    gap is reported explicitly instead of silently depressing the number.
     """
     if not os.environ.get("DQX_MCP_COVERAGE_DIR"):
         return []
@@ -494,28 +465,20 @@ def collect_remote_coverage(
         downloaded = _download_coverage_files(ws, coverage_dir, since, owns_dir=owns_dir)
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
-    if not downloaded:
-        # Say so loudly and name the directory. A silent empty download is how a wrong path went
-        # unnoticed: the workflow just logged "no remote coverage data" and skipped the upload, so
-        # the flag stopped reporting while every job still passed.
-        sys.stderr.write(
-            f"coverage: WARNING downloaded 0 data files from {coverage_dir} — the mcp flag will not "
-            "be uploaded. Check the app/runner actually installed the bootstrap wheel (dev-coverage "
-            "target) and that this path matches the deployed tmp schema.\n"
-        )
-    else:
-        sys.stderr.write(f"coverage files downloaded: {len(downloaded)} from {coverage_dir}\n")
-    _log_runner_data_completeness(downloaded, expected_run_ids)
+    # Reporting lives in one place, and counts data files rather than the mixed list: the download
+    # now also brings back breadcrumbs, so "did anything arrive" and "did any COVERAGE arrive" are
+    # different questions — a breadcrumb-only run is precisely the case worth shouting about, and
+    # testing the mixed list would silence the warning exactly then.
+    _log_collected_coverage(downloaded, coverage_dir)
     return downloaded
 
 
-def _log_runner_data_completeness(downloaded: list[str], expected_run_ids: list[int] | None) -> None:
+def _log_collected_coverage(downloaded: list[str], coverage_dir: str) -> None:
     """Report what arrived, and print the bootstrap's own diagnostics.
 
-    There is deliberately no per-run file check. The runner's task executes inside a shared,
-    long-lived Databricks python shell that serves many runs, so coverage is keyed to the
-    *interpreter*, not the run: one cumulative file per interpreter, rewritten as a superset on every
-    flush. Counting files against submitted runs would therefore always look short and mean nothing.
+    Coverage is keyed to the *interpreter*, not to a job run: one cumulative file per interpreter,
+    rewritten as a superset on every flush. So there is no per-run file to account for, and counting
+    files against submitted runs would always look short and mean nothing.
 
     The ``dqxcov-log.*`` breadcrumbs are what make a shortfall diagnosable at all — a Databricks job
     retains neither raw stderr nor anything logged before the task configures logging, which is why
@@ -523,10 +486,8 @@ def _log_runner_data_completeness(downloaded: list[str], expected_run_ids: list[
     """
     data_files = [p for p in downloaded if Path(p).name.startswith(".coverage")]
     breadcrumbs = [p for p in downloaded if Path(p).name.startswith("dqxcov-log")]
-    submitted = len(set(expected_run_ids or []))
     sys.stderr.write(
-        f"coverage: {len(data_files)} data file(s) from {submitted} submitted runner run(s) "
-        f"(files track interpreters, not runs); {len(breadcrumbs)} breadcrumb(s)\n"
+        f"coverage: {len(data_files)} data file(s), {len(breadcrumbs)} breadcrumb(s) from {coverage_dir}\n"
     )
     for path in breadcrumbs:
         try:
@@ -536,9 +497,13 @@ def _log_runner_data_completeness(downloaded: list[str], expected_run_ids: list[
             continue
         sys.stderr.write(f"coverage: --- {Path(path).name} ---\n{text}\n")
     if not data_files:
+        # Loud, and naming the directory. A silent empty download is how a wrong coverage path went
+        # unnoticed once already: the workflow logged "no remote coverage data", skipped the upload,
+        # and every job still went green.
         sys.stderr.write(
-            "coverage: WARNING no data files arrived, so the mcp flag will not be uploaded. The "
-            "breadcrumbs above (if any) say how far the bootstrap got.\n"
+            f"coverage: WARNING 0 data files from {coverage_dir} — the mcp flag will not be uploaded. "
+            "Check the app/runner installed the bootstrap wheel (dev-coverage target) and that this "
+            "path matches the deployed tmp schema. The breadcrumbs above, if any, say how far it got.\n"
         )
 
 
