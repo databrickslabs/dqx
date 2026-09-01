@@ -3114,10 +3114,12 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
-        join_columns = pk_column_names
-        ref_join_columns = ref_pk_column_names
+        # A per-group sequence number is appended to the join keys so that _add_row_diffs can tell a
+        # present row whose matching-key value is null (matched via null-safe equality) apart from a
+        # missing side of the join. Without it, both look "null" and the row is wrongly flagged as both
+        # missing and extra. Both the lazy and eager paths need this signal.
+        row_number_col = f"__match_row_number_{unique_id}"
         if not raise_on_duplicate_keys:
-            row_number_col = f"__match_row_number_{unique_id}"
             order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
             df = df.withColumn(
                 row_number_col,
@@ -3127,8 +3129,6 @@ def compare_datasets(
                 row_number_col,
                 F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
             )
-            join_columns = [*pk_column_names, row_number_col]
-            ref_join_columns = [*ref_pk_column_names, row_number_col]
         else:
             match_count_col = f"__match_count_{unique_id}"
             for dataset_name, dataset, matching_columns in (
@@ -3142,6 +3142,13 @@ def compare_datasets(
                         f"The {dataset_name} dataset contains duplicate matching keys for columns: "
                         f"{', '.join(matching_columns)}."
                     )
+            # Matching keys are unique here, so every group's sequence number is 1; a constant non-null
+            # marker gives _add_row_diffs the same present-vs-missing signal without a window shuffle.
+            df = df.withColumn(row_number_col, F.lit(1))
+            ref_df = ref_df.withColumn(row_number_col, F.lit(1))
+
+        join_columns = [*pk_column_names, row_number_col]
+        ref_join_columns = [*ref_pk_column_names, row_number_col]
 
         # apply filter before aliasing to avoid ambiguity
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
@@ -3150,7 +3157,6 @@ def compare_datasets(
         ref_df = ref_df.alias("ref_df")
 
         results = _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
-        # The row number distinguishes a present null-key row from a missing side of the join.
         results = _add_row_diffs(results, join_columns, ref_join_columns, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance

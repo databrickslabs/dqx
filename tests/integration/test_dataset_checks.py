@@ -3137,6 +3137,32 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
     assertDataFrameEqual(actual, expected)
 
 
+@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True])
+def test_compare_datasets_matches_null_matching_key_on_both_sides(spark: SparkSession, raise_on_duplicate_keys: bool):
+    # Regression: a single null-value matching key present on both sides matches via null-safe equality.
+    # It must be reported as a value change, not as a row that is simultaneously missing and extra, and
+    # the lazy (default) and eager (raise_on_duplicate_keys=True) paths must agree on the same input.
+    df = spark.createDataFrame([(None, "X")], "id int, value string")
+    ref_df = spark.createDataFrame([(None, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        check_missing_records=True,
+        raise_on_duplicate_keys=raise_on_duplicate_keys,
+    )
+
+    actual = apply(df, spark, {"ref_df": ref_df}).select(*df.columns, condition.alias("violation"))
+    rows = actual.collect()
+
+    assert len(rows) == 1
+    assert json.loads(rows[0]["violation"]) == {
+        "row_missing": False,
+        "row_extra": False,
+        "changed": {"value": {"df": "X", "ref": "Y"}},
+    }
+
+
 def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
     schema = "id1 long, id2 long, name string"
 
