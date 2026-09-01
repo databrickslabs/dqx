@@ -210,6 +210,14 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*', 'mcp-server/*']
 module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*", "websockets", "websockets.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# The MCP runner is a self-contained sub-project under the ``mcp-server/*`` tree excluded above, and
+# is never installed into the library venv — only into the deployed job. The test-only coverage
+# bootstrap imports it at runtime, inside that deployed process, so there is nothing here for mypy
+# to resolve.
+module = ["dqx_mcp_runner", "dqx_mcp_runner.*"]
+ignore_missing_imports = true
+
 
 [tool.pytest.ini_options]
 addopts = "--no-header"

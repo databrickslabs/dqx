@@ -25,20 +25,23 @@ import time
 # a FUSE mount is a known locking hazard. Only finished copies go to the UC volume.
 _LOCAL_DIR = "/tmp"  # noqa: S108 — container-local scratch, not a shared host
 
-# The checkpoint is the PRIMARY persistence mechanism for the runner, not a safety net.
+# Periodic flush interval, in seconds. OFF by default, and deliberately so.
 #
-# The runner's task runs inside a Databricks python shell (``db_ipykernel_launcher.py``), and the
-# task arguments are NOT in ``sys.argv`` when site.py execs the .pth. The results volume — and hence
-# the upload destination — is only derivable once they are, so an early tick can only log
-# "no destination could be resolved" and leave the data in /tmp. At the previous 15s interval a
-# short-lived interpreter could spend its whole life in that window and ship nothing: measured over
-# one suite run, only 7 of 21 runner runs produced a data file, and the split tracked process
-# lifetime rather than outcome. At 5s every interpreter gets a later tick once argv is populated —
-# measured 20/20, with 6 of the 20 still logging one early no-destination tick first.
+# The runner does not need it: the dev-coverage bundle target points the wheel task at a wrapping
+# entry point (see runner_entry) that persists coverage from ordinary code once the work is done.
+# That is deterministic — it runs on main()'s own call stack, with the task arguments already in
+# sys.argv so the results volume resolves.
 #
-# Each tick overwrites one cumulative file with a superset, so the interval bounds only how much of
-# the tail can be lost, at a cost of one local save plus one volume copy. 0 disables the thread.
-_CHECKPOINT_SECONDS = float(os.getenv("DQX_COVERAGE_CHECKPOINT_SECONDS", "5"))
+# A timer cannot offer that. The .pth executes at interpreter start, before the task arguments
+# exist, so an early tick can only log "no destination could be resolved" and leave the data in
+# /tmp. Measured with a 15s interval and no wrapper: 7 of 21 runner runs produced a data file at
+# all, and which ones did tracked process lifetime rather than outcome — the reported coverage of
+# unchanged code therefore wandered between 49% and 75%.
+#
+# The app is the exception and sets this explicitly (see the dev-coverage app_environment): it is a
+# uvicorn process with no entry point to wrap, relying on a graceful SIGTERM plus atexit, and the
+# interval bounds the loss if the platform's ~15s shutdown budget is exceeded.
+_CHECKPOINT_SECONDS = float(os.getenv("DQX_COVERAGE_CHECKPOINT_SECONDS", "0"))
 
 _cov = None
 _data_file = ""
@@ -48,6 +51,10 @@ _data_file = ""
 # investigations of lost coverage with nothing to read.
 _messages: list[str] = []
 _lock = threading.Lock()
+# Set by flush_at_task_end. The checkpoint exists only because nothing else reliably persists a
+# runner's data; once the wrapping entry point has done so deterministically there is nothing left
+# for the thread to do, and another tick would only re-upload the same bytes.
+_checkpoint_stopped = False
 # Fixed at startup: see _instance_key. The data file is cumulative for the interpreter, so every
 # flush overwrites one file with a superset — last write wins, and nothing depends on run boundaries.
 _key = ""
@@ -229,9 +236,33 @@ def _flush_locked(final: bool) -> None:
 
 def _checkpoint_loop() -> None:
     """Periodically flush so an ungraceful death costs at most one interval."""
-    while True:
+    while not _checkpoint_stopped:
         time.sleep(_CHECKPOINT_SECONDS)
+        if _checkpoint_stopped:
+            return
         _flush(final=False)
+
+
+def flush_at_task_end() -> None:
+    """Persist now, from ordinary code, and retire the checkpoint. Never raises.
+
+    Called by the coverage-wrapping wheel entry point (see runner_entry) once the runner's work is
+    done. This is the deterministic path: it runs on main()'s own call stack with the interpreter
+    unquestionably alive and — crucially — with the task arguments already in ``sys.argv``, so the
+    results volume resolves. Compare the checkpoint thread, whose early ticks fire before argv is
+    populated and can only leave the data in /tmp.
+
+    Deliberately a non-final flush: the tracer is left running so nothing that executes after this
+    point is silently untraced, and so a second call cannot blind an interpreter that turns out to be
+    shared.
+    """
+    global _checkpoint_stopped  # noqa: PLW0603 — module-level singleton, mirrors the other hooks
+    _checkpoint_stopped = True
+    # Logged so the breadcrumb attributes the upload. Without this the deterministic flush and a
+    # checkpoint tick are indistinguishable in the record, which is precisely the ambiguity that made
+    # an earlier attempt at this look like it worked when it had never run at all.
+    _log("task-end flush (deterministic; checkpoint retired)")
+    _flush(final=False)
 
 
 def _start() -> None:
