@@ -1,7 +1,5 @@
 """Scoring configuration and constants for row anomaly detection."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from databricks.labs.dqx.config import LLMModelConfig

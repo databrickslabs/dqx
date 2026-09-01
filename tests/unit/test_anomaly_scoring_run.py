@@ -6,8 +6,6 @@ is at least the segment count, and falls back to a documented finite bound (one 
 per segment) when the budget is under-provisioned.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from databricks.labs.dqx.anomaly import scoring_run

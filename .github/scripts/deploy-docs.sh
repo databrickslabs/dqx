@@ -130,6 +130,15 @@ if [[ ! -d "${WORKTREE_DIR}" ]]; then
       git commit --allow-empty -m "Initialize gh-pages"
     )
   fi
+else
+  # Worktree already exists. Reset it to origin/gh-pages so the new deploy
+  # commit is a clean fast-forward and the append-only push can't be rejected
+  # by local drift or a leftover un-pushed commit from a previous run. Guarded
+  # on origin/gh-pages existing (it may not if a prior bootstrap never pushed).
+  if git rev-parse --verify --quiet origin/gh-pages > /dev/null; then
+    echo "==> Resetting existing gh-pages worktree to origin/gh-pages"
+    git -C "${WORKTREE_DIR}" reset --hard origin/gh-pages
+  fi
 fi
 
 # --- Sync build into the gh-pages worktree -----------------------------------

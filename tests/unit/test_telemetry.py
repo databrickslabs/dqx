@@ -300,7 +300,7 @@ def test_get_paths_with_unicode_paths():
 class _FakeConfig:
     """Minimal stand-in for databricks.sdk.config.Config supporting the calls log_telemetry makes."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.user_agent_extra: list[tuple[str, str]] = []
         self.retry_timeout_seconds = None
         self.http_timeout_seconds = None

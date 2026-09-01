@@ -236,9 +236,17 @@ class DQRuleManager:
             F.lit(self.check.check_func.__name__).alias("function"),
             run_time_expr.alias("run_time"),
             F.lit(self.run_id).alias("run_id"),
-            F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
-                "user_metadata"
-            ),
+            # Cast keys and values to string so a mixed-type user_metadata (e.g. {"k": 2}) still
+            # produces a MAP<STRING, STRING> matching dq_result_item_schema. Without the cast,
+            # create_map infers a single value type (e.g. BIGINT) and fails to cast string values
+            # (CAST_INVALID_INPUT) when the dict mixes strings and numbers.
+            F.create_map(
+                *[
+                    item
+                    for key, value in self.user_metadata.items()
+                    for item in (F.lit(key).cast("string"), F.lit(value).cast("string"))
+                ]
+            ).alias("user_metadata"),
             F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
             F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
             F.lit(skipped or None).alias("skipped"),

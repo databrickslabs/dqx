@@ -1,0 +1,32 @@
+name: 'Merge MCP coverage'
+description: >
+  Merges the MCP integration suite's remote coverage data and converts it to XML for Codecov.
+  The MCP suite's code runs REMOTELY — the server in a deployed Databricks App, the runner in a
+  serverless job — so coverage is produced there and shipped back into the repo root as .coverage.*
+  files (see tests/integration_mcp/coverage_bootstrap). Shared by mcp.yml (PR) and nightly.yml
+  (scheduled) so the `main` baseline and PR heads report mcp-server coverage identically. Callers
+  invoke this with `if: always()` so the data is published even when the suite failed.
+runs:
+  using: "composite"
+  steps:
+    - name: Merge remote coverage and convert to XML
+      shell: bash
+      # Combine must run from the repo root, because a [paths] rule whose rewritten target does not
+      # exist on disk is silently skipped. `--keep` preserves the inputs so a bad merge stays
+      # debuggable, and the tolerant exits keep a legitimately data-less run (the suite skipped, or
+      # failed before the download) from failing the job for the wrong reason.
+      run: |
+        RCFILE="tests/integration_mcp/.coveragerc"
+
+        # Warn loudly rather than passing quietly: an empty download means the mcp flag will not be
+        # uploaded at all, and every job still goes green. That is how a wrong coverage path went
+        # unnoticed once already.
+        if ! ls .coverage.* >/dev/null 2>&1; then
+          echo "::warning title=No MCP coverage::No remote coverage data files were downloaded, so the mcp flag will not be uploaded. Check the deploy used the dev-coverage target and that conftest._coverage_dir matches the deployed tmp schema."
+        else
+          ls -la .coverage.*
+        fi
+
+        uv run coverage combine --rcfile="$RCFILE" --keep || true
+        uv run coverage xml --rcfile="$RCFILE" -o coverage-combined.xml || true
+        uv run coverage report --rcfile="$RCFILE" -m || true

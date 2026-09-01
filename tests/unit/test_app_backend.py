@@ -50,7 +50,10 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
+from databricks_labs_dqx_app.backend.services.draft_run_gate_service import DraftRunGateService
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
     RuleCatalogEntry,
     RulesCatalogService,
@@ -137,10 +140,22 @@ _SAMPLE_ROW = [
 class TestGetOboWs:
     """Unit tests for the get_obo_ws dependency function."""
 
-    def test_raises_when_no_token(self, monkeypatch):
-        """Should raise HTTPException when no token is provided."""
+    @pytest.fixture(autouse=True)
+    def _no_ambient_databricks_auth(self, monkeypatch, debug_env):
+        """Clear ambient Databricks credentials so the no-token cases are hermetic.
+
+        *get_obo_ws* falls back to default auth (building a *WorkspaceClient*) when
+        *DATABRICKS_CONFIG_PROFILE* or *DATABRICKS_TOKEN* is set, instead of raising 401.
+        DQX's autouse *debug_env* fixture loads those from *debug-env.json*, which would send
+        these tests down the fallback path. Depending on *debug_env* ensures this runs after
+        it, then removes the variables so the expected 401 path is exercised regardless of the
+        local environment.
+        """
         monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
         monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
+
+    def test_raises_when_no_token(self):
+        """Should raise HTTPException when no token is provided."""
 
         async def _() -> None:
             with pytest.raises(HTTPException) as exc_info:
@@ -150,10 +165,8 @@ class TestGetOboWs:
 
         asyncio.run(_())
 
-    def test_raises_when_empty_token(self, monkeypatch):
+    def test_raises_when_empty_token(self):
         """Should raise HTTPException when empty token is provided."""
-        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
-        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
 
         async def _() -> None:
             with pytest.raises(HTTPException) as exc_info:
@@ -848,6 +861,23 @@ class TestRulesRoutesWrite:
         return obo_ws
 
     @pytest.fixture
+    def mock_version_svc(self):
+        version_svc = create_autospec(MonitoredTableVersionService, instance=True)
+        return version_svc
+
+    @pytest.fixture
+    def mock_app_settings(self):
+        settings = create_autospec(AppSettingsService, instance=True)
+        settings.get_require_draft_run_before_submit.return_value = False
+        settings.get_approvals_mode.return_value = "enabled"
+        return settings
+
+    @pytest.fixture
+    def mock_draft_run_gate(self):
+        draft_run_gate = create_autospec(DraftRunGateService, instance=True)
+        return draft_run_gate
+
+    @pytest.fixture
     def sample_entry(self):
         return RuleCatalogEntry(
             table_fqn="catalog.schema.table",
@@ -858,6 +888,7 @@ class TestRulesRoutesWrite:
             created_at="2025-01-01T00:00:00",
             updated_by="alice@example.com",
             updated_at="2025-01-01T00:00:00",
+            rule_id="rule-1",
         )
 
     def test_save_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
@@ -883,47 +914,101 @@ class TestRulesRoutesWrite:
         assert result["status"] == "deleted"
         mock_svc.delete.assert_called_once_with("rule-1", "alice@example.com")
 
-    def test_submit_for_approval_success(self, mock_svc, mock_obo_ws, sample_entry):
+    def test_submit_for_approval_success(
+        self, mock_svc, mock_obo_ws, mock_version_svc, mock_app_settings, mock_draft_run_gate, sample_entry
+    ):
         sample_entry.status = "pending_approval"
+        mock_svc.get_by_rule_id.return_value = sample_entry
         mock_svc.set_status.return_value = sample_entry
         result = submit_for_approval(
-            rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=None
+            rule_id="rule-1",
+            svc=mock_svc,
+            version_svc=mock_version_svc,
+            app_settings=mock_app_settings,
+            draft_run_gate=mock_draft_run_gate,
+            obo_ws=mock_obo_ws,
+            user_role=UserRole.ADMIN,
+            body=None,
         )
         assert result.status == "pending_approval"
         mock_svc.set_status.assert_called_once_with("rule-1", "pending_approval", "alice@example.com", None)
 
-    def test_submit_for_approval_with_expected_version(self, mock_svc, mock_obo_ws, sample_entry):
+    def test_submit_for_approval_with_expected_version(
+        self, mock_svc, mock_obo_ws, mock_version_svc, mock_app_settings, mock_draft_run_gate, sample_entry
+    ):
         sample_entry.status = "pending_approval"
+        mock_svc.get_by_rule_id.return_value = sample_entry
         mock_svc.set_status.return_value = sample_entry
         body = SetStatusIn(status="pending_approval", expected_version=3)
-        submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=body)
+        submit_for_approval(
+            rule_id="rule-1",
+            svc=mock_svc,
+            version_svc=mock_version_svc,
+            app_settings=mock_app_settings,
+            draft_run_gate=mock_draft_run_gate,
+            obo_ws=mock_obo_ws,
+            user_role=UserRole.ADMIN,
+            body=body,
+        )
         mock_svc.set_status.assert_called_once_with("rule-1", "pending_approval", "alice@example.com", 3)
 
-    def test_submit_returns_400_on_value_error(self, mock_svc, mock_obo_ws):
+    def test_submit_returns_400_on_value_error(
+        self, mock_svc, mock_obo_ws, mock_version_svc, mock_app_settings, mock_draft_run_gate, sample_entry
+    ):
+        mock_svc.get_by_rule_id.return_value = sample_entry
         mock_svc.set_status.side_effect = ValueError("bad transition")
         with pytest.raises(HTTPException) as exc:
-            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=None)
+            submit_for_approval(
+                rule_id="rule-1",
+                svc=mock_svc,
+                version_svc=mock_version_svc,
+                app_settings=mock_app_settings,
+                draft_run_gate=mock_draft_run_gate,
+                obo_ws=mock_obo_ws,
+                user_role=UserRole.ADMIN,
+                body=None,
+            )
         assert exc.value.status_code == 400
 
-    def test_submit_returns_409_on_runtime_error(self, mock_svc, mock_obo_ws):
+    def test_submit_returns_409_on_runtime_error(
+        self, mock_svc, mock_obo_ws, mock_version_svc, mock_app_settings, mock_draft_run_gate, sample_entry
+    ):
+        mock_svc.get_by_rule_id.return_value = sample_entry
         mock_svc.set_status.side_effect = RuntimeError("version conflict")
         with pytest.raises(HTTPException) as exc:
-            submit_for_approval(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, user_role=UserRole.ADMIN, body=None)
+            submit_for_approval(
+                rule_id="rule-1",
+                svc=mock_svc,
+                version_svc=mock_version_svc,
+                app_settings=mock_app_settings,
+                draft_run_gate=mock_draft_run_gate,
+                obo_ws=mock_obo_ws,
+                user_role=UserRole.ADMIN,
+                body=None,
+            )
         assert exc.value.status_code == 409
 
     def test_approve_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "approved"
         mock_svc.set_status.return_value = sample_entry
-        result = approve_rules(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        mock_version_svc = create_autospec(MonitoredTableVersionService, instance=True)
+        result = approve_rules(
+            rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, version_svc=mock_version_svc, body=None
+        )
         assert result.status == "approved"
         mock_svc.set_status.assert_called_once_with("rule-1", "approved", "alice@example.com", None)
+        mock_version_svc.refreeze_for_quality_rule.assert_called_once_with("rule-1")
 
     def test_reject_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
         sample_entry.status = "rejected"
         mock_svc.set_status.return_value = sample_entry
-        result = reject_rules(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        mock_version_svc = create_autospec(MonitoredTableVersionService, instance=True)
+        result = reject_rules(
+            rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, version_svc=mock_version_svc, body=None
+        )
         assert result.status == "rejected"
         mock_svc.set_status.assert_called_once_with("rule-1", "rejected", "alice@example.com", None)
+        mock_version_svc.refreeze_for_quality_rule.assert_called_once_with("rule-1")
 
 
 # ============================================================================
@@ -1327,6 +1412,19 @@ class TestViewService:
         # Should not raise
         svc.drop_view("cat.sch.tmp_view_gone")
 
+    def test_drop_view_falls_back_to_service_principal(self, ws: WorkspaceClient) -> None:
+        sp_ws = create_autospec(WorkspaceClient)
+        sp_ws.statement_execution.execute_statement.return_value = _ok_response()
+        obo_sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+        sp_sql = SqlExecutor(ws=sp_ws, warehouse_id="w", catalog="cat", schema="sch")
+        svc = ViewService(sql=obo_sql, sp_sql=sp_sql)
+        ws.statement_execution.execute_statement.return_value = _failed_response("permission denied")  # type: ignore[attr-defined]
+
+        svc.drop_view("cat.sch.tmp_view_abc")
+
+        sp_sql_stmt = sp_ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "DROP VIEW IF EXISTS" in sp_sql_stmt
+
     # ---------- create_view: FQN validation ----------
 
     def test_create_view_rejects_invalid_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
@@ -1709,7 +1807,9 @@ class TestProfilerRoutes:
     def test_get_profile_run_status_returns_status_out(self, mock_view_svc: ViewService) -> None:
         """get_profile_run_status should map JobService.get_run_status to RunStatusOut."""
         mock_ws = create_autospec(WorkspaceClient)
-        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "99999"]])
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response(
+            [["cat.sch.tmp_view_x", "alice@example.com", "99999", "cat.sch.tbl"]]
+        )
         mock_ws.jobs.get_run.return_value = Run(
             state=RunState(
                 life_cycle_state=RunLifeCycleState.TERMINATED,
@@ -1721,12 +1821,14 @@ class TestProfilerRoutes:
         job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        monitored_tables = create_autospec(MonitoredTableService, instance=True)
         result = get_profile_run_status(
             run_id="run-001",
             job_svc=job_svc,
             view_svc=mock_view_svc,
             app_conf=app_conf,
             sql=sql,
+            monitored_tables=monitored_tables,
         )
 
         assert isinstance(result, RunStatusOut)
@@ -1738,12 +1840,15 @@ class TestProfilerRoutes:
     def test_get_profile_run_status_raises_500_on_error(self, mock_view_svc: ViewService) -> None:
         """get_profile_run_status should raise HTTP 500 when the job service errors."""
         mock_ws = create_autospec(WorkspaceClient)
-        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "99999"]])
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response(
+            [["cat.sch.tmp_view_x", "alice@example.com", "99999", "cat.sch.tbl"]]
+        )
         mock_ws.jobs.get_run.side_effect = RuntimeError("jobs api error")
         sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
         job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        monitored_tables = create_autospec(MonitoredTableService, instance=True)
         with pytest.raises(HTTPException) as exc:
             get_profile_run_status(
                 run_id="run-001",
@@ -1751,6 +1856,7 @@ class TestProfilerRoutes:
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
                 sql=sql,
+                monitored_tables=monitored_tables,
             )
 
         assert exc.value.status_code == 500
@@ -1920,7 +2026,9 @@ class TestDryRunRoutes:
     def test_get_dry_run_status_returns_status_out(self, mock_view_svc: ViewService) -> None:
         """get_dry_run_status should map JobService status to RunStatusOut."""
         mock_ws = create_autospec(WorkspaceClient)
-        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "88888"]])
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response(
+            [["cat.sch.tmp_view_x", "alice@example.com", "88888", "cat.sch.tbl"]]
+        )
         mock_ws.jobs.get_run.return_value = Run(
             state=RunState(
                 life_cycle_state=RunLifeCycleState.RUNNING,
@@ -1950,7 +2058,9 @@ class TestDryRunRoutes:
     def test_get_dry_run_status_raises_500_on_error(self, mock_view_svc: ViewService) -> None:
         """get_dry_run_status should raise HTTP 500 when the job service errors."""
         mock_ws = create_autospec(WorkspaceClient)
-        mock_ws.statement_execution.execute_statement.return_value = _ok_response([["", "", "88888"]])
+        mock_ws.statement_execution.execute_statement.return_value = _ok_response(
+            [["cat.sch.tmp_view_x", "alice@example.com", "88888", "cat.sch.tbl"]]
+        )
         mock_ws.jobs.get_run.side_effect = RuntimeError("api error")
         sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
         job_svc = JobService(ws=mock_ws, job_id="", sql=sql)

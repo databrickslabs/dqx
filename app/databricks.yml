@@ -17,6 +17,9 @@ variables:
   tmp_schema_name:
     description: "Temp schema for per-user dry-run views"
     default: "dqx_studio_tmp"
+  genie_schema_name:
+    description: "Schema for Genie-facing derived views/dims"
+    default: "genie"
   admin_group:
     description: "Workspace group bootstrapped with the Admin role"
     default: "admins"
@@ -32,6 +35,25 @@ variables:
   wheels_volume_name:
     description: "UC volume for DQX wheel files"
     default: "wheels"
+  # DQX (databricks-labs-dqx) version — single source of truth for the task-runner
+  # job's dqx dependency, kept in lockstep with src/databricks/labs/dqx/__about__.py
+  # by docs/dqx/sync_versions.py (make fmt). The pin and the wheel filename below
+  # both derive from it, so a bump only edits this one value.
+  dqx_version:
+    default: "0.16.0"
+  # Filename uv build produces for databricks-labs-dqx at ${var.dqx_version}. Used by
+  # the development dqx_task_dependency override (see target.dev.yml.example): the app
+  # publishes this wheel to the wheels volume at startup and the runner installs it.
+  dqx_wheel_filename:
+    default: "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl"
+  # The databricks-labs-dqx dependency the task-runner job installs.
+  # PRODUCTION (default): the pinned, published release from the registry — this is
+  #   what users get, reproducible and auditable.
+  # DEVELOPMENT: override in target.*.yml to the locally-built wheel on the wheels
+  #   volume so the runner exercises YOUR checkout's DQX, matching the app backend
+  #   (which runs the vendored source). See target.dev.yml.example.
+  dqx_task_dependency:
+    default: "databricks-labs-dqx==${var.dqx_version}"
   dqx_service_principal_application_id:
     description: "Application ID of the service principal that runs the task-runner job"
     default: "00000000-0000-0000-0000-000000000000"
@@ -64,6 +86,14 @@ variables:
   lakebase_database_name:
     description: "Postgres database the app connects to inside the Lakebase project."
     default: "databricks_postgres"
+  lakebase_schema_name:
+    description: >
+      Postgres schema inside the Lakebase admin DB where the app stores OLTP
+      tables. Created by PgMigrationRunner on first start. Isolate per target
+      when two apps share a Lakebase project (or when an older app already owns
+      tables in the default schema) — otherwise migrations fail with
+      ``must be owner of table …``.
+    default: "dqx_studio"
   lakebase_min_cu:
     description: "Lakebase endpoint min compute units (floor 0.5; cannot be 0)."
     default: 0.5
@@ -115,9 +145,15 @@ variables:
           value: "${var.lakebase_endpoint}"
         - name: "DQX_LAKEBASE_DATABASE_NAME"
           value: "${var.lakebase_database_name}"
+        - name: "DQX_LAKEBASE_SCHEMA"
+          value: "${var.lakebase_schema_name}"
         # Starter Insights dashboard; admins can override at runtime via Configuration.
         - name: "DQX_DEFAULT_DASHBOARD_ID"
           value: "${resources.dashboards.dqx_quality_overview.id}"
+        - name: "DQX_APP_NAME"
+          value: "${var.app_name}"
+        - name: "DQX_GENIE_SCHEMA"
+          value: "${var.genie_schema_name}"
 
 sync:
   include:
@@ -126,14 +162,22 @@ sync:
 artifacts:
   default:
     # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
-    # uv.lock + src + requirements.txt=``uv``) — no app wheel, no local dqx wheel
-    # (the app pins databricks-labs-dqx from the registry). We still build the
-    # task-runner wheel for the job (it's not published); its dqx dep resolves
-    # from the registry at job-environment install time.
+    # uv.lock + src + requirements.txt=``uv``) — no app wheel. While the app
+    # resolves databricks-labs-dqx from the parent checkout, build_app.py also
+    # vendors that library into .build/_vendor/dqx and retargets the copied
+    # pyproject/lock at it: the container never receives the parent directory.
+    # We build the task-runner wheel for the job (it's not published). We ALSO build the
+    # databricks-labs-dqx wheel from this checkout into .build/: production installs the
+    # pinned published release from the registry and ignores this wheel, but a dev deploy
+    # (dqx_task_dependency overridden in target.*.yml) installs it — the app publishes it
+    # to the wheels volume at startup — so the runner runs your checkout's DQX, matching
+    # the app backend (which runs the vendored source). Built last so build_app.py's stale
+    # .build/*.whl sweep doesn't remove it.
     build: >
       uv run python scripts/build_app.py &&
       rm -rf .build/tasks &&
-      uv build tasks/ --wheel --out-dir .build/tasks/
+      uv build tasks/ --wheel --out-dir .build/tasks/ &&
+      uv build .. --wheel --out-dir .build/
 
 resources:
   apps:
@@ -162,6 +206,20 @@ resources:
           job:
             id: ${resources.jobs.dqx_task_runner.id}
             permission: "CAN_MANAGE"
+        # Binding the wheels volume as a UC securable makes Databricks Apps auto-grant
+        # USE CATALOG + USE SCHEMA on the parents to the app SP (see the docs' note on
+        # app.resources.uc_securable). That's the missing piece the bundle cannot grant
+        # itself when it doesn't manage the catalog — without this binding the app SP
+        # can't reach anything inside ``${var.catalog_name}`` even though its
+        # schema/volume grants are ALL_PRIVILEGES. WRITE_VOLUME matches what the app
+        # actually does at startup (publishing the DQX wheel), and is a subset of the
+        # ALL_PRIVILEGES the volume's own ``grants:`` block already gives the app SP.
+        - name: "dqx-wheels-volume"
+          description: "UC volume for DQX wheels — bound so USE CATALOG / USE SCHEMA are auto-granted"
+          uc_securable:
+            securable_full_name: ${var.catalog_name}.${var.schema_name}.${var.wheels_volume_name}
+            securable_type: VOLUME
+            permission: WRITE_VOLUME
         # No ``database:`` binding — the app connects via DQX_LAKEBASE_ENDPOINT and
         # gets connect/create rights from postgres_roles.app_sp (below).
 
@@ -195,8 +253,11 @@ resources:
   # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
   # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
   # the flag, ``bundle deployment unbind <key>``, then destroy.
-  # Grants are native. USE CATALOG on the pre-existing catalog can't be granted here
-  # (the bundle doesn't manage the catalog) — grant it once per catalog (see DEPLOYMENT.md).
+  # Grants are native. USE CATALOG on the pre-existing catalog can't be declared on
+  # a catalog the bundle doesn't manage — for the **app SP** this is handled by
+  # binding the wheels volume as an app ``uc_securable`` above (Databricks Apps
+  # auto-grants USE CATALOG + USE SCHEMA on the parents). The **task-runner SP** and
+  # OBO end users (``account users``) still need one manual GRANT — see DEPLOYMENT.md.
   schemas:
     main_schema:
       catalog_name: ${var.catalog_name}
@@ -235,6 +296,51 @@ resources:
           privileges:
             - USE_SCHEMA
             - CREATE_TABLE
+      lifecycle:
+        prevent_destroy: true
+    genie_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.genie_schema_name}
+      comment: "DQX Studio Genie-facing derived views + dims"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        # The Genie space + end users read these derived views/dims. Schema-level
+        # SELECT covers current + future objects.
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+      lifecycle:
+        prevent_destroy: true
+    demo_schema:
+      # Home for the "Deploy demo content" seeded source tables (customers,
+      # orders, payments, products, shipments). Declared as a bundle resource so
+      # `bundle deploy` creates it owned by the app SP with ALL_PRIVILEGES — the
+      # app SP lacks catalog-level CREATE SCHEMA on the user catalog, so the
+      # seeder's `CREATE SCHEMA IF NOT EXISTS` is a no-op inside a schema it
+      # already fully owns. Kept separate from the app's own dqx_studio schema so
+      # a demo re-seed never touches app state.
+      catalog_name: ${var.catalog_name}
+      name: dqx_studio_demo
+      comment: "DQX Studio demo content source tables (seeded e-commerce data)"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        # End users browse/preview the demo source tables via OBO, so they need
+        # read access (the demo is meant to be explored).
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
+            - SELECT
       lifecycle:
         prevent_destroy: true
 
@@ -346,10 +452,12 @@ resources:
           spec:
             client: "5"
             dependencies:
-              # Local task-runner wheel (not published) + the library pinned
-              # from the registry — same version as the app, no local dqx build.
+              # Local task-runner wheel (not published) + databricks-labs-dqx. The dqx
+              # entry is ${var.dqx_task_dependency}: the pinned published release from the
+              # registry in production, or the locally-built wheel on the wheels volume for
+              # a dev deploy (overridden in target.*.yml). See the variable definition.
               - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
-              - databricks-labs-dqx==0.15.0
+              - ${var.dqx_task_dependency}
       parameters:
         - name: "task_type"
           default: "profile"

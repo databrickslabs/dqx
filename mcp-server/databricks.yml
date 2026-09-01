@@ -13,14 +13,20 @@ variables:
   # isolated copy alongside an existing deployment — used by the CI integration workflow.
   name_prefix:
     default: "mcp-dqx"
-  # Catalog for temp views + per-user output schemas AND the UC volume that hosts the runner wheels.
-  # REQUIRED at deploy time: workspace.artifact_path (below) is built from it and is resolved during
-  # `bundle deploy`, so an empty value produces an invalid `/Volumes//dqx_mcp_tmp/...` path. It is injected
-  # into the app as the DQX_CATALOG config env value (no secret scope — a catalog name isn't
-  # sensitive). Pass e.g. --var catalog_name=<catalog> (or CATALOG=<catalog> via make mcp-deploy).
+  # Catalog the bundle creates its schema + volumes in, and where per-user output schemas live.
+  # REQUIRED at deploy time: the resource definitions below build UC names from it, so an empty
+  # value produces invalid identifiers. It is injected into the app as the DQX_CATALOG config env
+  # value (no secret scope — a catalog name isn't sensitive; UC grants govern access).
+  # Pass e.g. --var catalog_name=<catalog> (or CATALOG=<catalog> via make mcp-deploy).
   # The placeholder default keeps the bundle syntactically valid but every real deploy must override it.
   catalog_name:
     default: ""
+  # Schema (in catalog_name) holding the temp views, the results volume, and the runner-wheel volume.
+  # A variable rather than a constant so concurrent deploys can be fully isolated — CI passes a
+  # per-run value. NOTE: schema identifiers cannot contain '-', so a caller deriving this from
+  # name_prefix must sanitise it (see scripts/ci_deploy.sh).
+  tmp_schema_name:
+    default: "dqx_mcp_tmp"
   # Application ID of the **dedicated workspace service principal** the runner job runs as.
   # This is NOT the app's auto-created SP — an app-scoped SP cannot be a job run_as identity,
   # so a separate workspace SP is required (see the "Runner service principal" section of the DQX
@@ -31,23 +37,168 @@ variables:
   # implicitly) or `bundle deploy` fails with "User is not authorized to use this service principal".
   runner_service_principal_id:
     default: "00000000-0000-0000-0000-000000000000"
+  # Filename of the runner wheel the app publishes to the wheels volume and the runner job installs.
+  # It carries the version from runner/pyproject.toml, so the two must be bumped together — a unit
+  # test asserts they match, and the app logs a warning at startup if the built wheel differs.
+  runner_wheel_filename:
+    default: "dqx_mcp_runner-0.1.0-py3-none-any.whl"
+  # Filename of the TEST-ONLY coverage bootstrap wheel. Only the dev-coverage target references it
+  # (production deploys never build or install it), but it is declared here beside the runner wheel
+  # because both are published to the same volume by the app at startup and both must be absolute
+  # /Volumes paths in a job dependency list.
+  coverage_bootstrap_wheel_filename:
+    default: "dqx_mcp_coverage_bootstrap-0.1.0-py3-none-any.whl"
+  # The DQX wheel built from THIS repo's source, installed by the runner job on the dev-coverage
+  # (CI) target only — see that target's runner_environment_dependencies for why. Production keeps
+  # the published `databricks-labs-dqx==<version>` pin, so this filename is unused there. Built by
+  # scripts/ci_deploy.sh (which needs it before `bundle deploy`) and published to the wheels volume
+  # by the app at startup, like the other two wheels. Derived from var.dqx_version so a release bump
+  # only edits that one value; the name here is exactly what `uv build` produces for that version.
+  dqx_wheel_filename:
+    default: "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl"
+  # The app's runtime environment, as a complex variable so the dev-coverage target can extend it
+  # (DAB target overrides don't merge into a list). The default is what every real deploy gets.
+  # DQX release the runner job installs. Reported as the `dqx/<version>` User-Agent token so the
+  # telemetry pipeline can populate its release_version column — every chart on the DQX Telemetry
+  # dashboard filters `release_version IS NOT NULL`, so a signal without it is collected and then
+  # discarded. Must match the databricks-labs-dqx pin in the runner dependency lists below; a unit
+  # test enforces that.
+  dqx_version:
+    default: "0.16.0"
+  app_environment:
+    type: complex
+    default:
+      # DQX_CATALOG is a plain (non-secret) value: a Unity Catalog *name* is not sensitive —
+      # access is governed by UC grants, not by hiding the name — so it does not belong in a
+      # secret scope. It is set at deploy time from the catalog_name bundle var, so there is
+      # nothing to configure out-of-band.
+      - name: DQX_CATALOG
+        value: "${var.catalog_name}"
+      - name: DQX_TMP_SCHEMA
+        value: "${var.tmp_schema_name}"
+      # Resource-backed: the runner job id comes from the app→job binding below.
+      - name: DQX_RUNNER_JOB_ID
+        value_from: "dqx-runner-job"
+      # Where the app publishes the runner wheel at startup, and the exact filename the runner
+      # job expects there (see server/bootstrap.py and the job's dependencies).
+      - name: DQX_WHEELS_VOLUME
+        value: "/Volumes/${resources.volumes.dqx_artifacts.catalog_name}/${resources.volumes.dqx_artifacts.schema_name}/${resources.volumes.dqx_artifacts.name}"
+      - name: DQX_RUNNER_WHEEL_FILENAME
+        value: "${var.runner_wheel_filename}"
+      # DQX release the runner installs, reported as the dqx/<version> telemetry token.
+      - name: DQX_VERSION
+        value: "${var.dqx_version}"
+  # The runner job environment's dependency list, as a complex variable so the dev-coverage
+  # target can extend it (DAB target overrides don't merge into an environment's spec list).
+  # The default is what every real deploy installs — no test instrumentation.
+  runner_environment_dependencies:
+    type: complex
+    default:
+      # The runner wheel, installed from the bundle-managed wheels volume by ABSOLUTE path. The app
+      # publishes it there at startup (server/bootstrap.py) rather than the bundle uploading it to
+      # workspace.artifact_path — that is what lets every UC object here be bundle-managed with
+      # native grants (see the comment above `workspace:`). Pinned via var.runner_wheel_filename,
+      # which must track runner/pyproject.toml; a unit test asserts they match.
+      - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.runner_wheel_filename}"
+      # A PINNED, published DQX release from the registry (mirrors the DQX Studio task runner, which
+      # also pins databricks-labs-dqx==<version>). The version is derived from var.dqx_version, the
+      # single place a release bump edits (sync_versions.py rewrites that one value). The
+      # [datacontract] extra can be applied here because this is a PyPI spec, not a wheel path.
+      #
+      # The [llm] extra (dspy) is intentionally NOT installed — the runner stays lean and
+      # deterministic, mirroring the DQX Studio task runner. As a result the
+      # generate_rules_from_contract tool is deterministic-only: it does not process the
+      # contract's free-text expectations (DQX's LLM "text rules" path). Enabling that is a
+      # follow-up: add the dspy/litellm deps from the DQX [llm] extra here, plumb an LLM
+      # endpoint config through to the runner, and re-expose the parameter in server/tools.py.
+      - "databricks-labs-dqx[datacontract]==${var.dqx_version}"
 
-# Host the runner wheels in a UC volume (not the deployer's personal workspace folder). The
-# runner job runs as a least-privilege SP; a UC volume grant (READ VOLUME, applied by setup.py)
-# is explicit and volume-wide, so it doesn't depend on workspace-ACL inheritance from someone's
-# home directory. The volume MUST already exist before `bundle deploy` uploads artifacts into it
-# — scripts/ensure_artifacts_volume.sh (run by ci_deploy.sh and `make mcp-deploy`) creates it.
+# Deliberately NO workspace.artifact_path. `bundle deploy` uploads artifacts BEFORE it creates
+# resources, so a volume named as artifact_path can never be bundle-managed — it has to pre-exist,
+# which is why this used to need scripts/ensure_artifacts_volume.sh. Instead the app publishes the
+# runner wheel to the bundle-managed wheels volume at startup (see server/bootstrap.py) and the
+# runner job installs it from that absolute /Volumes path, so every UC object here is owned by the
+# bundle and carries native `grants:` — mirroring the DQX Studio app.
 workspace:
-  # Both paths are scoped by name_prefix so concurrent deploys (e.g. two PRs' CI runs, each with a
-  # unique name_prefix) never share bundle state or overwrite each other's uploaded wheels. Without
-  # this, the CLI's default root_path (.../.bundle/mcp-dqx/dev) and a shared artifact folder are
-  # identical across runs by the same deployer, so parallel `bundle deploy`s race on the state file
-  # and clobber wheels. A normal `make mcp-deploy` leaves name_prefix at its default ("mcp-dqx"), so
-  # its paths stay stable and predictable.
+  # Scoped by name_prefix so concurrent deploys (e.g. two PRs' CI runs, each with a unique
+  # name_prefix) never share bundle state. Without this the CLI's default root_path
+  # (.../.bundle/mcp-dqx/dev) is identical across runs by the same deployer, so parallel
+  # `bundle deploy`s race on the state file. A normal `make mcp-deploy` leaves name_prefix at its
+  # default ("mcp-dqx"), so the path stays stable and predictable.
   root_path: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${var.name_prefix}/${bundle.target}"
-  artifact_path: "/Volumes/${var.catalog_name}/dqx_mcp_tmp/dqx_artifacts/${var.name_prefix}"
 
 resources:
+  # UC objects the bundle OWNS, so their grants are declared natively here and applied by
+  # `bundle deploy` — no post-deploy notebook job, and no runtime `ws.apps.get()` lookup, because the
+  # app's service principal is referenceable as ${resources.apps.mcp-dqx.service_principal_client_id}.
+  # Mirrors the DQX Studio bundle.
+  #
+  # Catalog-level grants (USE CATALOG for everyone, and CREATE SCHEMA for the runner SP, which needs
+  # it to create per-user dqx_mcp_<user> output schemas) are deliberately NOT declared here. They are
+  # applied once per catalog by scripts/grant_catalog_prereqs.sh — see the MCP section of
+  # docs/dqx/docs/installation.mdx.
+  #
+  # `resources.catalogs` does support `grants`, and declaring the catalog here WOULD work — but only
+  # after `bundle deployment bind`, because a catalog that already exists otherwise fails the deploy
+  # with CATALOG_ALREADY_EXISTS. Both routes were tested and rejected:
+  #   - bound WITHOUT lifecycle.prevent_destroy: `bundle destroy` deletes the customer's catalog and
+  #     everything in it. catalog_name is a free variable, so that could be `main`.
+  #   - bound WITH prevent_destroy: the catalog is safe, but `bundle destroy` then aborts entirely
+  #     (0 resources removed), so teardown would need an unbind step first and would no longer be one
+  #     command.
+  # A single documented grant command is the better trade, and matches the DQX Studio app, which also
+  # documents USE CATALOG as a prerequisite rather than binding the catalog.
+  schemas:
+    tmp_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.tmp_schema_name}
+      comment: "DQX MCP server: temp views, results volume, and runner-wheel volume."
+      grants:
+        # Users create definer's-rights temp views here through their own OBO token.
+        - principal: ${var.users_group}
+          privileges: [USE_SCHEMA, CREATE_TABLE]
+        # MANAGE (not MODIFY) for both SPs, and specifically for DROP: the temp views are created by
+        # each *user* through their OBO token, so the user owns them and the SPs are non-owners. In
+        # UC, MANAGE is what lets a non-owner "delete an object without being the owner"; MODIFY is
+        # data DML (insert/update/delete rows) and does NOT confer DROP. Without MANAGE the runner's
+        # end-of-run view drop and the app's stale-view sweeper both fail and orphan views in this
+        # schema. The schema stays owned by the deploying identity — MANAGE avoids handing the SPs
+        # ownership while still permitting exactly the cleanup they perform.
+        #
+        # The app reads through those views and drops stale ones (the in-app sweeper).
+        - principal: ${resources.apps.mcp-dqx.service_principal_client_id}
+          privileges: [USE_SCHEMA, SELECT, MANAGE]
+        # The runner job reads the views, drops its own view when the run ends, and writes results as
+        # its own least-privilege identity.
+        - principal: ${var.runner_service_principal_id}
+          privileges: [USE_SCHEMA, SELECT, MANAGE]
+  volumes:
+    # Result files (<run_id>.json) plus staged job inputs, written by the runner and read by the app.
+    mcp_results:
+      catalog_name: ${var.catalog_name}
+      schema_name: ${resources.schemas.tmp_schema.name}
+      name: mcp_results
+      volume_type: MANAGED
+      comment: "DQX MCP server: runner result files and staged job inputs."
+      grants:
+        - principal: ${resources.apps.mcp-dqx.service_principal_client_id}
+          privileges: [READ_VOLUME, WRITE_VOLUME]
+        - principal: ${var.runner_service_principal_id}
+          privileges: [READ_VOLUME, WRITE_VOLUME]
+    # The runner wheel the app publishes at startup; the runner job installs it from here by
+    # absolute path (see the job's `dependencies`), so the runner SP only needs read access.
+    dqx_artifacts:
+      catalog_name: ${var.catalog_name}
+      schema_name: ${resources.schemas.tmp_schema.name}
+      name: dqx_artifacts
+      volume_type: MANAGED
+      comment: "DQX MCP server: runner wheel published by the app at startup."
+      grants:
+        - principal: ${resources.apps.mcp-dqx.service_principal_client_id}
+          privileges: [READ_VOLUME, WRITE_VOLUME]
+        - principal: ${var.runner_service_principal_id}
+          privileges: [READ_VOLUME]
+
   jobs:
     dqx_runner:
       name: "${var.name_prefix}-runner"
@@ -61,10 +212,9 @@ resources:
       tasks:
         # A python_wheel_task (not a notebook_task): the job runs as the dedicated runner SP, and
         # the runner is a proper unit-testable package (mirrors the DQX Studio task runner). The
-        # run_as SP still needs read access to the wheel — it lives in the dqx_artifacts UC volume
-        # (workspace.artifact_path above) and the setup job grants the SP READ VOLUME there (see
-        # notebooks/setup.py). The entry point writes its JSON result to the results UC volume
-        # keyed by {{job.run_id}}; the app reads it back.
+        # run_as SP reads the wheel from the bundle-managed dqx_artifacts volume, which grants it
+        # READ_VOLUME natively (see resources.volumes.dqx_artifacts). The entry point writes its
+        # JSON result to the results UC volume keyed by {{job.run_id}}; the app reads it back.
         - task_key: dqx_run
           python_wheel_task:
             package_name: dqx_mcp_runner
@@ -83,21 +233,9 @@ resources:
         - environment_key: default
           spec:
             environment_version: "2"
-            dependencies:
-              # The runner wheel (this sub-project) + a PINNED, published DQX release from the
-              # registry (mirrors the DQX Studio task runner, which also pins
-              # databricks-labs-dqx==<version>). Keep this version in sync with the repo's current
-              # release; bump it when upgrading DQX. The [datacontract] extra can be applied here
-              # because this is a PyPI spec (not a wheel path — pip extras don't apply to wheel paths).
-              #
-              # The [llm] extra (dspy) is intentionally NOT installed — the runner stays lean and
-              # deterministic, mirroring the DQX Studio task runner. As a result the
-              # generate_rules_from_contract tool is deterministic-only: it does not process the
-              # contract's free-text expectations (DQX's LLM "text rules" path). Enabling that is a
-              # follow-up: add the dspy/litellm deps from the DQX [llm] extra here, plumb an LLM
-              # endpoint config through to the runner, and re-expose the parameter in server/tools.py.
-              - ./.build/dqx_mcp_runner-*.whl
-              - databricks-labs-dqx[datacontract]==0.15.0
+            # See var.runner_environment_dependencies for the list + rationale (a complex
+            # variable so the dev-coverage target can extend it for CI/test deploys).
+            dependencies: ${var.runner_environment_dependencies}
       parameters:
         - name: operation
           default: ""
@@ -112,30 +250,16 @@ resources:
         # the submitter may fetch a run's result (results can contain their governed source data).
         - name: requesting_user
           default: ""
-
-    # One-time setup job — grants USE CATALOG to users and app SP.
-    # Run after first deploy: databricks bundle run dqx_setup --profile <profile>
-    dqx_setup:
-      name: "${var.name_prefix}-setup"
-      tasks:
-        - task_key: setup
-          notebook_task:
-            notebook_path: "./notebooks/setup.py"
-            base_parameters:
-              app_name: "${var.name_prefix}"
-              catalog_name: "${var.catalog_name}"
-              users_group: ${var.users_group}
-              # The runner job's run_as SP — setup grants it the dqx_mcp_tmp-schema access it needs.
-              runner_service_principal_id: "${var.runner_service_principal_id}"
-              # The runner job id — setup grants the app SP CAN_MANAGE_RUN on it so the app can
-              # submit runs and poll results. (The app→job resource binding alone did not reliably
-              # land this grant in the job ACL, so setup applies it explicitly.)
-              runner_job_id: "${resources.jobs.dqx_runner.id}"
-          environment_key: default
-      environments:
-        - environment_key: default
-          spec:
-            environment_version: "2"
+      # Declared natively so `bundle deploy` applies it: the app submits runs and polls results, so
+      # it needs CAN_MANAGE_RUN — and deliberately NOT CAN_MANAGE, which would let the app SP rewrite
+      # the job definition (including its run_as) and so escape the least-privilege boundary the
+      # dedicated runner SP exists to enforce. The app never modifies the job: the runner wheel is
+      # installed from a fixed volume path (see `dependencies` above), so nothing needs jobs.update.
+      # This replaces the explicit ws.jobs.update_permissions() call the old setup job made because
+      # the app→job resource binding alone did not reliably land the grant in the job ACL.
+      permissions:
+        - level: CAN_MANAGE_RUN
+          service_principal_name: ${resources.apps.mcp-dqx.service_principal_client_id}
 
   apps:
     mcp-dqx:
@@ -156,18 +280,9 @@ resources:
       # reference ${var.*}).
       config:
         command: ["python", "server/main.py"]
-        env:
-          # DQX_CATALOG is a plain (non-secret) value: a Unity Catalog *name* is not sensitive —
-          # access is governed by UC grants, not by hiding the name — so it does not belong in a
-          # secret scope. It is set at deploy time from the catalog_name bundle var (the same value
-          # used for the artifacts-volume path), so there is nothing to configure out-of-band.
-          - name: DQX_CATALOG
-            value: "${var.catalog_name}"
-          - name: DQX_TMP_SCHEMA
-            value: "dqx_mcp_tmp"
-          # Resource-backed: the runner job id comes from the app→job binding below.
-          - name: DQX_RUNNER_JOB_ID
-            value_from: "dqx-runner-job"
+        # See var.app_environment for the list + rationale (a complex variable so the dev-coverage
+        # target can add test-only sweep thresholds without touching the production default).
+        env: ${var.app_environment}
 
       resources:
         - name: dqx-runner-job
@@ -181,8 +296,16 @@ resources:
 
 sync:
   include:
-    - "notebooks/**"
-    - ".build/**"
+    # The built runner wheel rides along as app source code, so the app can publish it to the
+    # wheels volume at startup (server/bootstrap.py). ("notebooks/**" is gone with the setup job.)
+    #
+    # Deliberately NOT ".build/**": that directory is not cleaned between builds, so a coverage
+    # bootstrap wheel left there by an earlier `dev-coverage` deploy would be synced by a later
+    # production `dev` deploy and published by publish_extra_wheels — shipping test instrumentation
+    # to a user deploy from nothing but a stale local file. Naming the runner wheel explicitly means
+    # a production deploy carries the test wheel only if the target asks for it; `dev-coverage`
+    # extends this list to do exactly that.
+    - ".build/dqx_mcp_runner-*.whl"
 
 # Build only the MCP runner wheel (this sub-project's ./runner). DQX is a pinned published release
 # installed from the registry by the runner job's environment spec — not built from source here.
@@ -197,3 +320,94 @@ artifacts:
 targets:
   dev:
     default: true
+
+  # CI/test-only overlay: identical to dev, but the runner job's environment ALSO installs the
+  # test-only coverage bootstrap wheel, whose .pth starts a coverage tracer at interpreter start
+  # (see tests/integration_mcp/coverage_bootstrap). Kept out of `dev` deliberately —
+  # production/user deploys must not ship test instrumentation, and no production module is
+  # coverage-aware. Selected by scripts/ci_deploy.sh when DQX_MCP_COVERAGE_DIR is set.
+  dev-coverage:
+    # NOTE: the bootstrap wheel is NOT built here. scripts/ci_deploy.sh builds it, because it needs
+    # the resolved filename to append to requirements.txt *before* `bundle deploy` runs (the bundle
+    # snapshots source files at sync time, and requirements.txt has no glob support). A duplicate
+    # `artifacts:` entry here ran the identical `uv build` a second time on every coverage deploy —
+    # wasted work, and two copies of the same command that could silently drift apart.
+    #
+    # Opt this target into syncing the test-only wheel. The base list names just the runner wheel, so
+    # a stale bootstrap wheel in ./.build cannot ride along on a production deploy.
+    #
+    # Note `sync.include` APPENDS to the base list rather than replacing it (unlike an environment
+    # spec or a complex variable, which replace) — so this adds to the runner wheel instead of
+    # shadowing it, and repeating the runner wheel here would duplicate the entry.
+    sync:
+      include:
+        - ".build/dqx_mcp_coverage_bootstrap-*.whl"
+        # The in-repo DQX wheel, so the app can publish it to the wheels volume for the runner job.
+        - ".build/databricks_labs_dqx-*.whl"
+    variables:
+      # Sweep every submission (interval 0) so a single test run exercises the stale-view and
+      # stale-result-file sweepers, which the hour-long production interval makes untestable. Only
+      # the thresholds differ; the sweep logic is identical. (Repeats the base list — target
+      # overrides replace a list rather than merging into it.)
+      #
+      # The TTL is NOT shortened below the server's floor. The sweep runs on the job-submission
+      # path, so a very short TTL deletes the temp view of the job being submitted right now and
+      # fails it with TABLE_OR_VIEW_NOT_FOUND once it dequeues — server/utils.py clamps the TTL up
+      # for exactly that reason, so a smaller value here would be silently ignored anyway. The
+      # result-file sweeper is unaffected by the floor and still exercised on every submission.
+      app_environment:
+        default:
+          - name: DQX_CATALOG
+            value: "${var.catalog_name}"
+          - name: DQX_TMP_SCHEMA
+            value: "${var.tmp_schema_name}"
+          - name: DQX_RUNNER_JOB_ID
+            value_from: "dqx-runner-job"
+          # Repeated from the base list (target overrides replace, never merge) — without these the
+          # app cannot publish the runner wheel and every data tool fails on library install.
+          - name: DQX_WHEELS_VOLUME
+            value: "/Volumes/${resources.volumes.dqx_artifacts.catalog_name}/${resources.volumes.dqx_artifacts.schema_name}/${resources.volumes.dqx_artifacts.name}"
+          - name: DQX_RUNNER_WHEEL_FILENAME
+            value: "${var.runner_wheel_filename}"
+          - name: DQX_VERSION
+            value: "${var.dqx_version}"
+          - name: DQX_SWEEP_INTERVAL_SECONDS
+            value: "0"
+          # Notice a finished run sooner. get_run_result blocks server-side while the run is pending
+          # (see utils.get_run_status), polling on a 2s→8s backoff; that backoff is dead time once the
+          # job has actually completed. A flat 1s here trims it for the ~33 job-backed calls the
+          # integration suite makes. The 30s *budget* is deliberately unchanged — shortening it would
+          # not make a job finish sooner, it would only spend more HTTP round-trips waiting.
+          - name: DQX_RUN_POLL_INITIAL_SECONDS
+            value: "1"
+          - name: DQX_RUN_POLL_MAX_SECONDS
+            value: "1"
+      # Overrides the dependency-list variable — DAB target overrides don't merge into an
+      # environment's spec list, so the base list is repeated here plus the bootstrap wheel
+      # (which depends on `coverage`, so that need not be listed separately).
+      #
+      # ABSOLUTE /Volumes paths, matching the base list: there is no workspace.artifact_path to
+      # upload a relative ./.build/ wheel any more, so the app publishes both at startup — the runner
+      # wheel via publish_runner_wheel and the bootstrap wheel via publish_extra_wheels. A unit test
+      # asserts this list stays a superset of the base one.
+      # DQX comes from the IN-REPO SOURCE WHEEL here, not the published release the base list pins.
+      # That is the whole point of running this suite in CI: with the PyPI pin, a PR that breaks
+      # src/databricks/labs/dqx/ left the MCP suite green because the runner installed the last
+      # *release* — so the suite could not catch a library regression at all. Production deploys keep
+      # the pin (reproducible, and what users actually get); CI tests the code in the PR.
+      #
+      # The `[datacontract]` extra CANNOT ride along on a wheel path. The obvious PEP 508 form
+      #   databricks-labs-dqx[datacontract] @ file:///Volumes/.../databricks_labs_dqx-<v>.whl
+      # is valid for pip (verified: pip does resolve the extra's dependencies from a wheel path) but
+      # the Databricks CLI rejects it while normalising dependency paths:
+      #   failed to normalize paths: parse "...": first path segment in URL cannot contain colon
+      # So the extra's own dependencies are listed explicitly below instead. A unit test asserts this
+      # list stays in sync with the [datacontract] extra in the repo's pyproject.toml, because the
+      # duplication is the whole risk of doing it this way.
+      runner_environment_dependencies:
+        default:
+          - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.runner_wheel_filename}"
+          - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.dqx_wheel_filename}"
+          # Stands in for the [datacontract] extra, which a wheel path cannot carry (see above).
+          - "datacontract-cli>=0.11.1,<1.0"
+          - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.coverage_bootstrap_wheel_filename}"

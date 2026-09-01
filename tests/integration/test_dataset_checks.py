@@ -387,6 +387,32 @@ def test_is_unique(spark: SparkSession):
     assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
 
 
+def test_is_unique_row_filter_excludes_non_matching_rows(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["duplicate", 1],
+            ["duplicate", 1],
+            ["duplicate", 0],
+            ["single", 1],
+        ],
+        SCHEMA,
+    )
+
+    condition, apply_method = is_unique(["a"], row_filter="b = 1")
+    actual_condition_df = apply_method(test_df).select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["duplicate", 1, "Value 'duplicate' in column 'a' is not unique, found 2 duplicates"],
+            ["duplicate", 1, "Value 'duplicate' in column 'a' is not unique, found 2 duplicates"],
+            ["duplicate", 0, None],
+            ["single", 1, None],
+        ],
+        SCHEMA + ", a_is_not_unique: string",
+    )
+    assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
+
+
 def test_is_unique_null_distinct(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
@@ -1808,6 +1834,20 @@ def test_aggr_matches_dataset_row_filters(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_aggr_matches_dataset_rejects_destructive_ref_row_filter(spark: SparkSession):
+    """aggr_matches_dataset routes ref_row_filter through safe_filter_expr, so a destructive filter is
+    rejected with UnsafeSqlQueryError instead of reaching ref_df.filter() as a raw string - matching the
+    checked-side row_filter and the is_sql_query_safe requirement in CLAUDE.md."""
+    test_df = spark.createDataFrame([["a", 1]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 1]], SCHEMA)
+
+    _, apply_method = aggr_matches_dataset(
+        "a", ref_df_name="ref_df", aggr_type="count", ref_row_filter="b = 1 OR DROP TABLE users"
+    )
+    with pytest.raises(UnsafeSqlQueryError):
+        apply_method(test_df, spark, {"ref_df": ref_df})
+
+
 def test_aggr_matches_dataset_star_column_with_row_filter(spark: SparkSession):
     """column='*' (count(*) over all rows) combined with row_filter counts filtered rows correctly, no violation."""
     # 5 rows total, but only 3 have b is not null
@@ -1870,6 +1910,150 @@ def test_aggr_matches_dataset_star_column_with_row_filter_mismatch(spark: SparkS
             ["e", 5, expected_message],
         ],
         f"{SCHEMA}, count_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_dataset_star_as_column_expression(spark: SparkSession):
+    """Regression for #1435: passing the star as F.col("*") must report '*' consistently on both the
+    checked and reference sides of the message (not the raw 'unresolvedstar()' rendering)."""
+    # 5 rows total, only 3 have b is not null
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3], ["d", None], ["e", 5]], SCHEMA)
+    # 5 rows total, all 5 have b is not null
+    ref_df = spark.createDataFrame([["v", 1], ["w", 2], ["x", 3], ["y", 4], ["z", 5]], SCHEMA)
+
+    checks = [
+        aggr_matches_dataset(
+            F.col("*"),  # star as a column expression, not the string "*"
+            ref_df_name="ref_df",
+            aggr_type="count",
+            row_filter="b is not null",
+            ref_row_filter="b is not null",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message = "Count value 3 in column '*' is not equal to DataFrame 'ref_df' column '*' limit: 5"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, expected_message],
+            ["b", None, expected_message],
+            ["c", 3, expected_message],
+            ["d", None, expected_message],
+            ["e", 5, expected_message],
+        ],
+        f"{SCHEMA}, count_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_aggr_count_star_column_expr_with_row_filter(spark: SparkSession):
+    """Regression for #1435: a count(*) check built programmatically with F.col("*") and a row_filter must
+    not raise INVALID_USAGE_OF_STAR_OR_REGEX, and must count only the filtered rows exactly like the
+    declarative string "*" form (identical metric, message and check name)."""
+    # 2 of the 3 rows have b is not null
+    test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3]], SCHEMA)
+
+    checks = [
+        is_aggr_not_less_than(F.col("*"), limit=3, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_greater_than(F.col("*"), limit=1, aggr_type="count", row_filter="b is not null"),
+    ]
+    actual = _apply_checks(test_df, checks)
+
+    # count over the filtered rows is 2: 2 < 3 -> violation, 2 > 1 -> violation, reported on every row
+    less_msg = "Count value 2 in column '*' is less than limit: 3"
+    greater_msg = "Count value 2 in column '*' is greater than limit: 1"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, less_msg, greater_msg],
+            ["b", None, less_msg, greater_msg],
+            ["c", 3, less_msg, greater_msg],
+        ],
+        f"{SCHEMA}, count_less_than_limit STRING, count_greater_than_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_aggr_count_distinct_star_unfiltered(spark: SparkSession):
+    """Regression for #1435: count(DISTINCT *) over '*' is valid Spark and must run end-to-end (not be
+    rejected by the star validation, which only guards the filtered-count placeholder path)."""
+    # (a, 1) is duplicated -> 3 distinct rows out of 4
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["a", 1], ["c", 3]], SCHEMA)
+
+    checks = [is_aggr_not_less_than("*", limit=10, aggr_type="count_distinct")]
+    actual = _apply_checks(test_df, checks)
+
+    msg = "Distinct count value 3 in column '*' is less than limit: 10"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, msg],
+            ["b", 2, msg],
+            ["a", 1, msg],
+            ["c", 3, msg],
+        ],
+        f"{SCHEMA}, count_distinct_less_than_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_aggr_star_column_expr_unfiltered_runs_natively(spark: SparkSession):
+    """Regression for #1435: count(*) and count(DISTINCT *) built with F.col("*") and no row_filter must
+    run end-to-end (F.count / F.countDistinct over F.col("*")), not just pass build-time validation."""
+    # 4 rows, (a, 1) duplicated -> 3 distinct rows
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["a", 1], ["c", 3]], SCHEMA)
+
+    checks = [
+        is_aggr_not_less_than(F.col("*"), limit=10, aggr_type="count"),
+        is_aggr_not_less_than(F.col("*"), limit=10, aggr_type="count_distinct"),
+    ]
+    actual = _apply_checks(test_df, checks)
+
+    count_msg = "Count value 4 in column '*' is less than limit: 10"
+    cd_msg = "Distinct count value 3 in column '*' is less than limit: 10"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, count_msg, cd_msg],
+            ["b", 2, count_msg, cd_msg],
+            ["a", 1, count_msg, cd_msg],
+            ["c", 3, count_msg, cd_msg],
+        ],
+        f"{SCHEMA}, count_less_than_limit STRING, count_distinct_less_than_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_dataset_count_distinct_star_runs_natively(spark: SparkSession):
+    """Regression for #1435: count(DISTINCT *) on the reference side (built with F.col("*")) must run
+    end-to-end via the native DataFrame aggregation, not just pass build-time validation."""
+    # 2 distinct rows ((a, 1) duplicated)
+    test_df = spark.createDataFrame([["a", 1], ["b", 2], ["a", 1]], SCHEMA)
+    # 3 distinct rows
+    ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
+
+    checks = [
+        aggr_matches_dataset(
+            "*",
+            ref_df_name="ref_df",
+            ref_column=F.col("*"),  # reference star as a column expression
+            aggr_type="count_distinct",
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # checked distinct rows = 2, reference distinct rows = 3 -> mismatch -> violation on every row
+    expected_message = "Distinct count value 2 in column '*' is not equal to DataFrame 'ref_df' column '*' limit: 3"
+    expected = spark.createDataFrame(
+        [
+            ["a", 1, expected_message],
+            ["b", 2, expected_message],
+            ["a", 1, expected_message],
+        ],
+        f"{SCHEMA}, count_distinct_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -2643,6 +2827,26 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
         ],
         expected_schema,
     )
+
+    assertDataFrameEqual(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "schema, value, ref_schema, ref_value",
+    [
+        ("id int, value string", "source", "id int, value map<string, string>", {"key": "reference"}),
+        ("id int, value map<string, string>", {"key": "source"}, "id int, value string", "reference"),
+    ],
+)
+def test_dataset_compare_skips_map_col_from_either_schema(
+    spark: SparkSession, schema: str, value: Any, ref_schema: str, ref_value: Any
+):
+    df = spark.createDataFrame([[1, value]], schema)
+    ref_df = spark.createDataFrame([[1, ref_value]], ref_schema)
+    condition, apply = compare_datasets(columns=["id"], ref_columns=["id"], ref_df_name="ref_df")
+
+    actual = apply(df, spark, {"ref_df": ref_df}).select(*df.columns, condition)
+    expected = spark.createDataFrame([[1, value, None]], f"{schema}, {get_column_name_or_alias(condition)} string")
 
     assertDataFrameEqual(actual, expected)
 

@@ -195,10 +195,11 @@ schema:
                 arguments:
                   column: sensor_status
                   allowed:
-                    - active
-                    - inactive
-                    - maintenance
-                    - faulty
+                    # is_in_list resolves bare strings as column expressions; quote string literals
+                    - "'active'"
+                    - "'inactive'"
+                    - "'maintenance'"
+                    - "'faulty'"
       
       - name: alert_level
         logicalType: string

@@ -9,7 +9,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.checks_storage import is_table_location
 from databricks.labs.dqx.contexts.global_context import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.__version__ import __version__
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -175,8 +175,35 @@ class WorkflowContext(GlobalContext):
 
         run_config.custom_check_functions = self._get_resolved_custom_check_function(run_config.custom_check_functions)
         run_config.checks_location = self._get_resolved_checks_location(run_config.checks_location)
+        run_config.actions_location = self._get_resolved_actions_location(run_config.actions_location)
 
         return run_config
+
+    def _get_resolved_actions_location(self, actions_location: str | None) -> str | None:
+        """Resolve a file-based actions location to an absolute path readable on the cluster.
+
+        Table locations and absolute paths (including */Volumes/...* and */Workspace/...*) are returned
+        unchanged. A relative file path is resolved to a */Workspace*-prefixed FUSE path under the
+        installation folder, because action definitions are loaded with *open()*
+        (*DQActionManager.load_actions_from_local_file*) rather than the workspace download API used for
+        checks — this mirrors how custom check function modules are resolved.
+
+        Args:
+            actions_location: The configured action-definitions location, or *None*.
+
+        Returns:
+            The resolved location, or *None* when actions are not configured.
+        """
+        if not actions_location:
+            return actions_location
+
+        if is_table_location(actions_location):
+            return actions_location
+
+        if actions_location.startswith("/"):
+            return actions_location
+
+        return f"/Workspace{self.installation.install_folder()}/{actions_location}"
 
     def _get_resolved_checks_location(self, checks_location: str) -> str:
         """

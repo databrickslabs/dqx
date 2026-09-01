@@ -344,6 +344,31 @@ def generated_national_id_df(spark):
 
 
 @pytest.fixture
+def generated_uuid_df(spark):
+    uuid_schema_str = (
+        "col1_uuid_v4_lowercase: string, "
+        "col2_uuid_v4_uppercase: string, "
+        "col3_uuid_v1_lowercase: string, "
+        "col4_uuid_mixed_case: string"
+    )
+    schema = _parse_datatype_string(uuid_schema_str)
+
+    uuid_templates = {
+        "col1_uuid_v4_lowercase": r"xxxxxxxx-xxxx-4xxx-9xxx-xxxxxxxxxxxx",
+        "col2_uuid_v4_uppercase": r"XXXXXXXX-XXXX-4XXX-9XXX-XXXXXXXXXXXX",
+        "col3_uuid_v1_lowercase": r"xxxxxxxx-xxxx-1xxx-8xxx-xxxxxxxxxxxx",
+        "col4_uuid_mixed_case": r"xxxxXXXX-xxXX-4xXx-9xXx-xxxxXXXXxxxx",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(uuid_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in uuid_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
+
+
+@pytest.fixture
 def generated_country_code_df(spark):
     # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
     # exercises isin() with a realistic hit ratio in both directions, since isin performance can

@@ -103,7 +103,7 @@ The schemas, wheels volume, and Lakebase Postgres **project** are declared as bu
  └── wheels (UC volume)               ← DQX + task-runner wheels uploaded at app startup
 
 Lakebase (Postgres) — when enabled (default):
- dqx-studio-lakebase (database_instance)
+ dqx-studio-db (postgres project; `var.lakebase_project_id`)
  └── databricks_postgres (database)    ← always-present admin DB; no per-app logical DB provisioned
      └── dqx_studio (schema)           ← created by PgMigrationRunner on first start (DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
@@ -116,7 +116,7 @@ Lakebase (Postgres) — when enabled (default):
 
 ### Role-Based Access Control
 
-Roles (`ADMIN`, `RULE_APPROVER`, `RULE_AUTHOR`, `VIEWER`, plus the orthogonal `RUNNER`) are defined in `backend/common/authorization.py` and resolved from Databricks workspace-group membership in `dq_role_mappings` (plus the bootstrap `DQX_ADMIN_GROUP`). Routes enforce roles via `require_role(*roles)` from `backend/dependencies.py`.
+Roles (`ADMIN`, `RULE_APPROVER`, `RULE_AUTHOR`, `VIEWER`) are defined in `backend/common/authorization.py`. There is no separate `RUNNER` role — `run_rules` is granted to Admin and Author (`CAN_RUN_ROLES`). Roles resolve from Databricks workspace-group membership in `dq_role_mappings` (plus the bootstrap `DQX_ADMIN_GROUP`). Routes enforce roles via `require_role(*roles)` from `backend/dependencies.py`.
 
 ### Metrics architecture
 

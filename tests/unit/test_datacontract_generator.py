@@ -534,6 +534,7 @@ class DataContractGeneratorTestBase:
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
                     'field': 'sensor_id',
+                    'description': 'Sensor ID must not be empty',
                 },
             },
             {
@@ -550,6 +551,7 @@ class DataContractGeneratorTestBase:
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
                     'field': 'reading_timestamp',
+                    'description': 'Validate reading timestamp format',
                 },
             },
             {
@@ -566,6 +568,7 @@ class DataContractGeneratorTestBase:
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
                     'field': 'calibration_date',
+                    'description': 'Calibration date must be before or equal to reading timestamp',
                 },
             },
             {
@@ -573,7 +576,7 @@ class DataContractGeneratorTestBase:
                     'function': 'is_in_list',
                     'arguments': {
                         'column': 'sensor_status',
-                        'allowed': ['active', 'inactive', 'maintenance', 'faulty'],
+                        'allowed': ["'active'", "'inactive'", "'maintenance'", "'faulty'"],
                     },
                 },
                 'name': 'sensor_status_valid_values',
@@ -585,6 +588,7 @@ class DataContractGeneratorTestBase:
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
                     'field': 'sensor_status',
+                    'description': 'Validate sensor status values',
                 },
             },
             {
@@ -604,6 +608,7 @@ class DataContractGeneratorTestBase:
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
                     'field': 'alert_email',
+                    'description': 'Validate email format',
                 },
             },
             {
@@ -624,6 +629,7 @@ class DataContractGeneratorTestBase:
                     'odcs_version': 'v3.0.2',
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
+                    'description': 'Ensure sensor data is fresh and recent',
                 },
             },
             {
@@ -639,6 +645,7 @@ class DataContractGeneratorTestBase:
                     'odcs_version': 'v3.0.2',
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
+                    'description': 'Ensure dataset contains data',
                 },
             },
             {
@@ -651,6 +658,7 @@ class DataContractGeneratorTestBase:
                     'odcs_version': 'v3.0.2',
                     'schema': 'sensor_readings',
                     'rule_type': 'explicit',
+                    'description': 'Ensure technician_id and alert_email are present for high alert levels',
                 },
                 'filter': 'alert_level in (\'high\', \'critical\')',
             },
@@ -2474,6 +2482,177 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             assert len(explicit) == 1, f"Should only extract one DQX explicit rule, got {len(explicit)}"
             assert explicit[0]["check"]["function"] == "is_not_null"
 
+        finally:
+            os.unlink(temp_path)
+
+    def test_explicit_rule_carries_dimension_description_and_custom_properties(self, generator):
+        """Quality-entry dimension/description/customProperties land in user_metadata."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="data",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "dimension": "timeliness",
+                    "description": "Data must not be in the future",
+                    "customProperties": [
+                        {"property": "businessTerm", "value": "Reading freshness"},
+                        {"property": "passThreshold", "value": 100},
+                        {"property": "sourceRuleId", "value": "GAME_00003"},
+                        {"property": "row_filter", "value": "region = 'EU'"},
+                        {"property": "steward", "value": "owner@example.com"},
+                    ],
+                    "implementation": {
+                        "name": "data_not_future",
+                        "check": {"function": "is_not_null", "arguments": {"column": "data"}},
+                    },
+                },
+            ],
+        )
+        # Contract-level team steward/owner is the fallback when a quality entry has none.
+        contract_dict["team"] = [{"username": "team-steward@example.com", "role": "steward"}]
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+        finally:
+            os.unlink(temp_path)
+
+        explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(explicit) == 1
+        metadata = explicit[0]["user_metadata"]
+
+        assert metadata["dimension"] == "timeliness"
+        assert metadata["description"] == "Data must not be in the future"
+        assert metadata["businessTerm"] == "Reading freshness"
+        # user_metadata is a string map, so non-string values are stringified.
+        assert metadata["passThreshold"] == "100"
+        assert metadata["sourceRuleId"] == "GAME_00003"
+        assert "row_filter" not in metadata
+        assert "steward" not in metadata
+        assert "owner" not in metadata
+        assert explicit[0]["filter"] == "region = 'EU'"
+        # Quality customProperty steward wins over contract team; emitted as top-level owner.
+        assert explicit[0]["owner"] == "owner@example.com"
+        # Provenance keys still present and unchanged.
+        assert metadata["schema"] == "test_table"
+        assert metadata["field"] == "data"
+
+    def test_contract_team_owner_applied_when_quality_has_none(self, generator):
+        """ODCS team members with role steward become the rule owner."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="data",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "implementation": {
+                        "name": "data_not_null",
+                        "check": {"function": "is_not_null", "arguments": {"column": "data"}},
+                    },
+                },
+            ],
+        )
+        contract_dict["team"] = [
+            {"username": "viewer@example.com", "role": "viewer"},
+            {"username": "steward@example.com", "role": "data steward"},
+        ]
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
+            assert explicit[0]["owner"] == "steward@example.com"
+        finally:
+            os.unlink(temp_path)
+
+    def test_custom_properties_cannot_overwrite_provenance_or_dimension(self, generator):
+        """Provenance keys are generator-owned; first-class dimension beats a custom property."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="data",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "dimension": "completeness",
+                    "customProperties": [
+                        {"property": "schema", "value": "spoofed_schema"},
+                        {"property": "rule_type", "value": "spoofed_type"},
+                        {"property": "contract_id", "value": "urn:spoofed"},
+                        {"property": "dimension", "value": "spoofed_dimension"},
+                    ],
+                    "implementation": {
+                        "name": "data_not_null",
+                        "check": {"function": "is_not_null", "arguments": {"column": "data"}},
+                    },
+                },
+            ],
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+            metadata = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"][0][
+                "user_metadata"
+            ]
+
+            assert metadata["schema"] == "test_table"
+            assert metadata["rule_type"] == "explicit"
+            assert metadata["contract_id"] != "urn:spoofed"
+            assert metadata["dimension"] == "completeness"
+        finally:
+            os.unlink(temp_path)
+
+    def test_explicit_rule_without_quality_annotations_keeps_provenance_only(self, generator):
+        """A bare quality entry still yields exactly the provenance metadata."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="data",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "implementation": {
+                        "name": "data_not_null",
+                        "check": {"function": "is_not_null", "arguments": {"column": "data"}},
+                    },
+                },
+            ],
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+            metadata = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"][0][
+                "user_metadata"
+            ]
+
+            assert "dimension" not in metadata
+            assert "description" not in metadata
         finally:
             os.unlink(temp_path)
 

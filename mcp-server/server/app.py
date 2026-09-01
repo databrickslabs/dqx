@@ -9,6 +9,7 @@ FastMCP application configuration for the DQX MCP server.
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 from starlette.middleware.cors import CORSMiddleware
@@ -16,6 +17,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from .bootstrap import run_startup_tasks
 from .tools import load_tools
 from .utils import OBOAuthMiddleware, configure_logging
 
@@ -42,6 +44,27 @@ async def health_check(request: Request) -> JSONResponse:
 
 
 combined_app.routes.insert(0, Route("/", health_check))
+
+
+def _with_startup_tasks(inner_lifespan):
+    """Wrap the app's lifespan so our startup work runs, then hand off to FastMCP's own.
+
+    FastMCP's ``http_app()`` takes no ``lifespan`` argument and installs its own (session manager),
+    so replacing it would break the server — we wrap it instead. Our work runs first and is
+    best-effort: ``run_startup_tasks`` never raises, so a failure cannot stop the app from serving,
+    and the health route stays available either way.
+    """
+
+    @asynccontextmanager
+    async def lifespan(app):
+        await run_startup_tasks()
+        async with inner_lifespan(app):
+            yield
+
+    return lifespan
+
+
+combined_app.router.lifespan_context = _with_startup_tasks(combined_app.router.lifespan_context)
 
 # Add OBO middleware (pure ASGI — no BaseHTTPMiddleware to avoid streaming timeouts)
 combined_app.add_middleware(OBOAuthMiddleware)
