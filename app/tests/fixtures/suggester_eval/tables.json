@@ -1,0 +1,703 @@
+[
+  {
+    "binding_id": "b-customers",
+    "table_fqn": "eval.golden.customers",
+    "note": "Baseline shape: one obvious identity column, one obvious format column, and a decoy (secondary_contact) that a careless judge binds the email rule to.",
+    "columns": [
+      {
+        "name": "customer_id",
+        "type": "STRING",
+        "comment": "Primary key, one row per customer"
+      },
+      {
+        "name": "email",
+        "type": "STRING",
+        "comment": "Customer contact email address"
+      },
+      {
+        "name": "secondary_contact",
+        "type": "STRING",
+        "comment": "Optional free-text note about how else to reach the customer"
+      },
+      {
+        "name": "country_code",
+        "type": "STRING",
+        "comment": "ISO 3166-1 alpha-2 country code"
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "comment": "Row creation timestamp"
+      },
+      {
+        "name": "lifetime_value",
+        "type": "DECIMAL(18,2)",
+        "comment": "Total revenue attributed to the customer to date"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-orders",
+    "table_fqn": "eval.golden.orders",
+    "note": "Carries the multi-slot case (ordered_at before shipped_at) and a foreign key that must NOT attract the uniqueness rule.",
+    "columns": [
+      {
+        "name": "order_id",
+        "type": "STRING",
+        "comment": "Primary key of the order"
+      },
+      {
+        "name": "customer_id",
+        "type": "STRING",
+        "comment": "Foreign key to customers.customer_id; repeats across orders"
+      },
+      {
+        "name": "order_total",
+        "type": "DECIMAL(18,2)",
+        "comment": "Order gross total, expressed in order_currency"
+      },
+      {
+        "name": "order_currency",
+        "type": "STRING",
+        "comment": "ISO 4217 currency code for order_total"
+      },
+      {
+        "name": "ordered_at",
+        "type": "TIMESTAMP",
+        "comment": "When the order was placed"
+      },
+      {
+        "name": "shipped_at",
+        "type": "TIMESTAMP",
+        "comment": "When the order shipped; null until dispatch"
+      },
+      {
+        "name": "status",
+        "type": "STRING",
+        "comment": "Order state: one of NEW, PAID, SHIPPED, CANCELLED"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-raw-landing",
+    "table_fqn": "eval.golden.raw_landing",
+    "note": "The table whose correct answer is nothing. Both columns are documented as legitimately null, so even the universal not-null rule is wrong here.",
+    "columns": [
+      {
+        "name": "payload",
+        "type": "STRING",
+        "comment": "Raw unparsed vendor payload; null is expected while a backfill is in flight"
+      },
+      {
+        "name": "ingest_batch",
+        "type": "STRING",
+        "comment": "Optional batch tag, left null for streaming arrivals"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-invoices",
+    "table_fqn": "eval.golden.invoices",
+    "note": "Two columns compete for the same rule: budget_amount and actual_spend are both correct for the positive-amount rule, so both are labelled and a judge that picks only one loses recall. due_at is legitimately in the future.",
+    "columns": [
+      {
+        "name": "invoice_id",
+        "type": "STRING",
+        "comment": "Primary key of the invoice"
+      },
+      {
+        "name": "vendor_email",
+        "type": "STRING",
+        "comment": "Vendor billing contact email address"
+      },
+      {
+        "name": "budget_amount",
+        "type": "DECIMAL(18,2)",
+        "comment": "Approved budget amount for the invoice"
+      },
+      {
+        "name": "actual_spend",
+        "type": "DECIMAL(18,2)",
+        "comment": "Actual amount spent against the approved budget"
+      },
+      {
+        "name": "invoice_currency",
+        "type": "STRING",
+        "comment": "ISO 4217 currency code for the invoice amounts"
+      },
+      {
+        "name": "issued_at",
+        "type": "TIMESTAMP",
+        "comment": "When the invoice was issued"
+      },
+      {
+        "name": "due_at",
+        "type": "TIMESTAMP",
+        "comment": "When payment falls due; deliberately later than now"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-shipments",
+    "table_fqn": "eval.golden.shipments",
+    "note": "Second multi-slot case, plus a reversed binding in must_not_suggest: swapping the two temporal slots is structurally valid and semantically wrong.",
+    "columns": [
+      {
+        "name": "shipment_id",
+        "type": "STRING",
+        "comment": "Primary key of the shipment"
+      },
+      {
+        "name": "dispatched_at",
+        "type": "TIMESTAMP",
+        "comment": "When the shipment left the warehouse"
+      },
+      {
+        "name": "delivered_at",
+        "type": "TIMESTAMP",
+        "comment": "When the shipment was delivered; null until arrival"
+      },
+      {
+        "name": "estimated_delivery_at",
+        "type": "TIMESTAMP",
+        "comment": "Forecast delivery date, normally later than now"
+      },
+      {
+        "name": "destination_country",
+        "type": "STRING",
+        "comment": "ISO 3166-1 alpha-2 destination country code"
+      },
+      {
+        "name": "parcel_count",
+        "type": "INT",
+        "comment": "Count of parcels in the consignment"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-sensors",
+    "table_fqn": "eval.golden.sensor_readings",
+    "note": "Exercises family matching across numeric and temporal columns, plus a percentage bound.",
+    "columns": [
+      {
+        "name": "reading_id",
+        "type": "STRING",
+        "comment": "Primary key of the reading"
+      },
+      {
+        "name": "recorded_at",
+        "type": "TIMESTAMP",
+        "comment": "When the reading was taken"
+      },
+      {
+        "name": "humidity_percent",
+        "type": "DOUBLE",
+        "comment": "Relative humidity expressed as a percentage"
+      },
+      {
+        "name": "error_count",
+        "type": "INT",
+        "comment": "Count of transmission errors since the previous reading"
+      },
+      {
+        "name": "sensor_url",
+        "type": "STRING",
+        "comment": "Management URL for the sensor device"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-employees",
+    "table_fqn": "eval.golden.employees",
+    "note": "Decoy pair: manager_note is free text that must not attract the email rule, and work_email must not attract the phone rule.",
+    "columns": [
+      {
+        "name": "employee_id",
+        "type": "STRING",
+        "comment": "Primary key of the employee record"
+      },
+      {
+        "name": "work_email",
+        "type": "STRING",
+        "comment": "Primary work email address"
+      },
+      {
+        "name": "manager_note",
+        "type": "STRING",
+        "comment": "Free-text note from the line manager"
+      },
+      {
+        "name": "home_phone",
+        "type": "STRING",
+        "comment": "Home telephone number"
+      },
+      {
+        "name": "joined_on",
+        "type": "DATE",
+        "comment": "Date the employee joined"
+      },
+      {
+        "name": "headcount_fte",
+        "type": "DOUBLE",
+        "comment": "Full time equivalent fraction for the role"
+      }
+    ]
+  },
+  {
+    "binding_id": "b-wide-events",
+    "table_fqn": "eval.golden.wide_events",
+    "note": "Wide-table (>64 col) exercise. Five distinctive columns start at position 64 behind 62 featureless padding columns; retrieval used to cap at 64 which cost recall on these five (measured 0.750 vs 1.000 on Claude). The cap is now 512 so this table hits every distinctive column and reaches full recall — kept in the fixture as the width-regression canary.",
+    "columns": [
+      {
+        "name": "event_id",
+        "type": "STRING",
+        "comment": "Primary key of the event"
+      },
+      {
+        "name": "occurred_at",
+        "type": "TIMESTAMP",
+        "comment": "When the event occurred"
+      },
+      {
+        "name": "attr_01",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 1, no agreed semantics"
+      },
+      {
+        "name": "attr_02",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 2, no agreed semantics"
+      },
+      {
+        "name": "attr_03",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 3, no agreed semantics"
+      },
+      {
+        "name": "attr_04",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 4, no agreed semantics"
+      },
+      {
+        "name": "attr_05",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 5, no agreed semantics"
+      },
+      {
+        "name": "attr_06",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 6, no agreed semantics"
+      },
+      {
+        "name": "attr_07",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 7, no agreed semantics"
+      },
+      {
+        "name": "attr_08",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 8, no agreed semantics"
+      },
+      {
+        "name": "attr_09",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 9, no agreed semantics"
+      },
+      {
+        "name": "attr_10",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 10, no agreed semantics"
+      },
+      {
+        "name": "attr_11",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 11, no agreed semantics"
+      },
+      {
+        "name": "attr_12",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 12, no agreed semantics"
+      },
+      {
+        "name": "attr_13",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 13, no agreed semantics"
+      },
+      {
+        "name": "attr_14",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 14, no agreed semantics"
+      },
+      {
+        "name": "attr_15",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 15, no agreed semantics"
+      },
+      {
+        "name": "attr_16",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 16, no agreed semantics"
+      },
+      {
+        "name": "attr_17",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 17, no agreed semantics"
+      },
+      {
+        "name": "attr_18",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 18, no agreed semantics"
+      },
+      {
+        "name": "attr_19",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 19, no agreed semantics"
+      },
+      {
+        "name": "attr_20",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 20, no agreed semantics"
+      },
+      {
+        "name": "attr_21",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 21, no agreed semantics"
+      },
+      {
+        "name": "attr_22",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 22, no agreed semantics"
+      },
+      {
+        "name": "attr_23",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 23, no agreed semantics"
+      },
+      {
+        "name": "attr_24",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 24, no agreed semantics"
+      },
+      {
+        "name": "attr_25",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 25, no agreed semantics"
+      },
+      {
+        "name": "attr_26",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 26, no agreed semantics"
+      },
+      {
+        "name": "attr_27",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 27, no agreed semantics"
+      },
+      {
+        "name": "attr_28",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 28, no agreed semantics"
+      },
+      {
+        "name": "attr_29",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 29, no agreed semantics"
+      },
+      {
+        "name": "attr_30",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 30, no agreed semantics"
+      },
+      {
+        "name": "attr_31",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 31, no agreed semantics"
+      },
+      {
+        "name": "attr_32",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 32, no agreed semantics"
+      },
+      {
+        "name": "attr_33",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 33, no agreed semantics"
+      },
+      {
+        "name": "attr_34",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 34, no agreed semantics"
+      },
+      {
+        "name": "attr_35",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 35, no agreed semantics"
+      },
+      {
+        "name": "attr_36",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 36, no agreed semantics"
+      },
+      {
+        "name": "attr_37",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 37, no agreed semantics"
+      },
+      {
+        "name": "attr_38",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 38, no agreed semantics"
+      },
+      {
+        "name": "attr_39",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 39, no agreed semantics"
+      },
+      {
+        "name": "attr_40",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 40, no agreed semantics"
+      },
+      {
+        "name": "attr_41",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 41, no agreed semantics"
+      },
+      {
+        "name": "attr_42",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 42, no agreed semantics"
+      },
+      {
+        "name": "attr_43",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 43, no agreed semantics"
+      },
+      {
+        "name": "attr_44",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 44, no agreed semantics"
+      },
+      {
+        "name": "attr_45",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 45, no agreed semantics"
+      },
+      {
+        "name": "attr_46",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 46, no agreed semantics"
+      },
+      {
+        "name": "attr_47",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 47, no agreed semantics"
+      },
+      {
+        "name": "attr_48",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 48, no agreed semantics"
+      },
+      {
+        "name": "attr_49",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 49, no agreed semantics"
+      },
+      {
+        "name": "attr_50",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 50, no agreed semantics"
+      },
+      {
+        "name": "attr_51",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 51, no agreed semantics"
+      },
+      {
+        "name": "attr_52",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 52, no agreed semantics"
+      },
+      {
+        "name": "attr_53",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 53, no agreed semantics"
+      },
+      {
+        "name": "attr_54",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 54, no agreed semantics"
+      },
+      {
+        "name": "attr_55",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 55, no agreed semantics"
+      },
+      {
+        "name": "attr_56",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 56, no agreed semantics"
+      },
+      {
+        "name": "attr_57",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 57, no agreed semantics"
+      },
+      {
+        "name": "attr_58",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 58, no agreed semantics"
+      },
+      {
+        "name": "attr_59",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 59, no agreed semantics"
+      },
+      {
+        "name": "attr_60",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 60, no agreed semantics"
+      },
+      {
+        "name": "attr_61",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 61, no agreed semantics"
+      },
+      {
+        "name": "attr_62",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 62, no agreed semantics"
+      },
+      {
+        "name": "settlement_currency",
+        "type": "STRING",
+        "comment": "ISO 4217 currency code for the settlement amount"
+      },
+      {
+        "name": "contact_email",
+        "type": "STRING",
+        "comment": "Operator contact email address"
+      },
+      {
+        "name": "origin_country",
+        "type": "STRING",
+        "comment": "ISO 3166-1 alpha-2 country code of origin"
+      },
+      {
+        "name": "settlement_total",
+        "type": "DECIMAL(18,2)",
+        "comment": "Settlement gross total amount"
+      },
+      {
+        "name": "status",
+        "type": "STRING",
+        "comment": "Event state: one of NEW, PAID, SHIPPED, CANCELLED"
+      },
+      {
+        "name": "attr_63",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 63, no agreed semantics"
+      },
+      {
+        "name": "attr_64",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 64, no agreed semantics"
+      },
+      {
+        "name": "attr_65",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 65, no agreed semantics"
+      },
+      {
+        "name": "attr_66",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 66, no agreed semantics"
+      },
+      {
+        "name": "attr_67",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 67, no agreed semantics"
+      },
+      {
+        "name": "attr_68",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 68, no agreed semantics"
+      },
+      {
+        "name": "attr_69",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 69, no agreed semantics"
+      },
+      {
+        "name": "attr_70",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 70, no agreed semantics"
+      },
+      {
+        "name": "attr_71",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 71, no agreed semantics"
+      },
+      {
+        "name": "attr_72",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 72, no agreed semantics"
+      },
+      {
+        "name": "attr_73",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 73, no agreed semantics"
+      },
+      {
+        "name": "attr_74",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 74, no agreed semantics"
+      },
+      {
+        "name": "attr_75",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 75, no agreed semantics"
+      },
+      {
+        "name": "attr_76",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 76, no agreed semantics"
+      },
+      {
+        "name": "attr_77",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 77, no agreed semantics"
+      },
+      {
+        "name": "attr_78",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 78, no agreed semantics"
+      },
+      {
+        "name": "attr_79",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 79, no agreed semantics"
+      },
+      {
+        "name": "attr_80",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 80, no agreed semantics"
+      },
+      {
+        "name": "attr_81",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 81, no agreed semantics"
+      },
+      {
+        "name": "attr_82",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 82, no agreed semantics"
+      },
+      {
+        "name": "attr_83",
+        "type": "STRING",
+        "comment": "Vendor-supplied attribute 83, no agreed semantics"
+      }
+    ]
+  }
+]

@@ -1,0 +1,828 @@
+"""Tests for ``services/rule_suggester.py`` — Rules Registry Phase 4C.
+
+Exercises the full pipeline with fakes (no Databricks, no Vector Search, no
+serving endpoint): a fake ``RuleRetriever`` returning candidates, a fake
+``AIGateway`` judge, and ``create_autospec`` doubles for the registry /
+monitored-table / apply-rules services (dependency injection per AGENTS.md).
+"""
+
+import json
+from unittest.mock import create_autospec
+
+import pytest
+
+from databricks_labs_dqx_app.backend.registry_models import (
+    AppliedRule,
+    MonitoredTable,
+    RegistryRule,
+    RuleDefinition,
+)
+from databricks_labs_dqx_app.backend.services.ai_gateway import (
+    AIGateway,
+    AIRateLimitExceededError,
+    AIUnavailableError,
+)
+from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, TableColumn
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    LatestProfile,
+    MonitoredTableDetail,
+    MonitoredTableService,
+)
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.rule_retriever import RetrievedRule, RuleRetrievalUnavailableError
+from databricks_labs_dqx_app.backend.services.rule_suggester import (
+    DEFAULT_TOP_K,
+    MAX_RETRIEVAL_COLUMNS,
+    _NO_CLEAN_MAPPING_REASON,
+    _NO_MATCH_REASON,
+    _NO_PUBLISHED_RULES_REASON,
+    RuleSuggester,
+)
+
+
+def _column(name: str, type_name: str = "STRING") -> TableColumn:
+    return TableColumn(name=name, type_name=type_name, comment=None, nullable=True, position=0)
+
+
+def _discovery(columns: list[TableColumn] | None = None) -> create_autospec:
+    """Fake DiscoveryService. Defaults to returning NO UC columns so tests
+    that seed a profile exercise the profile fallback path unchanged; pass
+    ``columns`` to exercise the UC-schema-first path."""
+    svc = create_autospec(DiscoveryService, instance=True)
+    svc.get_table_columns_async.return_value = columns or []
+    return svc
+
+
+def _rule(rule_id: str, slot_names: list[str], severity: str = "High") -> RegistryRule:
+    definition = RuleDefinition.model_validate(
+        {
+            "body": {"function": "is_not_null", "arguments": {n: f"{{{{{n}}}}}" for n in slot_names}},
+            "slots": [
+                {"name": n, "family": "any", "position": i, "cardinality": "one"} for i, n in enumerate(slot_names)
+            ],
+            "parameters": [],
+        }
+    )
+    return RegistryRule(
+        rule_id=rule_id,
+        mode="dqx_native",
+        status="approved",
+        version=1,
+        definition=definition,
+        user_metadata={"name": f"Rule {rule_id}", "dimension": "Completeness", "severity": severity},
+    )
+
+
+def _binding_detail(table_fqn: str = "cat.sch.tbl") -> MonitoredTableDetail:
+    table = MonitoredTable(binding_id="b1", table_fqn=table_fqn, status="approved")
+    return MonitoredTableDetail(table=table, applied_rules=[])
+
+
+def _profile(columns: dict) -> LatestProfile:
+    return LatestProfile(run_id="run1", source_table_fqn="cat.sch.tbl", summary=columns)
+
+
+class FakeRetriever:
+    def __init__(self, *, available: bool = True, reason: str = "", candidates: list[RetrievedRule] | None = None):
+        self._available = available
+        self._reason = reason
+        self._candidates = candidates or []
+        self.error: Exception | None = None
+
+    def is_available(self) -> tuple[bool, str]:
+        return self._available, self._reason
+
+    def retrieve(self, query_text: str, top_k: int) -> list[RetrievedRule]:
+        if self.error is not None:
+            raise self.error
+        return self._candidates[:top_k]
+
+    def retrieve_many(self, query_texts: list[str] | tuple[str, ...], top_k: int) -> list[list[RetrievedRule]]:
+        return [self.retrieve(query_text, top_k) for query_text in query_texts]
+
+
+def _gateway(judge_response: dict | str | None = None, error: Exception | None = None) -> create_autospec:
+    gw = create_autospec(AIGateway, instance=True)
+    gw.is_enabled.return_value = True
+    gw.endpoint_name.return_value = "ai-endpoint"
+    if error is not None:
+        gw.query.side_effect = error
+    else:
+        content = (
+            judge_response if isinstance(judge_response, str) else json.dumps(judge_response or {"suggestions": []})
+        )
+        gw.query.return_value = content
+    gw.parse_json_object.side_effect = AIGateway.parse_json_object
+    return gw
+
+
+@pytest.fixture
+def monitored_tables():
+    return create_autospec(MonitoredTableService, instance=True)
+
+
+@pytest.fixture
+def registry():
+    return create_autospec(RegistryService, instance=True)
+
+
+@pytest.fixture
+def apply_rules():
+    svc = create_autospec(ApplyRulesService, instance=True)
+    svc.list_applied.return_value = []
+    return svc
+
+
+def _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery=None) -> RuleSuggester:
+    return RuleSuggester(
+        monitored_tables=monitored_tables,
+        registry=registry,
+        apply_rules=apply_rules,
+        retriever=retriever,
+        ai_gateway=gateway,
+        discovery=discovery if discovery is not None else _discovery(),
+    )
+
+
+class TestUnavailablePaths:
+    async def test_unknown_binding(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = None
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), _gateway())
+
+        result = await suggester.suggest("missing", "user@x")
+
+        assert result.available is False
+        assert "missing" in result.reason
+
+    async def test_retriever_unavailable(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        retriever = FakeRetriever(available=False, reason="no embedding endpoint is configured")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+        assert "embedding endpoint" in result.reason
+
+    async def test_ai_not_enabled(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        gateway = _gateway()
+        gateway.is_enabled.return_value = False
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+
+    async def test_retrieval_unavailable_error(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        retriever = FakeRetriever()
+        retriever.error = RuleRetrievalUnavailableError("embedding endpoint down")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+        assert "embedding endpoint down" in result.reason
+
+    async def test_retrieval_unexpected_error_degrades_gracefully(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        retriever = FakeRetriever()
+        retriever.error = RuntimeError("boom")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+
+    @pytest.mark.parametrize("error_cls", [AIUnavailableError, AIRateLimitExceededError])
+    async def test_judge_gateway_errors_degrade_gracefully(self, monitored_tables, registry, apply_rules, error_cls):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        rule = _rule("r1", ["id"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        error = error_cls("boom") if error_cls is AIUnavailableError else error_cls(5)
+        gateway = _gateway(error=error)
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+
+    async def test_judge_permission_denied_returns_actionable_reason(self, monitored_tables, registry, apply_rules):
+        """PermissionDenied from the serving endpoint → available=False with a
+        human-readable reason that names the endpoint and instructs the user to
+        request EXECUTE access."""
+        from databricks.sdk.errors.platform import PermissionDenied
+
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["id"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway(
+            error=PermissionDenied("User is missing privileges: EXECUTE on system.ai.databricks-gpt-5-4-nano")
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+        # Reason must guide the user to request access.
+        assert "permission" in result.reason.lower() or "execute" in result.reason.lower()
+        # Reason must NOT leak workspace secrets.
+        for leak in ("token", "client_secret", "client_id"):
+            assert leak not in result.reason.lower(), f"reason must not contain '{leak}'"
+
+    async def test_judge_permission_denied_reason_differs_from_generic(self, monitored_tables, registry, apply_rules):
+        """PermissionDenied reason must be distinct from the generic 'AI judge failed' message."""
+        from databricks.sdk.errors.platform import PermissionDenied
+
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["id"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway_permission = _gateway(
+            error=PermissionDenied("User is missing privileges: EXECUTE on system.ai.databricks-gpt-5-4-nano")
+        )
+        gateway_generic = _gateway(error=RuntimeError("unexpected failure"))
+
+        result_permission = await _suggester(
+            monitored_tables, registry, apply_rules, retriever, gateway_permission
+        ).suggest("b1", "user@x")
+        result_generic = await _suggester(
+            monitored_tables,
+            registry,
+            apply_rules,
+            FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)]),
+            gateway_generic,
+        ).suggest("b1", "user@x")
+
+        assert (
+            result_permission.reason != result_generic.reason
+        ), "PermissionDenied should produce a distinct reason from the generic error path"
+
+    async def test_judge_unparsable_response_degrades_gracefully(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        rule = _rule("r1", ["id"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway(judge_response="not json at all, no braces")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+
+
+class TestHappyPath:
+    async def test_returns_mapped_suggestion(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway(
+            {
+                "suggestions": [
+                    {"rule_id": "r1", "mapping": {"column": "email"}, "explanation": "email looks nullable-checkable"}
+                ]
+            }
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert len(result.suggestions) == 1
+        suggestion = result.suggestions[0]
+        assert suggestion.rule_id == "r1"
+        assert suggestion.column_mapping == {"column": "email"}
+        assert suggestion.explanation == "email looks nullable-checkable"
+        assert suggestion.dimension == "Completeness"
+        assert suggestion.severity == "High"
+
+    async def test_per_column_retrieval_unions_column_specific_candidates(
+        self, monitored_tables, registry, apply_rules
+    ):
+        """Per-column retrieval must surface EACH column's strongest rules.
+
+        A query-aware retriever returns different rules depending on which
+        column's query text it sees: ``r_email`` only for the email column,
+        ``r_id`` only for the id column. The suggester retrieves per column and
+        unions, so BOTH reach the judge — whereas the old single blended
+        top-K query would have returned only one set. Regression guard for
+        "sales_customers.email never gets email rules on a wide table".
+        """
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
+        registry.get_rule.side_effect = lambda rid: _rule(rid, ["column"])
+
+        class ColumnAwareRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int):
+                if "email" in query_text:
+                    return [RetrievedRule(rule_id="r_email", score=0.95)]
+                if "id" in query_text:
+                    return [RetrievedRule(rule_id="r_id", score=0.90)]
+                return []
+
+            def retrieve_many(self, query_texts, top_k: int):
+                return [self.retrieve(query_text, top_k) for query_text in query_texts]
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, ColumnAwareRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        # The suggester resolves each unioned candidate via registry.get_rule,
+        # so both column-specific rules must have been looked up (→ handed to
+        # the judge). A single blended query would have surfaced only one.
+        looked_up = {call.args[0] for call in registry.get_rule.call_args_list}
+        assert "r_email" in looked_up
+        assert "r_id" in looked_up
+
+    async def test_judge_requests_deterministic_temperature(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        assert gateway.query.call_args.kwargs["temperature"] == 0
+
+    async def test_judge_max_tokens_scales_with_column_count(self, monitored_tables, registry, apply_rules):
+        """A wide table's judge response scales with column count.
+
+        The default fixed budget (2048) truncated mid-JSON at ~50 columns on
+        nano, so ``_judge`` now scales the budget linearly with column count
+        (base + per-column). Confirm the scaling shows up at the gateway
+        boundary — a fixed value here would silently reintroduce the
+        wide-table failure.
+        """
+        monitored_tables.get.return_value = _binding_detail()
+        # Narrow: base budget; wide: base + per_col * columns.
+        narrow_profile = _profile({f"c{i}": {} for i in range(5)})
+        wide_profile = _profile({f"c{i}": {} for i in range(90)})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+
+        monitored_tables.get_latest_profile.return_value = narrow_profile
+        narrow_gateway = _gateway({"suggestions": []})
+        await _suggester(monitored_tables, registry, apply_rules, retriever, narrow_gateway).suggest("b1", "user@x")
+        narrow_budget = narrow_gateway.query.call_args.kwargs["max_tokens"]
+
+        monitored_tables.get_latest_profile.return_value = wide_profile
+        wide_gateway = _gateway({"suggestions": []})
+        await _suggester(monitored_tables, registry, apply_rules, retriever, wide_gateway).suggest("b1", "user@x")
+        wide_budget = wide_gateway.query.call_args.kwargs["max_tokens"]
+
+        assert wide_budget > narrow_budget, (
+            f"Wide table (90 cols) got the same or smaller budget ({wide_budget}) as narrow (5 cols, "
+            f"{narrow_budget}); the scaling formula in ``_judge`` isn't reaching the gateway."
+        )
+        # A 100-col table should get materially more than the old fixed 2048.
+        assert wide_budget >= 8000
+
+    async def test_judge_max_tokens_is_capped_for_pathological_tables(self, monitored_tables, registry, apply_rules):
+        """A 10,000-column table must not request an unbounded endpoint budget."""
+        monitored_tables.get.return_value = _binding_detail()
+        # Use a fake discovery to avoid enormous profile dicts.
+        wide_columns = [_column(f"c{i}") for i in range(10_000)]
+        monitored_tables.get_latest_profile.return_value = None
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(
+            monitored_tables, registry, apply_rules, retriever, gateway, discovery=_discovery(wide_columns)
+        )
+
+        await suggester.suggest("b1", "user@x")
+
+        # Match the hard cap from ``rule_suggester._JUDGE_BUDGET_MAX_TOKENS``.
+        assert gateway.query.call_args.kwargs["max_tokens"] <= 16384
+
+    async def test_no_candidates_from_retriever(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(candidates=[]), _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+        assert result.reason == _NO_PUBLISHED_RULES_REASON
+
+    async def test_no_matching_rule_sets_distinct_reason(self, monitored_tables, registry, apply_rules):
+        # Candidates retrieved + published, judge ran, but proposed nothing.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway({"suggestions": []}))
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+        assert result.reason == _NO_MATCH_REASON
+
+    async def test_all_judged_filtered_sets_no_clean_mapping_reason(self, monitored_tables, registry, apply_rules):
+        # Judge proposed a mapping, but it maps to a column that doesn't exist,
+        # so post-processing drops it — the reason must say so, not stay blank.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "does_not_exist"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+        assert result.reason == _NO_CLEAN_MAPPING_REASON
+
+    async def test_unpublished_candidate_rule_is_dropped(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        draft_rule = _rule("r1", ["column"])
+        draft_rule.status = "draft"
+        registry.get_rule.return_value = draft_rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+        assert result.reason == _NO_PUBLISHED_RULES_REASON
+
+
+class TestPostProcessing:
+    async def test_drops_mapping_to_nonexistent_column(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "does_not_exist"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert result.suggestions == []
+
+    async def test_enforces_multi_slot_completeness(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}, "b": {}})
+        rule = _rule("r1", ["column_a", "column_b"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        # Only fills one of two slots — must be dropped.
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column_a": "a"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == []
+
+    async def test_complete_multi_slot_mapping_is_kept(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}, "b": {}})
+        rule = _rule("r1", ["column_a", "column_b"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column_a": "a", "column_b": "b"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+
+    async def test_dedups_identical_mappings(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway(
+            {
+                "suggestions": [
+                    {"rule_id": "r1", "mapping": {"column": "a"}},
+                    {"rule_id": "r1", "mapping": {"column": "a"}},
+                ]
+            }
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+
+    async def test_excludes_already_applied_mapping(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "a"}}]})
+        apply_rules.list_applied.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "a"}])
+        ]
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == []
+
+    async def test_unknown_rule_id_in_judge_output_is_ignored(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "not-a-candidate", "mapping": {"column": "a"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == []
+
+
+class TestColumnResolution:
+    """Columns resolve from the live UC schema first (dqlake behaviour), with
+    the latest profile as a fallback — so a never-profiled table still works."""
+
+    async def test_uc_columns_used_when_table_never_profiled(self, monitored_tables, registry, apply_rules):
+        # No profile at all — the OLD behaviour produced zero columns and hence
+        # zero suggestions. Now the UC schema supplies the columns.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "email"}}]})
+        discovery = _discovery([_column("id", "BIGINT"), _column("email", "STRING")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"column": "email"}
+
+    async def test_uc_column_type_family_reaches_the_judge(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery([_column("amount", "DECIMAL(10,2)")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        assert "amount" in user_prompt
+        # DECIMAL classifies to the numeric family and reaches the judge payload.
+        assert "numeric" in user_prompt
+
+    async def test_array_column_type_family_reaches_the_judge(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = None
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery([_column("tags", "ARRAY<STRING>")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        assert "tags" in user_prompt
+        # ARRAY columns classify as any (array family retired) and reach the judge payload.
+        assert '"family": "any"' in user_prompt
+        assert '"type": "ARRAY<STRING>"' in user_prompt
+
+    async def test_falls_back_to_profile_when_uc_read_fails(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"legacy_col": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "legacy_col"}}]})
+        discovery = _discovery()
+        discovery.get_table_columns_async.side_effect = RuntimeError("permission denied")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"column": "legacy_col"}
+
+
+class TestTopKAndSameColumnGuard:
+    """Tests for Change A (DEFAULT_TOP_K=20) and Change B (same-column multi-slot rejection)."""
+
+    def test_default_top_k_is_20(self):
+        assert DEFAULT_TOP_K == 20
+
+    async def test_per_column_retrieval_uses_top_k_20(self, monitored_tables, registry, apply_rules):
+        """_retrieve_per_column must call retrieve_many() with DEFAULT_TOP_K=20."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+
+        calls: list[int] = []
+
+        class RecordingRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int) -> list[RetrievedRule]:
+                calls.append(top_k)
+                return [RetrievedRule(rule_id="r1", score=0.9)]
+
+            def retrieve_many(self, query_texts, top_k: int) -> list[list[RetrievedRule]]:
+                calls.append(top_k)
+                return [[RetrievedRule(rule_id="r1", score=0.9)] for _ in query_texts]
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, RecordingRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        assert calls, "retriever was never called"
+        assert all(k == 20 for k in calls), f"expected top_k=20, got {calls}"
+
+    async def test_wide_table_retrieval_caps_column_queries(self, monitored_tables, registry, apply_rules):
+        """Wide tables must not embed one query per UC column unbounded."""
+        monitored_tables.get.return_value = _binding_detail()
+        wide = {f"c{i}": {} for i in range(MAX_RETRIEVAL_COLUMNS + 25)}
+        monitored_tables.get_latest_profile.return_value = _profile(wide)
+        registry.get_rule.return_value = _rule("r1", ["column"])
+
+        query_counts: list[int] = []
+
+        class CountingRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int) -> list[RetrievedRule]:
+                return [RetrievedRule(rule_id="r1", score=0.9)]
+
+            def retrieve_many(self, query_texts, top_k: int) -> list[list[RetrievedRule]]:
+                query_counts.append(len(query_texts))
+                return [[RetrievedRule(rule_id="r1", score=0.9)] for _ in query_texts]
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, CountingRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        assert query_counts == [MAX_RETRIEVAL_COLUMNS]
+
+    async def test_same_column_multi_slot_mapping_is_rejected(self, monitored_tables, registry, apply_rules):
+        """A mapping binding two slots to the same column must be dropped."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"order_ts": {}})
+        rule = _rule("r1", ["start_ts", "end_ts"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        # Both slots map to the same column — the exact bad pattern from the screenshot.
+        gateway = _gateway(
+            {"suggestions": [{"rule_id": "r1", "mapping": {"start_ts": "order_ts", "end_ts": "order_ts"}}]}
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == [], "same-column multi-slot mapping should be dropped"
+
+    async def test_distinct_column_multi_slot_mapping_is_kept(self, monitored_tables, registry, apply_rules):
+        """A mapping with distinct columns for each slot must be kept."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}, "b": {}})
+        rule = _rule("r1", ["start_ts", "end_ts"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"start_ts": "a", "end_ts": "b"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"start_ts": "a", "end_ts": "b"}
+
+    async def test_single_slot_mapping_is_kept(self, monitored_tables, registry, apply_rules):
+        """A single-slot mapping (len==1) must not be rejected by the same-column guard."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "a"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"column": "a"}
+
+
+class TestMatchFromQuery:
+    async def test_empty_query_unavailable(self, monitored_tables, registry, apply_rules):
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), _gateway())
+        result = await suggester.match_from_query("b1", "  ", "user@x")
+        assert result.available is False
+        assert "required" in result.reason.lower()
+
+    async def test_unknown_binding(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = None
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), _gateway())
+        result = await suggester.match_from_query("missing", "email must not be null", "user@x")
+        assert result.available is False
+        assert "missing" in result.reason
+
+    async def test_retriever_unavailable(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        retriever = FakeRetriever(available=False, reason="no embedding endpoint is configured")
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+        result = await suggester.match_from_query("b1", "email must not be null", "user@x")
+        assert result.available is False
+        assert "embedding endpoint" in result.reason
+
+    async def test_below_threshold_returns_empty_matches(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.2)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+        result = await suggester.match_from_query("b1", "email must not be null", "user@x")
+        assert result.available is True
+        assert result.matches == []
+        assert result.reason
+
+    async def test_returns_mapped_match_with_score(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.91)])
+        gateway = _gateway(
+            {
+                "suggestions": [
+                    {
+                        "rule_id": "r1",
+                        "mapping": {"column": "email"},
+                        "explanation": "Checks nulls on email",
+                    }
+                ]
+            }
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+        result = await suggester.match_from_query("b1", "email must never be null", "user@x")
+        assert result.available is True
+        assert len(result.matches) == 1
+        match = result.matches[0]
+        assert match.rule_id == "r1"
+        assert match.score == pytest.approx(0.91)
+        assert match.column_mapping == {"column": "email"}
+        assert "email" in match.explanation.lower() or match.explanation
+
+    async def test_unmapped_hit_still_returned(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.8)])
+        # Judge returns empty suggestions → hit surfaces without mapping.
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway({"suggestions": []}))
+        result = await suggester.match_from_query("b1", "email must never be null", "user@x")
+        assert result.available is True
+        assert len(result.matches) == 1
+        assert result.matches[0].column_mapping is None
+        assert result.reason  # explains why one-click staging isn't available
+
+    async def test_skips_non_approved_rules(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"email": {}})
+        draft = _rule("r1", ["column"])
+        draft.status = "draft"
+        registry.get_rule.return_value = draft
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.95)])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, _gateway())
+        result = await suggester.match_from_query("b1", "email must never be null", "user@x")
+        assert result.available is True
+        assert result.matches == []

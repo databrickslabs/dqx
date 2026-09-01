@@ -1,0 +1,134 @@
+---
+sidebar_position: 3
+title: Row-level vs table-level rules
+---
+
+import Admonition from '@theme/Admonition';
+
+# Row-level vs table-level rules
+
+Every rule answers one of two questions:
+
+- **Row-level** — *Does this individual row look good?* Failures are attributed
+  to specific rows (and you can open sample failing records).
+- **Table-level** — *Does the table as a whole look good?* You get one pass/fail
+  verdict for the whole table, with no per-row attribution.
+
+Most rules are row-level. Reach for table-level when the expectation is about
+the *set* of rows — for example "the table is not empty", "the average order
+amount stays in bounds", or "there are no orphaned orders anywhere".
+
+<Admonition type="tip" title="Why this matters for results">
+A row-level failure points you at the bad records. A table-level failure tells
+you the table failed the check, without listing every row. Choose based on how
+you want to investigate later — see
+[Review results](/docs/studio/running/).
+</Admonition>
+
+## How authoring decides the level
+
+You don't always pick this yourself. It depends on how you write the rule.
+
+| How you author | Who decides row vs table | What to know |
+| -------------- | ------------------------ | ------------ |
+| **Built-in check** | The check — fixed | Some checks always evaluate each row (for example "is not null"). Others need the whole table (uniqueness, some aggregates, reference lookups) and still attribute failures to rows when they can identify them. |
+| **Visual builder** | Derived from what you build | A plain condition is row-level. Adding **joins** or **grouping** still keeps the rule row-level: results are merged back onto key columns. |
+| **SQL — plain condition** | Always row-level | A boolean expression over `{{column}}` placeholders is evaluated per row. There is no **Applies to** switch. |
+| **SQL — full query** | **You choose** | The Condition header shows **Applies to**: **Row-level** or **Table-level**. |
+
+## Built-in checks
+
+When you pick a ready-made check, its level is a property of that check — not a
+setting you change. You don't need to think about "Applies to" for these.
+
+Examples of the idea (not an exhaustive list):
+
+- **Typically row-level:** is not null; is in list; is in range; matches a
+  pattern; date/timestamp checks.
+- **Need the whole table to evaluate:** is unique; some aggregate / rolling
+  checks; looking a value up in a reference table.
+
+Even when a check needs the whole table to *compute*, DQX Studio still
+attributes failures to individual rows whenever the check can identify them
+(for example duplicate keys, or values missing from a reference table).
+
+## Visual builder
+
+In the visual builder:
+
+1. Build your `IF …` conditions as usual.
+2. Optionally open **Advanced** for a **filter**, **joins**, or **group-by**.
+
+Joins and grouping do **not** flip the rule to a single table-wide verdict.
+They stay row-level: the app merges results back using the join / group keys so
+each failing row can still be found.
+
+For a true "one verdict for the whole table" custom rule, use a
+[SQL query](#sql-full-query) set to **Table-level**.
+
+## SQL — plain condition
+
+If your SQL is a boolean expression (not a full `SELECT`), it always runs
+**row-level**:
+
+```sql
+{{amount}} > 0 AND {{amount}} < 1000000
+```
+
+You can still add a join in **Advanced → Joins** for a cross-table predicate;
+results remain per row. See
+[Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules).
+
+## SQL — full query {#sql-full-query}
+
+When you write a full query (`SELECT … FROM {{input_view}} …`), the Condition
+header shows **Applies to**. Pick the level that matches what the query means.
+
+### Row-level
+
+- Each row carries a boolean `condition` column (`TRUE` = fail).
+- You must choose **Merge results back on** key columns so failures can be
+  matched to rows of the monitored table.
+- Those merge columns must appear in the query's `SELECT` list alongside
+  `condition`.
+
+```sql
+SELECT
+  o.{{order_id}},
+  o.{{customer_id}},
+  (c.id IS NULL) AS condition
+FROM {{input_view}} o
+LEFT JOIN catalog.schema.customers c ON o.{{customer_id}} = c.id
+```
+
+### Table-level
+
+- One verdict for the whole table.
+- The query must aggregate to **exactly one row** and return a boolean
+  `condition` (`TRUE` = fail). A query that returns one row per input row fails
+  at runtime when set to table-level.
+
+```sql
+SELECT
+  (AVG({{amount}}) < 0 OR AVG({{amount}}) > 1000000) AS condition
+FROM {{input_view}}
+```
+
+<Admonition type="caution" title="Match the switch to the query">
+**Row-level** without merge keys, or **Table-level** without a single aggregated
+row, will fail when the rule runs. The editor warns you about these cases —
+don't ignore those messages.
+</Admonition>
+
+## How this shows up in quality scores
+
+A row-level check contributes its **row pass rate**, while a table-level check
+contributes a **single pass/fail verdict** (it doesn't count once per row) — so a
+large table can't drown out, or exaggerate, one table-wide expectation. For how
+that rolls up into the DQ score, see [Review results](/docs/studio/running/#read-the-score).
+
+## Related
+
+- [Create a rule](/docs/studio/authoring/create-a-rule) — end-to-end authoring
+- [Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules) — joins and
+  multi-table SQL

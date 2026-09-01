@@ -1,33 +1,28 @@
 import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { cn } from "@/lib/utils";
-import { usePermissions } from "@/hooks/use-permissions";
 import {
-  Sparkles,
-  Database,
-  Upload,
-  BarChart3,
-  PlayCircle,
-  ShieldCheck,
   ClipboardCheck,
-  ChevronDown,
-  PenLine,
+  LineChart,
   History,
-  LayoutDashboard,
   BookOpen,
   ExternalLink,
+  Library,
+  Table2,
+  Boxes,
+  Store,
 } from "lucide-react";
 import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
+  SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubItem,
-  SidebarMenuSubButton,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRunFailureToasts } from "@/hooks/use-run-failure-toasts";
+import { usePermissions } from "@/hooks/use-permissions";
 
 export const Route = createFileRoute("/_sidebar")({
   component: () => <Layout />,
@@ -35,194 +30,157 @@ export const Route = createFileRoute("/_sidebar")({
 
 function Layout() {
   const location = useLocation();
-  const { canCreateRules, canRunRules } = usePermissions();
   const { t } = useTranslation();
+  // When approvals are disabled app-wide there is no review queue, so the
+  // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
+  const { mode: approvalsMode } = useApprovalsMode();
+  const { isAdmin } = usePermissions();
+  const approvalsEnabled = approvalsMode !== "disabled";
 
-  // ``/rules/from-contract`` still resolves (it redirects into
-  // ``/rules/import?tab=contract``) so we leave it in the active-route
-  // detection — old bookmarks should still highlight the Create group
-  // in the sidebar during the brief redirect frame.
-  const isCreateActive =
-    location.pathname.startsWith("/rules/create") ||
-    location.pathname.startsWith("/rules/single-table") ||
-    location.pathname.startsWith("/rules/import") ||
-    location.pathname.startsWith("/rules/from-contract") ||
-    location.pathname.startsWith("/profiler");
+  // App-wide run-failure watcher (item 58). Mounted once here so a FAILED
+  // validation/profiling run raises a toast (with a "View" link into Runs
+  // History) on any authenticated page — not only while Runs History is open.
+  useRunFailureToasts();
 
-  const [createOpen, setCreateOpen] = useState(isCreateActive);
-
-  const createChildren = [
-    {
-      to: "/rules/single-table",
-      label: t("sidebar.singleTableRules"),
-      icon: <Sparkles size={14} />,
-      match: (path: string) =>
-        path.startsWith("/rules/single-table") || path.startsWith("/rules/create"),
-    },
-    {
-      to: "/rules/create-sql",
-      label: t("sidebar.crossTableRules"),
-      icon: <Database size={14} />,
-      match: (path: string) => path.startsWith("/rules/create-sql"),
-    },
-    // Schema validation and other reference-table checks (``has_valid_schema``,
-    // ``foreign_key``) are authored and edited in the single-table editor, so
-    // there is no standalone sidebar entry for them.
-    {
-      to: "/profiler",
-      label: t("sidebar.profileAndGenerate"),
-      icon: <BarChart3 size={14} />,
-      match: (path: string) => path.startsWith("/profiler"),
-    },
-    {
-      // ``/rules/import`` now hosts both DQX YAML *and* the data-contract
-      // generation flow as two tabs, so the standalone "From contract"
-      // entry was removed and the old route redirects here.
-      to: "/rules/import",
-      label: t("sidebar.importRules"),
-      icon: <Upload size={14} />,
-      match: (path: string) =>
-        path.startsWith("/rules/import") ||
-        path.startsWith("/rules/from-contract"),
-    },
-  ];
+  // The old "Create Rules" expandable group (Single-table rules,
+  // Cross-table rules, Profile & Generate) and the standalone "Active
+  // Rules" item were removed as part of the nav-consolidation cleanup
+  // (Phase 5) — authoring and browsing now live in Rules Registry +
+  // Monitored Tables. The underlying route files still exist (some as
+  // redirects, some as still-reachable-by-URL pages) so old bookmarks
+  // don't 404; see ``rules.single-table.tsx``, ``rules.create-sql.tsx``,
+  // ``rules.active.tsx``, and ``discovery.tsx``.
 
   return (
     <SidebarLayout>
       <SidebarGroup className="pt-2">
         <SidebarGroupContent>
           <SidebarMenu>
-            {/* Create Rules — expandable (hidden for viewers) */}
-            {canCreateRules && (
+            {/* Home is intentionally not a sidebar item — the DQX Studio
+                logo in the top bar links to /home, so the landing page
+                stays reachable without a dedicated nav entry (#72).
+
+                Each item uses SidebarMenuButton so that in the collapsed
+                (icon-only) sidebar it shrinks to its icon and surfaces its
+                label as a hover tooltip; the previous hand-rolled active
+                styling now maps onto the button's isActive prop (#28). */}
+
+            {/* Rules Registry — reusable, versioned, governed rule
+                definitions (Phase 2). */}
             <SidebarMenuItem>
-              <button
-                type="button"
-                onClick={() => setCreateOpen((prev) => !prev)}
-                className={cn(
-                  "flex w-full items-center gap-2 p-2 rounded-lg text-sm font-medium transition-colors",
-                  isCreateActive
-                    ? "text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/registry-rules")}
+                tooltip={t("sidebar.rulesRegistry")}
               >
-                <PenLine size={16} />
-                <span className="flex-1 text-left">{t("sidebar.createRules")}</span>
-                <ChevronDown
-                  size={14}
-                  className={cn(
-                    "text-muted-foreground transition-transform duration-200",
-                    createOpen && "rotate-180",
-                  )}
-                />
-              </button>
-              {createOpen && (
-                <SidebarMenuSub>
-                  {createChildren.map((child) => (
-                    <SidebarMenuSubItem key={child.to}>
-                      <SidebarMenuSubButton
-                        asChild
-                        isActive={child.match(location.pathname)}
-                      >
-                        <Link to={child.to} className="flex items-center gap-2">
-                          {child.icon}
-                          <span>{child.label}</span>
-                        </Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              )}
+                <Link to="/registry-rules">
+                  <Library />
+                  <span>{t("sidebar.rulesRegistry")}</span>
+                </Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
+
+            {/* Monitored Tables — apply registry rules to real tables
+                (slot->column mapping), profile them, and publish to
+                materialize into dq_quality_rules (Phase 3D). */}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/monitored-tables")}
+                tooltip={t("sidebar.monitoredTables")}
+              >
+                <Link to="/monitored-tables">
+                  <Table2 />
+                  <span>{t("sidebar.monitoredTables")}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            {/* Collections — group monitored tables into governed,
+                versioned, schedulable bundles (Phase 11; renamed from
+                "Data Products" → "Table Spaces" → "Collections" in
+                bug-bash-v4 item 56). ``/runs`` and the old ``/table-spaces``
+                and ``/data-products`` paths redirect here so old bookmarks
+                don't 404, so all are folded into the active-state check. */}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={
+                  location.pathname.startsWith("/collections") ||
+                  location.pathname.startsWith("/table-spaces") ||
+                  location.pathname.startsWith("/data-products") ||
+                  (location.pathname.startsWith("/runs") &&
+                    !location.pathname.startsWith("/runs-history"))
+                }
+                tooltip={t("sidebar.dataProducts")}
+              >
+                <Link to="/collections">
+                  <Boxes />
+                  <span>{t("sidebar.dataProducts")}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            {/* Divider separating the authoring group (Rules / Tables /
+                Spaces) from the observability group (Runs History / Results).
+                mx-0 so it spans the same width as the full-width nav buttons
+                (both sit inside the group's p-2) instead of the default mx-2,
+                which pushed its right end past the buttons toward the edge. */}
+            <SidebarSeparator className="mx-0 w-full my-1" />
+
+            {/* Review & Approve — approvals for registry rules AND
+                per-table applications. Renamed from "Drafts & Review" (#11).
+                Hidden — along with the divider that follows it — when
+                approvals are disabled app-wide (no review queue, B2-142). */}
+            {approvalsEnabled && (
+              <>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/rules/drafts"}
+                    tooltip={t("sidebar.reviewAndApprove")}
+                  >
+                    <Link to="/rules/drafts">
+                      <ClipboardCheck />
+                      <span>{t("sidebar.reviewAndApprove")}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+                {/* Divider before the observability group (Runs History,
+                    Results). */}
+                <SidebarSeparator className="mx-0 w-full my-1" />
+              </>
             )}
 
-            {/* Drafts & Review */}
+            {/* Results — org-wide DQ results composition over all monitored
+                tables (dq-results endpoints). Visible to all; the backend
+                filters to the viewer's accessible catalogs. Sits ABOVE Runs History. */}
             <SidebarMenuItem>
-              <Link
-                to="/rules/drafts"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname === "/rules/drafts"
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/results")}
+                tooltip={t("sidebar.results")}
               >
-                <ClipboardCheck size={16} />
-                <span>{t("sidebar.draftsAndReview")}</span>
-              </Link>
+                <Link to="/results">
+                  <LineChart />
+                  <span>{t("sidebar.results")}</span>
+                </Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
-
-            {/* Active Rules */}
-            <SidebarMenuItem>
-              <Link
-                to="/rules/active"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname === "/rules/active" ||
-                    location.pathname === "/rules"
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <ShieldCheck size={16} />
-                <span>{t("sidebar.activeRules")}</span>
-              </Link>
-            </SidebarMenuItem>
-
-            <hr className="my-2 border-sidebar-border" />
-
-            {/* Run Rules — only visible to users with the RUNNER role
-                (admins are implicit runners). Authors/approvers without
-                an explicit RUNNER mapping cannot see this entry. */}
-            {canRunRules && (
-            <SidebarMenuItem>
-              <Link
-                to="/runs"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/runs")
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <PlayCircle size={16} />
-                <span>{t("sidebar.runRules")}</span>
-              </Link>
-            </SidebarMenuItem>
-            )}
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>
-              <Link
-                to="/runs-history"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/runs-history")
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/runs-history")}
+                tooltip={t("sidebar.runsHistory")}
               >
-                <History size={16} />
-                <span>{t("sidebar.runsHistory")}</span>
-              </Link>
-            </SidebarMenuItem>
-
-            {/* Insights — embedded Databricks AI/BI dashboard. Visible to all;
-                the dashboard itself enforces UC permissions on its data so a
-                viewer who can't read e.g. dq_quarantine_records just sees an
-                empty tile rather than being blocked at the app layer. */}
-            <SidebarMenuItem>
-              <Link
-                to="/insights"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/insights")
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <LayoutDashboard size={16} />
-                <span>{t("sidebar.insights")}</span>
-              </Link>
+                <Link to="/runs-history">
+                  <History />
+                  <span>{t("sidebar.runsHistory")}</span>
+                </Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroupContent>
@@ -240,25 +198,36 @@ function Layout() {
       <SidebarGroup className="pb-2">
         <SidebarGroupContent>
           <SidebarMenu>
+            {isAdmin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname.startsWith("/marketplace")}
+                  tooltip={t("sidebar.marketplace")}
+                >
+                  <Link to="/marketplace">
+                    <Store />
+                    <span>{t("sidebar.marketplace")}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
             <SidebarMenuItem>
-              <a
-                href="https://databrickslabs.github.io/dqx/docs/guide/dqx_studio/#accessing-dqx-studio"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg text-sm",
-                  "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-                title={t("sidebar.documentationTitle")}
-              >
-                <BookOpen size={16} />
-                <span className="flex-1">{t("sidebar.documentation")}</span>
-                <ExternalLink
-                  size={12}
-                  className="text-muted-foreground"
-                  aria-hidden
-                />
-              </a>
+              <SidebarMenuButton asChild tooltip={t("sidebar.documentation")}>
+                <a
+                  href="https://databrickslabs.github.io/dqx/docs/studio/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={t("sidebar.documentationTitle")}
+                >
+                  <BookOpen />
+                  <span className="flex-1">{t("sidebar.documentation")}</span>
+                  <ExternalLink
+                    className="text-muted-foreground"
+                    aria-hidden
+                  />
+                </a>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroupContent>

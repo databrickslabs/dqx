@@ -6,16 +6,15 @@ should accept a ``SqlExecutor`` instance instead of constructing its own
 makes services testable via ``create_autospec(SqlExecutor)``.
 """
 
-from __future__ import annotations
-
 import logging
 import time
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import Disposition, Format, StatementState
 
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +148,113 @@ class OltpExecutorProtocol(Protocol):
         """Like :meth:`query` but rows are column-name-keyed dicts."""
         ...
 
+    def insert(
+        self,
+        table: str,
+        *,
+        values: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Insert a single row: ``INSERT INTO <table> (<cols>) VALUES (<vals>)``.
+
+        The CRUD-builder counterpart to :meth:`upsert` for callers that
+        want plain INSERT semantics (no ON CONFLICT / MERGE clause).
+        See :meth:`update` for the value-encoding rules.
+
+        Raises :class:`ValueError` if *values* is empty — a
+        column-less INSERT is a caller bug, not a legitimate use case.
+        """
+
+    def update(
+        self,
+        table: str,
+        *,
+        updates: dict[str, Any],
+        where: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Update rows: ``UPDATE <table> SET <updates> WHERE <where>``.
+
+        Reviewer-requested CRUD helper that removes the f-string
+        ``UPDATE {tbl} SET {col} = {val} WHERE {key} = '{id}'`` shape
+        from every service. Value encoding is the same as
+        :meth:`upsert` — see :class:`RawSql` for verbatim SQL
+        expressions (``RawSql("now()")``, etc.) and :class:`WhereIn`
+        for ``col IN (...)`` predicates.
+
+        Safety
+        ------
+        Both *updates* and *where* MUST be non-empty; a full-table
+        UPDATE without a predicate is refused with :class:`ValueError`.
+        Callers that genuinely want to touch every row must fall back
+        to :meth:`execute` explicitly.
+        """
+
+    def delete(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Delete rows: ``DELETE FROM <table> WHERE <where>``.
+
+        Same safety contract as :meth:`update` — *where* MUST be
+        non-empty. Values in *where* obey the standard encoding
+        (see :meth:`update`); ``None`` in a WHERE clause becomes
+        ``IS NULL`` rather than ``= NULL`` (which never matches
+        in SQL).
+        """
+
+    def count(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> int:
+        """Row count: ``SELECT COUNT(*) FROM <table> [WHERE <where>]``.
+
+        Returns 0 when the query yields no rows (which shouldn't
+        happen for a COUNT — it's defensive).
+        """
+        ...
+
+    def select_rows(
+        self,
+        table: str,
+        columns: Sequence[str],
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[list[str]]:
+        """``SELECT <columns> FROM <table> [WHERE <where>]`` → list-of-list rows.
+
+        Simple projection helper for the "give me these columns from
+        this one table, optionally filtered" pattern. Complex reads
+        (JOINs, GROUP BY, ORDER BY, subqueries, aggregation) still
+        go through :meth:`query`.
+
+        See :meth:`update` for value encoding rules; ``None`` in
+        *where* renders as ``IS NULL``.
+        """
+        ...
+
+    def select_dicts(
+        self,
+        table: str,
+        columns: Sequence[str],
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[dict[str, str | None]]:
+        """``SELECT <columns> FROM <table> [WHERE <where>]`` → column-keyed dicts.
+
+        Same shape and constraints as :meth:`select_rows` but returns
+        column-name-keyed dicts (mirrors :meth:`query_dicts`).
+        """
+        ...
+
     def upsert(
         self,
         table: str,
@@ -249,6 +355,29 @@ class RawSql:
         self.expr = expr
 
 
+class WhereIn:
+    """Marker for ``WHERE <col> IN (<v1>, <v2>, ...)`` predicates.
+
+    Used as a value inside the ``where=`` dict on :meth:`update`,
+    :meth:`delete`, and :meth:`count`. Wrapping is required because
+    a plain ``list`` value would be indistinguishable from a scalar
+    to :func:`_build_where` — Python's iteration surface is too broad
+    to safely infer intent.
+
+    Empty ``values`` render as ``FALSE`` (matches no rows). Delta and
+    Postgres both reject the bare ``IN ()`` form so a sentinel is
+    required either way; ``FALSE`` keeps the SQL syntactically valid
+    without introducing any hidden "match everything" surprise.
+    """
+
+    __slots__ = ("values",)
+
+    def __init__(self, values: Sequence[Any]) -> None:
+        # Materialise once so we can render deterministically even if
+        # the caller passes a generator or a set (unordered).
+        self.values = list(values)
+
+
 def _render_value(value: Any) -> str:
     """Convert a Python value to a SQL literal or raw expression.
 
@@ -266,6 +395,163 @@ def _render_value(value: Any) -> str:
     if isinstance(value, (int, float)):
         return repr(value)
     return f"'{escape_sql_string(str(value))}'"
+
+
+# ---------------------------------------------------------------------------
+# CRUD-builder helpers
+# ---------------------------------------------------------------------------
+#
+# Reviewer-requested query-builder that removes the f-string
+# ``UPDATE {tbl} SET {col} = {val} WHERE {key} = '{escaped}'`` pattern
+# from every service.
+#
+# Design contract
+# ---------------
+# 1. **Identifier quoting is centralised** — every column name is routed
+#    through the ``quote`` callback (``executor.q``) so reserved words
+#    like ``check`` / ``order`` and hyphenated identifiers survive.
+# 2. **Value rendering is dialect-injected** — the ``render`` callback
+#    is :func:`_render_value` on Delta and :func:`_pg_render_value` on
+#    Postgres (which translates ``RawSql("current_timestamp()")`` to
+#    Postgres' ``CURRENT_TIMESTAMP``).  Both encode strings/booleans/
+#    None the same way.
+# 3. **NULL in WHERE becomes ``IS NULL``** — SQL's three-valued logic
+#    makes ``= NULL`` never match. This is the one place where WHERE
+#    rendering differs from SET rendering.
+# 4. **Empty updates / where are refused** — a full-table UPDATE
+#    without WHERE, or a column-less INSERT, is almost always a caller
+#    bug. Callers that genuinely need those shapes must fall back to
+#    :meth:`execute` explicitly, which is auditable at review time.
+#
+# Why free functions rather than mixin methods
+# --------------------------------------------
+# :class:`SqlExecutor` and :class:`PgExecutor` share NO base class
+# today, and adding one just for this would drag every attribute of
+# both classes into a common ancestor (auth surface, pool surface,
+# statement-execution surface). Extracting a mixin risks conflating
+# unrelated concerns. Free functions injected with the dialect-
+# specific callbacks keep the shared logic in one place without
+# entangling the class hierarchies.
+
+
+def _build_where(
+    where: dict[str, Any],
+    quote: Callable[[str], str],
+    render: Callable[[Any], str],
+) -> str:
+    """Render ``WHERE`` predicates from a ``{col: value}`` dict.
+
+    Values follow the standard encoding (see :func:`_render_value`)
+    with two WHERE-specific rules:
+
+    - ``None`` becomes ``IS NULL`` (SQL's three-valued logic makes
+      ``= NULL`` never match, which is almost always a caller bug).
+    - :class:`WhereIn` wrappers expand to ``col IN (v1, v2, ...)``,
+      or ``FALSE`` when the value list is empty.
+
+    Predicates are AND-joined; OR / nested composition is deliberately
+    out of scope for the builder. Callers that need OR fall back to
+    :meth:`OltpExecutorProtocol.execute`.
+    """
+    if not where:
+        raise ValueError("WHERE clause required — refusing to build a predicate-less statement")
+    parts: list[str] = []
+    for col, value in where.items():
+        qcol = quote(col)
+        if isinstance(value, WhereIn):
+            if not value.values:
+                # ``IN ()`` is a parse error on both dialects; ``FALSE``
+                # matches nothing and keeps the statement well-formed.
+                parts.append("FALSE")
+            else:
+                inner = ", ".join(render(v) for v in value.values)
+                parts.append(f"{qcol} IN ({inner})")
+        elif value is None:
+            parts.append(f"{qcol} IS NULL")
+        else:
+            parts.append(f"{qcol} = {render(value)}")
+    return " AND ".join(parts)
+
+
+def _build_insert(
+    table: str,
+    values: dict[str, Any],
+    quote: Callable[[str], str],
+    render: Callable[[Any], str],
+) -> str:
+    """Render ``INSERT INTO <table> (<cols>) VALUES (<vals>)``."""
+    if not values:
+        raise ValueError("insert requires at least one column")
+    cols = ", ".join(quote(c) for c in values)
+    vals = ", ".join(render(v) for v in values.values())
+    return f"INSERT INTO {table} ({cols}) VALUES ({vals})"
+
+
+def _build_update(
+    table: str,
+    updates: dict[str, Any],
+    where: dict[str, Any],
+    quote: Callable[[str], str],
+    render: Callable[[Any], str],
+) -> str:
+    """Render ``UPDATE <table> SET <updates> WHERE <where>``.
+
+    Refuses an empty *updates* (nothing to change) or an empty *where*
+    (would touch every row).
+    """
+    if not updates:
+        raise ValueError("update requires at least one column in `updates`")
+    set_clause = ", ".join(f"{quote(col)} = {render(v)}" for col, v in updates.items())
+    where_clause = _build_where(where, quote, render)
+    return f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
+
+
+def _build_delete(
+    table: str,
+    where: dict[str, Any],
+    quote: Callable[[str], str],
+    render: Callable[[Any], str],
+) -> str:
+    """Render ``DELETE FROM <table> WHERE <where>``.
+
+    Refuses an empty *where* — callers that genuinely need a full-
+    table wipe must go through :meth:`OltpExecutorProtocol.execute`.
+    """
+    where_clause = _build_where(where, quote, render)
+    return f"DELETE FROM {table} WHERE {where_clause}"
+
+
+def _build_count(
+    table: str,
+    where: dict[str, Any] | None,
+    quote: Callable[[str], str],
+    render: Callable[[Any], str],
+) -> str:
+    """Render ``SELECT COUNT(*) FROM <table> [WHERE <where>]``."""
+    if where:
+        return f"SELECT COUNT(*) FROM {table} WHERE {_build_where(where, quote, render)}"
+    return f"SELECT COUNT(*) FROM {table}"
+
+
+def _build_select(
+    table: str,
+    columns: Sequence[str],
+    where: dict[str, Any] | None,
+    quote: Callable[[str], str],
+    render: Callable[[Any], str],
+) -> str:
+    """Render ``SELECT <columns> FROM <table> [WHERE <where>]``.
+
+    Each column name is routed through ``quote`` so reserved words
+    survive interpolation into the projection list. Refuses an empty
+    *columns* list (a projection-less SELECT is a caller bug).
+    """
+    if not columns:
+        raise ValueError("select requires at least one column")
+    projection = ", ".join(quote(c) for c in columns)
+    if where:
+        return f"SELECT {projection} FROM {table} WHERE {_build_where(where, quote, render)}"
+    return f"SELECT {projection} FROM {table}"
 
 
 class SqlExecutor:
@@ -354,7 +640,7 @@ class SqlExecutor:
         returned expression is safe to inline into a larger statement
         as it already includes the proper escaping.
         """
-        return f"parse_json('{escape_sql_string(json_str)}')"
+        return f"parse_json('{escape_json_for_sql_string_literal(json_str)}')"
 
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as an ISO-formatted string.
@@ -503,6 +789,106 @@ class SqlExecutor:
             for col in ((resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else None) or [])
         ]
         return [dict(zip(columns, row)) for row in resp.result.data_array]
+
+    # ------------------------------------------------------------------
+    # CRUD-builder shortcuts (Protocol contract)
+    # ------------------------------------------------------------------
+
+    def insert(
+        self,
+        table: str,
+        *,
+        values: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Delta ``INSERT INTO <table> (<cols>) VALUES (<vals>)``.
+
+        See :meth:`OltpExecutorProtocol.insert` for the contract.
+        """
+        self.execute(
+            _build_insert(table, values, self.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def update(
+        self,
+        table: str,
+        *,
+        updates: dict[str, Any],
+        where: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Delta ``UPDATE <table> SET <updates> WHERE <where>``.
+
+        See :meth:`OltpExecutorProtocol.update` for the contract.
+        """
+        self.execute(
+            _build_update(table, updates, where, self.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def delete(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any],
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Delta ``DELETE FROM <table> WHERE <where>``.
+
+        See :meth:`OltpExecutorProtocol.delete` for the contract.
+        """
+        self.execute(
+            _build_delete(table, where, self.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def count(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> int:
+        """Delta ``SELECT COUNT(*) FROM <table> [WHERE <where>]``.
+
+        See :meth:`OltpExecutorProtocol.count` for the contract.
+        """
+        rows = self.query(
+            _build_count(table, where, self.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+        if rows and rows[0] and rows[0][0] is not None:
+            return int(rows[0][0])
+        return 0
+
+    def select_rows(
+        self,
+        table: str,
+        columns: Sequence[str],
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[list[str]]:
+        """Delta simple SELECT — see :meth:`OltpExecutorProtocol.select_rows`."""
+        return self.query(
+            _build_select(table, columns, where, self.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def select_dicts(
+        self,
+        table: str,
+        columns: Sequence[str],
+        *,
+        where: dict[str, Any] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[dict[str, str | None]]:
+        """Delta simple SELECT — see :meth:`OltpExecutorProtocol.select_dicts`."""
+        return self.query_dicts(
+            _build_select(table, columns, where, self.q, _render_value),
+            timeout_seconds=timeout_seconds,
+        )
 
     def upsert(
         self,
