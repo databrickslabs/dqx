@@ -34,5 +34,9 @@
     "src/databricks_labs_dqx_app/ui",
     "vite.config.ts",
     "src/databricks_labs_dqx_app/ui/types/vite-env.d.ts"
-  ]
+  ],
+  // `*.test.ts` files run under `bun test` (see `make app-test-ui`), which
+  // provides the `bun:test` module + transpiles TS itself. Exclude them from
+  // the production `tsc -b` pass so it doesn't fail resolving `bun:test`.
+  "exclude": ["src/databricks_labs_dqx_app/ui/**/*.test.ts"]
 }

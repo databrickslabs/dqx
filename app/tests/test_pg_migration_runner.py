@@ -33,20 +33,19 @@ Why the helpers look the way they do
   process.
 """
 
-from __future__ import annotations
-
 import dataclasses
+import re
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
+from databricks_labs_dqx_app.backend.migrations import OLTP_TABLE_NAMES
 from databricks_labs_dqx_app.backend.migrations.postgres import (
     PG_MIGRATIONS,
     PgMigration,
     PgMigrationRunner,
 )
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +122,23 @@ def _insert_meta_versions(cursor_mock: MagicMock) -> list[object]:
     return [params[0] for _, params in _insert_meta_calls(cursor_mock) if params]
 
 
+_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+
+
+def _baseline() -> str:
+    """The v1 baseline SQL, whitespace-normalized so column alignment doesn't matter."""
+    return " ".join(PG_MIGRATIONS[0].sql.split())
+
+
+def _statements(sql: str) -> list[str]:
+    """Split a migration the way ``_apply`` does."""
+    return [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+
+
+def _created_tables(sql: str) -> list[str]:
+    return _CREATE_TABLE_RE.findall(sql)
+
+
 # ---------------------------------------------------------------------------
 # PG_MIGRATIONS catalogue invariants
 # ---------------------------------------------------------------------------
@@ -143,9 +159,67 @@ class TestPgMigrationsCatalogue:
             assert m.description.strip(), f"v{m.version} migration has an empty description"
 
 
-# ---------------------------------------------------------------------------
-# PgMigration dataclass behaviour
-# ---------------------------------------------------------------------------
+class TestBaselineOnlyCatalogue:
+    """The catalogue is one baseline and the schema is expressed as CREATE TABLE.
+
+    There are no external installs to upgrade yet, so a shape change is
+    edited into v1 rather than appended as an ALTER. These tests pin that
+    decision — an ``ALTER TABLE`` or backfill ``UPDATE`` creeping back in
+    would mean the schema is once again split across a replay chain.
+    """
+
+    def test_catalogue_is_exactly_the_baseline(self):
+        assert [m.version for m in PG_MIGRATIONS] == [1]
+
+    def test_every_statement_creates_a_table_or_an_index(self):
+        for stmt in _statements(_baseline()):
+            assert stmt.startswith(
+                ("CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")
+            ), f"baseline statement is neither a CREATE TABLE nor a CREATE INDEX: {stmt[:120]}"
+
+    def test_no_table_is_created_twice(self):
+        created = _created_tables(_baseline())
+        assert len(created) == len(set(created))
+
+    def test_oltp_table_set_matches_the_delta_fallback_baseline(self):
+        # Lakebase and Delta-fallback deploys must serve the same tables: the
+        # app picks a backend at startup and the services are backend-agnostic,
+        # so a table present in only one baseline breaks that deploy shape.
+        assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+
+
+class TestBaselineShape:
+    """Columns that earlier revisions bolted on by ALTER now ship on CREATE.
+
+    Counts are asserted per column so a table dropping one is caught, not
+    just a global "the word appears somewhere" check. Three owner-bearing
+    tables: ``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``.
+    """
+
+    def test_owner_columns_replace_steward(self):
+        sql = _baseline()
+        assert "steward" not in sql
+        assert sql.count("owner TEXT,") == 3
+        assert sql.count("owner_display_name TEXT,") == 3
+        assert "idx_dq_rules_owner" in sql
+        assert "idx_dq_rules_steward" not in sql
+
+    def test_rationale_columns_ship_on_create(self):
+        sql = _baseline()
+        assert sql.count("pending_rationale TEXT,") == 3
+        assert sql.count("last_decision_rationale TEXT,") == 3
+        # dq_rules_history keeps the per-transition note under a bare name.
+        assert sql.count(" rationale TEXT,") == 1
+
+    def test_sticky_object_notes_are_gone(self):
+        assert "notes" not in _baseline()
+
+    def test_both_schedulable_scopes_carry_the_schedule_columns(self):
+        sql = _baseline()
+        assert sql.count("schedule_sample_size INTEGER,") == 2
+        assert sql.count("schedule_kind TEXT NOT NULL DEFAULT 'dq_only',") == 2
+        assert "chk_dq_monitored_tables_schedule_kind" in sql
+        assert "chk_dq_data_products_schedule_kind" in sql
 
 
 class TestPgMigrationDataclass:
@@ -262,8 +336,8 @@ class TestMigrationsInjection:
     def test_injected_list_is_used_in_place_of_default(self):
         """An explicit ``migrations=`` list must shadow ``PG_MIGRATIONS``."""
         fake = [
-            PgMigration(version=10, description="injected v10", sql="CREATE TABLE {schema}.t10 (id int);"),
-            PgMigration(version=11, description="injected v11", sql="CREATE TABLE {schema}.t11 (id int);"),
+            PgMigration(version=9001, description="injected v9001", sql="CREATE TABLE {schema}.t9001 (id int);"),
+            PgMigration(version=9002, description="injected v9002", sql="CREATE TABLE {schema}.t9002 (id int);"),
         ]
         exec_mock = _make_executor(applied_versions=())
         runner = PgMigrationRunner(exec_mock, migrations=fake)
@@ -277,8 +351,8 @@ class TestMigrationsInjection:
         # ``params`` tuple rather than substring-searching the SQL.
         assert len(inserts) == len(fake)
         bound_versions = _insert_meta_versions(cur)
-        assert 10 in bound_versions
-        assert 11 in bound_versions
+        assert 9001 in bound_versions
+        assert 9002 in bound_versions
         production_versions = {m.version for m in PG_MIGRATIONS}
         assert not (set(bound_versions) & production_versions), (
             "Injected runner leaked production-catalogue versions: " f"{set(bound_versions) & production_versions}"

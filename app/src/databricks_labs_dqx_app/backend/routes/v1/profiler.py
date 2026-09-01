@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from typing import Annotated
 from uuid import uuid4
@@ -7,12 +5,13 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
     get_conf,
     get_job_service,
+    get_monitored_table_service,
     get_obo_ws,
     get_sp_sql_executor,
     get_view_service,
@@ -20,6 +19,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.models import (
     BatchProfileRunFailure,
     BatchProfileRunIn,
@@ -28,11 +28,13 @@ from databricks_labs_dqx_app.backend.models import (
     ProfileRunIn,
     ProfileRunOut,
     ProfileRunSummaryOut,
+    RunFailureOut,
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 router = APIRouter()
 
@@ -40,6 +42,43 @@ _PROFILER_TABLE = "dq_profiling_results"
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
+# Prefix the scheduler stamps onto ``requesting_user`` for every run it
+# launches (see ``SchedulerService._submit_profile_run``:
+# ``f"scheduler:{schedule_name}"``). Manual profiler runs record the end
+# user's email instead, so this prefix is a reliable manual-vs-scheduled
+# discriminator.
+_SCHEDULER_USER_PREFIX = "scheduler:"
+
+
+def _profile_run_type(requesting_user: str | None) -> str:
+    """Classify a profiling run as ``scheduled`` vs ``manual`` for Runs History.
+
+    ``dq_profiling_results`` has no ``run_type`` column, so this is derived from
+    the ``requesting_user`` provenance the scheduler stamps rather than read
+    from the row. Persisting a real column would require a Delta migration on
+    ``dq_profiling_results`` — deliberately not added here.
+    """
+    return "scheduled" if (requesting_user or "").startswith(_SCHEDULER_USER_PREFIX) else "manual"
+
+
+def _refresh_run_timestamps_on_profile_success(
+    monitored_tables: MonitoredTableService, source_table_fqn: str | None
+) -> None:
+    """Best-effort denormalize the monitored table's run/profile timestamps.
+
+    Fired when a profiler run reaches terminal SUCCESS (T-perf / B2-15). No-op
+    for an unmonitored table (``refresh_run_timestamps`` simply writes zero
+    rows) or a missing FQN. Swallows failures — a warehouse hiccup must never
+    turn a successful profiler poll into a 500; the scheduler reconcile heals
+    the column on the next boot.
+    """
+    if not source_table_fqn:
+        return
+    try:
+        monitored_tables.refresh_run_timestamps([source_table_fqn])
+    except Exception:
+        logger.warning("Failed to refresh run timestamps after profiler success", exc_info=True)
 
 
 def _classify_table_error(exc: Exception, table_fqn: str) -> tuple[int, str, str]:
@@ -96,11 +135,28 @@ def _classify_table_error(exc: Exception, table_fqn: str) -> tuple[int, str, str
 def list_profile_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    table_fqn: str | None = None,
 ) -> list[ProfileRunSummaryOut]:
-    """Return profiling run history, newest first."""
+    """Return profiling run history, newest first.
+
+    When ``table_fqn`` is supplied, only runs for that source table are
+    returned (server-side filter) so single-table views don't pull the full
+    history and filter client-side.
+    """
+    # Validate before the value reaches the WHERE builder: the filter literal
+    # is embedded via ``escape_sql_string``, which deliberately does NOT escape
+    # backslashes and relies on ``validate_fqn`` upstream to reject them (see
+    # its docstring). This mirrors the POST ``/run`` path where ``create_view``
+    # validates the FQN. Kept outside the ``try`` below so the ValueError maps
+    # to a clean 400 instead of being re-wrapped as a generic 500.
+    if table_fqn:
+        try:
+            validate_fqn(table_fqn)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
-        rows = job_svc.list_run_rows(table)
+        rows = job_svc.list_run_rows(table, source_table_fqn=table_fqn)
         return [
             ProfileRunSummaryOut(
                 run_id=row.get("run_id") or "",
@@ -110,9 +166,11 @@ def list_profile_runs(
                 columns_profiled=int(v) if (v := row.get("columns_profiled")) else None,
                 duration_seconds=float(v) if (v := row.get("duration_seconds")) else None,
                 requesting_user=row.get("requesting_user"),
+                run_type=_profile_run_type(row.get("requesting_user")),
                 canceled_by=row.get("canceled_by"),
                 updated_at=row.get("updated_at"),
                 created_at=row.get("created_at"),
+                job_run_id=int(v) if (v := row.get("job_run_id")) else None,
             )
             for row in rows
         ]
@@ -121,11 +179,56 @@ def list_profile_runs(
         raise HTTPException(status_code=500, detail=f"Failed to list profile runs: {e}")
 
 
+_RECENT_FAILURES_LIMIT = 50
+
+
+@router.get(
+    "/runs/recent-failures",
+    response_model=list[RunFailureOut],
+    operation_id="listRecentProfileFailures",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_recent_profile_failures(
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
+) -> list[RunFailureOut]:
+    """Return recently-failed profiler runs, bounded to the most recent *N*.
+
+    Intended for the app-wide toast watcher: returns FAILED runs only with
+    minimal fields (run_id, source_table_fqn, status, created_at). The
+    endpoint is cheap by construction — no summary_json, no generated rules.
+    The full profiler run history is still available via ``GET /profiler/runs``.
+    """
+    try:
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        rows = job_svc.list_run_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
+
+        results: list[RunFailureOut] = []
+        for row in rows:
+            if row.get("status") != "FAILED":
+                continue
+            results.append(
+                RunFailureOut(
+                    run_id=row.get("run_id") or "",
+                    source_table_fqn=row.get("source_table_fqn") or "",
+                    status="FAILED",
+                    created_at=row.get("created_at"),
+                )
+            )
+            if len(results) >= _RECENT_FAILURES_LIMIT:
+                break
+
+        return results
+    except Exception as e:
+        logger.error("Failed to list recent profile failures: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list recent profile failures: {e}")
+
+
 @router.post(
     "/run",
     response_model=ProfileRunOut,
     operation_id="submitProfileRun",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def submit_profile_run(
     body: ProfileRunIn,
@@ -200,7 +303,7 @@ def submit_profile_run(
     "/batch-run",
     response_model=BatchProfileRunOut,
     operation_id="submitBatchProfileRun",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def submit_batch_profile_run(
     body: BatchProfileRunIn,
@@ -317,6 +420,7 @@ def get_profile_run_status(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
 ) -> RunStatusOut:
     """Poll the status of a profiler job run. Cleans up the view when job terminates."""
     try:
@@ -324,6 +428,8 @@ def get_profile_run_status(
         if meta.job_run_id is None:
             terminal = has_terminal_result(sql, app_conf, _PROFILER_TABLE, run_id)
             if terminal:
+                if terminal == "SUCCESS":
+                    _refresh_run_timestamps_on_profile_success(monitored_tables, meta.source_table_fqn)
                 if meta.view_fqn and "tmp_view_" in meta.view_fqn:
                     try:
                         view_svc.drop_view(meta.view_fqn)
@@ -355,6 +461,13 @@ def get_profile_run_status(
                 logger.info("Cleaned up temporary view: %s", meta.view_fqn)
             except Exception as cleanup_err:
                 logger.warning("Failed to clean up view %s: %s", meta.view_fqn, cleanup_err)
+
+        if is_terminal and status.result_state == "SUCCESS":
+            # Profiler-run completion (T-perf / B2-15): denormalize the table's
+            # last_profiled_at (and last_run_at, self-healing) into its OLTP row
+            # so the About tab and overview read a real "last profiled" without
+            # the list/detail path ever touching the warehouse.
+            _refresh_run_timestamps_on_profile_success(monitored_tables, meta.source_table_fqn)
 
         if is_terminal and status.state != "TERMINATED":
             update_run_status(
@@ -399,7 +512,7 @@ def get_profile_run_status(
 @router.post(
     "/runs/{run_id}/cancel",
     operation_id="cancelProfileRun",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def cancel_profile_run(
     run_id: str,

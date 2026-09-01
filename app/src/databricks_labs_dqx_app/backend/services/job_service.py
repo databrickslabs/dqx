@@ -4,15 +4,13 @@ All operations use the **SP WorkspaceClient** (``rt.ws``) so that the
 app's service principal submits and polls job runs.
 """
 
-from __future__ import annotations
-
-import json
 import logging
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from pydantic import BaseModel
 
+from databricks_labs_dqx_app.backend.run_config_store import prepare_config_json
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
@@ -34,10 +32,18 @@ class JobService:
         ws: WorkspaceClient,
         job_id: str,
         sql: SqlExecutor,
+        warehouse_id: str | None = None,
+        wheels_volume: str | None = None,
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
         self._sql = sql
+        # SQL warehouse the task runner uses for its temp-view cleanup path.
+        # The admin-configured warehouse (``dq_app_settings`` → resolved by the
+        # caller) wins; otherwise fall back to the SP executor's env-bound
+        # warehouse so behaviour is unchanged when no override is set.
+        self._warehouse_id = (warehouse_id or "").strip() or (sql.warehouse_id or "")
+        self._wheels_volume = (wheels_volume or "").strip()
 
     def submit_run(
         self,
@@ -54,18 +60,26 @@ class JobService:
         if not self._job_id:
             raise RuntimeError("DQX_JOB_ID is not configured — cannot submit job runs")
 
+        base_params = {
+            "task_type": task_type,
+            "view_fqn": view_fqn,
+            "result_catalog": self._sql.catalog,
+            "result_schema": self._sql.schema,
+            "run_id": run_id,
+            "requesting_user": requesting_user,
+            "warehouse_id": self._warehouse_id,
+        }
+        config_json = prepare_config_json(
+            self._ws,
+            wheels_volume=self._wheels_volume,
+            run_id=run_id,
+            config=config,
+            job_parameters_without_config=base_params,
+        )
+
         run = self._ws.jobs.run_now(
             job_id=self._job_id,
-            job_parameters={
-                "task_type": task_type,
-                "view_fqn": view_fqn,
-                "result_catalog": self._sql.catalog,
-                "result_schema": self._sql.schema,
-                "config_json": json.dumps(config),
-                "run_id": run_id,
-                "requesting_user": requesting_user,
-                "warehouse_id": self._sql.warehouse_id,
-            },
+            job_parameters={**base_params, "config_json": config_json},
         )
         logger.info(
             "Submitted job run %s (job_id=%s, task_type=%s, app_run_id=%s)",
@@ -211,7 +225,7 @@ class JobService:
     _PROFILE_COLS = (
         "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
-        "generated_rules_json, status, error_message, canceled_by, "
+        "generated_rules_json, status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
         "CAST(created_at AS STRING) AS created_at"
     )
@@ -219,7 +233,7 @@ class JobService:
     _DRYRUN_COLS = (
         "run_id, requesting_user, source_table_fqn, sample_size, "
         "total_rows, valid_rows, invalid_rows, error_rows, warning_rows, "
-        "status, error_message, canceled_by, "
+        "status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
         "CAST(created_at AS STRING) AS created_at, "
         "COALESCE(run_type, 'dryrun') AS run_type, "
@@ -231,12 +245,22 @@ class JobService:
         table: str,
         select_cols: str,
         limit: int = 500,
+        source_table_fqn: str | None = None,
     ) -> list[dict[str, str | None]]:
         """Read the most recent result rows from a Delta table, newest first.
 
         Deduplicates by run_id -- if both a RUNNING placeholder and a terminal
         row exist for the same run_id, only the terminal row is returned.
+
+        When ``source_table_fqn`` is given, only rows for that source table are
+        returned (server-side filter), so callers scoped to a single table
+        don't have to pull the full history and filter client-side.
         """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        where = ""
+        if source_table_fqn:
+            where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
         sql = (
             f"SELECT {select_cols} "  # noqa: S608
             f"FROM ("
@@ -245,37 +269,89 @@ class JobService:
             f"    ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
             f"  ) AS rn "
             f"  FROM {table}"
+            f"{where}"
             f") WHERE rn = 1 "
             f"ORDER BY created_at DESC LIMIT {int(limit)}"
         )
         return self._sql.query_dicts(sql)
 
-    def list_run_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
-        """Read the most recent profiler result rows."""
-        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit)
+    def list_run_rows(
+        self,
+        table: str,
+        limit: int = 500,
+        source_table_fqn: str | None = None,
+    ) -> list[dict[str, str | None]]:
+        """Read the most recent profiler result rows, optionally scoped to one source table."""
+        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit, source_table_fqn)
 
     def list_dryrun_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
         """Read the most recent dry-run result rows, excluding ad-hoc preview runs.
 
         A run is considered a history-visible run when:
         - run_type is 'scheduled', OR
-        - run_type is 'dryrun' (or NULL) AND the run has a RUNNING placeholder
-          row (which is only written for Execute-tab / batch-from-catalog runs).
+        - the app wrote a submission row for it (``has_submission``) — only
+          Execute-tab / batch-from-catalog / scheduled-binding runs get one.
         Runs tagged 'preview' (new runner) are always excluded.
+
+        ``has_submission`` deliberately does NOT test ``status = 'RUNNING'``
+        alone. The submission row is inserted RUNNING, but every non-successful
+        outcome later rewrites that very row: ``reconcile_running_rows`` and the
+        per-run status poll flip it to FAILED/CANCELED, the hourly stale
+        tmp-view sweep does the same, and Cancel writes CANCELED. Keying
+        visibility on RUNNING therefore made a failed or canceled run VANISH
+        from history the moment anything reconciled it — while successful runs
+        stayed, because the runner owns the terminal SUCCESS row and nothing
+        rewrites their placeholder. That asymmetry is what read as history
+        being lost at random. ``job_run_id`` is stamped when the placeholder is
+        inserted and is never rewritten by those paths, so it survives
+        reconciliation and is the durable "the app submitted this" marker. The
+        RUNNING arm is kept alongside it so the gate stays a superset of the
+        old one and cannot hide a run that used to show.
+
+        ``duration_seconds`` — the run's real wall-clock duration, computed
+        server-side so the Runs-History "Time" column matches the linked
+        Databricks job (B2-126). ``dq_validation_runs`` has no duration column;
+        instead each run keeps two rows: the app-written RUNNING placeholder
+        (``created_at`` stamped at job *submission*, so it spans cluster
+        startup) and the runner-appended terminal row (``updated_at`` = the
+        completion instant). The wall-clock span is therefore
+        ``MAX(COALESCE(updated_at, created_at)) - MIN(created_at)`` per run_id —
+        NOT ``MAX(created_at) - MIN(created_at)``, because the runner *back-dates*
+        the terminal row's ``created_at`` to ``completion - compute_duration``
+        (excluding startup) so a naive created-span would report only the
+        compute time (~28s) rather than the full job runtime (~1m17s). We emit
+        it only when a placeholder exists (``has_placeholder > 0``) and the span
+        is positive; otherwise it stays NULL so the UI shows a live tick (still
+        RUNNING) or an em dash (old runs whose true start can't be recovered)
+        rather than a misleading short value.
+
+        Note the duration stays keyed on a *live* RUNNING placeholder, not on
+        ``has_submission``. Once a run has been reconciled, the placeholder's
+        ``updated_at`` is the instant we NOTICED the failure — the tmp-view
+        sweep runs hourly, so that can be long after the job died — and the
+        span would report that gap as the runtime. An em dash is better than a
+        fabricated one-hour duration on a run that failed in seconds.
         """
         sql = (
-            f"SELECT {self._DRYRUN_COLS} "  # noqa: S608
+            f"SELECT {self._DRYRUN_COLS}, "  # noqa: S608
+            f"  CASE WHEN has_placeholder > 0 AND run_ended_at > run_started_at "
+            f"    THEN timestampdiff(SECOND, run_started_at, run_ended_at) "
+            f"    ELSE NULL END AS duration_seconds "
             f"FROM ("
             f"  SELECT *, "
             f"    ROW_NUMBER() OVER ("
             f"      PARTITION BY run_id "
             f"      ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
             f"    ) AS rn, "
-            f"    SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) OVER (PARTITION BY run_id) AS has_placeholder "
+            f"    SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) OVER (PARTITION BY run_id) AS has_placeholder, "
+            f"    MAX(CASE WHEN status = 'RUNNING' OR job_run_id IS NOT NULL THEN 1 ELSE 0 END) "
+            f"      OVER (PARTITION BY run_id) AS has_submission, "
+            f"    MIN(created_at) OVER (PARTITION BY run_id) AS run_started_at, "
+            f"    MAX(COALESCE(updated_at, created_at)) OVER (PARTITION BY run_id) AS run_ended_at "
             f"  FROM {table}"
             f") WHERE rn = 1 "
             f"  AND COALESCE(run_type, 'dryrun') != 'preview' "
-            f"  AND (COALESCE(run_type, 'dryrun') IN ('scheduled') OR has_placeholder > 0) "
+            f"  AND (COALESCE(run_type, 'dryrun') IN ('scheduled') OR has_submission > 0) "
             f"ORDER BY created_at DESC LIMIT {int(limit)}"
         )
         return self._sql.query_dicts(sql)
