@@ -33,7 +33,10 @@ class TestBuildProfilingRule:
         assert candidate is not None
         assert candidate.mapping == {"column": "score"}
         frozen = {p.name: p.value for p in candidate.definition.parameters}
-        assert frozen == {"min_limit": 0, "max_limit": 100}
+        # The profiler supplied min_limit/max_limit, so those are frozen to concrete values.
+        # allow_nulls is a non-column parameter of is_in_range that the profiler did not supply,
+        # so it stays at its unset default (None) rather than being dropped.
+        assert frozen == {"min_limit": 0, "max_limit": 100, "allow_nulls": None}
         # The column slot is still a placeholder; frozen params are NOT in the body.
         assert candidate.definition.body["arguments"] == {"column": "{{column}}"}
 
