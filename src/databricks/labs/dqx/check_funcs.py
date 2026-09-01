@@ -61,7 +61,11 @@ _URL_HOST = rf"(?:\[[A-Fa-f0-9:.]+\]|(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_E
 _URL_AUTHORITY = rf"(?:{_URL_USERINFO}@)?{_URL_HOST}(?::\d*)?"  # §3.2
 _URL_PCHAR = rf"(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED}|[:@])"  # §3.3
 _URL_PATH_ABEMPTY = rf"(?:/{_URL_PCHAR}*)*"  # §3.3; each iteration consumes at least the '/'
-_URL_PATH_NO_AUTHORITY = rf"(?:/?{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?"  # path-absolute / rootless / empty
+# path-absolute ("/" with an optional non-empty first segment, e.g. "/" or "/a/b"), path-rootless
+# ("a/b"), or path-empty. The two alternatives keep the leading-slash case (which may be followed by
+# no segment) distinct from the rootless case (which requires a non-empty first segment); their first
+# characters are disjoint ('/' is not a pchar), so this stays unambiguous and ReDoS-safe.
+_URL_PATH_NO_AUTHORITY = rf"(?:/(?:{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?|{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?"
 _URL_QUERY_OR_FRAGMENT = rf"(?:{_URL_PCHAR}|[/?])*"  # §3.4, §3.5
 
 # Curated aggregate functions for data quality checks
@@ -1208,8 +1212,10 @@ def is_valid_url(column: str | Column) -> Column:
 
     Validates against the RFC 3986 §4.3 *absolute-URI* grammar: *scheme ":" hier-part* with an
     optional *"?" query* and *"#" fragment*. A scheme is required, so relative references such as
-    */path* or *example.com* are rejected, and reserved characters must be percent-encoded to be
-    accepted inside a path, query, or fragment.
+    */path* or *example.com* are rejected. Sub-delimiters (*!$&'()*+,;=*) are permitted unencoded
+    inside a path, query, or fragment; any character outside the *unreserved* and *sub-delims* sets
+    (spaces, or gen-delimiters such as *[* and *]* outside their structural role) must be
+    percent-encoded to be accepted.
 
     Any syntactically valid scheme is accepted, which keeps non-network URLs such as *s3://*,
     *ftp://*, *mailto:* and *urn:* valid alongside *http://* and *https://*. Two consequences are

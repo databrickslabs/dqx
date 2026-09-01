@@ -1106,7 +1106,7 @@ def test_col_is_not_in_near_future(spark):
 
 def test_is_col_older_than_n_days_cur(spark):
     schema_dates = "a: string, b: map<string, string>"
-    cur_date = spark.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
+    cur_date = spark.sql("SELECT current_date() AS current_date").collect()[0]["current_date"].strftime("%Y-%m-%d")
 
     test_df = spark.createDataFrame(
         [["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}], [cur_date, {"dt": cur_date}]], schema_dates
@@ -2150,6 +2150,7 @@ def test_col_is_valid_url(spark):
             ["urn:isbn:0451450523"],
             ["file:///var/log/app.log"],  # empty host is permitted by RFC 3986
             ["custom-scheme+v2://host/p"],  # scheme may contain '+', '-', '.'
+            ["foo:/"],  # path-absolute with an empty segment: scheme + bare '/' (RFC 3986 hier-part)
             # Valid - percent-encoding and sub-delims
             ["https://example.com/a%20b"],
             ["https://example.com/a,b;c=d"],
@@ -2212,6 +2213,7 @@ def test_col_is_valid_url(spark):
         [None],  # urn:isbn:0451450523
         [None],  # file:///var/log/app.log
         [None],  # custom-scheme+v2://host/p
+        [None],  # foo:/ - path-absolute with an empty segment
         [None],  # https://example.com/a%20b
         [None],  # https://example.com/a,b;c=d
         [None],  # https://example.com/p?a=1+2
@@ -4737,14 +4739,14 @@ def test_is_valid_json(spark):
             ['{"key": "value"}', '{"key": value}'],
             ['{"number": 123}', '{"number": 123}'],
             ['{"array": [1, 2, 3]}', '{"array": [1, 2, 3}'],
-            ['Not a JSON string', 'Also not JSON'],
+            ["Not a JSON string", "Also not JSON"],
             [None, None],
-            ['123', '"a string"'],
-            ['true', 'null'],
-            ['[]', '{}'],
+            ["123", '"a string"'],
+            ["true", "null"],
+            ["[]", "{}"],
             ['{"a": 1,}', '{key: "value"}'],
-            ['[1, 2,', '{"a": "b"'],
-            ["{'a': 'b'}", ''],
+            ["[1, 2,", '{"a": "b"'],
+            ["{'a': 'b'}", ""],
             [' {"a": 1} ', '{"b": 2}\n'],
         ],
         schema,
@@ -4796,8 +4798,8 @@ def test_has_json_keys_require_all_true(spark):
             ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
             ['{"key": "value"}', '{"missing_key": "value"}'],
             [None, None],
-            ['Not a JSON string', '{"key": "value"}'],
-            ['{"key": "value"}', 'Not a JSON string'],
+            ["Not a JSON string", '{"key": "value"}'],
+            ['{"key": "value"}', "Not a JSON string"],
             ['{"key": "value"}', None],
             [None, '{"key": "value"}'],
             ['{"nested": {"inner_key": "inner_value"}}', '{"nested": {"inner_key": "inner_value"}}'],
@@ -4837,8 +4839,8 @@ def test_has_json_keys_require_all_true(spark):
             ["Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]", None],
             [None, None],
             [
-                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'a' is missing keys in the list: [key, another_key]",
-                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'b' is missing keys in the list: [key]",
+                'Value \'{"nested": {"inner_key": "inner_value"}}\' in Column \'a\' is missing keys in the list: [key, another_key]',
+                'Value \'{"nested": {"inner_key": "inner_value"}}\' in Column \'b\' is missing keys in the list: [key]',
             ],
             [
                 None,
@@ -4859,9 +4861,9 @@ def test_has_json_keys_require_at_least_one(spark):
             ['{"key": 1, "another_key": 2, "extra_key": 3}', '{"key": 1, "another_key": 2, "extra_key": 3}'],
             ['{"key": 1}', '{"key": 1}'],
             ['{"number": 123}', '{"random_sample": 1523}'],
-            ['{}', '{}'],
+            ["{}", "{}"],
             ['{"key": "value"', '{"key": "value"'],
-            [None, 'Not a JSON string'],
+            [None, "Not a JSON string"],
             [None, None],
             ['{"key": null}', '{"nested": {"key": null}}'],
         ],
@@ -4913,8 +4915,8 @@ def test_has_valid_json_schema(spark):
             ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
             ['{"key": "value"}', '{"missing_key": "value"}'],
             [None, None],
-            ['Not a JSON string', '{"key": "value"}'],
-            ['{"key": "value"}', 'Not a JSON string'],
+            ["Not a JSON string", '{"key": "value"}'],
+            ['{"key": "value"}', "Not a JSON string"],
             ['{"key": "value"}', None],
         ],
         schema,
@@ -4926,7 +4928,7 @@ def test_has_valid_json_schema(spark):
         [
             [None, None],
             [
-                "Value '{\"key\": \"value\", \"another_key\": 123}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                'Value \'{"key": "value", "another_key": 123}\' in Column \'a\' does not conform to expected JSON schema: struct<a:bigint,b:bigint>',
                 "Value '{\"key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
             ],
             [
@@ -4976,7 +4978,7 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
         ['{"level1": {"level2": {"level3": {"level4": {"level6": "sample"}}}}}'],
         [None],
         ['{"level1": null}'],
-        ['Not a JSON string'],
+        ["Not a JSON string"],
     ]
 
     test_df = spark.createDataFrame(test_data, schema)
@@ -4988,12 +4990,12 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
             [None],
             [None],
             [
-                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level5\": null}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
+                'Value \'{"level1": {"level2": {"level3": {"level4": {"level5": null}}}}}\' in Column \'json_data\' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>'
             ],
             [None],
             [None],
             [
-                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level6\": \"sample\"}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>",
+                'Value \'{"level1": {"level2": {"level3": {"level4": {"level6": "sample"}}}}}\' in Column \'json_data\' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>',
             ],
             [None],
             [None],
@@ -5092,10 +5094,10 @@ def test_has_valid_json_schema_with_complex_nested_structure(spark):
             [None],
             [None],
             [
-                "Value '{\"user\": {\"id\": \"invalid\", \"profile\": {\"name\": \"John\", \"age\": 30}}, \"tags\": [\"admin\"]}' in Column 'json_data' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+                'Value \'{"user": {"id": "invalid", "profile": {"name": "John", "age": 30}}, "tags": ["admin"]}\' in Column \'json_data\' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>'
             ],
             [
-                "Value '{\"user\": {\"id\": 1, \"profile\": {\"name\": 123, \"age\": \"thirty\"}}, \"tags\": [\"admin\"]}' in Column 'json_data' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+                'Value \'{"user": {"id": 1, "profile": {"name": 123, "age": "thirty"}}, "tags": ["admin"]}\' in Column \'json_data\' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>'
             ],
             [None],
         ],
