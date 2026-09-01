@@ -615,8 +615,12 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
     get_app_token = app_auth  # OAuth bearer the app's /mcp front-door accepts
 
+    # Owned here so BOTH the client (which fills it) and the deploy context manager (whose teardown
+    # collects coverage) see the same list — a runner run with no data file must be nameable.
+    submitted_run_ids: list[int] = []
+
     with (
-        deploy_mcp_app(host, get_token) as app,
+        deploy_mcp_app(host, get_token, run_id_sink=submitted_run_ids) as app,
         seed_demo_data(app["service_principal"], app["runner_service_principal"]) as data,
     ):
         client = McpClient(
@@ -624,6 +628,9 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
             get_app_token,
             job_id=app.get("runner_job_id", ""),
             workspace_host=app.get("workspace_host", host),
+            # Record every submitted runner run so coverage collection can name the ones that
+            # shipped no data instead of silently reporting their code as unexecuted.
+            run_id_sink=submitted_run_ids,
         )
         wait_until_ready(client)  # a freshly-deployed app needs a moment before /mcp serves
         table = data["table"]

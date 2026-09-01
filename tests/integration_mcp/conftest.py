@@ -178,7 +178,9 @@ def _decode_jwt_claims(token: str) -> dict:
 
 
 @contextlib.contextmanager
-def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str, str]]:
+def deploy_mcp_app(
+    host: str, get_token: Callable[[], str], run_id_sink: list[int] | None = None
+) -> Iterator[dict[str, str]]:
     """Deploy ONE isolated MCP app, yield {url, service_principal}, and tear it down.
 
     A context manager (not a fixture) so a single test owns exactly one deploy — the acceptance
@@ -233,7 +235,12 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     finally:
         # Collect coverage BEFORE teardown destroys the app, and do it here rather than at the end of
         # the test body so a FAILING test still yields its data — that is when it is most useful.
-        collect_remote_coverage(deployment["app_name"], started_at, deployment.get("tmp_schema") or "")
+        collect_remote_coverage(
+            deployment["app_name"],
+            started_at,
+            deployment.get("tmp_schema") or "",
+            expected_run_ids=run_id_sink,
+        )
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
 
@@ -348,16 +355,32 @@ class McpClient:
     — ``call`` handles both.
     """
 
-    def __init__(self, url: str, get_token: Callable[[], str], job_id: str = "", workspace_host: str = ""):
+    def __init__(
+        self,
+        url: str,
+        get_token: Callable[[], str],
+        job_id: str = "",
+        workspace_host: str = "",
+        run_id_sink: list[int] | None = None,
+    ):
         self._url = url
         self._get_token = get_token  # mint a fresh bearer per request (no expiry over a long run)
         # Used only to build clickable job/run URLs when something fails — never for auth.
         self._job_id = job_id
         self._workspace_host = (workspace_host or os.environ.get("DATABRICKS_HOST", "")).rstrip("/")
+        # Every run this client submits, in order. Coverage collection needs the exact set: each
+        # runner run ships its own data file, so this is the only way to tell a file that was never
+        # written from one that was never expected. See collect_remote_coverage.
+        self._run_id_sink = run_id_sink if run_id_sink is not None else []
 
     @property
     def url(self) -> str:
         return self._url
+
+    @property
+    def submitted_run_ids(self) -> list[int]:
+        """Runner runs this client submitted, in call order."""
+        return self._run_id_sink
 
     def current_token(self) -> str:
         """Mint the bearer this client sends — for 401 diagnostics only."""
@@ -370,8 +393,11 @@ class McpClient:
         payload = _tool_payload(
             _mcp_request(self._url, self._get_token(), "tools/call", {"name": name, "arguments": arguments or {}})
         )
-        if poll and payload.get("status") == "submitted" and payload.get("run_id"):
-            return self.wait(payload["run_id"], timeout=timeout)
+        run_id = payload.get("run_id")
+        if payload.get("status") == "submitted" and run_id:
+            self._run_id_sink.append(int(run_id))
+        if poll and payload.get("status") == "submitted" and run_id:
+            return self.wait(run_id, timeout=timeout)
         return payload
 
     def wait(self, run_id: int, *, timeout: float = 300.0, interval: float = 0.0) -> dict:
@@ -423,7 +449,9 @@ class McpClient:
         return f"\n  run URL: {self._workspace_host}/#job/{self._job_id}/run/{run_id}"
 
 
-def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -> list[str]:
+def collect_remote_coverage(
+    app_name: str, since: float, tmp_schema: str = "", expected_run_ids: list[int] | None = None
+) -> list[str]:
     """CI/test-only: stop the app (forcing its final flush) and download this run's data files.
 
     No-op unless DQX_MCP_COVERAGE_DIR is set. On a coverage-enabled deploy the app and every runner
@@ -440,6 +468,12 @@ def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -
     this run, so the merged report describes THIS code and no other. The volume outlives any single
     deployment, so without that bound `coverage combine` silently merges every prior run's data —
     which is how a report ends up citing lines that the current source no longer has.
+
+    *expected_run_ids* is every runner run the suite submitted. Each runner process writes its own
+    data file, so a missing file means that whole operation's body is reported as unexecuted — which
+    reads as a coverage regression in source nobody touched. Comparing the collected files against
+    the expected set is the only way to tell "never written" from "never expected", so pass it: the
+    gap is reported explicitly instead of silently depressing the number.
     """
     if not os.environ.get("DQX_MCP_COVERAGE_DIR"):
         return []
@@ -471,7 +505,41 @@ def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -
         )
     else:
         sys.stderr.write(f"coverage files downloaded: {len(downloaded)} from {coverage_dir}\n")
+    _log_runner_data_completeness(downloaded, expected_run_ids)
     return downloaded
+
+
+def _log_runner_data_completeness(downloaded: list[str], expected_run_ids: list[int] | None) -> None:
+    """Report what arrived, and print the bootstrap's own diagnostics.
+
+    There is deliberately no per-run file check. The runner's task executes inside a shared,
+    long-lived Databricks python shell that serves many runs, so coverage is keyed to the
+    *interpreter*, not the run: one cumulative file per interpreter, rewritten as a superset on every
+    flush. Counting files against submitted runs would therefore always look short and mean nothing.
+
+    The ``dqxcov-log.*`` breadcrumbs are what make a shortfall diagnosable at all — a Databricks job
+    retains neither raw stderr nor anything logged before the task configures logging, which is why
+    the shape of this mechanism went unexamined for so long. Print them.
+    """
+    data_files = [p for p in downloaded if Path(p).name.startswith(".coverage")]
+    breadcrumbs = [p for p in downloaded if Path(p).name.startswith("dqxcov-log")]
+    submitted = len(set(expected_run_ids or []))
+    sys.stderr.write(
+        f"coverage: {len(data_files)} data file(s) from {submitted} submitted runner run(s) "
+        f"(files track interpreters, not runs); {len(breadcrumbs)} breadcrumb(s)\n"
+    )
+    for path in breadcrumbs:
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"coverage: could not read {path}: {exc}\n")
+            continue
+        sys.stderr.write(f"coverage: --- {Path(path).name} ---\n{text}\n")
+    if not data_files:
+        sys.stderr.write(
+            "coverage: WARNING no data files arrived, so the mcp flag will not be uploaded. The "
+            "breadcrumbs above (if any) say how far the bootstrap got.\n"
+        )
 
 
 def _coverage_dir(tmp_schema: str = "") -> str:
@@ -523,7 +591,7 @@ def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: floa
     for entry in ws.files.list_directory_contents(coverage_dir):
         path = entry.path or ""
         name = path.rsplit("/", 1)[-1]
-        if not path or not name.startswith(".coverage"):
+        if not path or not (name.startswith(".coverage") or name.startswith("dqxcov-log")):
             continue
         # last_modified is epoch MILLIS on this API (files.get_metadata returns an HTTP date string
         # instead — do not mix them). An absent or non-numeric value is treated as current, so

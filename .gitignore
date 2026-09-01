@@ -48,6 +48,8 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
+# Diagnostics the MCP coverage bootstrap ships back beside its data files (tests/integration_mcp).
+dqxcov-log.*
 .cache
 nosetests.xml
 coverage.xml
