@@ -41,10 +41,13 @@ LIMIT_VALUE_ERROR = "Limit is not provided"
         ("col1", "col1", "col1"),
         ("Customer Name", "Customer Name", "customer_name"),
         ("Päivämäärä", "Päivämäärä", "p_iv_m_r"),
+        # A name the user already back-quoted is displayed without the quotes
+        ("`Customer Name`", "Customer Name", "customer_name"),
     ],
 )
 def test_get_normalized_column_and_expr_names_come_from_input(column, expected_display, expected_normalized):
-    """Display and normalized names must come from the original column string, not the escaped expression"""
+    """Display and normalized names come from the input string, not the back-quoted expression, so that
+    escaping a name for execution does not leak back-quotes into messages and generated check names."""
     col_str_norm, column_str, _ = get_normalized_column_and_expr(column)
     assert column_str == expected_display
     assert col_str_norm == expected_normalized

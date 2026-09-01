@@ -25,6 +25,7 @@ from databricks.labs.dqx.utils import (
     safe_filter_expr,
     normalize_col_str,
     normalize_column_expr,
+    unquote_column_name,
     get_columns_as_strings,
     to_lowercase,
 )
@@ -4637,8 +4638,11 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
     """
     col_expr = _get_column_expr(column)
     if isinstance(column, str):
-        column_str = column
-        col_str_norm = normalize_col_str(column)
+        # Derive display and normalized names from the input string, not the Column: back-quoting a name
+        # for execution changes its string representation (e.g. Spark renders `F.expr("`Customer Name`")`
+        # as ``Column<'`Customer Name`'>``), which would otherwise leak back-quotes into messages and names.
+        column_str = unquote_column_name(column)
+        col_str_norm = normalize_col_str(column_str)
     else:
         column_str = get_column_name_or_alias(col_expr)
         col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
