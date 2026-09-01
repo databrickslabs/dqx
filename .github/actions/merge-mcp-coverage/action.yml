@@ -27,6 +27,18 @@ runs:
           ls -la .coverage.*
         fi
 
+        # The bootstrap's own diagnostics, downloaded beside the data files. Print them: the suite's
+        # stderr is not retained in the CI log, so without this the breadcrumbs exist on the runner
+        # and are visible nowhere — which is the situation that left three separate investigations of
+        # lost coverage with nothing to read. Globbed with a guard because this step runs under
+        # `bash -e`, and an unmatched glob would otherwise fail the job over a diagnostic.
+        for crumb in dqxcov-log.*; do
+          [ -e "$crumb" ] || continue
+          echo "::group::$crumb"
+          cat "$crumb"
+          echo "::endgroup::"
+        done
+
         uv run coverage combine --rcfile="$RCFILE" --keep || true
         uv run coverage xml --rcfile="$RCFILE" -o coverage-combined.xml || true
         uv run coverage report --rcfile="$RCFILE" -m || true
