@@ -43,6 +43,7 @@ EXPECTED_PARAMETER_ORDER = {
     "is_valid_timestamp": ("column", "timestamp_format"),
     "is_valid_ipv4_address": ("column",),
     "is_valid_email": ("column",),
+    "is_valid_url": ("column",),
     "is_valid_national_id": ("column", "country"),
     "is_valid_uuid": ("column", "strict"),
     "is_valid_country_code": ("column", "code_format", "case_sensitive"),
@@ -126,6 +127,7 @@ EXPECTED_PARAMETER_ORDER = {
         "row_filter",
         "abs_tolerance",
         "rel_tolerance",
+        "raise_on_duplicate_keys",
     ),
     "is_data_fresh_per_time_window": (
         "column",

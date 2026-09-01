@@ -49,6 +49,25 @@ _EMAIL_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _EMAIL_QTEXT = r"[\x21\x23-\x5B\x5D-\x7E]"  # printable ASCII except '"' (0x22) and '\' (0x5C)
 _EMAIL_QPAIR = r"\\[\x09\x20-\x7E]"  # quoted-pair: '\' + VCHAR or WSP; valid only inside a quoted part
 
+# URL helpers (RFC 3986 absolute-URI grammar). Every repetition below is over alternatives whose first
+# characters are disjoint ('%' starts only pct-encoded, '/' only a new path segment), so matching is
+# deterministic and there is no catastrophic backtracking; ReDoS-safe.
+_URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*"  # RFC 3986 §3.1
+_URL_PCT_ENCODED = r"%[0-9A-Fa-f]{2}"  # RFC 3986 §2.1
+_URL_UNRESERVED_SUB_DELIMS = r"[A-Za-z0-9\-._~!$&'()*+,;=]"  # unreserved (§2.3) + sub-delims (§2.2)
+_URL_USERINFO = rf"(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED}|:)*"  # §3.2.1
+# reg-name (§3.2.2) also covers IPv4address, since digits and '.' are unreserved.
+_URL_HOST = rf"(?:\[[A-Fa-f0-9:.]+\]|(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED})*)"
+_URL_AUTHORITY = rf"(?:{_URL_USERINFO}@)?{_URL_HOST}(?::\d*)?"  # §3.2
+_URL_PCHAR = rf"(?:{_URL_UNRESERVED_SUB_DELIMS}|{_URL_PCT_ENCODED}|[:@])"  # §3.3
+_URL_PATH_ABEMPTY = rf"(?:/{_URL_PCHAR}*)*"  # §3.3; each iteration consumes at least the '/'
+# path-absolute ("/" with an optional non-empty first segment, e.g. "/" or "/a/b"), path-rootless
+# ("a/b"), or path-empty. The two alternatives keep the leading-slash case (which may be followed by
+# no segment) distinct from the rootless case (which requires a non-empty first segment); their first
+# characters are disjoint ('/' is not a pchar), so this stays unambiguous and ReDoS-safe.
+_URL_PATH_NO_AUTHORITY = rf"(?:/(?:{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?|{_URL_PCHAR}+{_URL_PATH_ABEMPTY})?"
+_URL_QUERY_OR_FRAGMENT = rf"(?:{_URL_PCHAR}|[/?])*"  # §3.4, §3.5
+
 # Curated aggregate functions for data quality checks
 # These are univariate (single-column) aggregate functions suitable for DQ monitoring
 # Maps function names to human-readable display names for error messages
@@ -123,6 +142,20 @@ class DQPattern(Enum):
     # Indian Permanent Account Number (PAN): three letters, a holder-type letter,
     # another letter, four digits, and a final letter.
     PAN_IN = r"\A[A-Z]{3}[ABCFGHJLPT][A-Z]\d{4}[A-Z]\z"
+
+    # RFC 3986 §4.3 absolute-URI: scheme ":" hier-part [ "?" query ] [ "#" fragment ]. A scheme is
+    # required, so relative references ("/path", "example.com") are rejected. Any syntactically valid
+    # scheme is accepted, which includes non-network schemes such as "javascript:" and "data:" - this
+    # validates URL *syntax*, not safety. Note that RFC 3986 permits an empty host ("file:///path"),
+    # so host presence is not enforced here.
+    # \A...\z anchors (not ^...$) so a trailing newline is rejected under Java regex - see IPV4_ADDRESS.
+    URL = (
+        rf"\A{_URL_SCHEME}:"
+        rf"(?://{_URL_AUTHORITY}{_URL_PATH_ABEMPTY}|{_URL_PATH_NO_AUTHORITY})"
+        rf"(?:\?{_URL_QUERY_OR_FRAGMENT})?"
+        rf"(?:#{_URL_QUERY_OR_FRAGMENT})?"
+        rf"\z"
+    )
 
     # Canonical UUID form per RFC 9562: 8-4-4-4-12 hex groups. UUID validates the shape
     # only, so RFC-defined Nil/Max sentinels and legacy variant GUIDs pass; UUID_STRICT
@@ -1171,6 +1204,40 @@ def is_valid_email(column: str | Column) -> Column:
         Column object for condition
     """
     return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
+
+
+@register_rule("row")
+def is_valid_url(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid URLs.
+
+    Validates against the RFC 3986 §4.3 *absolute-URI* grammar: *scheme ":" hier-part* with an
+    optional *"?" query* and *"#" fragment*. A scheme is required, so relative references such as
+    */path* or *example.com* are rejected. Sub-delimiters (*!$&'()*+,;=*) are permitted unencoded
+    inside a path, query, or fragment; any character outside the *unreserved* and *sub-delims* sets
+    (spaces, or gen-delimiters such as *[* and *]* outside their structural role) must be
+    percent-encoded to be accepted.
+
+    Any syntactically valid scheme is accepted, which keeps non-network URLs such as *s3://*,
+    *ftp://*, *mailto:* and *urn:* valid alongside *http://* and *https://*. Two consequences are
+    worth noting:
+
+    * This validates URL *syntax*, not safety or reachability. Script-bearing schemes
+      (*javascript:alert(1)*) and inline payloads (*data:text/plain,hello*) are syntactically valid
+      URLs and pass. Do not rely on this check to sanitize untrusted input before rendering or
+      fetching it; gate the scheme explicitly for that, for example with *is_in_list* on an extracted
+      scheme column or a *sql_expression* check.
+    * RFC 3986 permits an empty host, so *file:///path* passes. Host presence is not enforced.
+
+    Validation is purely syntactic: it does not verify that the host resolves or that the resource
+    exists. Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    return _matches_pattern(column, DQPattern.URL)
 
 
 @register_rule("row")
@@ -2903,6 +2970,7 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    raise_on_duplicate_keys: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -2911,6 +2979,17 @@ def compare_datasets(
     Only columns that are common across both datasets will be compared. Mismatched columns are ignored.
     Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
+
+    By default, duplicate matching-key groups are paired lazily using a per-group row number.
+    Rows are ordered by the string representation of their compared values, with nulls first.
+    Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
+    Cartesian fan-out but does not attempt to minimize the number of reported column changes.
+
+    This lazy pairing adds two *row_number* window computations (one per dataset) that sort both
+    datasets on the compared columns, which can be costly on large inputs. When the matching keys
+    are known to be unique, set *raise_on_duplicate_keys* to True to skip the windows and pair rows
+    with a single join instead; this is the more efficient option on large datasets, at the cost of
+    an eager uniqueness check that raises if duplicates are present.
 
     The log containing detailed differences is written to the message field of the check result as a JSON string.
 
@@ -2947,6 +3026,8 @@ def compare_datasets(
         the list of columns used to determine row matches; it only controls which columns are
         skipped during the column value comparison.
       null_safe_row_matching: If True, treats nulls as equal when matching rows.
+        If False, rows containing nulls in a matching column cannot match and are excluded
+        from matching-key uniqueness validation.
       null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
@@ -2954,6 +3035,13 @@ def compare_datasets(
         For example, abs(a - b) <= tolerance. With abs_tolerance=0.01, values 2.001 and 2.0099 are equal (diff=0.0089), but 2.001 and 2.02 are not (diff=0.019).
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
         For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
+      raise_on_duplicate_keys: Controls duplicate-key handling, which is also a performance trade-off.
+        If True, require unique matching keys in both datasets: uniqueness is validated with a lightweight
+        aggregation (an eager Spark job) and rows are then paired with a single join, avoiding the per-group
+        row-number windows. This is the more efficient option when keys are known to be unique, but raises
+        *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
+        by compared values using per-group row-number windows; this is robust to duplicates but sorts both
+        datasets on the compared columns.
 
 
     Returns:
@@ -2968,6 +3056,9 @@ def compare_datasets(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *abs_tolerance* or *rel_tolerance* is negative.
+            - if either DataFrame is streaming; dataset comparison requires bounded inputs.
+            - if *raise_on_duplicate_keys* is True and the matching columns do not uniquely identify
+              rows in either dataset.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -2994,6 +3085,12 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
+        if df.isStreaming or ref_df.isStreaming:
+            raise InvalidParameterError(
+                "compare_datasets requires bounded batch DataFrames and does not support streaming inputs. "
+                "Compare bounded snapshots, or run the comparison inside foreachBatch on each micro-batch."
+            )
+
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {
             field.name
@@ -3017,16 +3114,50 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
+        # A per-group sequence number is appended to the join keys so that _add_row_diffs can tell a
+        # present row whose matching-key value is null (matched via null-safe equality) apart from a
+        # missing side of the join. Without it, both look "null" and the row is wrongly flagged as both
+        # missing and extra. Both the lazy and eager paths need this signal.
+        row_number_col = f"__match_row_number_{unique_id}"
+        if not raise_on_duplicate_keys:
+            order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+            df = df.withColumn(
+                row_number_col,
+                F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
+            )
+            ref_df = ref_df.withColumn(
+                row_number_col,
+                F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
+            )
+        else:
+            match_count_col = f"__match_count_{unique_id}"
+            for dataset_name, dataset, matching_columns in (
+                ("source", df, pk_column_names),
+                ("reference", ref_df, ref_pk_column_names),
+            ):
+                matchable_rows = dataset if null_safe_row_matching else dataset.dropna(subset=matching_columns)
+                duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
+                if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
+                    raise InvalidParameterError(
+                        f"The {dataset_name} dataset contains duplicate matching keys for columns: "
+                        f"{', '.join(matching_columns)}."
+                    )
+            # Matching keys are unique here, so every group's sequence number is 1; a constant non-null
+            # marker gives _add_row_diffs the same present-vs-missing signal without a window shuffle.
+            df = df.withColumn(row_number_col, F.lit(1))
+            ref_df = ref_df.withColumn(row_number_col, F.lit(1))
+
+        join_columns = [*pk_column_names, row_number_col]
+        ref_join_columns = [*ref_pk_column_names, row_number_col]
+
         # apply filter before aliasing to avoid ambiguity
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        results = _match_rows(
-            df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
-        )
-        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
+        results = _add_row_diffs(results, join_columns, ref_join_columns, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
         )
@@ -3953,15 +4084,21 @@ def _add_row_diffs(
     """
     Adds flags to the DataFrame indicating missing or extra rows during comparison.
 
-    A row is considered missing if it exists in the reference DataFrame but not in the source DataFrame.
-    This is determined by checking if all primary key columns in the source DataFrame (df) are null.
-    A row is extra if it exists in the source DataFrame but not in the reference DataFrame.
-    This is determined by checking if all primary key columns in the reference DataFrame (ref_df) are null.
+    A row is missing if it exists in the reference DataFrame but not in the source DataFrame, and extra if it
+    exists in the source DataFrame but not in the reference DataFrame. This is determined by checking whether
+    all join-key columns on the respective side are null (df for missing, ref_df for extra), since an
+    unmatched side of the outer join is null-filled.
+
+    Important: *pk_column_names* and *ref_pk_column_names* are the full join-key lists, not just the real
+    matching keys. Callers must append a non-null sentinel column (e.g. a per-group row number) to both
+    lists. The sentinel is what distinguishes a present row whose matching-key value is legitimately null
+    (matched via null-safe equality) from a null-filled absent join side; without it, such a matched row is
+    wrongly flagged as both missing and extra. See the caller in *compare_datasets*.
     """
     row_missing_condition = F.lit(True)
     row_extra_condition = F.lit(True)
 
-    # check for existence against all pk columns
+    # a side is absent only if every join-key column on that side (including the non-null sentinel) is null
     for df_col_name, ref_col_name in zip(pk_column_names, ref_pk_column_names):
         row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
         row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
