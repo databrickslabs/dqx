@@ -1,0 +1,92 @@
+---
+sidebar_position: 1
+title: "Permissions & Entitlements"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Permissions & Entitlements
+
+Two different ideas control what you can do in DQX Studio, and it helps to keep
+them apart:
+
+- **Entitlements** are your **role across the whole app** — whether you can view
+  rules, write them, approve them, or change settings.
+- **Permissions** are your **access to one specific object** — a single rule,
+  monitored table, or collection.
+
+Your entitlement follows you everywhere; permissions apply object by object.
+
+## Entitlements (your role)
+
+Every person has one of four roles. **Author and Approver are complementary, not
+ranked** — an author writes and runs rules, an approver signs off on them, and
+the two are deliberately kept apart so that
+[four-eyes review](/docs/studio/governance/approval-workflow) works. Only an
+**Admin** can do everything.
+
+| Task | Viewer | Rule Author | Rule Approver | Admin |
+|---|:---:|:---:|:---:|:---:|
+| View rules, tables, collections, and results | ✅ | ✅ | ✅ | ✅ |
+| Create rules and edit your own drafts | | ✅ | | ✅ |
+| Submit drafts for approval | | ✅ | | ✅ |
+| Run checks (profiling & validation) | | ✅ | | ✅ |
+| Approve or reject anyone's drafts | | | ✅ | ✅ |
+| Change admin settings (entitlements, retention, tags) | | | | ✅ |
+
+You don't get a role by name. An admin maps your **Databricks workspace groups**
+to DQX Studio roles in **Admin Settings → Entitlements**; if your groups map you
+to more than one role, the **highest wins**. Your **Profile** page (top-right
+menu) shows your role and which groups granted it.
+
+<ThemedImage
+  alt="Admin Settings Entitlements tab, mapping workspace groups to DQX Studio roles"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_entitlements_light.png'),
+    dark: useBaseUrl('/img/studio/settings_entitlements_dark.png'),
+  }}
+/>
+
+## Permissions (per-object access)
+
+Every rule, monitored table, and collection has its own **Permissions tab**
+showing who the **Steward** is (the accountable owner for that object's data
+quality) and a list of who has access. You grant each **principal** — a user or a
+workspace group — one or more privileges on **that object only**:
+
+- **View** (SELECT) — see the object and its results.
+- **Modify** — edit the object's configuration and logic, and delete it.
+- **Apply** — attach the object to others (apply a rule to a table, add a table
+  to a collection).
+- **Execute** — run profiling and validation on this **table or collection**.
+  (Execute doesn't apply to rules.)
+- **ALL PRIVILEGES** — the full set, including managing the object's permissions.
+
+Anything you can act on you can also see, so Modify, Apply, or Execute include
+View automatically.
+
+<Admonition type="note" title="Running needs both a role and Execute">
+Triggering a run takes the **Rule Author** or **Admin** role *and* the
+**Execute** permission on the specific table or collection. Admins and approvers
+reach every object regardless of its permission list, so governance can never be
+locked out.
+</Admonition>
+
+### Defaults and cascade
+
+When you create an object, nothing is blocked out of the box: **you become the
+owner** with ALL PRIVILEGES, and **all workspace users** get View, Apply, and
+Execute (Modify is held back). These are real grant rows, so you can narrow them
+to specific groups or remove them whenever you like.
+
+By default permissions **cascade** through the hierarchy — granting access on a
+collection also grants it on the collection's tables and their applied rules.
+Admins control whether cascade is on by default in **Admin Settings →
+Entitlements**.
+
+<Admonition type="note" title="Changes are audited">
+Every change to who has which role, and to the permissions on an object, is
+recorded — who changed it, when, and the before-and-after values.
+</Admonition>

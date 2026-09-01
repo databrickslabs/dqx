@@ -5,7 +5,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { useCurrentUserSuspense } from "@/lib/api";
 import selector from "@/lib/selector";
-import LanguageSelector from "@/components/layout/LanguageSelector";
+import { FadeIn } from "@/components/anim/FadeIn";
 import {
   Card,
   CardContent,
@@ -27,7 +27,6 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
-  Settings2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_sidebar/profile")({
@@ -56,6 +55,7 @@ function ProfileContent() {
   };
 
   return (
+    <FadeIn>
     <div className="space-y-4">
       <PageBreadcrumb page={t("profile.breadcrumb")} />
       {/* Header Card */}
@@ -101,20 +101,6 @@ function ProfileContent() {
               )}
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Preferences */}
-      <Card className="border-primary/20">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Settings2 className="h-5 w-5" />
-            {t("profile.preferencesTitle")}
-          </CardTitle>
-          <CardDescription>{t("profile.preferencesDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LanguageSelector />
         </CardContent>
       </Card>
 
@@ -287,6 +273,7 @@ function ProfileContent() {
         )}
       </div>
     </div>
+    </FadeIn>
   );
 }
 

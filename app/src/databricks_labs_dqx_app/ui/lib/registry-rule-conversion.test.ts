@@ -1,0 +1,580 @@
+import { describe, expect, test } from "bun:test";
+import {
+  computeMatchedTagsForSlot,
+  deriveSlotsAndParameters,
+  fnSupportsNegate,
+  nativeArguments,
+  nativeArgumentsForTest,
+  slotTagsFromUserMetadata,
+  userMetadataWithSlotTags,
+} from "./registry-rule-conversion";
+import { familyForSparkType } from "./slot-mapping";
+import type { CheckFunctionDef, RuleSlot } from "./api";
+
+// Unit tests for the registry-rule <-> DQX-check conversion helpers touched by
+// P19-D items 10 (typed slot families + ARRAY) and 11 (negate -> polarity).
+// Run via `bun test` (see `make app-test-ui`).
+
+const fn = (over: Partial<CheckFunctionDef> = {}): CheckFunctionDef =>
+  ({ name: "x", rule_type: "row", category: "Other", doc: "", params: [], ...over }) as CheckFunctionDef;
+
+const param = (name: string, kind: string, extra: Record<string, unknown> = {}) =>
+  ({ name, kind, required: false, ...extra }) as CheckFunctionDef["params"][number];
+
+describe("fnSupportsNegate", () => {
+  test("true when the function declares a negate argument", () => {
+    expect(fnSupportsNegate(fn({ params: [param("column", "column"), param("negate", "boolean")] }))).toBe(true);
+  });
+  test("false when there is no negate argument", () => {
+    expect(fnSupportsNegate(fn({ params: [param("column", "column")] }))).toBe(false);
+  });
+  test("false for undefined", () => {
+    expect(fnSupportsNegate(undefined)).toBe(false);
+  });
+});
+
+describe("deriveSlotsAndParameters — item 10 family seeding + item 11 negate skip", () => {
+  test("seeds the column slot family from the param's implied family", () => {
+    const { slots } = deriveSlotsAndParameters(
+      fn({ params: [param("column", "column", { family: "temporal" })] }),
+    );
+    expect(slots).toHaveLength(1);
+    expect(slots[0]?.family).toBe("temporal");
+  });
+
+  test("falls back to any when the param carries no family", () => {
+    const { slots } = deriveSlotsAndParameters(fn({ params: [param("column", "column")] }));
+    expect(slots[0]?.family).toBe("any");
+  });
+
+  test("array-column checks advertise family any (array family retired)", () => {
+    const { slots } = deriveSlotsAndParameters(
+      fn({ params: [param("column", "column", { family: "any" })] }),
+    );
+    expect(slots[0]?.family).toBe("any");
+  });
+
+  test("drops negate from the derived parameter list (surfaced as polarity)", () => {
+    const { parameters } = deriveSlotsAndParameters(
+      fn({ params: [param("column", "column"), param("regex", "string"), param("negate", "boolean")] }),
+    );
+    expect(parameters.map((p) => p.name)).toEqual(["regex"]);
+  });
+
+  test("orders ref_table before ref_columns (a owner picks the table first)", () => {
+    // foreign_key's signature declares ref_columns before ref_table, which
+    // reads backwards in the editor — you can't choose reference columns
+    // before the table they live on.
+    const { parameters } = deriveSlotsAndParameters(
+      fn({
+        params: [
+          param("column", "column"),
+          param("ref_columns", "ref_columns"),
+          param("ref_table", "ref_table"),
+        ],
+      }),
+    );
+    expect(parameters.map((p) => p.name)).toEqual(["ref_table", "ref_columns"]);
+  });
+});
+
+describe("familyForSparkType — ARRAY columns classify as any", () => {
+  test("classifies array column types as any (array family retired)", () => {
+    expect(familyForSparkType("array<string>")).toBe("any");
+    expect(familyForSparkType("ARRAY<INT>")).toBe("any");
+  });
+  test("still classifies the primitive families", () => {
+    expect(familyForSparkType("bigint")).toBe("numeric");
+    expect(familyForSparkType("string")).toBe("text");
+    expect(familyForSparkType("timestamp")).toBe("temporal");
+    expect(familyForSparkType("boolean")).toBe("boolean");
+    expect(familyForSparkType("struct<a:int>")).toBe("any");
+  });
+});
+
+// ── Admin-editable severity -> criticality mapping (DQ Score Task 2) ────────
+// `resolveCriticality` prefers the `value_criticality` map stored on the
+// reserved `severity` label definition, mirroring the backend's
+// `registry_models.resolve_criticality` resolution order: stored entry →
+// built-in default → "warn".
+
+import {
+  buildDqxCheckJson,
+  parseDqxCheckJson,
+  resolveCriticality,
+  severityValueCriticality,
+} from "./registry-rule-conversion";
+import type { RegistryRuleOut, RuleDefinition } from "./api";
+
+describe("resolveCriticality — stored mapping precedence", () => {
+  test("uses the stored mapping over the built-in default", () => {
+    expect(resolveCriticality("Critical", { Critical: "warn" })).toBe("warn");
+    expect(resolveCriticality("Low", { Low: "error" })).toBe("error");
+  });
+
+  test("falls back to the built-in default for unmapped severities", () => {
+    expect(resolveCriticality("High", { Critical: "warn" })).toBe("error");
+    expect(resolveCriticality("Low")).toBe("warn");
+    expect(resolveCriticality("Critical")).toBe("error");
+  });
+
+  test("ignores stored values that are neither warn nor error", () => {
+    expect(resolveCriticality("High", { High: "fatal" })).toBe("error");
+  });
+
+  test("defaults to warn for missing or unknown severities", () => {
+    expect(resolveCriticality(undefined)).toBe("warn");
+    expect(resolveCriticality("Custom")).toBe("warn");
+    expect(resolveCriticality("Custom", { Custom: "error" })).toBe("error");
+  });
+});
+
+describe("severityValueCriticality — map extraction from label definitions", () => {
+  test("returns the severity definition's value_criticality map", () => {
+    expect(
+      severityValueCriticality([
+        { key: "dimension", value_criticality: null },
+        { key: "severity", value_criticality: { Critical: "warn" } },
+      ]),
+    ).toEqual({ Critical: "warn" });
+  });
+
+  test("returns undefined when absent", () => {
+    expect(severityValueCriticality(undefined)).toBeUndefined();
+    expect(severityValueCriticality([])).toBeUndefined();
+    expect(severityValueCriticality([{ key: "severity" }])).toBeUndefined();
+    expect(severityValueCriticality([{ key: "severity", value_criticality: null }])).toBeUndefined();
+  });
+});
+
+describe("buildDqxCheckJson — criticality honours the admin mapping", () => {
+  const rule = (severity: string): RegistryRuleOut =>
+    ({
+      mode: "dqx_native",
+      polarity: null,
+      definition: {
+        body: { function: "is_not_null", arguments: { column: "{{column_1}}" } },
+        slots: [],
+        parameters: [],
+      },
+      user_metadata: { severity },
+    }) as unknown as RegistryRuleOut;
+
+  test("built-in default without a stored mapping", () => {
+    expect(buildDqxCheckJson(rule("Critical")).criticality).toBe("error");
+  });
+
+  test("stored mapping wins when provided", () => {
+    expect(buildDqxCheckJson(rule("Critical"), { Critical: "warn" }).criticality).toBe("warn");
+  });
+});
+
+// The rule "View changes" diff (bug-bash-v4 item 43) materializes BOTH sides
+// through buildDqxCheckJson so every field renders like the table diff. The
+// previous side feeds a FROZEN version snapshot, which carries its own frozen
+// `mode` and must render as-of-that-version.
+describe("buildDqxCheckJson — materializes a full check for a frozen version snapshot", () => {
+  test("renders every field the diff needs (function/arguments/criticality/name/message/tags)", () => {
+    const version = {
+      mode: "dqx_native" as const,
+      polarity: null,
+      definition: {
+        body: { function: "is_not_null", arguments: { column: "{{column_1}}" } },
+        slots: [],
+        parameters: [],
+        error_message: "col must not be null",
+      },
+      user_metadata: { severity: "High", name: "id_not_null", team: "data-eng" },
+    };
+    const check = buildDqxCheckJson(version) as Record<string, unknown>;
+    expect(check.criticality).toBe("error");
+    expect(check.name).toBe("id_not_null");
+    expect(check.message_expr).toBe("col must not be null");
+    expect(check.user_metadata).toEqual({ severity: "High", name: "id_not_null", team: "data-eng" });
+    expect(check.check).toEqual({ function: "is_not_null", arguments: { column: "{{column_1}}" } });
+  });
+
+  test("uses the frozen mode over the live fallback for a versioned snapshot", () => {
+    const sqlVersion = {
+      mode: "sql" as const,
+      polarity: "fail" as const,
+      definition: { body: { predicate: "amount > 0" }, slots: [], parameters: [] },
+      user_metadata: {},
+    };
+    // fallback is dqx_native, but the frozen mode (sql) must win.
+    const check = buildDqxCheckJson(sqlVersion, undefined, "dqx_native").check as Record<string, unknown>;
+    expect(check.function).toBe("sql_expression");
+    expect((check.arguments as Record<string, unknown>).expression).toBe("amount > 0");
+    expect((check.arguments as Record<string, unknown>).negate).toBe(true);
+  });
+
+  test("falls back to the caller-supplied live mode for a legacy null-mode snapshot", () => {
+    const legacy = {
+      mode: null,
+      polarity: null,
+      definition: { body: { function: "is_not_null", arguments: { column: "{{c}}" } }, slots: [], parameters: [] },
+      user_metadata: {},
+    };
+    const check = buildDqxCheckJson(legacy, undefined, "dqx_native").check as Record<string, unknown>;
+    expect(check.function).toBe("is_not_null");
+  });
+});
+
+// ── parseDqxCheckJson: slot-name round-trip (item 32) + severity import (56) ──
+
+const identity = (key: string) => key;
+const emptyDefinition: RuleDefinition = { body: {}, slots: [], parameters: [] } as unknown as RuleDefinition;
+
+const parse = (
+  check: Record<string, unknown>,
+  checkFunctions: CheckFunctionDef[],
+  current: Record<string, unknown> | null = null,
+) => parseDqxCheckJson(JSON.stringify(check), emptyDefinition, current, checkFunctions, identity);
+
+describe("parseDqxCheckJson — reusable slot names survive the round-trip (item 32)", () => {
+  const isNotNull = fn({ name: "is_not_null", params: [param("column", "column")] });
+  const foreignKey = fn({ name: "foreign_key", params: [param("columns", "columns")] });
+
+  test("adopts the author's {{name}} token as the slot name", () => {
+    const result = parse(
+      { check: { function: "is_not_null", arguments: { column: "{{customer_id}}" } } },
+      [isNotNull],
+    );
+    expect(result.mode).toBe("dqx_native");
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["customer_id"]);
+    const args = (result.definition.body as { arguments: Record<string, unknown> }).arguments;
+    expect(args.column).toBe("{{customer_id}}");
+  });
+
+  test("expands a list argument into one slot per {{token}}", () => {
+    const result = parse(
+      { check: { function: "foreign_key", arguments: { columns: ["{{order_id}}", "{{line_no}}"] } } },
+      [foreignKey],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["order_id", "line_no"]);
+    const args = (result.definition.body as { arguments: Record<string, unknown> }).arguments;
+    expect(args.columns).toEqual(["{{order_id}}", "{{line_no}}"]);
+  });
+
+  test("promotes a literal column name to a slot so ODCS imports can auto-map", () => {
+    const result = parse(
+      { check: { function: "is_not_null", arguments: { column: "transactionID" } } },
+      [isNotNull],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["transactionID"]);
+    const args = (result.definition.body as { arguments: Record<string, unknown> }).arguments;
+    expect(args.column).toBe("{{transactionID}}");
+  });
+
+  test("promotes a list of literal column names to slots", () => {
+    const result = parse(
+      { check: { function: "foreign_key", arguments: { columns: ["order_id", "line_no"] } } },
+      [foreignKey],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["order_id", "line_no"]);
+    const args = (result.definition.body as { arguments: Record<string, unknown> }).arguments;
+    expect(args.columns).toEqual(["{{order_id}}", "{{line_no}}"]);
+  });
+
+  test("falls back to the canonical column_N name when the column arg is missing", () => {
+    const result = parse({ check: { function: "is_not_null", arguments: {} } }, [isNotNull]);
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["column_1"]);
+  });
+
+  test("maps a top-level imported filter into the rule definition", () => {
+    const result = parse(
+      {
+        filter: " region = 'EU' ",
+        check: { function: "is_not_null", arguments: { column: "customer_id" } },
+      },
+      [isNotNull],
+    );
+    expect(result.definition.filter).toBe("region = 'EU'");
+  });
+});
+
+describe("parseDqxCheckJson — severity is authoritative on import (item 56)", () => {
+  const isNotNull = fn({ name: "is_not_null", params: [param("column", "column")] });
+  const severityOf = (result: { userMetadata: Record<string, string> }) => result.userMetadata.severity;
+
+  test("back-fills a representative severity from a criticality-only JSON", () => {
+    const err = parse(
+      { criticality: "error", check: { function: "is_not_null", arguments: { column: "{{c}}" } } },
+      [isNotNull],
+    );
+    expect(severityOf(err)).toBe("High");
+    const warn = parse(
+      { criticality: "warn", check: { function: "is_not_null", arguments: { column: "{{c}}" } } },
+      [isNotNull],
+    );
+    expect(severityOf(warn)).toBe("Medium");
+  });
+
+  test("user_metadata.severity wins over a conflicting criticality", () => {
+    const result = parse(
+      {
+        criticality: "warn",
+        check: { function: "is_not_null", arguments: { column: "{{c}}" } },
+        user_metadata: { severity: "Critical" },
+      },
+      [isNotNull],
+    );
+    expect(severityOf(result)).toBe("Critical");
+  });
+
+  test("leaves severity unset when neither criticality nor severity is present", () => {
+    const result = parse(
+      { check: { function: "is_not_null", arguments: { column: "{{c}}" } } },
+      [isNotNull],
+    );
+    expect(severityOf(result)).toBeUndefined();
+  });
+});
+
+describe("parseDqxCheckJson — sql_query imports without the single-table picker list", () => {
+  test("accepts sql_query even when omitted from checkFunctions (cross-table import)", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_query",
+          arguments: {
+            query: "SELECT f.city FROM samples.bakehouse.sales_franchises f HAVING COUNT(*) = 0",
+          },
+        },
+        user_metadata: { name: "cities_with_zero_reviews" },
+      },
+      [], // sql_query is hidden from listCheckFunctions — must still parse
+    );
+    expect(result.mode).toBe("sql");
+    expect((result.definition.body as { sql_query: string }).sql_query).toContain("sales_franchises");
+    expect(result.userMetadata.name).toBe("cities_with_zero_reviews");
+  });
+});
+
+describe("parseDqxCheckJson — imported SQL rules recover their templated column slots", () => {
+  // The materializer only substitutes a {{token}} that has a declared slot, so a
+  // sql_expression imported with none would render its placeholders literally.
+  test("declares a slot per {{token}} in an imported sql_expression", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_expression",
+          arguments: { negate: false, expression: "{{order_amount}} > 0" },
+        },
+        user_metadata: { name: "Order amount must be positive" },
+      },
+      [],
+    );
+    expect(result.mode).toBe("sql");
+    expect(result.definition.slots).toEqual([
+      { name: "order_amount", family: "any", position: 0, cardinality: "one", arg_key: null },
+    ]);
+  });
+
+  test("declares one slot per distinct token, in first-appearance order", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_expression",
+          arguments: { expression: "{{amount}} <= {{credit_limit}} AND {{amount}} > 0" },
+        },
+      },
+      [],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["amount", "credit_limit"]);
+    expect(result.definition.slots?.map((s) => s.position)).toEqual([0, 1]);
+  });
+
+  test("skips {{input_view}}, which DQX resolves itself", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_query",
+          arguments: {
+            query: "SELECT {{customer_id}} FROM {{input_view}} GROUP BY {{customer_id}}",
+            merge_columns: ["{{customer_id}}"],
+          },
+        },
+      },
+      [],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["customer_id"]);
+  });
+
+  test("keeps already-declared slots (and their families) when editing in place", () => {
+    const declared: RuleDefinition = {
+      body: {},
+      slots: [{ name: "amount", family: "numeric", position: 0, cardinality: "one", arg_key: null }],
+      parameters: [],
+    } as unknown as RuleDefinition;
+
+    const result = parseDqxCheckJson(
+      JSON.stringify({
+        criticality: "error",
+        check: { function: "sql_expression", arguments: { expression: "{{amount}} > {{floor}}" } },
+      }),
+      declared,
+      null,
+      [],
+      identity,
+    );
+
+    // The declared slot keeps its numeric family; only the new token is added.
+    expect(result.definition.slots).toEqual([
+      { name: "amount", family: "numeric", position: 0, cardinality: "one", arg_key: null },
+      { name: "floor", family: "any", position: 1, cardinality: "one", arg_key: null },
+    ]);
+  });
+});
+
+describe("slot_tags helpers (apply-on-tag) — mirror backend get_slot_tags/set_slot_tags", () => {
+  test("round-trips a slot -> tags map through user_metadata", () => {
+    const md = userMetadataWithSlotTags({ name: "x" }, { c1: ["class.pii"] });
+    expect(md.slot_tags).toEqual({ c1: ["class.pii"] });
+    expect(md.name).toBe("x");
+    expect(slotTagsFromUserMetadata(md)).toEqual({ c1: ["class.pii"] });
+  });
+
+  test("returns {} when slot_tags is absent", () => {
+    expect(slotTagsFromUserMetadata({})).toEqual({});
+    expect(slotTagsFromUserMetadata(undefined)).toEqual({});
+  });
+
+  test("drops slots with empty tag lists on write", () => {
+    const md = userMetadataWithSlotTags({}, { c1: ["class.pii"], c2: [] });
+    expect(md.slot_tags).toEqual({ c1: ["class.pii"] });
+  });
+
+  test("removes the slot_tags key entirely when the map is empty", () => {
+    const md = userMetadataWithSlotTags({ slot_tags: { c1: ["class.pii"] } }, { c1: [] });
+    expect("slot_tags" in md).toBe(false);
+  });
+
+  test("ignores non-array slot values and non-string tags on read", () => {
+    expect(
+      slotTagsFromUserMetadata({
+        slot_tags: { c1: "class.pii", c2: ["class.ok", 3, "", null], c3: ["class.a"] },
+      } as Record<string, unknown>),
+    ).toEqual({ c2: ["class.ok"], c3: ["class.a"] });
+  });
+
+  test("returns {} when slot_tags is a non-object (array / string)", () => {
+    expect(slotTagsFromUserMetadata({ slot_tags: ["x"] } as Record<string, unknown>)).toEqual({});
+    expect(slotTagsFromUserMetadata({ slot_tags: "nope" } as Record<string, unknown>)).toEqual({});
+  });
+
+  test("does not mutate the input user_metadata", () => {
+    const md = { name: "x" };
+    userMetadataWithSlotTags(md, { c1: ["class.pii"] });
+    expect(md).toEqual({ name: "x" });
+  });
+});
+
+describe("computeMatchedTagsForSlot — governed tag intersection for demo chips", () => {
+  test("returns intersection of slot suggestions and column applied tags", () => {
+    const slotTags = { country: ["class.location", "class.geo"] };
+    const columnTags = { country_code: ["class.location", "class.pii"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([
+      "class.location",
+    ]);
+  });
+
+  test("returns [] when slot has no suggested tags", () => {
+    const slotTags: Record<string, string[]> = {};
+    const columnTags = { country_code: ["class.location"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([]);
+  });
+
+  test("returns [] when column has no applied tags", () => {
+    const slotTags = { country: ["class.location"] };
+    const columnTags: Record<string, string[]> = {};
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([]);
+  });
+
+  test("returns [] when no overlap exists", () => {
+    const slotTags = { country: ["class.location"] };
+    const columnTags = { country_code: ["class.pii"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([]);
+  });
+
+  test("returns all matching tags when there are multiple", () => {
+    const slotTags = { code: ["class.credit_card", "class.pii"] };
+    const columnTags = { card_last4: ["class.credit_card", "class.pii", "class.other"] };
+    expect(
+      computeMatchedTagsForSlot(slotTags, columnTags, "code", "card_last4"),
+    ).toEqual(["class.credit_card", "class.pii"]);
+  });
+
+  test("preserves order from slot suggestions (not from column tags)", () => {
+    const slotTags = { slot: ["class.z", "class.a"] };
+    const columnTags = { col: ["class.a", "class.z"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "slot", "col")).toEqual([
+      "class.z",
+      "class.a",
+    ]);
+  });
+});
+
+describe("nativeArgumentsForTest — merges scalar parameters for rule test", () => {
+  const slot = (name: string, over: Partial<RuleSlot> = {}): RuleSlot =>
+    ({ name, family: "any", position: 0, cardinality: "one", ...over }) as RuleSlot;
+  const isInList = {
+    name: "is_in_list",
+    params: [
+      { name: "column", kind: "column", required: true },
+      { name: "allowed", kind: "list", required: true },
+      { name: "case_sensitive", kind: "boolean", required: false },
+    ],
+  } as const;
+
+  test("includes parsed list parameters alongside column placeholders", () => {
+    const slots = [slot("column_1", { arg_key: "column", position: 0 })];
+    expect(
+      nativeArgumentsForTest(slots, isInList as never, [
+        { name: "allowed", type: "list" },
+        { name: "case_sensitive", type: "boolean" },
+      ], { allowed: "1,2,3", case_sensitive: "false" }),
+    ).toEqual({
+      column: "{{column_1}}",
+      allowed: ["1", "2", "3"],
+      case_sensitive: false,
+    });
+  });
+});
+
+describe("nativeArguments — CRIT-1: single-column fn extra slots are filter-only", () => {
+  const slot = (name: string, over: Partial<RuleSlot> = {}): RuleSlot =>
+    ({ name, family: "any", position: 0, cardinality: "one", ...over }) as RuleSlot;
+
+  test("single-column fn: the sole signature slot binds the function argument", () => {
+    const isNotNull = fn({ params: [param("column", "column")] });
+    const slots: RuleSlot[] = [slot("column_1", { arg_key: "column", position: 0 })];
+    expect(nativeArguments(slots, isNotNull)).toEqual({ column: "{{column_1}}" });
+  });
+
+  test("single-column fn: an added extra slot (arg_key undefined) does NOT leak a scalar argument", () => {
+    // The "+ Add column" path on a single-column fn appends a slot with no
+    // arg_key — it exists only for the advanced filter. It must NOT become its
+    // own top-level argument key (e.g. column_2=...) or the runner throws a
+    // TypeError (is_not_null(column=..., column_2=...)).
+    const isNotNull = fn({ params: [param("column", "column")] });
+    const slots: RuleSlot[] = [
+      slot("column_1", { arg_key: "column", position: 0 }),
+      slot("column_2", { arg_key: undefined, position: 1 }),
+    ];
+    expect(nativeArguments(slots, isNotNull)).toEqual({ column: "{{column_1}}" });
+  });
+
+  test("list-arg fn: multiple slots sharing the list arg_key still render as a list", () => {
+    const foreignKey = fn({ params: [param("columns", "columns")] });
+    const slots: RuleSlot[] = [
+      slot("column_1", { arg_key: "columns", position: 0 }),
+      slot("column_2", { arg_key: "columns", position: 1 }),
+    ];
+    expect(nativeArguments(slots, foreignKey)).toEqual({ columns: ["{{column_1}}", "{{column_2}}"] });
+  });
+});

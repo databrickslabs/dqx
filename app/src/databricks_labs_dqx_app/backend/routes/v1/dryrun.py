@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -9,7 +7,7 @@ from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -25,7 +23,6 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_user_catalog_names,
     get_view_service,
     require_role,
-    require_runner,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -36,11 +33,17 @@ from databricks_labs_dqx_app.backend.models import (
     DryRunIn,
     DryRunResultsOut,
     DryRunSubmitOut,
+    RunFailureOut,
     RunStatusOut,
     ValidationRunSummaryOut,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
-from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
+from databricks_labs_dqx_app.backend.run_status_manager import (
+    get_run_metadata,
+    has_terminal_result,
+    reconcile_running_rows,
+    update_run_status,
+)
 from databricks_labs_dqx_app.backend.services.review_status_service import ReviewStatusService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
@@ -82,6 +85,20 @@ async def list_validation_runs(
     review_svc: Annotated[ReviewStatusService, Depends(get_review_status_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    summary: Annotated[
+        bool,
+        Query(
+            description=(
+                "When true, omit the heavy ``error_message`` field from each row "
+                "(set to null). This reduces the response payload from ~117 kB to "
+                "~6 kB and is intended for callers that only need "
+                "run_id/status/source_table_fqn (e.g. the app-wide toast watcher "
+                "and the table-detail spinner). Full-payload callers (Runs History) "
+                "should omit this param or pass summary=false."
+            ),
+        ),
+    ] = False,
     review_status: Annotated[
         list[str] | None,
         Query(
@@ -99,6 +116,16 @@ async def list_validation_runs(
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
         rows = job_svc.list_dryrun_rows(table)
+
+        # Reconcile stale RUNNING placeholders whose task died before writing a
+        # terminal result (e.g. a runner crash or a PERMISSION_DENIED that also
+        # blocked its error-result write). Without this the run is stuck on
+        # RUNNING forever and never surfaces as FAILED in Runs History. Mutates
+        # ``rows`` in place; best-effort so listing never breaks.
+        try:
+            reconcile_running_rows(sql, app_conf, _DRYRUN_TABLE, rows, job_svc.get_run_status)
+        except Exception as exc:
+            logger.warning("Failed to reconcile RUNNING validation runs: %s", exc)
 
         # First-pass filter on UC visibility — we don't want to bulk-fetch
         # review statuses for runs the caller can't see anyway. Build the
@@ -166,15 +193,6 @@ async def list_validation_runs(
                 if not review_value or review_value not in review_filter:
                     continue
 
-            checks: list[dict[str, Any]] = []
-            raw = row.get("checks_json")
-            if raw:
-                try:
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, list):
-                        checks = parsed
-                except (json.JSONDecodeError, TypeError):
-                    pass
             results.append(
                 ValidationRunSummaryOut(
                     run_id=run_id,
@@ -193,8 +211,9 @@ async def list_validation_runs(
                     warning_rows=int(v) if (v := row.get("warning_rows")) is not None else None,
                     created_at=row.get("created_at"),
                     run_type=row.get("run_type"),
-                    error_message=row.get("error_message"),
-                    checks=checks,
+                    error_message=None if summary else row.get("error_message"),
+                    duration_seconds=float(v) if (v := row.get("duration_seconds")) is not None else None,
+                    job_run_id=int(v) if (v := row.get("job_run_id")) else None,
                     review_status=review_value,
                     review_status_is_default=bool(review.is_default) if review else False,
                     review_status_updated_by=review.updated_by if review else None,
@@ -207,15 +226,71 @@ async def list_validation_runs(
         raise HTTPException(status_code=500, detail=f"Failed to list validation runs: {e}")
 
 
+_RECENT_FAILURES_LIMIT = 50
+
+
+@router.get(
+    "/runs/recent-failures",
+    response_model=list[RunFailureOut],
+    operation_id="listRecentValidationFailures",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_recent_validation_failures(
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> list[RunFailureOut]:
+    """Return recently-failed validation runs, bounded to the most recent *N*.
+
+    Intended for the app-wide toast watcher: returns FAILED runs only with
+    minimal fields (run_id, source_table_fqn, status, created_at). The
+    endpoint is cheap by construction — no error_message, no counts, no
+    review-status join. The full run history is still available via
+    ``GET /dryrun/runs`` for the Runs History page.
+    """
+    try:
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+        rows = job_svc.list_dryrun_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
+
+        # Reconcile stale RUNNING placeholders so the failure list stays
+        # accurate even when the task runner crashed before writing a result.
+        # Best-effort — never let it break the listing.
+        try:
+            reconcile_running_rows(sql, app_conf, _DRYRUN_TABLE, rows, job_svc.get_run_status)
+        except Exception as exc:
+            logger.warning("Failed to reconcile RUNNING validation runs (recent-failures): %s", exc)
+
+        results: list[RunFailureOut] = []
+        for row in rows:
+            if row.get("status") != "FAILED":
+                continue
+            fqn = row.get("source_table_fqn") or ""
+            if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
+                continue
+            results.append(
+                RunFailureOut(
+                    run_id=row.get("run_id") or "",
+                    source_table_fqn=fqn,
+                    status="FAILED",
+                    created_at=row.get("created_at"),
+                )
+            )
+            if len(results) >= _RECENT_FAILURES_LIMIT:
+                break
+
+        return results
+    except Exception as e:
+        logger.error("Failed to list recent validation failures: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list recent validation failures: {e}")
+
+
 @router.post(
     "/batch-from-catalog",
     response_model=BatchRunFromCatalogOut,
     operation_id="batchRunFromCatalog",
-    # Executing approved rules from the Run Rules page is gated on the
-    # orthogonal runner role (admins are implicit runners). Authors and
-    # approvers without an explicit RUNNER mapping cannot trigger batch
-    # runs even though they would otherwise pass the _NON_VIEWERS check.
-    dependencies=[require_runner()],
+    # Run gate: only ADMIN and RULE_AUTHOR may trigger batch runs.
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def batch_run_from_catalog(
     body: BatchRunFromCatalogIn,
@@ -285,7 +360,9 @@ def batch_run_from_catalog(
                     run_id=run_id,
                     requesting_user=requesting_user,
                 )
-                submitted.append(DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
+                submitted.append(
+                    DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn, table_fqn=table_fqn)
+                )
 
                 job_svc.record_dryrun_started(
                     table=runs_table,
@@ -318,7 +395,7 @@ def batch_run_from_catalog(
     "",
     response_model=DryRunSubmitOut,
     operation_id="submitDryRun",
-    dependencies=[require_role(*_NON_VIEWERS)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def submit_dry_run(
     body: DryRunIn,
@@ -563,7 +640,7 @@ def get_dry_run_status(
 @router.post(
     "/runs/{run_id}/cancel",
     operation_id="cancelDryRun",
-    dependencies=[require_role(*_NON_VIEWERS)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def cancel_dry_run(
     run_id: str,
