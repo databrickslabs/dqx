@@ -20,8 +20,10 @@ The module is marked ``anomaly`` so the nightly can deselect it from the timing-
 (``--benchmark-compare-fail=mean:25%``), which is global and would flake on control-plane variance.
 """
 
+import datetime
 from typing import cast
 
+import numpy as np
 import pandas as pd
 import pytest
 from pyspark.sql import DataFrame, SparkSession
@@ -33,6 +35,7 @@ from mlflow.tracking import MlflowClient
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
+from databricks.labs.dqx.config import AnomalyParams
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.synthetic_generators import (
     generate_correlated_multivariate_data,
@@ -40,6 +43,10 @@ from tests.integration_anomaly.synthetic_generators import (
     generate_heavy_tail_data,
     generate_overlapping_gaussian_data,
 )
+
+# Hourly cadence over 45 days, so the temporal fixture below clears the six-cycle guard for a daily
+# seasonal term rather than getting trend only.
+TEMPORAL_HOURS = 24 * 45
 
 pytestmark = pytest.mark.anomaly
 
@@ -286,6 +293,65 @@ def test_benchmark_anomaly_score_conditioned(benchmark, request, spark, ws, make
         test_df.count(),
         dataset="synthetic: grouped volumes with a contextual collapse, baseline_by",
         n_features=len(feature_cols),
+        anomaly_frac=_anomaly_rate(test_df),
+    )
+    for name, value in _detection_quality(scored).items():
+        benchmark.extra_info[name] = value
+
+
+@pytest.mark.benchmark(group=BENCHMARK_GROUP)
+def test_benchmark_anomaly_score_temporal_baseline(benchmark, request, spark, ws, make_schema, make_random):
+    """Score with ``baseline_over_time`` on a trending metric, and record the quality.
+
+    The fixture is the case the parameter exists for: values that are ordinary against the whole training
+    range and wrong for where the trend had got to. Rolling the metrics back together leaves every value
+    inside the range and every correlation intact, so neither a range rule nor a correlation-aware
+    detector has anything to see -- only the position relative to each metric's own history is wrong.
+    """
+    rng = np.random.default_rng(SEED)
+    hours = np.arange(TEMPORAL_HOURS)
+    slopes = rng.uniform(0.02, 0.06, 4)
+    start = datetime.datetime(2025, 1, 6)
+
+    def frame(with_fault: bool):
+        values = 100.0 + np.outer(hours, slopes) + rng.normal(0, 1.5, size=(hours.size, 4))
+        labels = np.zeros(hours.size)
+        if with_fault:
+            bad = rng.choice(hours.size, size=int(0.05 * hours.size), replace=False)
+            values[bad] -= slopes * 600
+            labels[bad] = 1.0
+        rows = [
+            (start + datetime.timedelta(hours=int(h)), *[float(v) for v in values[i]], float(labels[i]))
+            for i, h in enumerate(hours)
+        ]
+        return spark.createDataFrame(
+            rows, "event_ts timestamp, m0 double, m1 double, m2 double, m3 double, is_anomaly double"
+        )
+
+    train_df, test_df = frame(False), frame(True)
+    columns = ["m0", "m1", "m2", "m3"]
+    model_name, registry_table = _new_model_names(make_schema, make_random)
+    request.addfinalizer(lambda: _cleanup_anomaly_mlflow(model_name, registry_table, spark))
+
+    engine = AnomalyEngine(workspace_client=ws, spark=spark)
+    engine.train(
+        df=train_df,
+        model_name=model_name,
+        registry_table=registry_table,
+        columns=columns,
+        baseline_by=[],
+        baseline_over_time="event_ts",
+        params=AnomalyParams(sample_fraction=1.0),
+    )
+
+    scored = _score_and_record(benchmark, model_name, registry_table, test_df)
+
+    _record_provenance(
+        benchmark,
+        train_df.count(),
+        test_df.count(),
+        dataset="synthetic: trending metrics, baseline_over_time",
+        n_features=len(columns),
         anomaly_frac=_anomaly_rate(test_df),
     )
     for name, value in _detection_quality(scored).items():
