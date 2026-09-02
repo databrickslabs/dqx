@@ -70,9 +70,9 @@ HUBER_EPSILON = 1.35
 HUBER_ALPHA = 1e-4
 HUBER_MAX_ITER = 400
 
-# MAD trimming. 1.4826 scales the median absolute deviation to a standard deviation for Gaussian data.
+# Scales a median absolute deviation to a standard deviation for Gaussian data. Used for the robust
+# residual scale that changepoint selection is judged on.
 MAD_TO_SIGMA = 1.4826
-MAD_TRIM_SIGMA = 3.0
 
 
 @dataclass(frozen=True)
@@ -287,24 +287,6 @@ def expected(seconds: np.ndarray, basis: TemporalBasis, coefficients: list[float
             f"{design.shape[1]}; the model and its basis are out of step"
         )
     return design @ coefficient_array
-
-
-def robust_scale_mask(residuals: np.ndarray, sigma: float = MAD_TRIM_SIGMA) -> np.ndarray:
-    """Rows within *sigma* robust deviations on every column.
-
-    A robust *fit* is not enough on its own. With 5% of training rows at six times normal, both a robust
-    and a least-squares fit produced a learned residual spread near 170 and both then missed a 1.5x spike
-    entirely, because the detector takes its notion of normal from residuals computed over the same
-    contaminated rows. Trimming before the detector fits is what closes that.
-    """
-    residuals = np.atleast_2d(np.asarray(residuals, dtype=float))
-    if residuals.shape[0] == 1 and residuals.size > 1:
-        residuals = residuals.T
-    centre = np.median(residuals, axis=0)
-    deviation = np.median(np.abs(residuals - centre), axis=0) * MAD_TO_SIGMA
-    # A column with no spread cannot exclude anything, so it must not divide by zero either.
-    deviation = np.where(deviation <= 0, np.inf, deviation)
-    return (np.abs((residuals - centre) / deviation) <= sigma).all(axis=1)
 
 
 def trend_strength(seconds: np.ndarray, metrics: dict[str, np.ndarray], basis: TemporalBasis) -> float:

@@ -30,6 +30,27 @@ the small-sample regime and against the collinear one-hot columns DQX's feature 
 neither of which SMD exercises. So the ridge floor is the default and Ledoit-Wolf is used when the
 sample is too small for a stable empirical covariance.
 
+**The estimate is not robust to gross contamination, and trimming was measured and rejected.** The mean,
+the standard deviation and the sample covariance all move with the rows they are computed over, so a
+training sample containing a few wildly wrong rows produces an inflated scale, and a real but moderate
+anomaly then scores *inside* it. Measured on synthetic data: with 5% of rows at six times normal, a 1.5x
+spike went entirely undetected. The cost is a miss rate rather than a false-alarm rate, which is what
+makes it easy to overlook.
+
+A median-and-MAD trim was implemented to fix that and then removed, because it cost more than it bought
+on real data: on SMD it excluded 4.6% of training rows and took event coverage from 91.9% to 86.4% and
+ROC-AUC from 0.784 to 0.763. Those rows were legitimate tail observations -- SMD's train split is clean
+by construction -- and a covariance estimated from the narrower core scored ordinary rows as anomalous.
+
+A distortion statistic was then tried, to fire the trim only on gross contamination and leave heavy tails
+alone. It does not separate them: a t-distribution with df=1.5 gives a scale-distortion ratio of 4.64 and
+the worst clean SMD entity 3.48, while the 6x-contaminated sample gives 1.62. The ordering is inverted,
+so there is no cheap in-sample signal to gate on.
+
+What this means for a caller: if the training sample is known to contain grossly wrong rows, filter them
+before training or narrow the input, because the detector will not do it for you. Ordinary tails need no
+action. Recorded in ``robust_gate.py`` and ``robust_gate2.py`` alongside the benchmark harness.
+
 **Attribution is leave-one-out, and non-negative by construction.** See
 :meth:`MahalanobisDetector.feature_contributions`.
 """

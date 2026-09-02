@@ -21,7 +21,6 @@ from databricks.labs.dqx.anomaly.temporal import (
     design_matrix,
     expected,
     fit_temporal,
-    robust_scale_mask,
     select_basis,
     trend_strength,
 )
@@ -249,35 +248,6 @@ def test_the_design_column_count_matches_the_declared_basis():
     assert design_matrix(_hourly_axis(50), basis).shape[1] == basis.n_terms
     # intercept + trend + 2 changepoints + 2 periods x 2 harmonics x sin/cos
     assert basis.n_terms == 1 + 1 + 2 + 8
-
-
-# ── robust scale, which the fit alone does not give ────────────────────────────────────────────────
-
-
-def test_trimming_keeps_the_learned_scale_near_the_clean_scale():
-    """A robust fit is necessary but not sufficient.
-
-    With 5% of rows at six times normal, both a robust and a least-squares fit produced a learned residual
-    spread near 170, and both then missed a 1.5x spike entirely at 0% recall, because the detector takes
-    its notion of normal from residuals over the same contaminated rows. Trimming is what closes that.
-    """
-    rng = np.random.default_rng(9)
-    clean = rng.normal(0, 3.0, 2000)
-    contaminated = clean.copy()
-    contaminated[rng.choice(clean.size, size=int(0.05 * clean.size), replace=False)] += 6.0 * 30.0
-
-    untrimmed = float(np.std(contaminated))
-    trimmed = float(np.std(contaminated[robust_scale_mask(contaminated)]))
-
-    assert untrimmed > 3.0 * 2  # the contamination really does inflate it
-    assert trimmed == pytest.approx(float(np.std(clean)), rel=0.15)
-
-
-def test_trimming_a_column_with_no_spread_excludes_nothing():
-    """A constant column cannot vote to exclude a row, and must not divide by zero to say so."""
-    mask = robust_scale_mask(np.column_stack([np.full(100, 5.0), np.arange(100, dtype=float)]))
-
-    assert mask.sum() > 0
 
 
 # ── the advisory statistic ─────────────────────────────────────────────────────────────────────────
