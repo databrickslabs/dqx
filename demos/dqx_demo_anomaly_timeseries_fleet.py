@@ -418,6 +418,174 @@ print("   detector produced the contributions, so the explanation describes the 
 # MAGIC %md
 # MAGIC ---
 # MAGIC
+# MAGIC ## Section 5: (Optional) A Third Question — Is This Normal *For Now*?
+# MAGIC
+# MAGIC Everything above compared each reading against the fleet's normal. There is a third question, and a
+# MAGIC maintenance engineer asks it constantly:
+# MAGIC
+# MAGIC > *Bearing temperature is 71°C. That is fine for this machine. Is it fine for **1,800 hours in**?*
+# MAGIC
+# MAGIC A wearing bearing has a **rising baseline**. A reading that is ordinary against the whole service
+# MAGIC history can be well above where the wear curve had actually got to. `baseline_over_time` fits each
+# MAGIC metric's expected level as a function of time and compares against *that*.
+# MAGIC
+# MAGIC | Question | Argument |
+# MAGIC |---|---|
+# MAGIC | Unusual on its own, or in combination? | `profile` |
+# MAGIC | Unusual for its own group? | `baseline_by` |
+# MAGIC | Unusual for its own point in time? | `baseline_over_time` |
+# MAGIC
+# MAGIC **This needs a different dataset, and that is the lesson.** The telemetry above is stationary by
+# MAGIC construction — no trend, no timestamp — which is exactly the shape where a temporal baseline has
+# MAGIC nothing to remove. So we generate a short service history that genuinely wears.
+
+# COMMAND ----------
+# DBTITLE 1,Generate a service history with a rising baseline
+
+import datetime
+
+WEAR_START = datetime.datetime(2025, 1, 6)
+
+
+def generate_wear_history(n_hours: int, seed: int, late_fault: bool = False):
+    """Bearing temperature and vibration that drift upward as the bearing wears.
+
+    With *late_fault*, a block near the end is held at the level it had 600 hours earlier. Every value
+    stays inside the range the whole history covers, so nothing about it is extreme -- it is simply wrong
+    for how worn the bearing should be by then.
+    """
+    rng = np.random.default_rng(seed)
+    hours = np.arange(n_hours)
+    temp = 52.0 + 0.011 * hours + 4.0 * np.sin(2 * np.pi * hours / 24.0) + rng.normal(0, 1.1, n_hours)
+    vib = 1.7 + 0.0006 * hours + rng.normal(0, 0.08, n_hours)
+    labels = np.zeros(n_hours)
+
+    if late_fault:
+        start, length = int(n_hours * 0.80), max(6, int(n_hours * 0.05))
+        temp[start : start + length] -= 0.011 * 600
+        vib[start : start + length] -= 0.0006 * 600
+        labels[start : start + length] = 1.0
+
+    rows = [
+        (WEAR_START + datetime.timedelta(hours=int(h)), float(temp[i]), float(vib[i]), float(labels[i]))
+        for i, h in enumerate(hours)
+    ]
+    return spark.createDataFrame(rows, "reading_ts timestamp, bearing_temp double, vibration double, is_incident double")
+
+
+wear_train = f"{catalog}.{schema}.bearing_wear_history"
+wear_test = f"{catalog}.{schema}.bearing_wear_recent"
+generate_wear_history(24 * 45, seed=11).write.mode("overwrite").saveAsTable(wear_train)
+generate_wear_history(24 * 20, seed=12, late_fault=True).write.mode("overwrite").saveAsTable(wear_test)
+
+print(f"📊 45 days of hourly service history, and 20 days of recent readings with a fault")
+
+# COMMAND ----------
+# DBTITLE 1,Measure whether the data trends before deciding
+
+# The decision comes first, and it is measurable. Subtracting a fitted expectation from a metric with no
+# temporal structure removes real signal and adds the fit's own error, so this is not a free switch.
+from databricks.labs.dqx.anomaly.temporal_advisory import measure_trend_strength
+
+WEAR_METRICS = ["bearing_temp", "vibration"]
+wear_trend = measure_trend_strength(spark.table(wear_train), "reading_ts", WEAR_METRICS)
+flat_trend = measure_trend_strength(
+    spark.table(healthy_table).withColumn("fake_ts", F.expr("timestamp('2025-01-06') + make_interval(0,0,0,0,reading_seq)")),
+    "fake_ts",
+    METRICS,
+)
+
+print(f"📊 Wear history:        {wear_trend:.1%} of variance explained by trend and seasonality  ✅ use it")
+print(f"📊 Fleet telemetry:     {flat_trend:.1%}  ⚠️  nothing to remove — DQX would warn, so leave it off")
+
+# COMMAND ----------
+# DBTITLE 1,Train with a time axis
+
+# reading_ts is named as the axis, so it is NOT a feature: no cyclical calendar columns are derived from
+# it. That matters — those help a calendar-contextual anomaly and measurably hurt otherwise.
+wear_model = f"{catalog}.{schema}.bearing_wear_model"
+
+anomaly_engine.train(
+    df=spark.table(wear_train),
+    model_name=wear_model,
+    registry_table=registry_table,
+    columns=WEAR_METRICS,
+    baseline_over_time="reading_ts",
+    baseline_by=[],
+)
+
+print(f"🎯 Trained with an expected level per metric over time")
+
+# COMMAND ----------
+# DBTITLE 1,Score, and see what "wrong for now" looks like
+
+wear_checks = [
+    {
+        "criticality": "error",
+        "check": {
+            "function": "has_no_row_anomalies",
+            "arguments": {"model_name": wear_model, "registry_table": registry_table, "threshold": 95},
+        },
+    }
+]
+wear_scored = f"{catalog}.{schema}.bearing_wear_scored"
+dq_engine.apply_checks_by_metadata_and_save_in_table(
+    input_config=InputConfig(location=wear_test),
+    output_config=OutputConfig(location=wear_scored, mode="overwrite"),
+    checks=wear_checks,
+)
+
+anomaly = F.col("_dq_info")[0].getField("anomaly")
+caught = spark.table(wear_scored).filter(anomaly.getField("is_anomaly") & (F.col("is_incident") == 1.0)).count()
+total = spark.table(wear_scored).filter(F.col("is_incident") == 1.0).count()
+print(f"🔍 Caught {caught} of {total} rows that were wrong for how worn the bearing should have been")
+
+# COMMAND ----------
+# DBTITLE 1,Read the contributions, which name the expected level
+
+print("💡 Contributions read 'X vs its expected level at that time', not 'unusual X'.")
+print("   The distinction is real: every one of these readings sits inside the history's own range.")
+display(
+    spark.table(wear_scored)
+    .filter(anomaly.getField("is_anomaly"))
+    .select(
+        "reading_ts",
+        "bearing_temp",
+        anomaly.getField("severity_percentile").alias("severity"),
+        anomaly.getField("contributions").alias("contributions"),
+        anomaly.getField("is_stale_baseline").alias("extrapolating"),
+    )
+    .orderBy(F.desc("severity"))
+    .limit(8)
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC
+# MAGIC ### When *not* to reach for `baseline_over_time`
+# MAGIC
+# MAGIC The cell that measured both datasets is the point of this section. The honest cases against it:
+# MAGIC
+# MAGIC - **A largely stationary metric**, like the fleet telemetry above. On real server telemetry that
+# MAGIC   arrives already normalised, the same transform measured *worse* than leaving it off.
+# MAGIC - **A short training window.** A daily shape needs several complete days to be identifiable at all.
+# MAGIC   DQX fits one only where the window supports it, and logs the period it skipped and why.
+# MAGIC - **With `profile="tabular"`, keep other datetime columns out of `columns`.** Calendar features on
+# MAGIC   top of the residual measured worse on every anomaly shape tested.
+# MAGIC
+# MAGIC It is also **not a forecaster**. It models the level expected *at* a time; it does not predict the
+# MAGIC next value, and it never reads the previous row — which is what keeps scoring valid on a stream.
+# MAGIC
+# MAGIC `is_stale_baseline` marks rows past the window the expectation was fitted on. The score is still
+# MAGIC produced, because near the boundary it is still accurate; treat the flag as a signal to retrain.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC
 # MAGIC ## Summary & Next Steps
 # MAGIC
 # MAGIC **Key takeaways:**

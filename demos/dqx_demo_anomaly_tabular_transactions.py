@@ -490,6 +490,33 @@ print("   not reveal a better model.")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
+# MAGIC ## A Note On Time, And Why This Demo Does Not Use It
+# MAGIC
+# MAGIC DQX has a third comparison basis, `baseline_over_time`, which judges each metric against what its
+# MAGIC own history says to expect at that point in time. It is the right tool for a metric that trends or
+# MAGIC carries a daily shape — see the
+# MAGIC [fleet telemetry demo](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_anomaly_timeseries_fleet.py).
+# MAGIC
+# MAGIC **It is deliberately not used here.** Transaction amounts in this dataset are stationary: there is
+# MAGIC no trend to remove and no daily shape to subtract. Fitting an expectation to data that has none
+# MAGIC removes real signal and adds the fit's own error on top, and measured on a stationary dataset the
+# MAGIC same transform performed *worse* than leaving it off. DQX will warn you when the training window
+# MAGIC shows little structure over time, rather than turning it on for you.
+# MAGIC
+# MAGIC A demo that only ever shows features helping teaches the wrong default. The three bases answer
+# MAGIC different questions, and picking the wrong one costs accuracy:
+# MAGIC
+# MAGIC | Ask this | Use |
+# MAGIC |---|---|
+# MAGIC | Is this row odd on its own, or in combination? | `profile` (this demo) |
+# MAGIC | Is it odd for its own group? | `baseline_by` (this demo) |
+# MAGIC | Is it odd for its own point in time? | `baseline_over_time` (not here) |
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC
 # MAGIC ## Summary & Next Steps
 # MAGIC
 # MAGIC **Key takeaways:**

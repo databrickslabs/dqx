@@ -345,6 +345,82 @@ It is not flagged as a violation. Neither categorical encoder can represent an u
 
 If an unrecognised group value is itself something you want to fail on, that is a membership question rather than an anomaly one: use `foreign_key` or `is_in_list` on the baseline column against your set of known values.
 
+## Comparing against time
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
+
+Some values are only wrong *for when they happened*. A metric that has grown steadily for a year sits
+outside the range it trained on, so ordinary rows start looking anomalous; and a value that is perfectly
+normal against the whole year can be badly wrong for where the trend had actually got to. Comparing
+against the whole table cannot see either.
+
+Pass `baseline_over_time` to give DQX a time axis:
+
+```python
+anomaly_engine.train(
+    df,
+    model_name="catalog.schema.revenue_model",
+    registry_table="catalog.schema.dqx_anomaly_models",
+    columns=["revenue", "orders"],
+    baseline_over_time="event_ts",
+)
+```
+
+DQX fits each metric's expected level as a function of time, persists it with the model, and gives the
+detector the *difference* between the observed value and that expectation. Because the expectation is a
+function rather than a lookup table, it extends to timestamps the training window never contained.
+
+It is the third of three independent questions, and they compose:
+
+| Question | Argument |
+|---|---|
+| Is this value unusual on its own, or in combination? | `profile` |
+| Is it unusual for its own group? | `baseline_by` |
+| Is it unusual for its own point in time? | `baseline_over_time` |
+
+Set both grouping and time and the expectation is fitted on the group-relative value, so a table whose
+groups trend at different rates still needs only one model.
+
+### When to use it, and when not to
+
+The parameter is not free, so this table is worth reading before reaching for it.
+
+| Situation | Recommendation |
+|---|---|
+| The metric carries a real trend, or a genuine daily or weekly shape | Use it |
+| The metric is largely stationary | Leave it off. Subtracting a fitted expectation from data with no temporal structure removes signal and adds the fit's own error |
+| You want to catch a value that is wrong *for a Saturday* | Use it, and keep the timestamp out of `columns` |
+| Using `profile="tabular"` | Exclude other datetime columns from `columns`; calendar features on top of the residual measured worse on every anomaly shape tested |
+| The training window is short | A seasonal term needs several complete cycles to be identifiable. DQX fits one only where the window supports it, and logs the period it skipped and why |
+
+DQX will not turn this on for you. Whether a metric's own history is worth comparing against is a
+judgement about the data, and it cannot be verified without labelled anomalies. What DQX does instead is
+tell you when the training window shows almost no structure over time, so you learn the parameter is
+unlikely to help before you rely on it.
+
+### It is not a forecaster
+
+`baseline_over_time` models the level expected *at* a time. It does not predict the next value, and it
+never looks at the previous row: every row is judged from its own timestamp alone, which is what keeps
+scoring valid on a streaming DataFrame. A sudden jump that lands exactly where the trend expected is not
+an anomaly to this feature.
+
+### Knowing when the model has run out of evidence
+
+A fitted expectation extrapolates, but its accuracy decays the further past the training window you go.
+Rows beyond that window carry `is_stale_baseline`, and `stale_baseline_horizon` records where the
+evidence ran out:
+
+```python
+result.filter(F.col("_dq_info")[0].anomaly.is_stale_baseline).select("_dq_info")
+```
+
+The score is still produced, unlike the unseen-group case above. Near the boundary it is still accurate,
+so nulling it would throw away a usable verdict; far out it is not, and the flag is how you tell the
+difference. Treat it as a signal to retrain rather than as a violation.
+
 ## Choosing a profile
 
 <FeatureTags>
@@ -437,7 +513,7 @@ If you did, here is the whole migration.
 - **Replace `segment_by` with `baseline_by`.** They are not the same. `segment_by` trained one model per group; `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change. `AnomalyParams.max_segment_models` is gone too, since there is only ever one model now.
 - **Retrain your models.** A model trained before this release raises an error at scoring time until you retrain it, rather than scoring against a feature list that no longer matches.
 - **Your registry table is handled for you.** Retraining writes the new schema into your existing table in place. The `segmentation` column becomes `grouping`, and a table you never retrain into keeps the old column and will not be read.
-- **`_dq_info[].anomaly` changes shape.** The `segment` field is gone (it was always null once per-group models were), and `is_new_baseline` and `new_baseline_key` are added. Named-field queries keep working, but appending to a table that already holds `_dq_info` needs `mergeSchema`.
+- **`_dq_info[].anomaly` changes shape.** The `segment` field is gone (it was always null once per-group models were), and `is_new_baseline`, `new_baseline_key`, `is_stale_baseline` and `stale_baseline_horizon` are added. Named-field queries keep working, but appending to a table that already holds `_dq_info` needs `mergeSchema`.
 - **Auto-discovered groupings may score differently** even with no configuration change, because a discovered grouping is now used as `baseline_by` and the policy that picks it is finer than the segmented one it replaced.
 
 ## How it works under the hood
@@ -564,18 +640,19 @@ Use row anomaly detection when you want to catch unusual combinations across col
 
 Yes, and they are worth knowing before you rely on it.
 
-**Trend.** DQX learns what normal looks like from a training window. A metric that grows steadily
-eventually sits outside that window, and ordinary rows start being flagged. Give the model a quantity
-that does not trend — `orders_per_customer` rather than `daily_orders`, `revenue_per_order` rather than
-`cumulative_revenue` — which stays comparable as the business grows and is usually what you wanted to
-watch anyway. Where the level itself matters, retrain on a schedule; a gradual trend inflates the spread
-of the window it is measured against, so `drift_threshold` will not reliably warn you about this
-particular case.
+**Trend, unless you ask for it.** DQX learns what normal looks like from a training window, so a metric
+that grows steadily eventually sits outside that window and ordinary rows start being flagged. Pass
+[`baseline_over_time`](#comparing-against-time) and the trend is fitted and subtracted, which also catches
+the opposite case: a value that is ordinary against the whole training range and wrong for where the trend
+had got to. Without it, model a quantity that does not trend — `orders_per_customer` rather than
+`daily_orders` — and note that `drift_threshold` will not reliably warn you here, because a gradual trend
+inflates the very spread it is measured against.
 
 **Cycles other than hourly, daily, weekly, or monthly.** Those four are handled automatically from a
-datetime column. A six-week promotional cycle, or a fiscal quarter that does not align to calendar
-months, is not — pass the cycle as a column and use `baseline_by`, which then judges each row against
-its own phase.
+datetime column, and `baseline_over_time` fits daily and weekly shapes where the window holds enough
+complete cycles to identify one. A six-week promotional cycle, or a fiscal quarter that does not align to
+calendar months, is not — pass the cycle as a column and use `baseline_by`, which then judges each row
+against its own phase.
 
 **Forecasting.** DQX judges rows against learned normal. It does not predict the next value and compare.
 
