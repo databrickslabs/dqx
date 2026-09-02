@@ -14,6 +14,7 @@ import pytest
 from pyspark.sql import DataFrame, Row, SparkSession
 from pyspark.sql import types as T
 
+from databricks.labs.dqx.anomaly.scoring_utils import mark_stale_baselines
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis
 from databricks.labs.dqx.anomaly.transformers import (
     BASELINE_RELATIVE_SUFFIX,
@@ -288,3 +289,89 @@ def test_a_null_timestamp_produces_a_zero_residual_rather_than_a_null_feature(sp
     value = engineered.select(f"revenue{TEMPORAL_RELATIVE_SUFFIX}").first()
     assert value is not None
     assert value[0] == 0.0
+
+
+# ============================================================================
+# The staleness contract
+# ============================================================================
+
+
+def test_a_row_inside_the_fitted_window_is_not_stale(spark: SparkSession):
+    """The flag has to stay quiet where the model has evidence, or it says nothing."""
+    df = _trending_frame(spark, hours=24 * 30)
+    _, metadata = apply_feature_engineering(df, [_numeric("revenue")], baseline_over_time="event_ts")
+
+    marked = mark_stale_baselines(
+        df, metadata.baseline_over_time, metadata.temporal_window, stale_col="stale", horizon_col="horizon"
+    )
+
+    assert marked.filter("stale").count() == 0
+
+
+def test_a_row_far_past_the_window_is_flagged_but_still_scored(spark: SparkSession):
+    """Extrapolation is reported, not corrected.
+
+    Deliberately different from the unseen-group contract, which nulls the score because no baseline for
+    that group exists at all. A fitted function does extrapolate, and measured, false flags one window
+    past the boundary are 3.4% against 2.8% at the boundary itself -- nulling that would discard a usable
+    verdict. It decays with distance (6.4% five windows out, 89.6% at twenty-five), so the flag says
+    "this is extrapolation" and the horizon says from where.
+    """
+    df = _trending_frame(spark, hours=24 * 30)
+    _, metadata = apply_feature_engineering(df, [_numeric("revenue")], baseline_over_time="event_ts")
+
+    # Three training spans past the end: comfortably beyond a one-span horizon.
+    future = spark.createDataFrame(
+        [(START + datetime.timedelta(days=120), 500.0)], "event_ts timestamp, revenue double"
+    )
+    marked = mark_stale_baselines(
+        future, metadata.baseline_over_time, metadata.temporal_window, stale_col="stale", horizon_col="horizon"
+    )
+
+    row = marked.select("stale", "horizon").first()
+    assert row is not None
+    assert row["stale"] is True
+    # The horizon is reported so a caller learns *when* the evidence ran out, not only that it did.
+    assert row["horizon"] is not None
+
+    # And the feature is still computed rather than nulled.
+    engineered, _ = apply_feature_engineering_from_metadata(future, metadata)
+    value = engineered.select(f"revenue{TEMPORAL_RELATIVE_SUFFIX}").first()
+    assert value is not None and value[0] is not None
+
+
+def test_a_null_timestamp_is_not_called_stale(spark: SparkSession):
+    """A row with no timestamp has no position to be past a horizon.
+
+    Its temporal feature already fell back to zero, so calling it stale would blame the wrong thing and
+    send a reader looking for a retrain they do not need.
+    """
+    df = _trending_frame(spark, hours=24 * 30)
+    _, metadata = apply_feature_engineering(df, [_numeric("revenue")], baseline_over_time="event_ts")
+
+    with_null = spark.createDataFrame(
+        [Row(event_ts=None, revenue=150.0)],
+        T.StructType(
+            [
+                T.StructField("event_ts", T.TimestampType(), True),
+                T.StructField("revenue", T.DoubleType(), True),
+            ]
+        ),
+    )
+    marked = mark_stale_baselines(
+        with_null, metadata.baseline_over_time, metadata.temporal_window, stale_col="stale", horizon_col="horizon"
+    )
+
+    row = marked.select("stale").first()
+    assert row is not None
+    assert row["stale"] is False
+
+
+def test_a_model_with_no_temporal_baseline_gains_no_staleness_columns(spark: SparkSession):
+    """Inertness again: the ungrouped, non-temporal path must not acquire extra columns."""
+    df = _trending_frame(spark, hours=200)
+    before = set(df.columns)
+
+    marked = mark_stale_baselines(df, "", {}, stale_col="stale", horizon_col="horizon")
+
+    assert set(marked.columns) == before

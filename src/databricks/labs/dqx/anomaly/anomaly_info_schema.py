@@ -47,5 +47,15 @@ anomaly_info_struct_schema = StructType(
         # needs mergeSchema on append because the struct is now wider.
         StructField("is_new_baseline", BooleanType(), True),
         StructField("new_baseline_key", StringType(), True),
+        # True when the row's timestamp lies beyond the window a temporal baseline was fitted on, so
+        # its expected level is an extrapolation. Unlike an unseen group, the score is still produced:
+        # a fitted function does extrapolate, and measured, accuracy one training window past the
+        # boundary is 3.4% false flags against 2.8% at the boundary itself. Nulling that would discard
+        # a usable verdict. It degrades with distance though -- 6.4% five windows out, 89.6% at
+        # twenty-five -- so the flag says "this is extrapolation, and here is where the evidence ran
+        # out". Both null when no temporal baseline was fitted. Appended for the same reason as the
+        # two above: named-field queries keep working, a wider struct needs mergeSchema on append.
+        StructField("is_stale_baseline", BooleanType(), True),
+        StructField("stale_baseline_horizon", StringType(), True),
     ]
 )

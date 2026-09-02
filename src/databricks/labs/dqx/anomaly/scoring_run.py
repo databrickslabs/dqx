@@ -28,9 +28,11 @@ from databricks.labs.dqx.anomaly.scoring_utils import (
     add_severity_percentile_column,
     apply_row_filter,
     join_filtered_results_back,
+    mark_stale_baselines,
     mark_unseen_baselines,
     null_out_unseen_baseline_scores,
     permissive_quantile_points,
+    StaleBaselineContext,
     UnseenGroupContext,
 )
 from databricks.labs.dqx.anomaly.scoring_config import SEVERITY_QUANTILE_KEYS, ScoringConfig
@@ -223,6 +225,18 @@ def score_global_model(
         group_key_col=group_key_col,
     )
 
+    # Extrapolation is reported, not corrected: unlike an unseen group the score is still produced, and
+    # measured it is still good one window past the boundary. So this marks and never nulls.
+    stale_col = "__dqx_is_stale_baseline"
+    horizon_col = "__dqx_stale_horizon"
+    scored_df = mark_stale_baselines(
+        scored_df,
+        parsed_metadata.baseline_over_time,
+        parsed_metadata.temporal_window,
+        stale_col=stale_col,
+        horizon_col=horizon_col,
+    )
+
     scored_df = _add_severity(scored_df, config, parsed_metadata, group_quantile_points, global_quantile_points)
 
     scored_df = null_out_unseen_baseline_scores(
@@ -256,9 +270,17 @@ def score_global_model(
             group_key_col=group_key_col,
             flag_as_violation=config.flag_unseen_baseline_as_violation,
         ),
+        stale=StaleBaselineContext(stale_col=stale_col, horizon_col=horizon_col),
     )
 
-    internal_to_remove = [config.score_std_col, config.severity_col, unseen_col, group_key_col]
+    internal_to_remove = [
+        config.score_std_col,
+        config.severity_col,
+        unseen_col,
+        group_key_col,
+        stale_col,
+        horizon_col,
+    ]
     if config.enable_contributions:
         internal_to_remove.append(config.contributions_col)
     if config.enable_ai_explanation:
