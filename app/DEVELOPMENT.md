@@ -36,7 +36,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 
 ### Marketplace release workflow
 
-Main intentionally excludes only the compiled Marketplace frontend at `app/marketplace/src/databricks_labs_dqx_app/__dist__/`; the rest of the Marketplace source remains tracked. Start a release from an annotated signed tag whose version matches `app/pyproject.toml`:
+Main intentionally excludes the generated `app/marketplace/` artifact. Canonical application source and Marketplace templates remain tracked. Start a release from an annotated signed tag whose version matches `app/pyproject.toml`:
 
 ```bash
 app/scripts/release_marketplace.sh v0.16.1

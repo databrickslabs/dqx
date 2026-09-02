@@ -36,8 +36,8 @@ node_modules/
 # Local deployment tree.
 .build/
 
-# Compiled Marketplace UI is committed only on signed release branches.
-/marketplace/src/databricks_labs_dqx_app/__dist__/
+# The complete Marketplace artifact is committed only on signed release branches.
+/marketplace/
 
 # Local, untracked deploy targets (real profile / catalog / SP ids). Keep the
 # tracked template target.dev.yml.example; never commit the filled-in copy.

@@ -1,6 +1,7 @@
 """Artifact-contract tests for the Databricks Marketplace source folder."""
 
 import hashlib
+import subprocess
 import sys
 import tomllib
 import zipfile
@@ -94,10 +95,16 @@ def test_marketplace_artifact_contains_only_runtime_inputs(marketplace_artifact:
     assert locked_names.isdisjoint({"basedpyright", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff"})
 
 
-def test_main_ignores_only_compiled_marketplace_frontend() -> None:
-    ignore = (APP_DIR / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert "/marketplace/src/databricks_labs_dqx_app/__dist__/" in ignore
-    assert "/marketplace/" not in ignore
+def test_main_ignores_generated_marketplace_artifact() -> None:
+    generated_backend = APP_DIR / "marketplace" / "src" / "databricks_labs_dqx_app" / "backend" / "app.py"
+
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--quiet", str(generated_backend)],
+        cwd=APP_DIR,
+        check=False,
+    )
+
+    assert completed.returncode == 0
 
 
 def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifact: Path) -> None:
@@ -157,7 +164,9 @@ def test_marketplace_build_is_repeatable_and_removes_stale_files(marketplace_art
     assert _file_hashes(marketplace_artifact) == before
 
 
-def test_marketplace_build_ignores_parent_uv_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_marketplace_build_ignores_parent_uv_configuration(
+    tmp_path: Path, marketplace_artifact: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app_dir = tmp_path / "app"
     app_dir.mkdir()
     (app_dir / "pyproject.toml").write_text(
@@ -166,7 +175,7 @@ def test_marketplace_build_ignores_parent_uv_configuration(tmp_path: Path, monke
     )
     output_dir = app_dir / "marketplace"
     output_dir.mkdir()
-    (output_dir / "uv.lock").write_bytes((APP_DIR / "marketplace" / "uv.lock").read_bytes())
+    (output_dir / "uv.lock").write_bytes((marketplace_artifact / "uv.lock").read_bytes())
     monkeypatch.setattr(marketplace_builder, "APP_DIR", app_dir)
     monkeypatch.setattr(marketplace_builder, "MARKETPLACE_DIR", output_dir)
 

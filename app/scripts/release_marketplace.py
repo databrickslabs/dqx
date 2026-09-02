@@ -100,11 +100,7 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
                 ),
                 cwd=worktree,
             )
-            commands.run(("git", "add", "-A", "app/marketplace"), cwd=worktree)
-            commands.run(
-                ("git", "add", "-f", "app/marketplace/src/databricks_labs_dqx_app/__dist__"),
-                cwd=worktree,
-            )
+            commands.run(("git", "add", "-f", "-A", "app/marketplace"), cwd=worktree)
             changed = commands.run(("git", "diff", "--cached", "--quiet"), cwd=worktree, check=False)
             if changed.returncode == 0:
                 raise RuntimeError("Marketplace release produced no changes")

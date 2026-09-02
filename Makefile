@@ -138,10 +138,10 @@ app-build-marketplace: app-build ## Build the Databricks Marketplace source fold
 
 app-check-marketplace: ## Validate Marketplace generation and signed-release tooling
 	cd app && $(UV_RUN) --group test pytest tests/test_build_marketplace.py tests/test_release_marketplace.py -v
-	@tracked="$$(git ls-files 'app/marketplace/src/databricks_labs_dqx_app/__dist__/**')"; \
-	deleted="$$(git diff --name-only --diff-filter=D -- 'app/marketplace/src/databricks_labs_dqx_app/__dist__/**')"; \
+	@tracked="$$(git ls-files 'app/marketplace/**')"; \
+	deleted="$$(git diff --name-only --diff-filter=D -- 'app/marketplace/**')"; \
 	test -z "$$tracked" || test "$$tracked" = "$$deleted" || \
-	  (echo "Compiled Marketplace frontend assets must not be tracked on main."; exit 1)
+	  (echo "Generated Marketplace artifacts must not be tracked on main."; exit 1)
 
 app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)

@@ -1,4 +1,4 @@
-"""Build the committed Databricks Marketplace source folder."""
+"""Build the generated Databricks Marketplace source folder."""
 
 import argparse
 import hashlib
