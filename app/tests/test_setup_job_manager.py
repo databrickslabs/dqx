@@ -3,7 +3,15 @@
 from unittest.mock import MagicMock
 
 import pytest
-from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
+from databricks.sdk.service.jobs import (
+    Job,
+    JobAccessControlResponse,
+    JobPermission,
+    JobPermissionLevel,
+    JobPermissions,
+    JobRunAs,
+    JobSettings,
+)
 
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob, TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import SetupStepId, StepState
@@ -65,6 +73,31 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
     created = manager.workspace.jobs.create.call_args.kwargs
     assert created["tags"] == {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
     assert created["access_control_list"][0].user_name == "admin@example.com"
+
+
+@pytest.mark.parametrize("permission_level", [JobPermissionLevel.IS_OWNER, JobPermissionLevel.CAN_MANAGE])
+def test_grant_setup_admin_preserves_existing_management_access(
+    manager: TaskRunnerJobManager,
+    permission_level: JobPermissionLevel,
+) -> None:
+    """Existing management access is not changed by an idempotent setup retry."""
+    manager.workspace.jobs.get_permissions.return_value = JobPermissions(
+        object_id="42",
+        object_type="job",
+        access_control_list=[
+            JobAccessControlResponse(
+                user_name="admin@example.com",
+                display_name="Setup Admin",
+                all_permissions=[
+                    JobPermission(inherited=False, permission_level=permission_level),
+                ],
+            )
+        ],
+    )
+
+    manager.grant_setup_admin(42, "admin@example.com")
+
+    manager.workspace.jobs.update_permissions.assert_not_called()
 
 
 def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> None:
