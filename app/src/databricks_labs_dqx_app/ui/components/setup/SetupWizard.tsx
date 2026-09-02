@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { HelpTooltip } from "@/components/HelpTooltip";
 import Logo from "@/components/layout/Logo";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { ThemeProvider } from "@/components/layout/theme-provider";
@@ -148,20 +149,13 @@ function StepCard({
       <Card className="gap-4 py-4">
         <CardHeader className="gap-2 px-4 sm:px-5">
           <div className="flex min-w-0 items-start justify-between gap-3">
-            <CardTitle className="text-base">
-              {t(`setup.steps.${step.id}`)}
+            <CardTitle className="flex items-center gap-1.5 text-base">
+              <span>{t(`setup.steps.${step.id}`)}</span>
+              <HelpTooltip text={t(`setup.purposes.${step.id}`)} />
             </CardTitle>
             <Badge variant={step.state === "passed" ? "secondary" : "outline"}>
               {t(`setup.states.${step.state}`)}
             </Badge>
-          </div>
-          <div className="rounded-md border-l-2 border-primary/50 bg-muted/35 px-3 py-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("setup.whyNeeded")}
-            </p>
-            <p className="mt-1 text-sm leading-5 text-foreground/90">
-              {t(`setup.purposes.${step.id}`)}
-            </p>
           </div>
           {step.summary && (
             <CardDescription className="whitespace-pre-wrap break-words">

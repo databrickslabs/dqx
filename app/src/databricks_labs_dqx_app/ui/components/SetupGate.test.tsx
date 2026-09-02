@@ -120,7 +120,7 @@ describe("SetupGate", () => {
     expect(markup).toContain('disabled=""');
   });
 
-  test("explains why each setup resource is required", () => {
+  test("keeps each setup resource explanation in an accessible tooltip", () => {
     const status = setupStatus(true);
     status.report.steps = [
       {
@@ -133,9 +133,9 @@ describe("SetupGate", () => {
 
     const markup = renderGate(status);
 
-    expect(markup).toContain("Why this is needed");
+    expect(markup).not.toContain("Why this is needed");
     expect(markup).toContain(
-      "Stores the versioned application and task-runner wheels",
+      'aria-label="Stores the DQX Core library and task-runner application used by profiling and data-quality jobs."',
     );
   });
 

@@ -2941,8 +2941,8 @@
     "reconcileFailed": "No se pudo completar la configuración. Revise los pasos indicados e inténtelo de nuevo.",
     "whyNeeded": "Por qué es necesario",
     "purposes": {
-      "identity": "Identifica la entidad de servicio que posee los recursos de Studio y realiza las operaciones de configuración.",
-      "volume": "Almacena las ruedas versionadas de la aplicación y del ejecutor de tareas que usan los trabajos de Studio.",
+      "identity": "Una entidad de servicio que DQX Studio utiliza para administrar los recursos de la aplicación y realizar operaciones de configuración.",
+      "volume": "Almacena la biblioteca DQX Core y la aplicación del ejecutor de tareas utilizadas por los trabajos de perfilado y calidad de datos.",
       "unity_catalog": "Permite que Studio cree y consulte sus esquemas, tablas, vistas temporales y resultados de ejecución.",
       "schemas": "Separa el estado de la aplicación, las vistas temporales y los objetos destinados a Genie en Unity Catalog.",
       "lakebase": "Almacena el estado transaccional de Studio, como reglas, roles, ajustes y programaciones.",

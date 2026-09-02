@@ -2941,8 +2941,8 @@
     "reconcileFailed": "Non è stato possibile completare la configurazione. Esamina i passaggi indicati e riprova.",
     "whyNeeded": "Perché è necessario",
     "purposes": {
-      "identity": "Identifica il principal di servizio che possiede le risorse di Studio ed esegue le operazioni di configurazione.",
-      "volume": "Archivia i wheel con versione dell’applicazione e del task runner usati dai processi di Studio.",
+      "identity": "Un principal di servizio utilizzato da DQX Studio per gestire le risorse dell’applicazione ed eseguire le operazioni di configurazione.",
+      "volume": "Archivia la libreria DQX Core e l’applicazione task runner utilizzate dai job di profilazione e qualità dei dati.",
       "unity_catalog": "Consente a Studio di creare e interrogare schemi, tabelle, viste temporanee e risultati delle esecuzioni.",
       "schemas": "Separa lo stato dell’applicazione, le viste temporanee e gli oggetti destinati a Genie in Unity Catalog.",
       "lakebase": "Archivia lo stato transazionale di Studio, come regole, ruoli, impostazioni e pianificazioni.",

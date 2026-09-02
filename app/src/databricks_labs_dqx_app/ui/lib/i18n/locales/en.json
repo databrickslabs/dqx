@@ -2941,8 +2941,8 @@
     "reconcileFailed": "Setup could not be completed. Review the reported steps and try again.",
     "whyNeeded": "Why this is needed",
     "purposes": {
-      "identity": "Identifies the service principal that owns Studio resources and performs setup operations.",
-      "volume": "Stores the versioned application and task-runner wheels used by Studio jobs.",
+      "identity": "A service principal used by DQX Studio to manage application resources and perform setup operations.",
+      "volume": "Stores the DQX Core library and task-runner application used by profiling and data-quality jobs.",
       "unity_catalog": "Lets Studio create and query its schemas, tables, temporary views, and run results.",
       "schemas": "Separates application state, temporary views, and Genie-facing objects in Unity Catalog.",
       "lakebase": "Stores transactional Studio state such as rules, roles, settings, and schedules.",

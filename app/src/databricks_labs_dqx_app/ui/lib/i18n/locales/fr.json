@@ -2941,8 +2941,8 @@
     "reconcileFailed": "La configuration n’a pas pu être terminée. Examinez les étapes indiquées et réessayez.",
     "whyNeeded": "Pourquoi cette étape est nécessaire",
     "purposes": {
-      "identity": "Identifie le principal de service qui possède les ressources de Studio et exécute les opérations de configuration.",
-      "volume": "Stocke les wheels versionnées de l’application et du lanceur de tâches utilisées par les traitements Studio.",
+      "identity": "Un principal de service utilisé par DQX Studio pour gérer les ressources de l’application et effectuer les opérations de configuration.",
+      "volume": "Stocke la bibliothèque DQX Core et l’application d’exécution des tâches utilisées par les jobs de profilage et de qualité des données.",
       "unity_catalog": "Permet à Studio de créer et d’interroger ses schémas, tables, vues temporaires et résultats d’exécution.",
       "schemas": "Sépare l’état de l’application, les vues temporaires et les objets destinés à Genie dans Unity Catalog.",
       "lakebase": "Stocke l’état transactionnel de Studio, notamment les règles, rôles, paramètres et planifications.",
