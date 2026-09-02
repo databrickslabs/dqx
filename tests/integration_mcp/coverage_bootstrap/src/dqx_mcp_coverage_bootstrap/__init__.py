@@ -17,7 +17,6 @@ import atexit
 import collections
 import io
 import os
-import shutil
 import sys
 import threading
 import time
@@ -51,17 +50,19 @@ _data_file = ""
 # stderr nor records logged before the task configures logging, which left three separate
 # investigations of lost coverage with nothing to read.
 #
-# Bounded, because the whole buffer is re-uploaded on every flush: unbounded, a long-lived app
-# checkpointing all suite long would ship a quadratic amount of breadcrumb traffic. The cap is far
-# above what a healthy process emits (a handful of lines), so it only ever truncates a pathological
-# repeating failure — and then the tail, which is the part worth reading, is what survives.
+# Bounded as a safety net. Breadcrumbs are written only at a few informative moments (see
+# _write_breadcrumb), so a healthy process emits a handful of lines and never approaches the cap. It
+# exists for a pathological repeating failure, where each attempt logs — and then the tail, which is
+# the part worth reading, is what survives.
 _MAX_MESSAGES = 400
 _messages: collections.deque[str] = collections.deque(maxlen=_MAX_MESSAGES)
-# Last breadcrumb text actually uploaded, so an unchanged one is not re-shipped. Together with the
-# quiet routine copy below this keeps a long-lived app's breadcrumb traffic flat instead of growing
-# with the run: in steady state nothing new is logged, so nothing is re-uploaded.
-_last_breadcrumb = ""
 _lock = threading.Lock()
+# A SEPARATE lock for the message buffer. _log is called from inside _flush_locked's `with _lock`
+# block, so it cannot take _lock as well (plain Lock, not RLock: that would deadlock). Without a lock
+# of its own, list(_messages) races _log's append and `deque` raises "mutated during iteration" —
+# which escapes _write_breadcrumb, and via flush_at_task_end's bare finally would replace the
+# runner's real exception with a coverage one.
+_messages_lock = threading.Lock()
 # Set by flush_at_task_end. The checkpoint exists only because nothing else reliably persists a
 # runner's data; once the wrapping entry point has done so deterministically there is nothing left
 # for the thread to do, and another tick would only re-upload the same bytes.
@@ -71,7 +72,7 @@ _checkpoint_stopped = False
 _key = ""
 
 
-def _log(message: str) -> None:
+def _log(message: str, warning: bool = False) -> None:
     """Emit a diagnostic through BOTH the logging module and raw stderr.
 
     ``[dqx-coverage] tracing started`` is the primary signal that instrumentation is live; a silent
@@ -82,14 +83,24 @@ def _log(message: str) -> None:
     invisible exactly where a failing runner needs to be diagnosed — which is how a lost-coverage
     bug stayed unexplained across three full suite runs. The app, whose stderr *is* captured,
     keeps working either way, and stderr is retained so a pre-logging-config failure still surfaces.
+
+    Routine events log at INFO and only real problems at WARNING (*warning*), so a long-lived app does
+    not emit a steady stream of spurious warnings from the flush path. Nothing is lost before the task
+    configures logging — where ``lastResort`` would drop INFO — because the raw stderr write above is
+    unconditional.
     """
-    _messages.append(message)
+    with _messages_lock:
+        _messages.append(message)
     sys.stderr.write(f"[dqx-coverage] {message}\n")
     sys.stderr.flush()
     try:
         import logging
 
-        logging.getLogger("dqx-coverage").warning(message)
+        logger = logging.getLogger("dqx-coverage")
+        if warning:
+            logger.warning(message)
+        else:
+            logger.info(message)
     except Exception:  # noqa: BLE001 — diagnostics must never break the app or fail a job
         pass
 
@@ -150,104 +161,124 @@ def _instance_key() -> str:
 _announced_copies: set[str] = set()
 
 
-def _persist(local_path: str, remote_path: str) -> None:
-    """Copy the saved data file to the UC volume.
+def _write_to_volume(remote_path: str, payload: bytes, announce: str = "") -> bool:
+    """Write *payload* to the UC volume. Never raises. Returns whether it landed.
 
-    Serverless jobs have a ``/Volumes`` FUSE mount, so a plain filesystem copy works there.
-    Databricks Apps do **not** (go/apps/faq: "Can I mount a Unity Catalog volume in my app?" —
-    "Not today"; request XTA-11566), so fall back to the Files API. One code path serves both and
-    self-heals if either platform assumption changes.
+    One helper carries the platform fallback for both the coverage data and the breadcrumb, because
+    there is exactly one thing to know here and it is easy to get wrong: serverless jobs have a
+    ``/Volumes`` FUSE mount, so a plain filesystem write works, while Databricks Apps do **not**
+    (go/apps/faq: "Can I mount a Unity Catalog volume in my app?" — "Not today"; request XTA-11566)
+    and need the Files API. Two copies of that had already drifted apart, one logging and the other
+    silent.
+
+    *announce* names the payload in a one-off success log; empty means log only failures. A failure is
+    always logged: this module exists to explain missing uploads, so a silent write failure here is
+    the one blind spot that must not exist.
     """
+    directory = os.path.dirname(remote_path)
     try:
-        os.makedirs(os.path.dirname(remote_path), exist_ok=True)
-        shutil.copyfile(local_path, remote_path)
-        # Announced once per destination. A periodic checkpoint copies to the same path every tick,
-        # and logging each one grew the breadcrumb — which is re-uploaded whole — with run length.
-        if remote_path not in _announced_copies:
-            _announced_copies.add(remote_path)
-            _log(f"copied -> {remote_path}")
-        return
-    except OSError as exc:
-        _log(f"FUSE copy unavailable ({exc}); using the Files API")
-
-    from databricks.sdk import WorkspaceClient
-
-    ws = WorkspaceClient()
-    ws.files.create_directory(os.path.dirname(remote_path))  # upload does not create parents
-    with open(local_path, "rb") as handle:
-        ws.files.upload(remote_path, handle, overwrite=True)
-    if remote_path not in _announced_copies:
-        _announced_copies.add(remote_path)
-        _log(f"uploaded -> {remote_path}")
-
-
-def _persist_text(remote_path: str, text: str) -> None:
-    """Write *text* to the volume, FUSE first then the Files API. Never raises."""
-    try:
-        payload = text.encode()
         try:
-            os.makedirs(os.path.dirname(remote_path), exist_ok=True)
+            os.makedirs(directory, exist_ok=True)
             with open(remote_path, "wb") as handle:
                 handle.write(payload)
-            return
-        except OSError:
-            pass
+            _announce_once(remote_path, announce, "copied")
+            return True
+        except OSError as exc:
+            # Which platform path this process took, said once per directory. This is the line that
+            # tells you whether the FUSE mount was there, so it must read as a sentence.
+            _log_once(f"fuse:{directory}", f"no FUSE mount at {directory} ({exc}); using the Files API")
         from databricks.sdk import WorkspaceClient
 
         ws = WorkspaceClient()
-        ws.files.create_directory(os.path.dirname(remote_path))
+        ws.files.create_directory(directory)  # upload does not create parents
         ws.files.upload(remote_path, io.BytesIO(payload), overwrite=True)
-    except Exception:  # noqa: BLE001 — a diagnostic must never break the app or fail a job
-        pass
+        _announce_once(remote_path, announce, "uploaded")
+        return True
+    except Exception as exc:  # noqa: BLE001 — must never break the app or fail a job
+        _log(f"could not write {announce or 'breadcrumb'} to {remote_path}: {exc!r}", warning=True)
+        return False
+
+
+def _announce_once(remote_path: str, announce: str, verb: str) -> None:
+    """Note a successful write once per destination, and never again.
+
+    A periodic checkpoint writes to the same path every tick; logging each one grew the message
+    buffer, so the breadcrumb traffic scaled with run length. Empty *announce* stays silent entirely.
+    """
+    if not announce:
+        return
+    _log_once(remote_path, f"{verb} {announce} -> {remote_path}")
+
+
+def _log_once(key: str, message: str) -> None:
+    """Log *message* the first time *key* is seen, and never again."""
+    if key in _announced_copies:
+        return
+    _announced_copies.add(key)
+    _log(message)
+
+
+def _persist(local_path: str, remote_path: str) -> bool:
+    """Ship the saved coverage data file to the volume. Never raises.
+
+    Reads the file into memory rather than streaming it, so one helper can carry the platform fallback
+    for both payloads instead of two copies that drift. The data files this ships are ~50KB (measured
+    on a full suite run), so buffering them is immaterial; revisit if that ever stops being true.
+    """
+    try:
+        with open(local_path, "rb") as handle:
+            payload = handle.read()
+    except OSError as exc:
+        _log(f"could not read {local_path}: {exc!r}", warning=True)
+        return False
+    return _write_to_volume(remote_path, payload, announce="coverage data")
 
 
 def _write_breadcrumb() -> None:
-    """Publish the diagnostics collected so far, so they are readable even if no flush ever runs.
+    """Publish the diagnostics collected so far. Never raises.
 
-    Called at startup and after each flush. The filename deliberately does NOT start with
-    ``.coverage.`` — ``coverage combine`` globs that prefix and would choke on a text file.
+    Written at a few explicit moments rather than on every flush: process start, the deterministic
+    task-end flush, a final (shutdown) flush, and any flush that failed. That is a handful of writes
+    per process instead of one per checkpoint tick, and it removes the need to deduplicate identical
+    uploads — which is what previously let a failed write mark itself as delivered and never retry.
+
+    The filename deliberately does NOT start with ``.coverage.``: ``coverage combine`` globs that
+    prefix and would choke on a text file.
     """
     destination = _destination_dir()
     if not destination:
         return
-    # Snapshot under the lock rather than joining the live buffer: _log appends from whichever thread
-    # is running, and building the text outside the lock would race it. The join happens while
-    # evaluating _persist_text's argument, i.e. OUTSIDE that function's own try — so an exception here
-    # would escape _write_breadcrumb, propagate out of _flush's finally, and (see _checkpoint_loop)
-    # take the checkpoint thread with it permanently.
-    global _last_breadcrumb  # noqa: PLW0603 — module-level singleton, mirrors the other hooks
-    with _lock:
+    # Snapshot under the buffer's own lock: _log appends from whichever thread is running, and a deque
+    # raises if it is mutated while being iterated.
+    with _messages_lock:
         snapshot = list(_messages)
-    text = "\n".join(snapshot) + "\n"
-    if text == _last_breadcrumb:
-        return
-    _last_breadcrumb = text
-    _persist_text(f"{destination}/dqxcov-log.{_key}.txt", text)
+    _write_to_volume(f"{destination}/dqxcov-log.{_key}.txt", ("\n".join(snapshot) + "\n").encode())
 
 
-def _flush(final: bool) -> None:
-    """Save the collected data and persist it to the volume. Never raises.
+def _flush(final: bool) -> bool:
+    """Save the collected data and persist it to the volume. Never raises. True if it landed.
 
     *final* stops the tracer first (process is exiting); a checkpoint leaves it running. Only
     ``save()`` is called mid-run — never ``stop()``/``start()`` from the checkpoint thread, which
     would blind other threads while they execute.
     """
     if _cov is None:
-        return
-    try:
-        _flush_locked(final)
-    finally:
-        # In a finally so the breadcrumb is published even when the flush itself gets nowhere — the
-        # "no destination could be resolved" return and the caught-exception path both land here, and
-        # those are exactly the cases worth being able to read afterwards.
+        return False
+    persisted = _flush_locked(final)
+    # Breadcrumbs are NOT written per flush. A routine checkpoint tick that succeeded says nothing new,
+    # and writing one every time meant the diagnostics had to be deduplicated to keep the traffic flat
+    # — which in turn let a failed write mark itself delivered and never retry. Write at the moments
+    # that carry information instead: a final (shutdown) flush, and any flush that did not land.
+    if final or not persisted:
         _write_breadcrumb()
+    return persisted
 
 
-def _flush_locked(final: bool) -> None:
-    """The body of :func:`_flush`, minus the breadcrumb. Never raises."""
+def _flush_locked(final: bool) -> bool:
+    """Save and ship the data. Never raises. Returns whether it reached the volume."""
     cov = _cov
     if cov is None:
-        return
+        return False
     try:
         with _lock:
             if final:
@@ -258,13 +289,17 @@ def _flush_locked(final: bool) -> None:
             cov.save()
             destination = _destination_dir()
             if not destination:
+                # Routine on an early checkpoint tick, where the runner's task arguments are not in
+                # sys.argv yet. Callers for whom it is NOT routine say so themselves — see
+                # flush_at_task_end.
                 _log("no destination could be resolved; data left in /tmp only")
-                return
+                return False
             # The name must start with '.coverage.' (and never be exactly '.coverage') or
             # `coverage combine` will not glob it.
-            _persist(_data_file, f"{destination}/.coverage.{_key}")
+            return _persist(_data_file, f"{destination}/.coverage.{_key}")
     except Exception as exc:  # noqa: BLE001 — coverage must never break the app or fail a job
-        _log(f"flush failed (non-fatal): {exc!r}")
+        _log(f"flush failed (non-fatal): {exc!r}", warning=True)
+        return False
 
 
 def _checkpoint_loop() -> None:
@@ -278,7 +313,7 @@ def _checkpoint_loop() -> None:
         except Exception as exc:  # noqa: BLE001 — the thread must outlive any single bad tick
             # Without this, one escaped exception ends the thread for the life of the process and
             # silently reinstates the atexit-only failure this whole mechanism exists to avoid.
-            _log(f"checkpoint tick failed (non-fatal): {exc!r}")
+            _log(f"checkpoint tick failed (non-fatal): {exc!r}", warning=True)
 
 
 def flush_at_task_end() -> None:
@@ -300,7 +335,15 @@ def flush_at_task_end() -> None:
     # checkpoint tick are indistinguishable in the record, which is precisely the ambiguity that made
     # an earlier attempt at this look like it worked when it had never run at all.
     _log("task-end flush (deterministic; checkpoint retired)")
-    _flush(final=False)
+    # _flush publishes the breadcrumb itself when the flush did not land, so only the success path
+    # needs one here — otherwise the same bytes would be uploaded twice on the failure path.
+    if _flush(final=False):
+        _write_breadcrumb()
+    else:
+        # Not benign here, unlike an early checkpoint tick: the work is finished, so if this did not
+        # reach the volume the run's coverage is lost. WARNING because the breadcrumb cannot help —
+        # an unresolved destination is exactly the case where it has nowhere to be written either.
+        _log("task-end flush did not reach the volume; this run's coverage is lost", warning=True)
 
 
 def _start() -> None:
@@ -325,11 +368,13 @@ def _start() -> None:
     atexit.register(_flush, True)
     if _CHECKPOINT_SECONDS > 0:
         threading.Thread(target=_checkpoint_loop, daemon=True, name="dqx-coverage").start()
-    _log(f"tracing started (key={_key}, data_file={_data_file}, argv0={sys.argv[0]!r})")
+    # WARNING, not INFO: emitted from the .pth before the task calls basicConfig, where lastResort
+    # drops INFO — and this is the line whose absence explains a silent 0% report. Once per process.
+    _log(f"tracing started (key={_key}, data_file={_data_file}, argv0={sys.argv[0]!r})", warning=True)
     _write_breadcrumb()
 
 
 try:
     _start()
 except Exception as exc:  # noqa: BLE001 — a broken bootstrap must not stop the app or job
-    _log(f"NOT started (non-fatal, expect 0% coverage): {exc!r}")
+    _log(f"NOT started (non-fatal, expect 0% coverage): {exc!r}", warning=True)
