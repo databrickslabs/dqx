@@ -7,7 +7,7 @@ Web application for the DQX framework — a UI for authoring and managing data q
 
 ## Marketplace release artifacts
 
-The main branch tracks the Marketplace manifests, backend, lockfile, and task-runner wheel, but excludes the compiled frontend under `app/marketplace/src/databricks_labs_dqx_app/__dist__/`. An annotated signed version tag is the immutable input for a complete Marketplace release. A releaser runs `make app-release-marketplace TAG=vX.Y.Z`; the command verifies the tag and matching app version, builds the self-contained artifact on local branch `marketplace/vX.Y.Z`, signs and verifies its commit, and never pushes. After inspection, publish it manually with `git push origin marketplace/vX.Y.Z`.
+The main branch tracks the Marketplace manifests, backend, lockfile, and task-runner wheel, but excludes the compiled frontend under `app/marketplace/src/databricks_labs_dqx_app/__dist__/`. An annotated signed version tag is the immutable input for a complete Marketplace release. A releaser runs `app/scripts/release_marketplace.sh vX.Y.Z`; the script verifies the tag and matching app version, builds the self-contained artifact on local branch `marketplace/vX.Y.Z`, signs and verifies its commit, and never pushes. After inspection, publish it manually with `git push origin marketplace/vX.Y.Z`.
 
 DAB deployments are independent and continue to build and consume `app/.build/`.
 
@@ -149,6 +149,6 @@ The app aligns with the [DQX Summary Metrics spec](https://github.com/databricks
 
 ## Stack
 
-- **Backend**: Python 3.12+, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
+- **Backend**: Python 3.12, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
 - **Frontend**: React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation**: orval (OpenAPI → TypeScript types + React Query hooks)

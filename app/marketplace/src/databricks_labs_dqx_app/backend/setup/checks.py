@@ -63,7 +63,7 @@ class ResourceCheckers:
                 "volume_permission_check_failed",
                 "Could not verify app service principal access to the wheels volume.",
             )
-        missing = _VOLUME_PRIVILEGES - _privileges(response)
+        missing = _missing_privileges(response, _VOLUME_PRIVILEGES)
         if missing:
             return SetupStep(
                 id=SetupStepId.VOLUME,
@@ -89,8 +89,8 @@ class ResourceCheckers:
                 "catalog_permission_check_failed",
                 "Could not verify the required Unity Catalog permissions.",
             )
-        missing_catalog = _CATALOG_PRIVILEGES - _privileges(catalog_response)
-        missing_schema = _SCHEMA_PRIVILEGES - _privileges(schema_response)
+        missing_catalog = _missing_privileges(catalog_response, _CATALOG_PRIVILEGES)
+        missing_schema = _missing_privileges(schema_response, _SCHEMA_PRIVILEGES)
         if missing_catalog or missing_schema:
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
@@ -181,6 +181,13 @@ class ResourceCheckers:
                 instructions=(f"Grant CAN_USE on SQL warehouse {warehouse} to the app service principal.",),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
+        if warehouse_id is None:
+            try:
+                self._sql.query("SELECT 1")
+            except Exception:
+                pass
+            else:
+                return _passed(SetupStepId.WAREHOUSE, "The app service principal can use the SQL warehouse.")
         return _action_required(
             SetupStepId.WAREHOUSE,
             "warehouse_permission_unknown",
@@ -254,6 +261,13 @@ def _privileges(response: EffectivePermissionsList) -> frozenset[str]:
             if isinstance(value, str):
                 privileges.add(value)
     return frozenset(privileges)
+
+
+def _missing_privileges(response: EffectivePermissionsList, required: frozenset[str]) -> frozenset[str]:
+    privileges = _privileges(response)
+    if "ALL_PRIVILEGES" in privileges:
+        return frozenset()
+    return required - privileges
 
 
 def _passed(step_id: SetupStepId, summary: str) -> SetupStep:

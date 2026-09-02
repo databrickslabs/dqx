@@ -67,6 +67,13 @@ class TaskRunnerJobManager:
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
         """Give the setup administrator management access to a task-runner job."""
+        permissions = self.workspace.jobs.get_permissions(str(job_id))
+        for access in permissions.access_control_list or []:
+            if (access.user_name or "").casefold() != user_name.casefold():
+                continue
+            granted_levels = {permission.permission_level for permission in access.all_permissions or []}
+            if granted_levels & {JobPermissionLevel.CAN_MANAGE, JobPermissionLevel.IS_OWNER}:
+                return
         self.workspace.jobs.update_permissions(
             str(job_id),
             access_control_list=[_setup_admin_access(user_name)],
