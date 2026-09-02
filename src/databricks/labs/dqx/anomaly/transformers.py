@@ -85,6 +85,15 @@ class SparkFeatureMetadata:
     # than in the typed training.score_quantiles map<string,double> column, which would need a
     # registry migration to hold a nested map; training.score_quantiles stays the global fallback.
     baseline_score_quantiles: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Temporal conditioning, and the same defaults-to-empty contract as the grouping fields above:
+    # an empty baseline_over_time makes the temporal transform return immediately, so a model trained
+    # before these existed keeps a byte-identical engineered_feature_names and scores exactly as it did.
+    baseline_over_time: str = ""  # The time column each metric is judged along
+    temporal_basis: dict[str, Any] = field(default_factory=dict)  # TemporalBasis.to_dict()
+    temporal_coefficients: dict[str, list[float]] = field(default_factory=dict)  # metric -> [intercept, *coefs]
+    # Training window bounds in epoch seconds, for the staleness horizon. A fitted basis extrapolates to
+    # any t, but accuracy decays with distance, so scoring needs to know where the evidence ran out.
+    temporal_window: dict[str, float] = field(default_factory=dict)  # {"t_min": ..., "t_max": ...}
 
     def to_json(self) -> str:
         """Serialize to JSON for storage.

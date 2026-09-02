@@ -437,3 +437,51 @@ def test_group_metadata_survives_a_json_roundtrip():
     assert restored.baseline_by == ["country", "product"]
     assert restored.baseline_medians == {"amount": {"DE\x1fcasino": 3284.0, "IT\x1flive": 657.0}}
     assert restored.global_medians == {"amount": 1200.5}
+
+
+def test_temporal_metadata_survives_a_json_roundtrip():
+    """The expected level is rebuilt at scoring time from the basis plus the coefficients.
+
+    Both have to survive exactly. A basis that comes back with a different column count, or coefficients
+    that lose their order, produce an expectation for a different design than the one that was fitted, and
+    the residual is then quietly wrong rather than loudly broken.
+    """
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "revenue", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["revenue", "revenue_rel_time"],
+        baseline_over_time="event_ts",
+        temporal_basis={
+            "trend": True,
+            "periods": [86400.0, 604800.0],
+            "harmonics": 2,
+            "changepoints": [0.27, 0.53],
+            "span": 2592000.0,
+        },
+        temporal_coefficients={"revenue": [100.5, 12.25, -3.0, 0.5, -0.25, 0.125, 0.0625, 1.5, -1.25, 0.75, -0.5]},
+        temporal_window={"t_min": 1735689600.0, "t_max": 1738281600.0},
+    )
+
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+
+    assert restored.baseline_over_time == "event_ts"
+    assert restored.temporal_basis["periods"] == [86400.0, 604800.0]
+    assert restored.temporal_basis["changepoints"] == [0.27, 0.53]
+    assert restored.temporal_coefficients["revenue"] == metadata.temporal_coefficients["revenue"]
+    assert restored.temporal_window == {"t_min": 1735689600.0, "t_max": 1738281600.0}
+
+
+def test_a_payload_written_before_the_temporal_fields_deserializes_inert():
+    """The inertness contract, at the persistence layer.
+
+    A model trained before this release carries none of the temporal keys. It must come back with an empty
+    time column, which is what makes the transform return immediately and leaves
+    ``engineered_feature_names`` byte-identical to what it was.
+    """
+    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
+
+    assert restored.baseline_over_time == ""
+    assert not restored.temporal_basis
+    assert not restored.temporal_coefficients
+    assert not restored.temporal_window
