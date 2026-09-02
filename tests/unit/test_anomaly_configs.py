@@ -195,6 +195,27 @@ def test_anomaly_config_defaults():
     assert cfg.baseline_by is None
     assert cfg.model_name is None
     assert cfg.registry_table is None
+    assert cfg.profile is None
+
+
+def test_anomaly_config_carries_the_profile():
+    """The detector choice has to survive a round trip through run-config YAML.
+
+    Without it the choice is reachable only from the Python API, so a scheduled retrain silently falls
+    back to the tabular default and produces a different model from the one the user trained by hand.
+    """
+    cfg = AnomalyConfig(columns=["a"], profile="timeseries")
+    assert cfg.profile == "timeseries"
+
+
+def test_anomaly_config_omitting_profile_keeps_the_tabular_default():
+    """A run config written before *profile* existed must still load, and train as it always did.
+
+    ``None`` rather than the literal ``"tabular"`` so the default lives in one place, next to the
+    detector resolution, rather than being duplicated into every persisted config.
+    """
+    cfg = AnomalyConfig(columns=["a"])
+    assert cfg.profile is None
 
 
 def test_anomaly_config_with_columns_and_baseline():

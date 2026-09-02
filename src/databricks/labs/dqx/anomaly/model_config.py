@@ -53,6 +53,11 @@ class FeatureEngineering:
     column_types: dict[str, str] | None = None
     feature_metadata: str | None = None
     feature_importance: dict[str, float] | None = None
+    # A queryable summary of how time was used: the column, the fitted basis, and the seasonal cycles
+    # the training window supported. Kept as a typed map rather than folded into *feature_metadata*
+    # because a dashboard should be able to read "which models are time-aware?" without parsing JSON.
+    # The coefficients themselves live in the feature metadata, which is the only place that can hold
+    # nested structures without a registry migration.
     temporal_config: dict[str, str] | None = None
 
 
