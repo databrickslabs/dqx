@@ -117,6 +117,9 @@ def test_anomaly_params_field_order_and_defaults_are_stable():
         "algorithm_config",
         "feature_engineering",
         "baseline_by",
+        # Appended, never inserted. A new comparison basis goes on the end so that anything
+        # constructing this positionally keeps binding the same values to the same fields.
+        "baseline_over_time",
     ]
 
     defaults = AnomalyParams()
@@ -125,6 +128,8 @@ def test_anomaly_params_field_order_and_defaults_are_stable():
     assert defaults.train_ratio == 0.8
     assert defaults.ensemble_size == 3
     assert defaults.baseline_by is None
+    # Unset by default, so a caller who never mentions time gets the behaviour that predates it.
+    assert defaults.baseline_over_time is None
 
 
 @pytest.mark.parametrize("algorithm", ["IsolationForest", "IsolationForest_Ensemble_3"])

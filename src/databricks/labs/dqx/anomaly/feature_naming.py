@@ -22,7 +22,11 @@ the remainder is a known source column, so a numeric column literally named ``re
 mistaken for the frequency encoding of a non-existent *revenue*. Numeric identity is matched last.
 """
 
-from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
+from databricks.labs.dqx.anomaly.transformers import (
+    BASELINE_RELATIVE_SUFFIX,
+    TEMPORAL_RELATIVE_SUFFIX,
+    SparkFeatureMetadata,
+)
 
 # Fixed suffixes appended by the non-one-hot transforms, paired with a human-phrase template applied
 # to the recovered source column. Order within this tuple does not affect correctness -- a suffix is
@@ -31,6 +35,11 @@ from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, S
 # a reader is most likely to see in a contribution.
 _SUFFIX_LABELS: tuple[tuple[str, str], ...] = (
     (BASELINE_RELATIVE_SUFFIX, "{col} vs its group baseline"),
+    # "vs its expected level" and not "unusual value": a time-relative contribution can be large while
+    # the metric's own value sits well inside its normal range, and an LLM handed the raw suffix has
+    # nothing to stop it reporting the latter. That mistake was already made once on this feature for
+    # correlation breaks; the fix is the same one, applied where the name is rendered for a reader.
+    (TEMPORAL_RELATIVE_SUFFIX, "{col} vs its expected level at that time"),
     ("_is_weekend", "{col} is a weekend"),
     ("_hour_sin", "{col} hour"),
     ("_hour_cos", "{col} hour"),

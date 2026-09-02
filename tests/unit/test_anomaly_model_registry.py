@@ -50,6 +50,53 @@ def test_compute_config_hash_treats_empty_baseline_as_ungrouped() -> None:
     assert compute_config_hash(["a"], []) == compute_config_hash(["a"], None)
 
 
+def test_compute_config_hash_distinguishes_baseline_over_time() -> None:
+    """A time column changes the engineered feature list, so it has to change the hash.
+
+    Without this, retraining under one name with the time column added or removed keeps the old hash, and
+    scoring then hands the pipeline a feature vector of a different width than it was fitted on. The
+    mismatch is the mechanism that turns that into a raised error instead of a wrong number.
+    """
+    without_time = compute_config_hash(["a", "b"], None)
+    with_time = compute_config_hash(["a", "b"], None, "event_ts")
+    other_time = compute_config_hash(["a", "b"], None, "created_at")
+
+    assert without_time != with_time
+    # Which column was used matters too: two timestamps in one table describe different histories.
+    assert with_time != other_time
+
+
+def test_compute_config_hash_treats_an_empty_time_column_as_no_time_column() -> None:
+    """Empty and absent must agree, because the persisted metadata stores "" where a caller passed None."""
+    assert compute_config_hash(["a"], None, "") == compute_config_hash(["a"], None, None)
+
+
+def test_compute_config_hash_combines_both_bases_independently() -> None:
+    """Grouping and time compose, so each has to move the hash on its own and together."""
+    plain = compute_config_hash(["a"], None, None)
+    grouped = compute_config_hash(["a"], ["region"], None)
+    timed = compute_config_hash(["a"], None, "event_ts")
+    both = compute_config_hash(["a"], ["region"], "event_ts")
+
+    assert len({plain, grouped, timed, both}) == 4
+
+
+def test_compute_config_hash_pins_the_current_formula() -> None:
+    """A committed reference value, because changing this formula forces every user to retrain.
+
+    Adding *baseline_over_time* to the hashed payload moved every hash, including for configurations that
+    do not use it: the key is present as null rather than absent. That is acceptable here and only here,
+    because this same unreleased release already moved the hash when *baseline_by* joined it, so no
+    published model carries the intermediate value. It would not be acceptable again.
+
+    Pinning the value is what makes the next such change deliberate rather than incidental.
+    """
+    assert compute_config_hash(["amount", "quantity"], ["region"]) == "63d569c1b4ec7ec5"
+    assert compute_config_hash(["amount", "quantity"], ["region"], "event_ts") == compute_config_hash(
+        ["quantity", "amount"], ["region"], "event_ts"
+    )
+
+
 def test_compute_config_hash_different_columns_produce_different_hash() -> None:
     """Different column sets should produce different hashes."""
     hash_a = compute_config_hash(["col1", "col2"], None)

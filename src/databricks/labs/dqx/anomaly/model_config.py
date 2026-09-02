@@ -96,12 +96,15 @@ class AnomalyModelRecord:
     grouping: GroupingConfig
 
 
-def compute_config_hash(columns: list[str], baseline_by: list[str] | None = None) -> str:
+def compute_config_hash(
+    columns: list[str], baseline_by: list[str] | None = None, baseline_over_time: str | None = None
+) -> str:
     """Generate stable hash of model configuration.
 
     Args:
         columns: List of column names used for training
         baseline_by: Columns the metrics are judged against, or None
+        baseline_over_time: The time column the metrics are judged along, or None
 
     Returns:
         16-character hex string (first 16 chars of SHA256 hash)
@@ -120,10 +123,17 @@ def compute_config_hash(columns: list[str], baseline_by: list[str] | None = None
         same name, different configuration -- was invisible for the grouping. Row anomaly detection
         was Experimental through 0.16.0, which carries no backward-compatibility or on-disk format
         guarantee. See https://github.com/databrickslabs/dqx/issues/1484.
+
+        *baseline_over_time* joins the inputs for the same reason and with the same consequence. It
+        changes the engineered feature list, so a model retrained under one name with the time column
+        added or removed must not keep the hash it had: the mismatch is what makes scoring raise rather
+        than hand the pipeline a feature vector of a different width than it was fitted on. Models
+        registered before it existed hash without it, since ``None`` is what they carried.
     """
     config = {
         "columns": sorted(columns),
         "baseline_by": sorted(baseline_by) if baseline_by else None,
+        "baseline_over_time": baseline_over_time or None,
     }
     config_str = json.dumps(config, sort_keys=True)
     return hashlib.sha256(config_str.encode()).hexdigest()[:16]

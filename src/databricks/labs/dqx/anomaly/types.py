@@ -72,8 +72,9 @@ class EnsembleTrainingResult:
 class AnomalyTrainingContext:
     """Context containing all inputs needed for training.
 
-    ``baseline_by`` names the columns each metric is judged against. It is expressed as features on a
-    single model, so the group count never decides how many models are trained.
+    ``baseline_by`` names the columns each metric is judged against, and ``baseline_over_time`` the
+    column it is judged along. Both are expressed as features on a single model, so neither the group
+    count nor the length of history ever decides how many models are trained.
     """
 
     spark: SparkSession
@@ -92,6 +93,10 @@ class AnomalyTrainingContext:
     # a defaulted field cannot precede a non-defaulted one, and appending also keeps positional
     # construction stable for anything building this directly.
     profile: str | None = None
+    # The time column each metric's expected level is fitted along. Appended for the same reason as
+    # *profile*: defaulted fields follow non-defaulted ones, and appending keeps positional
+    # construction stable for anything building this directly.
+    baseline_over_time: str | None = None
 
 
 @dataclass(frozen=True)

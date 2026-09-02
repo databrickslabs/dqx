@@ -65,6 +65,7 @@ class AnomalyEngine(DQEngineBase):
         expected_anomaly_rate: float = 0.02,
         baseline_by: list[str] | None = None,
         profile: str | None = None,
+        baseline_over_time: str | None = None,
     ) -> str:
         """
             Train a row anomaly detection model with intelligent auto-discovery.
@@ -106,6 +107,21 @@ class AnomalyEngine(DQEngineBase):
                       its own group. Auto-discovered only when *columns* is also omitted; pass
                       ``baseline_by=[]`` to compare against the whole table and suppress both that
                       discovery and the advisory warning.
+            baseline_over_time: A timestamp or date column each metric is judged *along*, so a value is
+                      compared with what its own history says to expect at that point in time. Each
+                      numeric metric gains its deviation from that expected level as an extra feature,
+                      on the same single pooled model. This is what catches a value that is ordinary
+                      against the whole training range and wrong for where the trend had got to.
+                      Independent of *profile*: measured across nine anomaly types it was worth about the
+                      same on both detectors. Composes with *baseline_by*, and the expectation is then
+                      fitted on the group-relative value, so one model still covers every group.
+                      Never auto-discovered: whether a metric's history is worth comparing against is a
+                      judgement about the data, so DQX will warn when the training window shows little
+                      trend but will not turn this on for you. **Not a forecaster.** It models the level
+                      expected at a time, not the next value, and it does not use the previous row.
+                      A seasonal term is fitted only where the training window holds enough complete
+                      cycles to identify one; skipped periods are logged with the reason. The named
+                      column must not also appear in *columns*, since a time axis is not a metric.
             params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Exclusions always take precedence over `columns` if both are provided.
@@ -185,6 +201,7 @@ class AnomalyEngine(DQEngineBase):
             expected_anomaly_rate=expected_anomaly_rate,
             baseline_by=baseline_by,
             profile=profile,
+            baseline_over_time=baseline_over_time,
         )
 
         log_telemetry(self.ws, "anomaly_num_features", str(len(context.columns)))

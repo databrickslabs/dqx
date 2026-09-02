@@ -40,6 +40,7 @@ from databricks.labs.dqx.anomaly.transformers import (
 )
 from databricks.labs.dqx.anomaly.types import AnomalyTrainingContext, TrainingArtifacts
 from databricks.labs.dqx.anomaly.validation import (
+    validate_baseline_over_time,
     validate_columns,
     validate_fully_qualified_name,
     validate_baseline_columns,
@@ -220,6 +221,7 @@ class AnomalyTrainingService:
         expected_anomaly_rate: float,
         baseline_by: list[str] | None = None,
         profile: str | None = None,
+        baseline_over_time: str | None = None,
     ) -> AnomalyTrainingContext:
         """Build training context with all validated inputs."""
         validate_spark_version(self._spark)
@@ -257,6 +259,15 @@ class AnomalyTrainingService:
         if baseline_by:
             logger.info(f"Judging each metric against its own group's baseline, grouped by {baseline_by}")
 
+        resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
+        validate_baseline_over_time(df, resolved_over_time, columns)
+        if resolved_over_time:
+            safe_time_column = sanitize_for_logging(resolved_over_time)
+            # Saying "within its group" when both are set matters: the expectation is then fitted on the
+            # group-relative value rather than the raw metric, which is a different model of the data.
+            within = ", within its own group" if baseline_by else ""
+            logger.info(f"Judging each metric against its expected level over '{safe_time_column}'{within}")
+
         self._prepare_training_config(
             model_name=model_name,
             registry_table=registry_table,
@@ -269,6 +280,7 @@ class AnomalyTrainingService:
         # caller's params. Downstream feature engineering reads baseline_by off params, because
         # every narrowing select is already handed params and nothing else.
         params.baseline_by = baseline_by
+        params.baseline_over_time = resolved_over_time
 
         return AnomalyTrainingContext(
             spark=self._spark,
@@ -283,6 +295,7 @@ class AnomalyTrainingService:
             auto_discovery_used=auto_discovery_used,
             baseline_by=baseline_by,
             profile=profile,
+            baseline_over_time=resolved_over_time,
         )
 
     def train(self, context: AnomalyTrainingContext) -> str:
@@ -414,7 +427,7 @@ class AnomalyTrainingService:
             grouping=GroupingConfig(
                 baseline_by=context.baseline_by,
                 sklearn_version=sklearn.__version__,
-                config_hash=compute_config_hash(context.columns, context.baseline_by),
+                config_hash=compute_config_hash(context.columns, context.baseline_by, context.baseline_over_time),
             ),
         )
         registry = AnomalyModelRegistry(context.spark)

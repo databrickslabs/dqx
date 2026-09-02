@@ -203,6 +203,11 @@ class AnomalyParams:
             its deviation from that baseline as an extra feature, on one pooled model, so cost does
             not grow with the group count. Normally set by passing *baseline_by* to
             ``AnomalyEngine.train()``, which populates this.
+        baseline_over_time: The time column each metric is judged along, so a value is compared with
+            what its own history says to expect at that point in time rather than only with the whole
+            table or its own group. Composes with *baseline_by*: with both set the expectation is
+            fitted on the group-relative value, which keeps one pooled model. Normally set by passing
+            *baseline_over_time* to ``AnomalyEngine.train()``, which populates this.
     """
 
     sample_fraction: float = 0.3
@@ -212,6 +217,7 @@ class AnomalyParams:
     algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
     feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
     baseline_by: list[str] | None = None
+    baseline_over_time: str | None = None
 
 
 @dataclass
@@ -229,6 +235,10 @@ class AnomalyConfig:
     # without this the choice was reachable only from the Python API, and a run config could not
     # reproduce a model a user had trained by hand.
     profile: str | None = None
+    # The time column each metric's expected level is fitted along. Optional for the same reason as
+    # the two above: a run config written before it existed keeps training a model with no temporal
+    # notion, which is byte-identical to what it produced before.
+    baseline_over_time: str | None = None
 
 
 @dataclass

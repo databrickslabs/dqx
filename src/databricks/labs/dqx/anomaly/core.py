@@ -42,16 +42,23 @@ SCORE_QUANTILE_PROBS = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 
 SCORE_QUANTILE_KEYS = ["p00", "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "p100"]
 
 
-def _with_baseline_columns(columns: list[str], baseline_by: list[str] | None) -> list[str]:
-    """Union *columns* with *baseline_by*, preserving order and dropping duplicates.
+def _with_basis_columns(
+    columns: list[str], baseline_by: list[str] | None, baseline_over_time: str | None = None
+) -> list[str]:
+    """Union *columns* with the comparison bases, preserving order and dropping duplicates.
+
+    A basis column has to survive the narrowing select even though it is never a feature: the grouping
+    columns build the group key, and the time column is the axis an expected level is fitted along. Both
+    are projected away again by ``apply_feature_engineering``.
 
     Group columns are not features, but they must survive every narrowing ``select`` on the way
     to feature engineering, or the group-relative transform has nothing to compute a baseline
     from. Feature engineering drops them again before the sklearn pipeline sees anything.
     """
-    if not baseline_by:
+    extra = [*(baseline_by or []), *([baseline_over_time] if baseline_over_time else [])]
+    if not extra:
         return columns
-    return list(dict.fromkeys([*columns, *baseline_by]))
+    return list(dict.fromkeys([*columns, *extra]))
 
 
 def sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple[DataFrame, int, bool]:
@@ -66,7 +73,7 @@ def sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple
         Tuple of (sampled DataFrame, row count, truncated flag)
     """
     fraction = params.sample_fraction if params.sample_fraction is not None else DEFAULT_SAMPLE_FRACTION
-    columns = _with_baseline_columns(columns, params.baseline_by)
+    columns = _with_basis_columns(columns, params.baseline_by, params.baseline_over_time)
     missing_cols = [c for c in columns if c not in df.columns]
     if missing_cols:
         raise InvalidParameterError(f"Columns not found in DataFrame: {missing_cols}")
@@ -107,7 +114,7 @@ def prepare_training_features(
 
     # Group columns ride along for the relative transform but are never classified as features:
     # analyze_columns sees only feature_columns.
-    feature_df = train_df.select(*_with_baseline_columns(feature_columns, params.baseline_by))
+    feature_df = train_df.select(*_with_basis_columns(feature_columns, params.baseline_by, params.baseline_over_time))
     column_infos, _ = classifier.analyze_columns(feature_df, feature_columns)
 
     engineered_df, feature_metadata = apply_feature_engineering(
@@ -116,6 +123,7 @@ def prepare_training_features(
         categorical_cardinality_threshold=fe_config.categorical_cardinality_threshold,
         frequency_maps=None,
         baseline_by=params.baseline_by,
+        baseline_over_time=params.baseline_over_time,
     )
 
     # Project to the feature list explicitly. The engineered frame also carries the baseline key
@@ -197,7 +205,10 @@ def score_with_model(
     This enables distributed inference across the Spark cluster.
     """
     engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
-        df.select(*_with_baseline_columns(feature_cols, feature_metadata.baseline_by)), feature_metadata
+        df.select(
+            *_with_basis_columns(feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time)
+        ),
+        feature_metadata,
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -234,7 +245,10 @@ def score_with_ensemble_models(
 ) -> DataFrame:
     """Score DataFrame using an ensemble of models and return mean scores."""
     engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
-        df.select(*_with_baseline_columns(feature_cols, feature_metadata.baseline_by)), feature_metadata
+        df.select(
+            *_with_basis_columns(feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time)
+        ),
+        feature_metadata,
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names

@@ -47,6 +47,7 @@ class AnomalyTrainerWorkflow(Workflow):
             columns=anomaly_config.columns,
             baseline_by=anomaly_config.baseline_by,
             profile=anomaly_config.profile,
+            baseline_over_time=anomaly_config.baseline_over_time,
             model_name=model_name,
             registry_table=registry_table,
         )

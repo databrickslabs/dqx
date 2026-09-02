@@ -44,8 +44,10 @@ def metadata() -> SparkFeatureMetadata:
             "signup_month_cos",
             "signup_is_weekend",
             "amount_rel_baseline",
+            "amount_rel_time",
         ],
         baseline_by=["country"],
+        baseline_over_time="signup",
     )
 
 
@@ -54,6 +56,9 @@ def metadata() -> SparkFeatureMetadata:
     [
         ("amount", "amount", "amount"),
         ("amount_rel_baseline", "amount", "amount vs its group baseline"),
+        # Deliberately not "unusual amount": a large time-relative contribution is compatible with the
+        # metric's own value sitting well inside its normal range, and the label is what an LLM reads.
+        ("amount_rel_time", "amount", "amount vs its expected level at that time"),
         ("country_US", "country", "country = US"),
         ("country_DE", "country", "country = DE"),
         ("country_is_null", "country", "country is null"),
@@ -78,7 +83,9 @@ def test_every_convention_resolves(
 
 def test_engineered_from_covers_all_derived_features(metadata: SparkFeatureMetadata):
     assert engineered_from("country", metadata) == frozenset({"country_US", "country_DE", "country_is_null"})
-    assert engineered_from("amount", metadata) == frozenset({"amount", "amount_rel_baseline"})
+    # The time-relative feature has to be in here too, or redacting *amount* would leave a feature
+    # derived from it in the contributions map, which is the leak this function exists to prevent.
+    assert engineered_from("amount", metadata) == frozenset({"amount", "amount_rel_baseline", "amount_rel_time"})
     assert engineered_from("channel", metadata) == frozenset({"channel_freq"})
     assert engineered_from("signup", metadata) == frozenset(
         {

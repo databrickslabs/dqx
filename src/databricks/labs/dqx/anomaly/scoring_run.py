@@ -110,19 +110,20 @@ def score_global_model(
     # which is the intended loud failure rather than an accident. See compute_config_hash.
     # A record with no persisted feature metadata cannot have been trained with a grouping, so it
     # hashes as ungrouped -- and will still mismatch, because the hash formula itself changed.
-    trained_baseline_by = (
-        SparkFeatureMetadata.from_json(record.features.feature_metadata).baseline_by
-        if record.features.feature_metadata
-        else None
+    trained_metadata = (
+        SparkFeatureMetadata.from_json(record.features.feature_metadata) if record.features.feature_metadata else None
     )
-    expected_hash = compute_config_hash(config.columns, trained_baseline_by)
+    trained_baseline_by = trained_metadata.baseline_by if trained_metadata else None
+    trained_baseline_over_time = trained_metadata.baseline_over_time if trained_metadata else None
+    expected_hash = compute_config_hash(config.columns, trained_baseline_by, trained_baseline_over_time)
 
     if expected_hash != record.grouping.config_hash:
         raise InvalidParameterError(
             f"Configuration mismatch for model '{config.model_name}':\n"
             f"  Trained columns: {record.training.columns}\n"
             f"  Provided columns: {config.columns}\n"
-            f"  Trained baseline_by: {trained_baseline_by or None}\n\n"
+            f"  Trained baseline_by: {trained_baseline_by or None}\n"
+            f"  Trained baseline_over_time: {trained_baseline_over_time or None}\n\n"
             f"This model was trained with a different configuration, or by a DQX version before\n"
             f"baseline_by became part of the configuration hash (0.17.0). Either:\n"
             f"  1. Use the columns that match the trained model\n"
