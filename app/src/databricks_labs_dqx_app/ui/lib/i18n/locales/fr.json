@@ -2929,5 +2929,41 @@
     "contribute": "Contribuer sur GitHub",
     "added": "Ajoutée",
     "alreadyImported": "Cette règle est déjà importée"
+  },
+  "setup": {
+    "title": "Configurer DQX Studio",
+    "checkingTitle": "Vérification de l’état de préparation de Studio",
+    "checkingDescription": "DQX Studio vérifie les capacités nécessaires pour démarrer en toute sécurité.",
+    "waitingTitle": "La configuration de Studio nécessite un administrateur",
+    "waitingDescription": "Contactez un membre de {{adminGroup}} pour terminer les étapes de configuration restantes.",
+    "statusUnavailableTitle": "L’état de la configuration est indisponible",
+    "statusUnavailableDescription": "Actualisez la page pour vérifier à nouveau l’état de préparation de Studio.",
+    "reconcileFailed": "La configuration n’a pas pu être terminée. Examinez les étapes indiquées et réessayez.",
+    "steps": {
+      "identity": "Identité de l’application",
+      "volume": "Volume des wheels",
+      "unity_catalog": "Accès à Unity Catalog",
+      "schemas": "Schémas de l’application",
+      "lakebase": "Base de données Lakebase",
+      "warehouse": "Entrepôt SQL",
+      "task_runner": "Tâche d’exécution des jobs",
+      "wheels": "Wheels de l’application",
+      "migrations": "Migrations de base de données",
+      "activation": "Activer Studio"
+    },
+    "states": {
+      "pending": "En attente",
+      "running": "En cours",
+      "passed": "Prêt",
+      "action_required": "Action requise",
+      "failed": "Attention requise"
+    },
+    "actions": {
+      "reconcile": "Lancer la configuration",
+      "verify_again": "Vérifier à nouveau",
+      "openJobs": "Ouvrir les jobs"
+    },
+    "instructions": "Comment résoudre ce problème",
+    "diagnosticCode": "Code : {{code}}"
   }
 }

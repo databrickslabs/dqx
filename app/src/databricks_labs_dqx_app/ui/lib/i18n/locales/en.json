@@ -2929,5 +2929,41 @@
     "contribute": "Contribute on GitHub",
     "added": "Added",
     "alreadyImported": "This rule is already imported"
+  },
+  "setup": {
+    "title": "Set up DQX Studio",
+    "checkingTitle": "Checking Studio readiness",
+    "checkingDescription": "DQX Studio is checking the capabilities required to start safely.",
+    "waitingTitle": "Studio setup needs an administrator",
+    "waitingDescription": "Contact a member of {{adminGroup}} to complete the remaining setup steps.",
+    "statusUnavailableTitle": "Setup status is unavailable",
+    "statusUnavailableDescription": "Refresh the page to check Studio readiness again.",
+    "reconcileFailed": "Setup could not be completed. Review the reported steps and try again.",
+    "steps": {
+      "identity": "Application identity",
+      "volume": "Wheels volume",
+      "unity_catalog": "Unity Catalog access",
+      "schemas": "Application schemas",
+      "lakebase": "Lakebase database",
+      "warehouse": "SQL warehouse",
+      "task_runner": "Task-runner job",
+      "wheels": "Application wheels",
+      "migrations": "Database migrations",
+      "activation": "Activate Studio"
+    },
+    "states": {
+      "pending": "Pending",
+      "running": "In progress",
+      "passed": "Ready",
+      "action_required": "Action required",
+      "failed": "Needs attention"
+    },
+    "actions": {
+      "reconcile": "Run setup",
+      "verify_again": "Verify again",
+      "openJobs": "Open Jobs"
+    },
+    "instructions": "How to resolve this",
+    "diagnosticCode": "Code: {{code}}"
   }
 }

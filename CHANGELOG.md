@@ -2,6 +2,7 @@
 
 ## 0.16.0
 
+* DQX Studio is now packaged for Databricks Marketplace with a readiness wizard for bound SQL warehouse, Lakebase, and Unity Catalog volume resources. Main excludes compiled Marketplace frontend assets; maintainers generate the complete artifact from an annotated signed version tag on a locally signed `marketplace/vX.Y.Z` branch, then inspect and push it manually. Marketplace uses published DQX Core pins, while DAB remains the one-command deployment path and continues to consume `.build/`.
 * Added a pluggable actions and alerting subsystem ([#1289](https://github.com/databrickslabs/dqx/issues/1289)). DQX now supports extensible *actions* that run when checked data violates an optional condition evaluated against the summary metrics produced by `DQMetricsObserver`. The built-in `DQAlert` action can send notifications to Slack, Microsoft Teams, a generic HTTPS webhook, or the log, so pipelines can react to data quality regressions without custom plumbing. You can create your own custom actions as well, and custom alerting is possible via the callback destination, which invokes an in-process Python callable for each alert.
 * Added an MCP (Model Context Protocol) server for DQX ([#1252](https://github.com/databrickslabs/dqx/issues/1252)). The server exposes DQX's data quality capabilities as tools that any MCP-compatible AI agent (Claude, Genie Code, Cursor, Mosaic AI) can discover and orchestrate. It runs as a Databricks App with on-behalf-of (OBO) authentication, so all data access is governed by the calling user's Unity Catalog permissions.
 * Added support for summary metrics in Lakeflow Declarative Pipelines (LDP/DLT) ([#1301](https://github.com/databrickslabs/dqx/issues/1301)). A new `DQEngine.compute_summary_metrics(...)` produces the same row counts, per-check breakdown, and custom observer metrics as a lazy aggregation over the results DataFrame, so metrics can be computed inside Spark Declarative Pipelines where the observer- and streaming-listener-based paths cannot be used.
@@ -111,6 +112,7 @@ BREAKING CHANGES!
 
 BREAKING CHANGES!
 
+* DQX Studio no longer supports Delta-backed OLTP/application state. Lakebase is required and existing Delta OLTP state has no migration path.
 * The default save mode for storing checks in Delta and Lakebase tables changed from `overwrite` to `append`. Rules are now versioned going forward — every save produces a new entry stamped with `created_at`, `rule_set_fingerprint`, and `rule_fingerprint`. To preserve the previous overwrite behaviour, explicitly pass `mode="overwrite"` when saving checks. ([#1044](https://github.com/databrickslabs/dqx/issues/1044))
 * Parameter order changed in `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table`. Update callers accordingly — see the methods' updated docstrings for the new signature. ([#1064](https://github.com/databrickslabs/dqx/issues/1064))
 

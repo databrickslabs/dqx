@@ -1,6 +1,16 @@
-# Deployment (Declarative Automation Bundles)
+# Deployment (Declarative Automation Bundles and Marketplace)
 
-Production deployment uses [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DABs, formerly known as Databricks Asset Bundles) via the Databricks CLI (`databricks bundle deploy`). For local development, see [DEVELOPMENT.md](DEVELOPMENT.md).
+Production deployment uses [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DABs, formerly known as Databricks Asset Bundles) via the Databricks CLI (`databricks bundle deploy`), or the Databricks Marketplace listing. For local development, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Choose an installation path
+
+**DAB deployment** remains the one-command route: `make app-deploy PROFILE=<profile> TARGET=<target>` builds the app, deploys the bundle, and starts it. On first start, DQX Studio runs the same readiness workflow used by Marketplace before it serves the normal API.
+
+**Marketplace installation** binds three existing resources: a SQL warehouse, a Lakebase Postgres endpoint, and a Unity Catalog volume. The bound volume determines the main catalog and schema. Before opening the app, ensure an administrator is a member of the workspace group named by `DQX_ADMIN_GROUP`. The setup wizard verifies all three resources, creates the sibling schemas, runs migrations, publishes wheels, and gives precise grant instructions when a capability is missing. It also links to the Jobs UI so an administrator can set the task-runner job's external `run_as` service principal.
+
+Lakebase is mandatory. Delta-backed application (OLTP) state was removed and cannot be migrated. Marketplace currently supports replacing the SQL warehouse; swapping the Lakebase endpoint or volume, and smoke-validating the task runner, are planned follow-up capabilities.
+
+Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the Marketplace runtime source but excludes its compiled frontend. An annotated signed version tag is the immutable release input: `make app-release-marketplace TAG=vX.Y.Z` verifies the tag and app version, creates `marketplace/vX.Y.Z`, builds the complete self-contained source, and signs and verifies its local commit. The command never pushes; inspect the branch, then run `git push origin marketplace/vX.Y.Z` manually. DAB deployment continues to consume `.build/`, not `app/marketplace/`.
 
 ## Prerequisites
 
@@ -41,7 +51,7 @@ These are configured at the workspace or account level — not by you, not by th
 - **Databricks Apps** is enabled on the workspace
 - **User token passthrough** (a.k.a. user authorization / OBO) is enabled for Databricks Apps — see [Step 2](#step-2-enable-user-token-passthrough). Without this the app can't make OBO calls and Unity Catalog browsing fails.
 - **Serverless compute** is enabled on the workspace — the task-runner job runs exclusively on serverless
-- **Lakebase Postgres** is enabled on the workspace (default OLTP backend). Lakebase is declared as a Postgres *project* bundle resource (`resources.postgres_projects.dqx_studio`, plus `resources.postgres_roles.app_sp` for the app SP's role) with `lifecycle.prevent_destroy: true` so a `bundle destroy` cannot drop it and wipe OLTP state — see [Stateful storage and destroy protection](#step-3-stateful-storage-and-destroy-protection). The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema inside it on first connection — no separate logical-DB provisioning step.
+- **Lakebase Postgres** is enabled on the workspace. Lakebase is mandatory for DQX Studio's transactional state. In the DAB path it is declared as a Postgres *project* bundle resource (`resources.postgres_projects.dqx_studio`, plus `resources.postgres_roles.app_sp` for the app SP's role) with `lifecycle.prevent_destroy: true` so a `bundle destroy` cannot drop it and wipe OLTP state — see [Stateful storage and destroy protection](#step-3-stateful-storage-and-destroy-protection). The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema inside it on first connection — no separate logical-DB provisioning step.
 
 ### The catalog must already exist
 
@@ -133,8 +143,6 @@ The bundle **always** creates and manages a dedicated serverless warehouse (`res
 
 Lakebase is a bundle-managed Postgres **project** (`resources.postgres_projects.dqx_studio`) plus the app SP's Postgres role (`resources.postgres_roles.app_sp`, a `DATABRICKS_SUPERUSER` member so the app can create its own schema). The project auto-creates its default branch (`lakebase_branch`, default `dqx`) and a `primary` read/write endpoint; the app connects via that endpoint path (`DQX_LAKEBASE_ENDPOINT`). The endpoint scales to zero after `lakebase_suspend_timeout` of inactivity — the app's connection pool pre-pings on checkout and transparently reconnects (waking the endpoint) on the next request.
 
-To run **without** Lakebase (OLTP on Delta): remove the `postgres_projects` and `postgres_roles` blocks from `databricks.yml` and set `lakebase_endpoint: "-"`.
-
 > **The default warehouse and Lakebase sizes are deliberately small.** The bundle ships a `Small` SQL warehouse and a 0.5–1 CU autoscaling, scale-to-zero Lakebase project — sized for a typical rules catalog (low-thousands of rows) and light concurrent use, and chosen to keep idle cost near zero. They are a sensible **starting point, not a tuned production configuration.** Watch the app logs and the warehouse / Lakebase metrics under real load and raise `sql_warehouse_size`, `lakebase_max_cu`, or `DQX_LAKEBASE_POOL_MAX_SIZE` if you see query queueing or connection-pool exhaustion (see [Troubleshooting](#troubleshooting)).
 
 ### Variable reference
@@ -145,16 +153,16 @@ All target-level variables, their defaults, and what they control:
 |---|---|---|---|
 | `catalog_name` | `dqx` | **Yes** | Unity Catalog catalog where schemas and the wheels volume are created. **Must already exist** — the bundle does not create the catalog itself. |
 | `dqx_service_principal_application_id` | `00000000-…` | **Yes** | Application ID of the service principal that runs the task-runner job. Created in [Step 1](#step-1-create-a-service-principal). The placeholder default fails validation. |
-| `admin_group` | `proj_dbw_dev_dg_admins-data_ug` (bundle) / unset (local Python) | Yes for prod | Workspace group whose members get the in-app `ADMIN` role unconditionally (bootstrap admin path). The bundle ships with a non-production placeholder — override per target with your real admin group (e.g. `dqx-admins-prod`). Locally, `AppConfig` defaults to `None` and skips bootstrap admin assignment; set `DQX_ADMIN_GROUP` in your shell if you need it for local testing. Additional roles are assigned at runtime via the in-app Role Management UI. |
+| `admin_group` | `proj_dbw_dev_dg_admins-data_ug` (bundle) / `admins` (local Python) | Yes for prod | Workspace group whose members get the in-app `ADMIN` role unconditionally (bootstrap admin path). The bundle ships with a non-production placeholder — override per target with your real admin group (e.g. `dqx-admins-prod`). In every path, `AppConfig` defaults to the workspace `admins` group; `DQX_ADMIN_GROUP` overrides that default for local testing or deployment. Additional roles are assigned at runtime via the in-app Role Management UI. |
 | `app_name` | `dqx-studio` | No | Deployed Databricks App name. Override per target (e.g. `dqx-studio-dev`, `dqx-studio-prod`) when deploying multiple targets to the same workspace, or for personal sandboxes. |
 | `sql_warehouse_name` | `dqx-studio-sql-warehouse` | No | Name of the bundle-managed SQL warehouse. Override per target to avoid duplicates in shared workspaces. |
 | `sql_warehouse_size` | `Small` | No | Cluster size of the bundle-managed warehouse (e.g. `2X-Small`, `Small`, `Medium`). |
-| `schema_name` | `dqx_studio` | No | Main schema — holds run history, profiling, metrics, quarantine, and OLTP fallback tables. Declared as `resources.schemas.main_schema` in the bundle with `lifecycle.prevent_destroy: true`. |
+| `schema_name` | `dqx_studio` | No | Main schema — holds run history, profiling, metrics, and quarantine tables. Declared as `resources.schemas.main_schema` in the bundle with `lifecycle.prevent_destroy: true`. |
 | `tmp_schema_name` | `dqx_studio_tmp` | No | Per-user temp-view schema. Declared as `resources.schemas.tmp_schema` with `lifecycle.prevent_destroy: true`. |
 | `wheels_volume_name` | `wheels` | No | UC volume under `<catalog>.<schema_name>` for the DQX + task-runner wheels. Declared as `resources.volumes.wheels` with `lifecycle.prevent_destroy: true`. |
 | `lakebase_project_id` | `dqx-studio-db` | No | Lakebase Postgres project id for OLTP state. Declared as `resources.postgres_projects.dqx_studio` with `lifecycle.prevent_destroy: true`. Autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling). |
 | `lakebase_branch` | `dqx` | No | Project branch the app uses; auto-created with a `primary` endpoint on first deploy. |
-| `lakebase_endpoint` | `projects/<project>/branches/<branch>/endpoints/primary` | No | Endpoint resource path (`DQX_LAKEBASE_ENDPOINT`) driving host resolution + OAuth. Derived from project + branch. Set to `-` (and remove the postgres_projects/roles blocks) to disable Lakebase. |
+| `lakebase_endpoint` | `projects/<project>/branches/<branch>/endpoints/primary` | No | Required endpoint resource path (`DQX_LAKEBASE_ENDPOINT`) driving host resolution + OAuth. Derived from project + branch. |
 | `lakebase_database_name` | `databricks_postgres` | No | Logical Postgres database inside the Lakebase instance the app connects to. Defaults to `databricks_postgres` (always present, no provisioning step). Override only if you've manually created a different logical DB you want to use. |
 | `lakebase_schema_name` | `dqx_studio` | No | Postgres schema inside that database where OLTP tables live (`DQX_LAKEBASE_SCHEMA`). Created by the app on first start. Isolate per target (e.g. `dqx_studio_v2`) when two apps share a Lakebase project — otherwise migrations fail with `must be owner of table …` against tables owned by another app SP. |
 | `lakebase_min_cu` / `lakebase_max_cu` | `0.5` / `1` | No | Autoscaling compute-unit range for the project endpoint. Raise the max if Lakebase queries queue in the app logs. |
@@ -177,7 +185,7 @@ make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 
 Remember the one manual prerequisite: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) on your catalog to the **task-runner SP** and **`account users`**. The app SP itself is handled automatically now, via the wheels-volume `uc_securable` binding on the app resource.
 
-> **First start**: The app runs both Delta and Lakebase database migrations on startup, and uploads DQX wheels to the UC volume. If the task-runner job runs before the app has started at least once, it will fail to find its wheels. Wait for `"Uploaded databricks_labs_dqx-<version>..."` in the logs before triggering runs. If Lakebase is enabled, also wait for `"Lakebase OLTP routing enabled"` before opening the UI — when Lakebase is configured and init fails, the app refuses to start (logged as `"Lakebase initialisation failed ... Refusing to start"`) and the Apps platform will restart the container. Silent fallback to Delta is intentionally disallowed because it would split OLTP writes across two physical stores and orphan prior Lakebase data on every flap. To intentionally run on Delta only, unset `DQX_LAKEBASE_ENDPOINT`.
+> **First start**: The app runs Delta analytical and Lakebase application migrations on startup, and uploads DQX wheels to the UC volume. If the task-runner job runs before the app has started at least once, it will fail to find its wheels. Wait for `"Uploaded databricks_labs_dqx-<version>..."` in the logs before triggering runs. Also wait for `"Lakebase OLTP routing enabled"` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Apps platform restarts the container. It never falls back to Delta-backed application state.
 
 ### Step-by-step alternative
 
@@ -360,14 +368,14 @@ make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 ```
 
 **App logs `"Lakebase initialisation failed ... Refusing to start"` and the container restart-loops:**
-The app deliberately refuses to start when Lakebase is configured (`DQX_LAKEBASE_ENDPOINT` non-empty) and init fails — silently falling back to Delta would split OLTP writes across two physical stores and orphan prior Lakebase data. Diagnose with the steps below; the Apps platform will pick up the next successful start automatically.
+The app deliberately refuses to start when Lakebase initialization fails — it never falls back to Delta-backed application state. Diagnose with the steps below; the Apps platform will pick up the next successful start automatically.
 
 1. Confirm the Lakebase project + endpoint exist and are running (Compute → Database Instances in the workspace UI). If missing, re-run `databricks bundle deploy`; if the endpoint is still `STARTING`, wait and the next restart will succeed. (A suspended endpoint is fine — the app's pre-ping pool wakes it on connect.)
 2. Confirm the app SP's Postgres role exists on the project branch — it's created by the `postgres_roles.app_sp` resource. Redeploy if the role is missing.
 3. If the failure is specifically a Postgres `permission denied for database databricks_postgres` (or `permission denied to create schema`), the app SP can connect but lacks `CREATE` on the system `databricks_postgres` database — that privilege comes from the `DATABRICKS_SUPERUSER` membership in `postgres_roles.app_sp`. Confirm that block deployed (CLI ≥ 1.4.0), or run a one-time `GRANT CREATE ON DATABASE databricks_postgres TO "<app-sp-client-id>"` against the project endpoint.
 4. If the failure is `must be owner of table <name>` during startup migrations, the Lakebase `dqx_studio` schema objects are owned by a Postgres role other than the app's service principal — most often the human deployer after local dev (`make app-start-dev`) or `seed_demo.py` against the same Lakebase project. Postgres requires table ownership for `ALTER TABLE`; the app SP's `DATABRICKS_SUPERUSER` membership grants broad DML but does not let a non-owner add columns. **`make app-deploy` runs `scripts/post_deploy_lakebase_migrations.sh` after `bundle deploy`**, applying pending migrations as the deployer (who owns the objects) before the app starts. Re-run `make app-deploy` if you hit this after pulling new migrations. Avoid pointing local dev at production Lakebase endpoints.
 5. Confirm OAuth token issuance is healthy — Lakebase tokens currently expire after one hour; a misconfigured OAuth integration or revoked SP credential will surface here.
-6. If you intentionally want to run on Delta only (no Lakebase), remove the `postgres_projects` / `postgres_roles` blocks and set `lakebase_endpoint: "-"`, then redeploy. The app will start in legacy UC-only mode and OLTP tables will live on Delta.
+6. Recheck that the Lakebase endpoint and the caller's Postgres role are valid. DQX Studio requires Lakebase; there is no Delta-only mode or migration from the removed Delta-backed application state.
 
 **`databricks bundle deploy` fails with `"already exists"` on the first deploy of a target:**
 A schema, volume, or Lakebase project of the same name was created out-of-band. Either rename it via the corresponding variable (`schema_name`, `wheels_volume_name`, `lakebase_project_id`) or `databricks bundle deployment bind <key> <existing-id> -t <target>` to adopt the existing resource, then redeploy.
@@ -398,6 +406,5 @@ DQX Studio lets reviewers attach a per-run **review status** (e.g. *Pending revi
 
 - **Configurable catalogue** — admins manage the list of allowed values (label, description, colour) under **Configuration → Run review statuses**. Exactly one entry must be marked **Default**; that value is what unreviewed runs surface virtually (no row is written until someone explicitly reviews). The backend enforces the single-default invariant on save.
 - **Audit trail** — every change appends to `dq_run_review_status_history`, surfaced as an "Activity" timeline inside the review-status panel. The current value lives in `dq_run_review_status` (one row per reviewed run).
-- **Storage** — both tables are OLTP-shaped (single-key lookups, frequent mutation), so they live in Lakebase when it's enabled and fall back to Delta otherwise via the same `oltp_fallback` plumbing used by comments and role mappings. No extra deployment configuration is needed.
+- **Storage** — both tables are OLTP-shaped (single-key lookups, frequent mutation), so they live in required Lakebase Postgres alongside comments and role mappings. No extra deployment configuration is needed.
 - **Permissions** — any authenticated app user can set or change a review status, mirroring how comments work. Only admins can edit the catalogue itself.
-

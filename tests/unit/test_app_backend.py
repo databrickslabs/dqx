@@ -4,13 +4,14 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Generator
 from unittest.mock import create_autospec
 
 import pytest
 
 from databricks_labs_dqx_app.backend.cache import CacheFactory, MISS
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.config import AppConfig
+from databricks_labs_dqx_app.backend.config import AppConfig, conf
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, get_logger, setup_logger
 from databricks_labs_dqx_app.backend.migrations import MIGRATIONS, MigrationRunner
@@ -28,6 +29,7 @@ from databricks_labs_dqx_app.backend.models import (
     SaveRulesIn,
     SetStatusIn,
 )
+from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.routes.v1.dryrun import (
     get_dry_run_results,
     get_dry_run_status,
@@ -65,6 +67,7 @@ from databricks_labs_dqx_app.backend.services.view_service import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -86,6 +89,41 @@ from databricks.sdk.service.sql import (
     StatementStatus,
 )
 from databricks.sdk.service.workspace import ExportResponse
+
+
+@pytest.fixture(autouse=True)
+def _activate_test_runtime_resources() -> Generator[None, None, None]:
+    """Supply activated Studio resources to route tests that bypass the app lifespan."""
+    previous_resources = rt.resources
+    resources = ActiveResources(
+        volume=VolumeLocation(
+            conf.catalog,
+            conf.schema_name,
+            "wheels",
+            f"/Volumes/{conf.catalog}/{conf.schema_name}/wheels",
+        ),
+        lakebase=LakebaseConnection(
+            endpoint="projects/test/branches/test/endpoints/primary",
+            host=None,
+            port=5432,
+            database="databricks_postgres",
+            username=None,
+            password=None,
+            schema=conf.lakebase_schema_name,
+        ),
+        warehouse_id="test-warehouse",
+        job_id="1",
+        tmp_schema=conf.tmp_schema_name,
+        genie_schema=conf.genie_schema_name,
+    )
+    rt.activate(resources)
+    try:
+        yield
+    finally:
+        if previous_resources is None:
+            rt.deactivate()
+        else:
+            rt.activate(previous_resources)
 
 
 @pytest.fixture
@@ -1208,10 +1246,10 @@ class TestJobService:
         return JobService(ws=ws, job_id="42", sql=sql)
 
     def test_submit_run_raises_when_no_job_id(self, ws: WorkspaceClient) -> None:
-        """Should raise RuntimeError when job_id is not configured."""
+        """Should raise RuntimeError when the task-runner job is unresolved."""
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
         svc = JobService(ws=ws, job_id="", sql=sql)
-        with pytest.raises(RuntimeError, match="DQX_JOB_ID is not configured"):
+        with pytest.raises(RuntimeError, match="Task-runner job is not resolved — cannot submit job runs"):
             svc.submit_run(
                 task_type="dryrun",
                 view_fqn="cat.sch.tmp_view_abc",

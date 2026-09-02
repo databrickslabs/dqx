@@ -1,6 +1,13 @@
 """Tests for AppConfig fields and env-var overrides."""
 
 
+def test_admin_group_defaults_to_workspace_admins(monkeypatch):
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_ADMIN_GROUP", raising=False)
+    assert AppConfig(_env_file=None).admin_group == "admins"
+
+
 def test_genie_schema_name_default_and_env(monkeypatch):
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
     # Re-import so pydantic-settings picks up the cleared env.

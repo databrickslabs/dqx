@@ -1,0 +1,40 @@
+[project]
+name = "databricks-labs-dqx-app"
+version = "0.15.0"
+description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi~=0.119",
+    "pydantic-settings~=2.11",
+    "uvicorn~=0.37",
+    "databricks-labs-dqx[llm,datacontract]==0.15.0",
+    "databricks-sdk~=0.120",
+    "databricks-sql-connector[pyarrow]==4.2.5",
+    "openpyxl>=3.1",
+    # Lakebase (Postgres) backend for OLTP state. ``binary`` ships a
+    # pre-built libpq so we don't need a system Postgres install at
+    # runtime; ``pool`` adds the threaded ConnectionPool used by
+    # PgExecutor.  Both are optional features of the same package.
+    "psycopg[binary,pool]>=3.2",
+]
+
+[tool.dqx_app.metadata]
+app-name = "DQX Studio"
+app-slug = "databricks_labs_dqx_app"
+app-module = "databricks_labs_dqx_app.backend.app:app"
+
+
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+# Static version (see [project].version); build_app.py generates _version.py.
+[tool.hatch.build]
+artifacts = [
+    "src/databricks_labs_dqx_app/__dist__",
+    "src/databricks_labs_dqx_app/_metadata.py",
+    "src/databricks_labs_dqx_app/_version.py",
+    "src/databricks_labs_dqx_app/backend/marketplace/packs/*.yaml",
+]
+exclude = ["src/databricks_labs_dqx_app/ui"]

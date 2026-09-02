@@ -2929,5 +2929,41 @@
     "contribute": "Contribuisci su GitHub",
     "added": "Aggiunta",
     "alreadyImported": "Questa regola è già stata importata"
+  },
+  "setup": {
+    "title": "Configura DQX Studio",
+    "checkingTitle": "Verifica della disponibilità di Studio",
+    "checkingDescription": "DQX Studio sta verificando le funzionalità necessarie per avviarsi in sicurezza.",
+    "waitingTitle": "La configurazione di Studio richiede un amministratore",
+    "waitingDescription": "Contatta un membro di {{adminGroup}} per completare i passaggi di configurazione rimanenti.",
+    "statusUnavailableTitle": "Lo stato della configurazione non è disponibile",
+    "statusUnavailableDescription": "Aggiorna la pagina per verificare di nuovo la disponibilità di Studio.",
+    "reconcileFailed": "Non è stato possibile completare la configurazione. Esamina i passaggi indicati e riprova.",
+    "steps": {
+      "identity": "Identità dell’applicazione",
+      "volume": "Volume dei wheel",
+      "unity_catalog": "Accesso a Unity Catalog",
+      "schemas": "Schemi dell’applicazione",
+      "lakebase": "Database Lakebase",
+      "warehouse": "Warehouse SQL",
+      "task_runner": "Job di esecuzione attività",
+      "wheels": "Wheel dell’applicazione",
+      "migrations": "Migrazioni del database",
+      "activation": "Attiva Studio"
+    },
+    "states": {
+      "pending": "In attesa",
+      "running": "In corso",
+      "passed": "Pronto",
+      "action_required": "Azione richiesta",
+      "failed": "Richiede attenzione"
+    },
+    "actions": {
+      "reconcile": "Esegui configurazione",
+      "verify_again": "Verifica di nuovo",
+      "openJobs": "Apri job"
+    },
+    "instructions": "Come risolvere",
+    "diagnosticCode": "Codice: {{code}}"
   }
 }
