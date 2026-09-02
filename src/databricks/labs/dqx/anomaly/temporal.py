@@ -37,7 +37,7 @@ on a tail the fit never saw.
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -120,15 +120,6 @@ class TemporalBasis:
             changepoints=tuple(float(c) for c in data.get("changepoints", ())),
             span=float(data.get("span", 1.0)),
         )
-
-
-@dataclass
-class TemporalFit:
-    """A fitted basis and its per-metric coefficients, ready to persist."""
-
-    basis: TemporalBasis
-    coefficients: dict[str, list[float]] = field(default_factory=dict)
-    skipped_periods: dict[float, str] = field(default_factory=dict)  # period -> why it was not fitted
 
 
 def candidate_periods(seconds: np.ndarray) -> tuple[tuple[float, ...], dict[float, str]]:

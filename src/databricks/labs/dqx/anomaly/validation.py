@@ -70,6 +70,11 @@ _ALLOWED_GROUP_COLUMN_TYPES = (
     T.DateType,
 )
 
+#: Time column types elapsed seconds can be read from. A string that happens to hold a date is rejected:
+#: parsing it would silently produce nulls for any row whose format differs, and a null time axis makes
+#: every expectation for that row wrong rather than absent.
+_ALLOWED_TIME_COLUMN_TYPES = (T.TimestampType, T.TimestampNTZType, T.DateType)
+
 
 def validate_baseline_columns(
     df: DataFrame, baseline_by: list[str] | None, columns: collections.abc.Iterable[str]
@@ -111,6 +116,42 @@ def validate_baseline_columns(
             "integral, boolean or date. Floating-point and decimal columns are rejected because "
             "Spark and Python format them differently, which would make a row's group key differ "
             "between training and scoring. Cast to string or bucket the value first."
+        )
+
+
+def validate_baseline_over_time(
+    df: DataFrame, baseline_over_time: str | None, columns: collections.abc.Iterable[str]
+) -> None:
+    """Validate the declared time column.
+
+    The same contract the group columns follow, for the same reason: a time column is the axis a metric is
+    measured *along*, not a thing being measured, so it must exist, must not double as a feature, and must
+    be a type a timestamp can be read from.
+
+    Rejected loudly rather than coerced. Silently dropping the column from the feature list would leave a
+    caller wondering why their explicit *columns* list did not produce the features they asked for.
+    """
+    if not baseline_over_time:
+        return
+
+    schema_fields = {field.name: field.dataType for field in df.schema.fields}
+    if baseline_over_time not in schema_fields:
+        raise InvalidParameterError(
+            f"baseline_over_time column '{baseline_over_time}' not found in DataFrame. Available: {df.columns}."
+        )
+
+    if baseline_over_time in set(columns):
+        raise InvalidParameterError(
+            f"Column '{baseline_over_time}' is used both as a feature and as baseline_over_time. A time "
+            "column is the axis a metric is measured along, so it cannot also be one of the metrics being "
+            "measured. Remove it from columns."
+        )
+
+    if not isinstance(schema_fields[baseline_over_time], _ALLOWED_TIME_COLUMN_TYPES):
+        raise InvalidParameterError(
+            f"baseline_over_time column '{baseline_over_time}' has type "
+            f"{schema_fields[baseline_over_time].simpleString()}, which is not a time type. It must be a "
+            "timestamp or a date, because the expected level is fitted against elapsed seconds."
         )
 
 

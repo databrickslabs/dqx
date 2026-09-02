@@ -8,6 +8,7 @@ Spark Connect compatibility (no custom Python class serialization).
 
 import json
 import logging
+import math
 import re
 import sys
 import threading
@@ -15,6 +16,7 @@ from dataclasses import dataclass, field, fields
 from io import StringIO
 from typing import Any
 
+import numpy as np
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -35,9 +37,10 @@ from pyspark.sql.functions import (
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
+from databricks.labs.dqx.anomaly.temporal import TemporalBasis, fit_temporal, select_basis
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
-from databricks.labs.dqx.utils import get_table_primary_keys
+from databricks.labs.dqx.utils import get_table_primary_keys, sanitize_for_logging
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +125,22 @@ class SparkFeatureMetadata:
                 "this model was likely trained by a newer version of DQX."
             )
         return cls(**{k: v for k, v in data.items() if k in known_fields})
+
+
+@dataclass
+class TemporalState:
+    """The fitted temporal artefacts, carried through the transform pipeline as one thing.
+
+    Written when training and read when scoring, which is why it is mutable: the transform fills it in
+    place exactly as the baseline median dicts are filled. Empty means the feature is unused.
+
+    Not the persisted shape. :class:`SparkFeatureMetadata` keeps these flat, so the JSON payload a model
+    carries stays stable regardless of how they are grouped for passing around.
+    """
+
+    basis: dict[str, Any] = field(default_factory=dict)  # TemporalBasis.to_dict()
+    coefficients: dict[str, list[float]] = field(default_factory=dict)  # metric -> [intercept, *coefs]
+    window: dict[str, float] = field(default_factory=dict)  # {"t_min": ..., "t_max": ...}
 
 
 def _spark_type_for_category(category: str) -> T.DataType:
@@ -777,6 +796,47 @@ def _signed_log1p(column: Column) -> Column:
 # to be able to recognise a feature as derived from a source column: a caller who redacts "amount"
 # means the LLM must not see "amount_rel_baseline" either.
 BASELINE_RELATIVE_SUFFIX = "_rel_baseline"
+TEMPORAL_RELATIVE_SUFFIX = "_rel_time"
+# Rows collected to the driver to fit the temporal basis. The fit runs on a bucketed aggregate rather
+# than raw rows, so this bounds driver memory regardless of table size, exactly as the per-group median
+# aggregation does. Each bucket contributes its median, which is robust before Huber even sees it.
+TEMPORAL_FIT_BUCKETS = 4000
+
+
+def _epoch_seconds(time_column: str, t_min: float) -> Column:
+    """The time axis the temporal basis was fitted against: seconds since the window start.
+
+    Kept in one place because training and scoring must agree on it exactly. A different origin or a
+    different unit produces an expectation for a design the coefficients were never fitted to.
+    """
+    return F.unix_timestamp(col(time_column).cast(TimestampType())).cast(DoubleType()) - lit(t_min)
+
+
+def _temporal_expected_column(basis: "TemporalBasis", coefficients: list[float], seconds: Column) -> Column:
+    """The fitted expected level, as a Spark expression.
+
+    Deliberately a column expression rather than a UDF: it is a closed-form function of the row's own
+    timestamp, so it evaluates per row with no ordering, no neighbours and no state. That is what keeps
+    scoring valid on a streaming DataFrame, where a lag or a rolling window would not be.
+
+    Column order here must match :func:`databricks.labs.dqx.anomaly.temporal.design_matrix` term for term.
+    """
+    scaled = seconds / lit(basis.span) if basis.span > 0 else lit(0.0)
+    terms: list[Column] = [lit(1.0)]
+    if basis.trend:
+        terms.append(scaled)
+    for changepoint in basis.changepoints:
+        terms.append(F.greatest(lit(0.0), scaled - lit(changepoint)))
+    for period in basis.periods:
+        for harmonic in range(1, basis.harmonics + 1):
+            angle = seconds * lit(2.0 * math.pi * harmonic / period)
+            terms.append(F.sin(angle))
+            terms.append(F.cos(angle))
+
+    expected = lit(0.0)
+    for coefficient, term in zip(coefficients, terms, strict=True):
+        expected = expected + lit(float(coefficient)) * term
+    return expected
 
 
 def _process_baseline_relative_features(
@@ -906,6 +966,178 @@ def _baseline_lookup_df(
     return df.sparkSession.createDataFrame(rows, schema=schema)
 
 
+def _fit_temporal_from_buckets(
+    df: DataFrame,
+    time_column: str,
+    source_columns: dict[str, str],
+) -> tuple["TemporalBasis", dict[str, list[float]], dict[float, str], dict[str, float]]:
+    """Fit the temporal basis from a bucketed aggregate of the training frame.
+
+    The fit needs the data on the driver, and a table can be arbitrarily large, so the frame is first
+    reduced to at most :data:`TEMPORAL_FIT_BUCKETS` time buckets carrying each metric's median. That
+    bounds driver memory the same way ``_compute_baseline_medians`` does, and the per-bucket median is
+    itself robust, so gross outliers are attenuated before the Huber fit ever sees them.
+
+    The basis is then selected against the *bucket centres* rather than the raw timestamps, which matters:
+    the resolution guard in :func:`~databricks.labs.dqx.anomaly.temporal.candidate_periods` then measures
+    the axis actually being fitted. A period the buckets are too coarse to resolve is rejected for that
+    reason rather than admitted and quietly fitted to noise.
+
+    Args:
+        df: Training frame, carrying *time_column* and every value in *source_columns*.
+        time_column: The user's timestamp column.
+        source_columns: metric name -> the column its expectation is fitted from. With ``baseline_by``
+            in play this is the group-relative feature rather than the raw metric.
+
+    Returns:
+        ``(basis, coefficients, rejected_periods, window)``.
+    """
+    bounds = df.agg(
+        F.min(F.unix_timestamp(col(time_column).cast(TimestampType())).cast(DoubleType())).alias("t_min"),
+        F.max(F.unix_timestamp(col(time_column).cast(TimestampType())).cast(DoubleType())).alias("t_max"),
+    ).first()
+    if bounds is None or bounds["t_min"] is None or bounds["t_max"] is None:
+        raise ComputationError(
+            f"Could not read a time range from column '{time_column}'. Every value is null or unparseable "
+            f"as a timestamp, so there is no axis to fit an expected level against."
+        )
+    t_min, t_max = float(bounds["t_min"]), float(bounds["t_max"])
+    span = max(t_max - t_min, 1.0)
+
+    seconds = _epoch_seconds(time_column, t_min)
+    bucket_width = span / TEMPORAL_FIT_BUCKETS
+    bucketed = df.withColumn("__dqx_time_bucket", F.floor(seconds / lit(bucket_width)))
+    aggregations = [F.percentile_approx(col(source), 0.5).alias(name) for name, source in source_columns.items()]
+    rows = (
+        bucketed.groupBy("__dqx_time_bucket")
+        .agg(F.min(seconds).alias("__dqx_bucket_seconds"), *aggregations)
+        .orderBy("__dqx_time_bucket")
+        .collect()
+    )
+
+    bucket_seconds = np.array([float(row["__dqx_bucket_seconds"]) for row in rows], dtype=float)
+    metrics = {
+        name: np.array([float(row[name]) if row[name] is not None else np.nan for row in rows], dtype=float)
+        for name in source_columns
+    }
+    # A bucket where a metric had no non-null value carries NaN, which would poison the fit. Drop those
+    # buckets per metric rather than dropping the metric, so one sparse column does not cost the rest.
+    usable = {name: ~np.isnan(values) for name, values in metrics.items()}
+
+    representative = next(
+        (metrics[name][usable[name]] for name in source_columns if usable[name].sum() > 2),
+        np.array([], dtype=float),
+    )
+    representative_seconds = next(
+        (bucket_seconds[usable[name]] for name in source_columns if usable[name].sum() > 2),
+        np.array([], dtype=float),
+    )
+    basis, rejected = select_basis(representative_seconds, representative)
+
+    coefficients: dict[str, list[float]] = {}
+    for name, values in metrics.items():
+        mask = usable[name]
+        fitted = fit_temporal(bucket_seconds[mask], {name: values[mask]}, basis)
+        coefficients.update(fitted)
+
+    return basis, coefficients, rejected, {"t_min": t_min, "t_max": t_max}
+
+
+def _process_temporal_baseline_features(
+    transformed_df: DataFrame,
+    numeric_cols: list[ColumnTypeInfo],
+    baseline_over_time: str,
+    baseline_by: list[str],
+    is_training: bool,
+    temporal: TemporalState,
+    engineered_features: list[str],
+) -> DataFrame:
+    """Append each numeric metric's deviation from its own expected level at that point in time.
+
+    ``rel = value - expected(t)``. A plain difference rather than the log-ratio the group-relative
+    feature uses, because when the two compose the input here is *already* the signed-log group-relative
+    value, so the difference is a log-ratio in that case and a level difference otherwise. Measured that
+    way too, which is the more important reason.
+
+    Composition with ``baseline_by`` is not incidental. Fitted on raw values, one pooled trend is wrong for
+    every group as soon as their slopes differ: measured, event coverage fell from 80% to 29% as group
+    slopes diverged. Fitted on the group-relative residual, which is already on a common scale across
+    groups, one pooled fit reached 101% of per-group fits while still training a single model.
+
+    Runs after :func:`_process_baseline_relative_features` for two reasons that happen to agree:
+    ``engineered_feature_names`` is positional so features may only be appended, and this transform reads
+    the group-relative columns that one produces.
+
+    An empty *baseline_over_time* returns immediately, appending nothing. That is what keeps a model
+    trained before this existed byte-identical.
+    """
+    if not baseline_over_time or not numeric_cols:
+        return transformed_df
+
+    metrics = [c.name for c in numeric_cols]
+    # With grouping in play the expectation is fitted on the group-relative feature; without it, on the
+    # raw metric. Either way the feature appended below is named after the metric.
+    source_columns = {
+        metric: (
+            f"{metric}{BASELINE_RELATIVE_SUFFIX}"
+            if baseline_by and f"{metric}{BASELINE_RELATIVE_SUFFIX}" in transformed_df.columns
+            else metric
+        )
+        for metric in metrics
+    }
+
+    if is_training:
+        basis, coefficients, rejected, window = _fit_temporal_from_buckets(
+            transformed_df, baseline_over_time, source_columns
+        )
+        temporal.basis.update(basis.to_dict())
+        temporal.coefficients.update(coefficients)
+        temporal.window.update(window)
+        _log_temporal_fit(baseline_over_time, basis, coefficients, rejected, metrics)
+    else:
+        basis = TemporalBasis.from_dict(temporal.basis)
+
+    seconds = _epoch_seconds(baseline_over_time, temporal.window.get("t_min", 0.0))
+    for metric in metrics:
+        feature_name = f"{metric}{TEMPORAL_RELATIVE_SUFFIX}"
+        coefficient_vector = temporal.coefficients.get(metric)
+        if not coefficient_vector:
+            # No expectation was learned for this metric. Emit a constant rather than a fabricated
+            # signal, and still append it, so the feature list stays positionally stable.
+            transformed_df = transformed_df.withColumn(feature_name, lit(0.0))
+            engineered_features.append(feature_name)
+            continue
+        expected_level = _temporal_expected_column(basis, coefficient_vector, seconds)
+        transformed_df = transformed_df.withColumn(
+            feature_name, coalesce(col(source_columns[metric]) - expected_level, lit(0.0))
+        )
+        engineered_features.append(feature_name)
+
+    return transformed_df
+
+
+def _log_temporal_fit(
+    time_column: str,
+    basis: "TemporalBasis",
+    coefficients: dict[str, list[float]],
+    rejected: dict[float, str],
+    metrics: list[str],
+) -> None:
+    """Say what was fitted, and what was not and why.
+
+    The rejections are the part worth logging loudly. A caller who expected a daily cycle and did not get
+    one has no way to find out otherwise, and the silence is the defect: a seasonal term fitted over too
+    few cycles measurably costs accuracy, so refusing it is right, but refusing it quietly is not.
+    """
+    safe_column = sanitize_for_logging(time_column)
+    logger.info(
+        f"Temporal baseline on '{safe_column}': fitted {basis.describe()} for "
+        f"{len(coefficients)} of {len(metrics)} metrics"
+    )
+    for period, reason in rejected.items():
+        logger.info(f"Temporal baseline on '{safe_column}': no {period:g}s seasonal term, {reason}")
+
+
 def apply_feature_engineering(
     df: DataFrame,
     column_infos: list[ColumnTypeInfo],
@@ -915,6 +1147,8 @@ def apply_feature_engineering(
     baseline_by: list[str] | None = None,
     baseline_medians: dict[str, dict[str, float]] | None = None,
     global_medians: dict[str, float] | None = None,
+    baseline_over_time: str | None = None,
+    temporal: TemporalState | None = None,
 ) -> tuple[DataFrame, SparkFeatureMetadata]:
     """
     Apply feature engineering transformations in Spark (distributed).
@@ -930,8 +1164,9 @@ def apply_feature_engineering(
     3. Boolean: Map to 0/1
     4. Numeric: Keep as-is
     5. Group-relative: deviation of each numeric metric from its own group's baseline
-    6. Null indicators: Add column_is_null for columns with nulls
-    7. Imputation: Fill nulls with 0 (numeric), "MISSING" (categorical), epoch (datetime), 0 (boolean)
+    6. Time-relative: deviation of each numeric metric from its expected level at that timestamp
+    7. Null indicators: Add column_is_null for columns with nulls
+    8. Imputation: Fill nulls with 0 (numeric), "MISSING" (categorical), epoch (datetime), 0 (boolean)
 
     New transforms must be appended at the end, never inserted: inserting one shifts the feature
     positions an already-trained model expects.
@@ -946,6 +1181,10 @@ def apply_feature_engineering(
             which is what makes a pre-grouping model's feature list byte-identical.
         baseline_medians: Pre-computed per-group medians (for scoring). Computed from df when training.
         global_medians: Pre-computed global medians, used for groups absent from training.
+        baseline_over_time: The time column each metric's expected level is fitted along. Empty disables
+            time-relative features entirely, which is what makes a pre-temporal model's feature list
+            byte-identical.
+        temporal: Pre-fitted temporal artefacts (for scoring); filled in place when training.
     """
     is_training = frequency_maps is None
     if frequency_maps is None:
@@ -957,6 +1196,9 @@ def apply_feature_engineering(
         baseline_medians = {}
     if global_medians is None:
         global_medians = {}
+    baseline_over_time = baseline_over_time or ""
+    if temporal is None:
+        temporal = TemporalState()
 
     transformed_df = df
     engineered_features: list[str] = []
@@ -985,7 +1227,7 @@ def apply_feature_engineering(
 
     transformed_df = _process_numeric_columns(transformed_df, numeric_cols, engineered_features)
 
-    # Must stay last: engineered_feature_names is positional, so features may only be appended.
+    # engineered_feature_names is positional, so features may only be appended past this point.
     transformed_df = _process_baseline_relative_features(
         transformed_df,
         numeric_cols,
@@ -996,23 +1238,70 @@ def apply_feature_engineering(
         engineered_features,
     )
 
-    # Select engineered features + preserve any extra columns not in column_infos
-    # (e.g., __dqx_row_id__ for joining results back). Group columns are the comparison basis,
-    # not features, so they are excluded here — they must not reach the sklearn pipeline or the
-    # inferred MLflow signature.
+    # Must stay last, and must stay after the group-relative block above: it reads the columns that one
+    # produces, because a pooled trend fitted on raw values is wrong for every group once their slopes
+    # differ (measured: event coverage 80% to 29% as slopes diverged).
+    transformed_df = _process_temporal_baseline_features(
+        transformed_df,
+        numeric_cols,
+        baseline_over_time,
+        baseline_by,
+        is_training,
+        temporal,
+        engineered_features,
+    )
+
+    return _project_and_describe(
+        transformed_df,
+        column_infos,
+        engineered_features,
+        categorical_cardinality_threshold=categorical_cardinality_threshold,
+        frequency_maps=frequency_maps,
+        onehot_categories=onehot_categories,
+        baseline_by=baseline_by,
+        baseline_medians=baseline_medians,
+        global_medians=global_medians,
+        baseline_over_time=baseline_over_time,
+        temporal=temporal,
+    )
+
+
+def _project_and_describe(
+    transformed_df: DataFrame,
+    column_infos: list[ColumnTypeInfo],
+    engineered_features: list[str],
+    *,
+    categorical_cardinality_threshold: int,
+    frequency_maps: dict[str, dict[str, float]],
+    onehot_categories: dict[str, list[str]],
+    baseline_by: list[str],
+    baseline_medians: dict[str, dict[str, float]],
+    global_medians: dict[str, float],
+    baseline_over_time: str,
+    temporal: TemporalState,
+) -> tuple[DataFrame, SparkFeatureMetadata]:
+    """Project the frame down to features, and describe what was built so scoring can replay it.
+
+    Two contracts live here, both about what must *not* reach the model:
+
+    Original columns are dropped, but incidental ones are kept (``__dqx_row_id__`` joins results back).
+    A comparison basis is never a feature: the grouping columns define what a metric is compared against,
+    and the time column is the axis it is measured along. Either reaching the sklearn pipeline would put
+    it in the inferred MLflow signature too, which then has to be honoured at every future scoring call.
+    """
     feature_col_names = [c.name for c in column_infos]
+    excluded_bases = set(baseline_by) | ({baseline_over_time} if baseline_over_time else set())
     extra_cols = [
         c
         for c in transformed_df.columns
-        if c not in feature_col_names and c not in engineered_features and c not in baseline_by
+        if c not in feature_col_names and c not in engineered_features and c not in excluded_bases
     ]
     result_df = transformed_df.select(*engineered_features, *extra_cols)
 
-    # Use only the features that actually exist in the result DataFrame
-    # This handles cases where original columns (e.g., datetime) were dropped during transformation
+    # Only the features that survived on this frame. Original columns such as a datetime are dropped
+    # during transformation, so the persisted list must reflect what the scoring UDF will actually be handed.
     actual_engineered_features = [f for f in engineered_features if f in result_df.columns]
 
-    # Create metadata for scoring
     metadata = SparkFeatureMetadata(
         column_infos=[
             {
@@ -1030,6 +1319,10 @@ def apply_feature_engineering(
         baseline_by=baseline_by,
         baseline_medians=baseline_medians,
         global_medians=global_medians,
+        baseline_over_time=baseline_over_time,
+        temporal_basis=temporal.basis,
+        temporal_coefficients=temporal.coefficients,
+        temporal_window=temporal.window,
     )
 
     return result_df, metadata
@@ -1067,4 +1360,10 @@ def apply_feature_engineering_from_metadata(
         baseline_by=feature_metadata.baseline_by,
         baseline_medians=feature_metadata.baseline_medians,
         global_medians=feature_metadata.global_medians,
+        baseline_over_time=feature_metadata.baseline_over_time,
+        temporal=TemporalState(
+            basis=feature_metadata.temporal_basis,
+            coefficients=feature_metadata.temporal_coefficients,
+            window=feature_metadata.temporal_window,
+        ),
     )
