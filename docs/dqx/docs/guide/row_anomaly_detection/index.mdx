@@ -392,9 +392,11 @@ you would have been paged, not how many rows you would have had to read. Both de
 data that still contained the anomalies, which is what DQX does when it fits a sample of your table; on a
 curated clean training split the same comparison is 36% against 82%.
 
-That is telemetry, which is what `"timeseries"` is for — on ordinary tabular data the ranking reverses.
-Detection quality on DQX's own synthetic fixtures is published in
-[Benchmarks](/docs/reference/benchmarks).
+That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data the two detectors are
+closer than this table might suggest, so choose on the *shape* of the anomaly you expect rather than on an
+expected accuracy gap. Two things independent of accuracy do favour the default: `"tabular"` trains an
+ensemble, so it can report `confidence_std`, and its contributions come from SHAP. Detection quality on
+DQX's own synthetic fixtures is published in [Benchmarks](/docs/reference/benchmarks).
 
 <Admonition type="info" title="Why not choose for you?">
 DQX does not detect which profile you need. Getting it right cannot be verified without labelled
