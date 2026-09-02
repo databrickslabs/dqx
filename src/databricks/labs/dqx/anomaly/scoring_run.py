@@ -135,6 +135,21 @@ def score_global_model(
     check_model_staleness(record, config.model_name)
 
     df_filtered = apply_row_filter(df, config.row_filter)
+    # Marked here rather than on the scored frame: by then the projection has dropped the caller's time
+    # column, which is correct (a time axis is not a feature) but leaves nothing to compare against. These
+    # two flags then ride through feature engineering as passthrough columns, the way the row id does.
+    #
+    # Extrapolation is reported and never corrected. Unlike an unseen group, the score is still produced:
+    # measured, it is still good one window past the boundary, so nulling it would discard a usable verdict.
+    stale_col = "__dqx_is_stale_baseline"
+    horizon_col = "__dqx_stale_horizon"
+    df_filtered = mark_stale_baselines(
+        df_filtered,
+        trained_baseline_over_time or "",
+        trained_metadata.temporal_window if trained_metadata else {},
+        stale_col=stale_col,
+        horizon_col=horizon_col,
+    )
     drift_result = check_and_warn_drift(
         df_filtered,
         config.columns,
@@ -223,18 +238,6 @@ def score_global_model(
         _known_group_keys(parsed_metadata),
         unseen_col=unseen_col,
         group_key_col=group_key_col,
-    )
-
-    # Extrapolation is reported, not corrected: unlike an unseen group the score is still produced, and
-    # measured it is still good one window past the boundary. So this marks and never nulls.
-    stale_col = "__dqx_is_stale_baseline"
-    horizon_col = "__dqx_stale_horizon"
-    scored_df = mark_stale_baselines(
-        scored_df,
-        parsed_metadata.baseline_over_time,
-        parsed_metadata.temporal_window,
-        stale_col=stale_col,
-        horizon_col=horizon_col,
     )
 
     scored_df = _add_severity(scored_df, config, parsed_metadata, group_quantile_points, global_quantile_points)
