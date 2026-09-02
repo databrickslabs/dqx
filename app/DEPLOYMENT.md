@@ -10,7 +10,7 @@ Production deployment uses [Declarative Automation Bundles](https://docs.databri
 
 Lakebase is mandatory. Delta-backed application (OLTP) state was removed and cannot be migrated. Marketplace currently supports replacing the SQL warehouse; swapping the Lakebase endpoint or volume, and smoke-validating the task runner, are planned follow-up capabilities.
 
-Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the Marketplace runtime source but excludes its compiled frontend. An annotated signed version tag is the immutable release input: `make app-release-marketplace TAG=vX.Y.Z` verifies the tag and app version, creates `marketplace/vX.Y.Z`, builds the complete self-contained source, and signs and verifies its local commit. The command never pushes; inspect the branch, then run `git push origin marketplace/vX.Y.Z` manually. DAB deployment continues to consume `.build/`, not `app/marketplace/`.
+Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the Marketplace runtime source but excludes its compiled frontend. An annotated signed version tag is the immutable release input: `app/scripts/release_marketplace.sh vX.Y.Z` verifies the tag and app version, creates `marketplace/vX.Y.Z`, builds the complete self-contained source, and signs and verifies its local commit. During lock generation, the builder works around LiteLLM being absent from the Databricks proxy by staging its exact verified public wheel, then normalizes the artifact to public PyPI URLs. The script never pushes; inspect the branch, then run `git push origin marketplace/vX.Y.Z` manually. DAB deployment continues to consume `.build/`, not `app/marketplace/`.
 
 ## Prerequisites
 

@@ -25,12 +25,23 @@ type SetupGateProps = {
 
 const SETUP_POLL_INTERVAL_MS = 2_000;
 
-export function setupPollingInterval(state: "checking" | "initializing" | "setup_required" | "ready" | undefined): number | false {
-  return state === "checking" || state === "initializing" ? SETUP_POLL_INTERVAL_MS : false;
+export function setupPollingInterval(
+  state: "checking" | "initializing" | "setup_required" | "ready" | undefined,
+  isReconciling = false,
+): number | false {
+  return isReconciling || state === "checking" || state === "initializing"
+    ? SETUP_POLL_INTERVAL_MS
+    : false;
+}
+
+export function setupPollingInBackground(): boolean {
+  return true;
 }
 
 export function invalidateSetupStatus(queryClient: QueryClient): Promise<void> {
-  return queryClient.invalidateQueries({ queryKey: getGetSetupStatusQueryKey() });
+  return queryClient.invalidateQueries({
+    queryKey: getGetSetupStatusQueryKey(),
+  });
 }
 
 export function reconciliationMutationOptions(
@@ -49,18 +60,26 @@ export function reconciliationMutationOptions(
  */
 export function SetupGate({ children }: SetupGateProps) {
   const queryClient = useQueryClient();
+  const reconciliation = useMutation(
+    reconciliationMutationOptions(queryClient, () => reconcileSetup()),
+  );
   const setupStatus = useQuery({
     queryKey: getGetSetupStatusQueryKey(),
     queryFn: () => getSetupStatus(),
-    refetchInterval: (query) => setupPollingInterval(query.state.data?.data.report.state),
+    refetchInterval: (query) =>
+      setupPollingInterval(
+        query.state.data?.data.report.state,
+        reconciliation.isPending,
+      ),
+    refetchIntervalInBackground: setupPollingInBackground(),
   });
   const workspaceHost = useWorkspaceHost({
     query: {
-      enabled: setupStatus.data?.data.can_manage === true && setupStatus.data.data.report.state !== "ready",
+      enabled:
+        setupStatus.data?.data.can_manage === true &&
+        setupStatus.data.data.report.state !== "ready",
     },
   });
-  const reconciliation = useMutation(reconciliationMutationOptions(queryClient, () => reconcileSetup()));
-
   if (setupStatus.isPending) return <SetupLoading />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 

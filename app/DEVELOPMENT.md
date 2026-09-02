@@ -22,7 +22,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make app-build` | Compile UI, generate OpenAPI schema, assemble the `.build/` deploy tree (runs `app/scripts/build_app.py`) |
 | `make app-build-marketplace` | Generate a complete local `app/marketplace/` artifact for inspection |
 | `make app-check-marketplace` | Validate Marketplace generation and the signed-release tooling |
-| `make app-release-marketplace TAG=vX.Y.Z` | Create and verify local signed branch `marketplace/vX.Y.Z`; never pushes |
+| `app/scripts/release_marketplace.sh vX.Y.Z` | Create and verify local signed branch `marketplace/vX.Y.Z`; never pushes |
 | `make app-start-dev` | Build then start uvicorn + vite via `app/scripts/dev.py` (foreground; Ctrl+C to stop) |
 | `make app-stop-dev` | Stop dev servers started in another shell (`pkill`-based) |
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
@@ -39,7 +39,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 Main intentionally excludes only the compiled Marketplace frontend at `app/marketplace/src/databricks_labs_dqx_app/__dist__/`; the rest of the Marketplace source remains tracked. Start a release from an annotated signed tag whose version matches `app/pyproject.toml`:
 
 ```bash
-make app-release-marketplace TAG=v0.16.1
+app/scripts/release_marketplace.sh v0.16.1
 git push origin marketplace/v0.16.1
 ```
 

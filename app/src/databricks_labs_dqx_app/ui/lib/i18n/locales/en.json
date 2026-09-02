@@ -2939,6 +2939,19 @@
     "statusUnavailableTitle": "Setup status is unavailable",
     "statusUnavailableDescription": "Refresh the page to check Studio readiness again.",
     "reconcileFailed": "Setup could not be completed. Review the reported steps and try again.",
+    "whyNeeded": "Why this is needed",
+    "purposes": {
+      "identity": "Identifies the service principal that owns Studio resources and performs setup operations.",
+      "volume": "Stores the versioned application and task-runner wheels used by Studio jobs.",
+      "unity_catalog": "Lets Studio create and query its schemas, tables, temporary views, and run results.",
+      "schemas": "Separates application state, temporary views, and Genie-facing objects in Unity Catalog.",
+      "lakebase": "Stores transactional Studio state such as rules, roles, settings, and schedules.",
+      "warehouse": "Runs Studio's SQL queries for setup, metadata, results, and interactive checks.",
+      "task_runner": "Runs Spark-based profiling and data-quality workloads outside the web application.",
+      "wheels": "Keeps the task runner on the same DQX and Studio code versions as the application.",
+      "migrations": "Creates and upgrades the Delta and Lakebase tables required by this Studio version.",
+      "activation": "Starts Studio APIs and background services only after every dependency is ready."
+    },
     "steps": {
       "identity": "Application identity",
       "volume": "Wheels volume",

@@ -418,7 +418,7 @@ def main() -> int:
     try:
         if args.check:
             if not _check():
-                print("Marketplace artifact differs; run make app-build-marketplace.")
+                print("Marketplace artifact differs; run uv run --frozen python app/scripts/build_marketplace.py.")
                 return 1
             print("Marketplace artifact is up to date.")
             return 0

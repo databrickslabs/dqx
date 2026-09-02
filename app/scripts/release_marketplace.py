@@ -84,8 +84,22 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
         try:
             commands.run(("git", "worktree", "add", "-b", branch, str(worktree), tag), cwd=resolved_root)
             created = True
-            commands.run(("make", "app-build-marketplace"), cwd=worktree)
-            commands.run(("make", "app-check-marketplace"), cwd=worktree)
+            commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"), cwd=worktree)
+            commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"), cwd=worktree)
+            commands.run(
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--group",
+                    "test",
+                    "pytest",
+                    "app/tests/test_build_marketplace.py",
+                    "app/tests/test_release_marketplace.py",
+                    "-v",
+                ),
+                cwd=worktree,
+            )
             commands.run(("git", "add", "-A", "app/marketplace"), cwd=worktree)
             commands.run(
                 ("git", "add", "-f", "app/marketplace/src/databricks_labs_dqx_app/__dist__"),

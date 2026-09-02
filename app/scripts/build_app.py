@@ -171,13 +171,24 @@ def _dump_openapi() -> None:
     exactly the same environment the app uses — same pydantic / fastapi
     versions, same plugin set.
     """
-    target = BUILD_DIR / "openapi.json"
+    _run(openapi_dump_command(BUILD_DIR / "openapi.json"))
+
+
+def openapi_dump_command(target: Path) -> list[str]:
+    """Return the frozen command used to generate an OpenAPI document.
+
+    Args:
+        target: Destination path for the generated JSON document.
+
+    Returns:
+        The uv command and Python snippet used by the application build.
+    """
     code = (
         "import json, sys;"
         "from databricks_labs_dqx_app.backend.app import app;"
         f"open({str(target)!r}, 'w').write(json.dumps(app.openapi(), indent=2))"
     )
-    _run(["uv", "run", "--exact", "--all-extras", "python", "-c", code])
+    return ["uv", "run", "--frozen", "--exact", "--all-extras", "python", "-c", code]
 
 
 def _run_orval() -> None:

@@ -1,6 +1,8 @@
 """Tests for locally signed Marketplace release branches."""
 
+import os
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -79,6 +81,9 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     branch = release_marketplace("v0.16.1", tmp_path, commands)
     assert branch == "marketplace/v0.16.1"
     assert commands.contains(("git", "show", "v0.16.1:app/pyproject.toml"))
+    assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
+    assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
+    assert not commands.contains_prefix(("make",))
     assert commands.contains_prefix(("git", "commit", "-S"))
     assert commands.contains(("git", "verify-commit", "HEAD"))
     assert not commands.contains_prefix(("git", "push"))
@@ -97,3 +102,60 @@ def test_release_rejects_tag_version_that_differs_from_app(tmp_path: Path) -> No
     commands = RecordingCommandRunner(project_version="0.16.0")
     with pytest.raises(RuntimeError, match="does not match"):
         release_marketplace("v0.16.1", tmp_path, commands)
+
+
+def test_shell_release_entrypoint_requires_one_tag_argument(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parent.parent / "scripts" / "release_marketplace.sh"
+
+    completed = subprocess.run(
+        [str(script)],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "Usage: app/scripts/release_marketplace.sh vX.Y.Z" in completed.stderr
+
+
+def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parent.parent / "scripts" / "release_marketplace.sh"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    invocation = tmp_path / "uv-invocation"
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        "#!/usr/bin/env sh\nprintf '%s\\n' 'https://packages.example.test/simple'\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        f'#!/usr/bin/env sh\nprintf \'%s\\n\' "$PWD" "${{UV_DEFAULT_INDEX:-}}" "$@" > {invocation}\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+
+    completed = subprocess.run(
+        [str(script), "v0.16.1"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0
+    assert invocation.read_text(encoding="utf-8").splitlines() == [
+        str(script.parent.parent.parent),
+        "https://packages.example.test/simple",
+        "run",
+        "--frozen",
+        "python",
+        "app/scripts/release_marketplace.py",
+        "--tag",
+        "v0.16.1",
+    ]

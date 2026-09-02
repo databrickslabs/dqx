@@ -1,4 +1,10 @@
-import { CheckCircle2, CircleAlert, Clock3, ExternalLink, Loader2 } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleAlert,
+  Clock3,
+  ExternalLink,
+  Loader2,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import Logo from "@/components/layout/Logo";
@@ -24,6 +30,20 @@ type SetupWizardProps = {
   reconciliationFailed: boolean;
 };
 
+function progressSteps(view: SetupViewModel): SetupStep[] {
+  const steps = [...view.report.steps];
+  const currentStep = view.report.current_step;
+  if (view.kind !== "checking" || !currentStep) return steps;
+
+  const currentIndex = steps.findIndex((step) => step.id === currentStep);
+  if (currentIndex >= 0) {
+    steps[currentIndex] = { ...steps[currentIndex], state: "running" };
+  } else {
+    steps.push({ id: currentStep, state: "running" });
+  }
+  return steps;
+}
+
 export function SetupShell({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="cdh-ui-theme">
@@ -34,7 +54,9 @@ export function SetupShell({ children }: { children: React.ReactNode }) {
             <ModeToggle />
           </div>
         </header>
-        <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 sm:py-12">{children}</main>
+        <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
+          {children}
+        </main>
       </div>
     </ThemeProvider>
   );
@@ -48,14 +70,25 @@ export function workspaceJobsUrl(workspaceHost?: string): string | null {
 function StepIcon({ state }: { state: StepState }) {
   switch (state) {
     case "passed":
-      return <CheckCircle2 className="size-5 text-primary" aria-hidden="true" />;
+      return (
+        <CheckCircle2 className="size-5 text-primary" aria-hidden="true" />
+      );
     case "running":
-      return <Loader2 className="size-5 animate-spin motion-reduce:animate-none text-primary" aria-hidden="true" />;
+      return (
+        <Loader2
+          className="size-5 animate-spin motion-reduce:animate-none text-primary"
+          aria-hidden="true"
+        />
+      );
     case "action_required":
     case "failed":
-      return <CircleAlert className="size-5 text-destructive" aria-hidden="true" />;
+      return (
+        <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
+      );
     case "pending":
-      return <Clock3 className="size-5 text-muted-foreground" aria-hidden="true" />;
+      return (
+        <Clock3 className="size-5 text-muted-foreground" aria-hidden="true" />
+      );
   }
 }
 
@@ -78,7 +111,12 @@ function StepActions({
       disabled={isReconciling}
       onClick={onReconcile}
     >
-      {isReconciling && <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+      {isReconciling && (
+        <Loader2
+          className="animate-spin motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+      )}
       {t(`setup.actions.${action.id}`)}
     </Button>
   ));
@@ -110,14 +148,31 @@ function StepCard({
       <Card className="gap-4 py-4">
         <CardHeader className="gap-2 px-4 sm:px-5">
           <div className="flex min-w-0 items-start justify-between gap-3">
-            <CardTitle className="text-base">{t(`setup.steps.${step.id}`)}</CardTitle>
+            <CardTitle className="text-base">
+              {t(`setup.steps.${step.id}`)}
+            </CardTitle>
             <Badge variant={step.state === "passed" ? "secondary" : "outline"}>
               {t(`setup.states.${step.state}`)}
             </Badge>
           </div>
-          {step.summary && <CardDescription className="whitespace-pre-wrap break-words">{step.summary}</CardDescription>}
+          <div className="rounded-md border-l-2 border-primary/50 bg-muted/35 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("setup.whyNeeded")}
+            </p>
+            <p className="mt-1 text-sm leading-5 text-foreground/90">
+              {t(`setup.purposes.${step.id}`)}
+            </p>
+          </div>
+          {step.summary && (
+            <CardDescription className="whitespace-pre-wrap break-words">
+              {step.summary}
+            </CardDescription>
+          )}
         </CardHeader>
-        {(step.code || step.instructions?.length || stepActions.length > 0 || (canManage && step.id === "task_runner" && jobsUrl)) && (
+        {(step.code ||
+          step.instructions?.length ||
+          stepActions.length > 0 ||
+          (canManage && step.id === "task_runner" && jobsUrl)) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
             {step.code && (
               <p className="font-mono text-xs text-muted-foreground break-all">
@@ -170,10 +225,15 @@ export function SetupLoading() {
   return (
     <SetupShell>
       <div className="mx-auto flex max-w-lg flex-col items-center gap-4 py-20 text-center">
-        <Loader2 className="size-10 animate-spin motion-reduce:animate-none text-primary" aria-hidden="true" />
+        <Loader2
+          className="size-10 animate-spin motion-reduce:animate-none text-primary"
+          aria-hidden="true"
+        />
         <div className="space-y-2">
           <h1 className="text-xl font-semibold">{t("setup.checkingTitle")}</h1>
-          <p className="text-sm text-muted-foreground">{t("setup.checkingDescription")}</p>
+          <p className="text-sm text-muted-foreground">
+            {t("setup.checkingDescription")}
+          </p>
         </div>
       </div>
     </SetupShell>
@@ -188,7 +248,9 @@ export function SetupStatusUnavailable() {
       <Card className="mx-auto mt-12 max-w-xl">
         <CardHeader>
           <CardTitle>{t("setup.statusUnavailableTitle")}</CardTitle>
-          <CardDescription>{t("setup.statusUnavailableDescription")}</CardDescription>
+          <CardDescription>
+            {t("setup.statusUnavailableDescription")}
+          </CardDescription>
         </CardHeader>
       </Card>
     </SetupShell>
@@ -205,23 +267,34 @@ export function SetupWizard({
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
   const jobsUrl = workspaceJobsUrl(workspaceHost);
+  const steps = progressSteps(view);
 
-  if (view.kind === "checking") return <SetupLoading />;
+  if (view.kind === "checking" && steps.length === 0) return <SetupLoading />;
 
   return (
     <SetupShell>
       <section className="mx-auto max-w-3xl space-y-8">
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">{isWaiting ? t("setup.waitingTitle") : t("setup.title")}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {isWaiting
+              ? t("setup.waitingTitle")
+              : view.kind === "checking"
+                ? t("setup.checkingTitle")
+                : t("setup.title")}
+          </h1>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
             {isWaiting
               ? t("setup.waitingDescription", { adminGroup: view.adminGroup })
               : t("setup.checkingDescription")}
           </p>
-          {reconciliationFailed && <p className="text-sm text-destructive">{t("setup.reconcileFailed")}</p>}
+          {reconciliationFailed && (
+            <p className="text-sm text-destructive">
+              {t("setup.reconcileFailed")}
+            </p>
+          )}
         </div>
         <ol className="relative space-y-3 before:absolute before:bottom-6 before:left-4 before:top-6 before:w-px before:bg-border sm:before:left-[18px]">
-          {view.report.steps.map((step) => (
+          {steps.map((step) => (
             <StepCard
               key={step.id}
               step={step}

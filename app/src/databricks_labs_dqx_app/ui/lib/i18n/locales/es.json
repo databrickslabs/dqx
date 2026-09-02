@@ -2939,6 +2939,19 @@
     "statusUnavailableTitle": "El estado de configuración no está disponible",
     "statusUnavailableDescription": "Actualice la página para comprobar de nuevo la preparación de Studio.",
     "reconcileFailed": "No se pudo completar la configuración. Revise los pasos indicados e inténtelo de nuevo.",
+    "whyNeeded": "Por qué es necesario",
+    "purposes": {
+      "identity": "Identifica la entidad de servicio que posee los recursos de Studio y realiza las operaciones de configuración.",
+      "volume": "Almacena las ruedas versionadas de la aplicación y del ejecutor de tareas que usan los trabajos de Studio.",
+      "unity_catalog": "Permite que Studio cree y consulte sus esquemas, tablas, vistas temporales y resultados de ejecución.",
+      "schemas": "Separa el estado de la aplicación, las vistas temporales y los objetos destinados a Genie en Unity Catalog.",
+      "lakebase": "Almacena el estado transaccional de Studio, como reglas, roles, ajustes y programaciones.",
+      "warehouse": "Ejecuta las consultas SQL de Studio para configuración, metadatos, resultados y comprobaciones interactivas.",
+      "task_runner": "Ejecuta cargas de perfilado y calidad de datos basadas en Spark fuera de la aplicación web.",
+      "wheels": "Mantiene el ejecutor de tareas en las mismas versiones de DQX y Studio que la aplicación.",
+      "migrations": "Crea y actualiza las tablas de Delta y Lakebase que requiere esta versión de Studio.",
+      "activation": "Inicia las API y los servicios en segundo plano de Studio solo cuando todas las dependencias están listas."
+    },
     "steps": {
       "identity": "Identidad de la aplicación",
       "volume": "Volumen de wheels",

@@ -16,6 +16,7 @@ build = marketplace_builder.build
 APP_DIR = Path(__file__).resolve().parent.parent
 MANIFEST = APP_DIR / "marketplace_templates" / "manifest.yaml"
 APP_YAML = APP_DIR / "marketplace_templates" / "app.yaml"
+DQX_VERSION = marketplace_builder.dqx_release_version()
 
 EXPECTED_SCOPES = [
     "sql",
@@ -51,7 +52,7 @@ def test_marketplace_release_uses_the_configured_dqx_version(tmp_path: Path) -> 
 @pytest.fixture(scope="module")
 def marketplace_artifact(tmp_path_factory: pytest.TempPathFactory) -> Path:
     output_dir = tmp_path_factory.mktemp("marketplace") / "artifact"
-    build(output_dir=output_dir, dqx_version="0.15.0")
+    build(output_dir=output_dir, dqx_version=DQX_VERSION)
     return output_dir
 
 
@@ -62,13 +63,13 @@ def test_marketplace_artifact_is_self_contained(marketplace_artifact: Path) -> N
     combined = "\n".join(path.read_text(errors="ignore") for path in marketplace_artifact.rglob("*.toml"))
     assert "../" not in combined
     assert "_vendor/dqx" not in combined
-    assert "databricks-labs-dqx[llm,datacontract]==0.15.0" in combined
+    assert f"databricks-labs-dqx[llm,datacontract]=={DQX_VERSION}" in combined
 
     task_wheel = next((marketplace_artifact / "tasks").glob("databricks_labs_dqx_task_runner-*.whl"))
     with zipfile.ZipFile(task_wheel) as wheel:
         metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
         metadata = wheel.read(metadata_name).decode("utf-8")
-    assert "Requires-Dist: databricks-labs-dqx==0.15.0" in metadata
+    assert f"Requires-Dist: databricks-labs-dqx=={DQX_VERSION}" in metadata
 
 
 def test_marketplace_artifact_contains_only_runtime_inputs(marketplace_artifact: Path) -> None:
@@ -151,7 +152,7 @@ def test_marketplace_build_is_repeatable_and_removes_stale_files(marketplace_art
     before = _file_hashes(marketplace_artifact)
     (marketplace_artifact / "stale-file").write_text("must be removed\n", encoding="utf-8")
 
-    build(output_dir=marketplace_artifact, dqx_version="0.15.0")
+    build(output_dir=marketplace_artifact, dqx_version=DQX_VERSION)
 
     assert _file_hashes(marketplace_artifact) == before
 
@@ -176,12 +177,9 @@ def test_marketplace_build_ignores_parent_uv_configuration(tmp_path: Path, monke
 
 
 def test_marketplace_check_accepts_generated_artifact(
-    marketplace_artifact: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    marketplace_artifact: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text("[project]\nversion = '0.15.0'\n", encoding="utf-8")
     monkeypatch.setattr(marketplace_builder, "MARKETPLACE_DIR", marketplace_artifact)
-    monkeypatch.setattr(marketplace_builder, "PYPROJECT", pyproject)
     monkeypatch.setattr(sys, "argv", ["build_marketplace.py", "--check"])
 
     assert marketplace_builder.main() == 0
