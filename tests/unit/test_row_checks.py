@@ -177,6 +177,23 @@ def test_is_not_equal_to_missing_value():
         is_not_equal_to("a", value=None)
 
 
+@pytest.mark.parametrize(
+    "check_func, kwargs, default_name, name_with_nulls_failing",
+    [
+        (is_equal_to, {"value": 1}, "a_not_equal_to_value", "a_is_null_or_not_equal_to_value"),
+        (is_not_equal_to, {"value": 1}, "a_equal_to_value", "a_is_null_or_equal_to_value"),
+        (is_not_less_than, {"limit": 1}, "a_less_than_limit", "a_is_null_or_less_than_limit"),
+        (is_not_greater_than, {"limit": 1}, "a_greater_than_limit", "a_is_null_or_greater_than_limit"),
+        (is_in_range, {"min_limit": 1, "max_limit": 2}, "a_not_in_range", "a_is_null_or_not_in_range"),
+        (is_not_in_range, {"min_limit": 1, "max_limit": 2}, "a_in_range", "a_is_null_or_in_range"),
+    ],
+)
+def test_comparison_checks_allow_nulls_auto_name(check_func, kwargs, default_name, name_with_nulls_failing):
+    assert get_column_name_or_alias(check_func("a", **kwargs)) == default_name
+    assert get_column_name_or_alias(check_func("a", **kwargs, allow_nulls=True)) == default_name
+    assert get_column_name_or_alias(check_func("a", **kwargs, allow_nulls=False)) == name_with_nulls_failing
+
+
 def test_sql_expression_complex_exists_auto_name():
     expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
     result = sql_expression(expression)
