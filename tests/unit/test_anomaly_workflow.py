@@ -192,6 +192,7 @@ def test_anomaly_workflow_passes_the_configured_profile(monkeypatch):
             registry_table="catalog.schema.my_registry",
             baseline_by=["machine_id"],
             profile="timeseries",
+            baseline_over_time="reading_ts",
         ),
     )
     ctx = SimpleNamespace(run_config=run_config, spark=Mock(), workspace_client=Mock())
@@ -200,3 +201,6 @@ def test_anomaly_workflow_passes_the_configured_profile(monkeypatch):
 
     assert train_called["kwargs"]["profile"] == "timeseries"
     assert train_called["kwargs"]["baseline_by"] == ["machine_id"]
+    # All three comparison bases, because a scheduled retrain that silently drops one produces a different
+    # model from the YAML it was given, and nothing downstream would report the discrepancy.
+    assert train_called["kwargs"]["baseline_over_time"] == "reading_ts"
