@@ -282,7 +282,7 @@ class AnomalyTrainingService:
             f"month, weekend). That helps when an anomaly is contextual by calendar and hurts otherwise: "
             f"measured, it took group-contextual detection from 72% to 0% by diluting the metric it was "
             f"meant to support. Pass exclude_columns={safe} to leave them out, or "
-            f"baseline_over_time='<column>' to use one as a time axis instead of as features."
+            f"baseline_over_time='{safe[0]}' to use it as a time axis instead of as features."
         )
 
     def build_context(

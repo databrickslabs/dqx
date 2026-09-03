@@ -31,21 +31,66 @@
 # MAGIC those rise and fall together, because cutting harder draws more current. For two hours load was
 # MAGIC high while current sat mid-band. Both readings were ordinary. Their relationship was not.
 # MAGIC
-# MAGIC ## Two kinds of anomaly, two profiles
+# MAGIC ## "Normal" compared to what?
+# MAGIC
+# MAGIC Every anomaly check answers one question: *is this row normal?* The useful part is the follow-up,
+# MAGIC **normal compared to what?** DQX gives you three independent answers, and you can use any combination
+# MAGIC of them. Nothing here requires knowing any ML.
+# MAGIC
+# MAGIC #### 1. Compared to the rest of the table — which detector? (`profile`)
 # MAGIC
 # MAGIC | Your data | `profile` | An anomaly looks like |
 # MAGIC |---|---|---|
-# MAGIC | Independent records — transactions, orders, customers | `"tabular"` (default) | A row whose values, or combination of values, is unusual |
-# MAGIC | Repeated multivariate measurements — machine or service metrics, sensors | `"timeseries"` | Metrics that normally move **together** stop doing so, each staying in its own range |
+# MAGIC | **Independent records.** Card payments, insurance claims, customer records, product listings. | `"tabular"` (default) | A row whose values, or combination of values, is unusual |
+# MAGIC | **Repeated measurements of the same things.** Machine sensors, server metrics, patient vitals, smart meters. | `"timeseries"` | Metrics that normally move **together** stop doing so, each staying in its own range |
 # MAGIC
-# MAGIC Use `"timeseries"` for data like this. The default detector splits on one feature at a time, so a
-# MAGIC broken relationship between two in-range values is close to invisible to it. On the **Server Machine
-# MAGIC Dataset** — 28 machines of real telemetry with labelled incidents — the correlation-aware detector
-# MAGIC surfaces **79%** of incidents inside an alert budget of 1% of rows, against **33%** for the default.
+# MAGIC This notebook uses `"timeseries"`, because the bearing story above is exactly its case. The default
+# MAGIC detector splits on one column at a time, so a broken relationship between two in-range values is close
+# MAGIC to invisible to it. On the **Server Machine Dataset**, 28 machines of real telemetry with labelled
+# MAGIC incidents, the correlation-aware detector surfaces **79%** of incidents inside an alert budget of 1% of
+# MAGIC rows, against **33%** for the default.
 # MAGIC
-# MAGIC **It needs no timestamp column.** It models correlation *between metrics*, not behaviour over time,
-# MAGIC and never looks at row order. Include a timestamp anyway and DQX derives calendar features from it
-# MAGIC (hour, day of week, month, weekend) exactly as it does for the tabular profile.
+# MAGIC #### 2. Compared to its own group (`baseline_by`)
+# MAGIC
+# MAGIC The same number can be fine in one group and wrong in another, so comparing everything against one
+# MAGIC table-wide normal hides a whole class of problem:
+# MAGIC
+# MAGIC - **Retail** — £8,000 of sales is a good day for a small branch and a collapse for a flagship.
+# MAGIC - **Payments** — £900 is ordinary for electronics and absurd for a coffee shop.
+# MAGIC - **Healthcare** — a lab's reference range differs from another lab's for the same assay.
+# MAGIC - **SaaS** — a 2% error rate is normal for one tenant's integration and an incident for another's.
+# MAGIC
+# MAGIC #### 3. Compared to its own past (`baseline_over_time`)
+# MAGIC
+# MAGIC When the normal level itself moves, a value that looks fine against the whole history can be wrong for
+# MAGIC where things had actually got to:
+# MAGIC
+# MAGIC - **Manufacturing** — a wearing bearing runs hotter every month; 71°C is fine at week 1 and a warning
+# MAGIC   at week 40.
+# MAGIC - **Subscriptions** — revenue that has grown all year makes last January's figure a bad yardstick.
+# MAGIC - **Energy** — demand climbs through a heatwave, so yesterday is the only fair comparison.
+# MAGIC - **Logistics** — a new depot ramps for months before its throughput means anything.
+# MAGIC
+# MAGIC **Section 5 covers this one**, on a dataset that genuinely trends, and measures whether it is worth
+# MAGIC turning on before turning it on. It is off by default, because on flat data it measures *worse*.
+# MAGIC
+# MAGIC ## What DQX does with a timestamp column
+# MAGIC
+# MAGIC Three different things, depending on what you tell it. Worth knowing up front, because the default is
+# MAGIC the one people least expect:
+# MAGIC
+# MAGIC | You... | DQX... | Use when |
+# MAGIC |---|---|---|
+# MAGIC | name `columns` explicitly and omit it | ignores it | the clock has nothing to do with what you are looking for |
+# MAGIC | list it in `columns` | derives seven calendar features: hour, day of week and month as sine/cosine pairs, plus a weekend flag | 3am is suspicious and 3pm is not |
+# MAGIC | pass it as `baseline_over_time` | treats it as the **axis** each metric is measured along, never as a feature | the normal level moves over time |
+# MAGIC
+# MAGIC Pass no `columns` at all and DQX discovers them for you, which *includes* any timestamp, so the
+# MAGIC middle row is what you get by default. It says so at training time rather than leaving you to find out.
+# MAGIC
+# MAGIC Note what the correlation-aware profile does *not* need: **a timestamp, or any row order.** It models
+# MAGIC how metrics relate to each other, not how they behave over time, and it never reads the previous row.
+# MAGIC That is what keeps it valid on a streaming DataFrame.
 # MAGIC
 
 # COMMAND ----------

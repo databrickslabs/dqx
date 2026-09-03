@@ -1,5 +1,6 @@
 """Integration tests for auto-discovery of anomaly detection columns and segments."""
 
+import datetime
 import logging
 
 from pyspark.sql import SparkSession
@@ -9,6 +10,9 @@ from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import SEGMENT_REGIONS
 from tests.integration_anomaly.conftest import qualify_model_name
+
+#: A Monday, so the weekday and weekend calendar features the advisory warns about are meaningful.
+START = datetime.datetime(2025, 1, 6)
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
@@ -472,3 +476,74 @@ def test_segment_column_explicitly_removed_from_features(spark: SparkSession):
 
     # Verify region was analyzed (has a type) but then removed
     assert profile.column_types is not None
+
+
+def test_the_calendar_advisory_fires_when_a_timestamp_reaches_the_feature_list(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """A datetime column in *columns* becomes seven cyclical features, and the caller has to be told.
+
+    This is the advisory with the most to say for itself, because the mistake it names is the *default*:
+    auto-discovery includes any timestamp it finds. Measured on the transactions demo, the same model with a
+    meaningless timestamp added took recall at a fixed alert budget from 100% to 79% while raising exactly as
+    many alerts, so a caller who never sees the warning silently loses a quarter of their detections.
+
+    The message must carry both escapes, since the right one depends on what the column means: exclude it
+    when the clock is irrelevant, or name it as an axis when the level moves over time.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    rows = [(START + datetime.timedelta(hours=i), float(100.0 + i % 17), 5.0 + i % 3) for i in range(400)]
+    df = spark.createDataFrame(rows, "event_ts timestamp, amount double, discount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.calendar_advisory_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "discount", "event_ts"],
+            model_name=qualify_model_name(f"test_calendar_{suffix}", registry_table),
+            registry_table=registry_table,
+            baseline_by=[],
+        )
+
+    advisories = [r.message for r in caplog.records if "cyclical calendar features" in r.message]
+    assert advisories, "a datetime column among the features must be called out"
+    message = advisories[0]
+    assert "event_ts" in message
+    # Both escapes, and each naming the actual column rather than a placeholder, so either is copy-pasteable.
+    assert "exclude_columns=['event_ts']" in message
+    assert "baseline_over_time='event_ts'" in message
+
+
+def test_the_calendar_advisory_stays_quiet_when_the_timestamp_is_the_axis(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """Naming a column as the time axis is the fix the advisory recommends, so it must not then fire.
+
+    An advisory that keeps warning after you have followed it is one callers learn to filter out, and then it
+    is worth nothing on the run where it matters.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    rows = [(START + datetime.timedelta(hours=i), float(100.0 + 0.05 * i), 5.0 + i % 3) for i in range(400)]
+    df = spark.createDataFrame(rows, "event_ts timestamp, amount double, discount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.calendar_axis_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "discount"],
+            model_name=qualify_model_name(f"test_axis_{suffix}", registry_table),
+            registry_table=registry_table,
+            baseline_by=[],
+            baseline_over_time="event_ts",
+        )
+
+    advisories = [r.message for r in caplog.records if "cyclical calendar features" in r.message]
+    assert not advisories, f"the axis column must not be reported as a feature: {advisories}"
