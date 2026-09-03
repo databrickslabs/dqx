@@ -291,7 +291,7 @@
     "computeTitle": "Cómputo",
     "computeWarehouseLabel": "Almacén SQL",
     "computeWarehousePlaceholder": "Selecciona un almacén",
-    "computeWarehouseDefault": "Usar el predeterminado de la app",
+    "computeWarehouseDefaultSuffix": "(predeterminado)",
     "computeWarehouseCustomOption": "guardado",
     "computeNoWarehouses": "No se encontraron almacenes",
     "computeSpAccessMissing": "La entidad de servicio de la app aún no puede usar este almacén.",

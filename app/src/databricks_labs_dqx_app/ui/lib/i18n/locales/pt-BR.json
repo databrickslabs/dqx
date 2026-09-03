@@ -291,7 +291,7 @@
     "computeTitle": "Computação",
     "computeWarehouseLabel": "Warehouse SQL",
     "computeWarehousePlaceholder": "Selecione um warehouse",
-    "computeWarehouseDefault": "Usar o padrão do app",
+    "computeWarehouseDefaultSuffix": "(padrão)",
     "computeWarehouseCustomOption": "salvo",
     "computeNoWarehouses": "Nenhum warehouse encontrado",
     "computeSpAccessMissing": "A entidade de serviço do app ainda não pode usar este warehouse.",

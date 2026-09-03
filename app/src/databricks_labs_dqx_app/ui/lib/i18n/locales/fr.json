@@ -291,7 +291,7 @@
     "computeTitle": "Compute",
     "computeWarehouseLabel": "SQL warehouse",
     "computeWarehousePlaceholder": "Sélectionner un warehouse",
-    "computeWarehouseDefault": "Utiliser la valeur par défaut de l'application",
+    "computeWarehouseDefaultSuffix": "(par défaut)",
     "computeWarehouseCustomOption": "enregistré",
     "computeNoWarehouses": "Aucun warehouse trouvé",
     "computeSpAccessMissing": "Le service principal de l'application ne peut pas encore utiliser ce warehouse.",

@@ -1525,7 +1525,6 @@ function RunReviewStatusesSettings() {
 
 // Sentinel values for Radix Select — it rejects empty-string item values.
 const NO_ENDPOINT_VALUE = "__none__";
-const NO_WAREHOUSE_VALUE = "__default__";
 
 /**
  * SQL-warehouse dropdown. Groups warehouses into Serverless and Classic with
@@ -1538,40 +1537,51 @@ function WarehouseSelect({
   value,
   onChange,
   warehouses,
+  defaultWarehouseId,
   disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
   warehouses: WarehouseOut[];
+  defaultWarehouseId?: string;
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
+  // With no explicit override, show the effective/default warehouse as selected.
+  const selectedId = value || defaultWarehouseId || "";
   const { serverless, classic } = useMemo(() => {
     const byId = new Map(warehouses.map((w) => [w.id, w]));
-    // Ensure saved id is always present in the list even if not in workspace
-    if (value && !byId.has(value)) {
-      byId.set(value, { id: value, name: value, serverless: false, running: false });
+    // Ensure the selected id is always present in the list even if not in workspace
+    if (selectedId && !byId.has(selectedId)) {
+      byId.set(selectedId, { id: selectedId, name: selectedId, serverless: false, running: false });
     }
     const all = Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
     return {
       serverless: all.filter((w) => w.serverless),
       classic: all.filter((w) => !w.serverless),
     };
-  }, [warehouses, value]);
+  }, [warehouses, selectedId]);
+
+  const optionSuffix = (w: WarehouseOut) => {
+    if (defaultWarehouseId && w.id === defaultWarehouseId) {
+      return ` ${t("config.computeWarehouseDefaultSuffix")}`;
+    }
+    if (w.id === selectedId && !warehouses.some((x) => x.id === selectedId)) {
+      return ` (${t("config.computeWarehouseCustomOption")})`;
+    }
+    return "";
+  };
 
   return (
     <Select
-      value={value || NO_WAREHOUSE_VALUE}
-      onValueChange={(v) => onChange(v === NO_WAREHOUSE_VALUE ? "" : v)}
+      value={selectedId || undefined}
+      onValueChange={(v) => onChange(v)}
       disabled={disabled}
     >
       <SelectTrigger className="h-8 text-xs w-52">
         <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
-          {t("config.computeWarehouseDefault")}
-        </SelectItem>
         {serverless.length > 0 && (
           <SelectGroup>
             <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pt-1">
@@ -1582,9 +1592,7 @@ function WarehouseSelect({
                 <span className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
                   {w.name}
-                  {w.id === value && !warehouses.some((x) => x.id === value)
-                    ? ` (${t("config.computeWarehouseCustomOption")})`
-                    : ""}
+                  {optionSuffix(w)}
                 </span>
               </SelectItem>
             ))}
@@ -1600,9 +1608,7 @@ function WarehouseSelect({
                 <span className="flex items-center gap-1.5">
                   <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", w.running ? "bg-green-500" : "bg-red-500")} />
                   {w.name}
-                  {w.id === value && !warehouses.some((x) => x.id === value)
-                    ? ` (${t("config.computeWarehouseCustomOption")})`
-                    : ""}
+                  {optionSuffix(w)}
                 </span>
               </SelectItem>
             ))}
@@ -2363,6 +2369,7 @@ function ComputeSettingsCard() {
           value={warehouseId}
           onChange={handleWarehouseChange}
           warehouses={warehouses}
+          defaultWarehouseId={settings?.effective_warehouse_id ?? undefined}
           disabled={!isAdmin || saveMutation.isPending}
         />
       </div>
