@@ -1,11 +1,16 @@
 """API-safe models for DQX Studio setup readiness."""
 
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
 
 
-class SetupState(StrEnum):
+class _StrEnum(str, Enum):
+    def __str__(self) -> str:
+        return self.value
+
+
+class SetupState(_StrEnum):
     """Process-wide setup lifecycle states."""
 
     CHECKING = "checking"
@@ -14,7 +19,7 @@ class SetupState(StrEnum):
     READY = "ready"
 
 
-class StepState(StrEnum):
+class StepState(_StrEnum):
     """State of one ordered setup capability or action."""
 
     PENDING = "pending"
@@ -24,7 +29,7 @@ class StepState(StrEnum):
     FAILED = "failed"
 
 
-class SetupStepId(StrEnum):
+class SetupStepId(_StrEnum):
     """Stable identifiers for the ordered setup workflow."""
 
     IDENTITY = "identity"
@@ -39,7 +44,7 @@ class SetupStepId(StrEnum):
     ACTIVATION = "activation"
 
 
-class SetupActionId(StrEnum):
+class SetupActionId(_StrEnum):
     """Retry-safe actions advertised by setup reports."""
 
     RECONCILE = "reconcile"
