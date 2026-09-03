@@ -709,6 +709,24 @@ class AppSettingsService:
                 "High": "error",
                 "Critical": "error",
             },
+            # One-line explanations shown alongside each severity wherever the
+            # value is surfaced (admin editor, label picker tooltip) — parallel
+            # to the dimension seed's ``value_descriptions`` above.
+            "value_descriptions": {
+                "Critical": (
+                    "Blocking issues with severe impact on pipelines, use-case outcomes, or regulatory "
+                    "requirements — must be resolved before the data is trusted or consumed."
+                ),
+                "High": (
+                    "Serious issues that significantly undermine data reliability or downstream decisions "
+                    "and should be addressed promptly."
+                ),
+                "Medium": (
+                    "Moderate issues worth investigating that may affect some consumers but don't block "
+                    "usage of the data."
+                ),
+                "Low": "Minor issues with limited impact — track and address opportunistically.",
+            },
         },
     ]
 
@@ -753,6 +771,50 @@ class AppSettingsService:
         updated = existing + [json.loads(json.dumps(seed)) for seed in missing]
         self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(updated), user_email=user_email)
         logger.info("Seeded reserved label definition(s): %s", [s["key"] for s in missing])
+        return True
+
+    def backfill_reserved_value_descriptions_if_missing(self, *, user_email: str | None = None) -> bool:
+        """Fill in seed ``value_descriptions`` for already-seeded reserved keys.
+
+        The seed above is only applied to keys that don't yet exist
+        (:meth:`seed_reserved_label_definitions_if_absent`), so a deployment
+        that was seeded before a description was added to the seed never picks
+        it up. This closes that gap: for each stored reserved definition, it
+        copies over any ``value_descriptions`` entry the seed defines but the
+        stored definition is missing.
+
+        Safe and non-destructive: an existing (admin-authored) description is
+        never overwritten, descriptions are only added for values the stored
+        definition still lists, and no other field or user-created definition
+        is touched. Idempotent — returns ``True`` iff a write happened.
+        """
+        seeds_by_key = {seed["key"]: seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS}
+        existing = self.get_label_definitions()
+        changed = False
+
+        for definition in existing:
+            seed = seeds_by_key.get(definition.get("key"))
+            if seed is None:
+                continue
+            seed_descriptions = seed.get("value_descriptions")
+            if not seed_descriptions:
+                continue
+            current = definition.get("value_descriptions")
+            if not isinstance(current, dict):
+                current = {}
+            defined_values = set(definition.get("values") or seed.get("values") or [])
+            for value, description in seed_descriptions.items():
+                if value in defined_values and not current.get(value):
+                    current[value] = description
+                    changed = True
+            if current:
+                definition["value_descriptions"] = current
+
+        if not changed:
+            return False
+
+        self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(existing), user_email=user_email)
+        logger.info("Backfilled reserved label value_descriptions for keys: %s", list(seeds_by_key))
         return True
 
     # ------------------------------------------------------------------

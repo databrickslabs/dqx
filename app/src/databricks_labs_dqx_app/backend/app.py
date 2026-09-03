@@ -661,7 +661,12 @@ async def lifespan(app: FastAPI):
     # best-effort for the same reason as run-review-statuses above.
     try:
         oltp_for_label_seed = pg_executor if pg_executor is not None else sp_sql
-        AppSettingsService(sql=oltp_for_label_seed).seed_reserved_label_definitions_if_absent()
+        label_settings = AppSettingsService(sql=oltp_for_label_seed)
+        label_settings.seed_reserved_label_definitions_if_absent()
+        # Backfill descriptions onto reserved definitions seeded before the
+        # seed carried them (idempotent, never overwrites admin edits) so
+        # already-deployed workspaces pick up newly added value_descriptions.
+        label_settings.backfill_reserved_value_descriptions_if_missing()
     except Exception as seed_e:
         logger.warning("Could not seed reserved label definitions: %s", seed_e, exc_info=True)
 
