@@ -91,7 +91,7 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
       const opts: { value: string; label: string }[] = [];
       selectedCatalogs.forEach((catalog, i) => {
         (results[i]?.data?.data ?? []).forEach((s) => {
-          opts.push({ value: `${catalog}.${s.name}`, label: `${catalog}.${s.name}` });
+          opts.push({ value: `${catalog}.${s.name}`, label: s.name });
         });
       });
       return {
@@ -119,7 +119,7 @@ export function useTableScopePicker(enabled: boolean): TableScopePickerState {
       const opts: { value: string; label: string }[] = [];
       resolvedSchemaScopes.forEach((scope, i) => {
         (results[i]?.data?.data ?? []).forEach((tbl) => {
-          opts.push({ value: `${scope}.${tbl.name}`, label: `${scope}.${tbl.name}` });
+          opts.push({ value: `${scope}.${tbl.name}`, label: tbl.name });
         });
       });
       return {
