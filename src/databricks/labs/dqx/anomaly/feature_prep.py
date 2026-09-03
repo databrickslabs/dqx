@@ -1,5 +1,6 @@
 """Prepare feature metadata and apply feature engineering for anomaly scoring."""
 
+import collections.abc
 import uuid
 
 import pyspark.sql.functions as F
@@ -19,6 +20,35 @@ def prepare_feature_metadata(feature_metadata_json: str) -> tuple[list[ColumnTyp
     feature_metadata = SparkFeatureMetadata.from_json(feature_metadata_json)
     column_infos = reconstruct_column_infos(feature_metadata)
     return column_infos, feature_metadata
+
+
+def scoring_input_columns(
+    feature_cols: collections.abc.Iterable[str],
+    merge_columns: collections.abc.Iterable[str],
+    feature_metadata: SparkFeatureMetadata,
+    passthrough_columns: collections.abc.Iterable[str] | None = None,
+) -> list[str]:
+    """The columns the scoring transform must be handed, in the order it expects them.
+
+    A comparison basis is not a feature, but it is still *read*: the grouping columns say what a metric is
+    compared against and the time column is the axis it is measured along, so both have to survive the
+    narrowing even though feature engineering drops them again before the model sees anything. Leaving
+    either off does not degrade the score, it fails the query outright on an unresolved column.
+
+    Deduplicated while preserving order, since a column may legitimately appear in more than one role.
+    """
+    time_cols = [feature_metadata.baseline_over_time] if feature_metadata.baseline_over_time else []
+    return list(
+        dict.fromkeys(
+            [
+                *feature_cols,
+                *feature_metadata.baseline_by,
+                *time_cols,
+                *merge_columns,
+                *(passthrough_columns or []),
+            ]
+        )
+    )
 
 
 def apply_feature_engineering_for_scoring(
@@ -44,15 +74,7 @@ def apply_feature_engineering_for_scoring(
             "Ensure the anomaly check is applied to the same DataFrame instance."
         )
 
-    # Group columns and the time axis must survive this select or the group-relative and temporal
-    # transforms have no basis to compute against; feature engineering drops them again before the
-    # model sees anything. The time column is only ever read, never scored: it is not a feature.
-    time_cols = [feature_metadata.baseline_over_time] if feature_metadata.baseline_over_time else []
-    cols_to_select = list(
-        dict.fromkeys(
-            [*feature_cols, *feature_metadata.baseline_by, *time_cols, *merge_columns, *(passthrough_columns or [])]
-        )
-    )
+    cols_to_select = scoring_input_columns(feature_cols, merge_columns, feature_metadata, passthrough_columns)
 
     engineered_df, _ = apply_feature_engineering_from_metadata(
         df.select(*cols_to_select), feature_metadata, column_infos=column_infos
