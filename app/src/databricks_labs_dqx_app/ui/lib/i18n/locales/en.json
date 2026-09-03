@@ -157,13 +157,13 @@
       "tables": "Tables monitored",
       "rules": "Rules",
       "spaces": "Collections",
-      "score": "Overall DQ score",
+      "score": "Overall Score",
       "scoreInfo": "This overall score is computed across the tables you can access and may differ from an individual table's Results-screen score, which reflects Unity Catalog permission-scoped data."
     },
     "grid": {
       "rulesRegistryDesc": "Create a repository of reusable data quality rules",
       "monitoredTablesDesc": "Apply rules to specific tables and monitor their data quality",
-      "tableSpacesDesc": "Group related tables into collections with a shared schedule",
+      "tableSpacesDesc": "Group related tables into data products to consolidate owners, scheduling, and results",
       "config": "Admin Settings",
       "configDesc": "Configure settings and preferences"
     },
@@ -2406,7 +2406,7 @@
   },
   "dataProducts": {
     "title": "Collections",
-    "subtitle": "Group related tables into collections with a shared schedule.",
+    "subtitle": "Group related tables into data products to consolidate owners, scheduling, and results.",
     "newProduct": "New Collection",
     "createTitle": "Create collection",
     "searchPlaceholder": "Search collections…",

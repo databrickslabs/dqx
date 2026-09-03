@@ -157,13 +157,13 @@
       "tables": "Tabelle monitorate",
       "rules": "Regole",
       "spaces": "Raccolte",
-      "score": "Punteggio DQ complessivo",
+      "score": "Punteggio complessivo",
       "scoreInfo": "Questo punteggio complessivo è calcolato sulle tabelle a cui puoi accedere e può differire dal punteggio della schermata Risultati di una singola tabella, che riflette i dati con ambito di autorizzazione di Unity Catalog."
     },
     "grid": {
       "rulesRegistryDesc": "Crea un repository di regole di qualità dei dati riutilizzabili",
       "monitoredTablesDesc": "Applica regole a tabelle specifiche e monitora la loro qualità dei dati",
-      "tableSpacesDesc": "Raggruppa tabelle correlate in raccolte con una pianificazione condivisa",
+      "tableSpacesDesc": "Raggruppa tabelle correlate in prodotti dati per consolidare proprietari, pianificazione e risultati",
       "config": "Impostazioni Amministratore",
       "configDesc": "Configura impostazioni e preferenze"
     },
@@ -2406,7 +2406,7 @@
   },
   "dataProducts": {
     "title": "Raccolte",
-    "subtitle": "Raggruppa tabelle correlate in raccolte con una pianificazione condivisa.",
+    "subtitle": "Raggruppa tabelle correlate in prodotti dati per consolidare proprietari, pianificazione e risultati.",
     "newProduct": "Nuova Raccolta",
     "createTitle": "Crea raccolta",
     "searchPlaceholder": "Cerca raccolte…",

@@ -157,13 +157,13 @@
       "tables": "Tables surveillées",
       "rules": "Règles",
       "spaces": "Collections",
-      "score": "Score DQ global",
+      "score": "Score global",
       "scoreInfo": "Ce score global est calculé sur l'ensemble des tables auxquelles vous avez accès et peut différer du score affiché dans l'écran Résultats d'une table, qui reflète les données délimitées par les autorisations Unity Catalog."
     },
     "grid": {
       "rulesRegistryDesc": "Créez un référentiel de règles de qualité des données réutilisables",
       "monitoredTablesDesc": "Appliquez des règles à des tables spécifiques et surveillez la qualité de leurs données",
-      "tableSpacesDesc": "Regroupez des tables associées dans des collections partageant une même planification",
+      "tableSpacesDesc": "Regroupez des tables liées dans des produits de données pour consolider propriétaires, planification et résultats",
       "config": "Paramètres d'administration",
       "configDesc": "Configurez les paramètres et les préférences"
     },
@@ -2406,7 +2406,7 @@
   },
   "dataProducts": {
     "title": "Collections",
-    "subtitle": "Regroupez des tables liées dans des collections avec une planification partagée.",
+    "subtitle": "Regroupez des tables liées dans des produits de données pour consolider propriétaires, planification et résultats.",
     "newProduct": "Nouvelle collection",
     "createTitle": "Créer une collection",
     "searchPlaceholder": "Rechercher des collections…",

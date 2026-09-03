@@ -157,13 +157,13 @@
       "tables": "Tabelas monitoradas",
       "rules": "Regras",
       "spaces": "Coleções",
-      "score": "Pontuação geral de DQ",
+      "score": "Pontuação geral",
       "scoreInfo": "Esta pontuação geral é calculada sobre as tabelas às quais você tem acesso e pode diferir da pontuação da tela de Resultados de uma tabela específica, que reflete os dados com escopo de permissão do Unity Catalog."
     },
     "grid": {
       "rulesRegistryDesc": "Crie um repositório de regras de qualidade de dados reutilizáveis",
       "monitoredTablesDesc": "Aplique regras a tabelas específicas e monitore sua qualidade de dados",
-      "tableSpacesDesc": "Agrupe tabelas relacionadas em coleções com um agendamento compartilhado",
+      "tableSpacesDesc": "Agrupe tabelas relacionadas em produtos de dados para consolidar proprietários, agendamento e resultados",
       "config": "Configurações de Administrador",
       "configDesc": "Configure ajustes e preferências"
     },
@@ -2406,7 +2406,7 @@
   },
   "dataProducts": {
     "title": "Coleções",
-    "subtitle": "Agrupe tabelas relacionadas em coleções com um agendamento compartilhado.",
+    "subtitle": "Agrupe tabelas relacionadas em produtos de dados para consolidar proprietários, agendamento e resultados.",
     "newProduct": "Nova Coleção",
     "createTitle": "Criar coleção",
     "searchPlaceholder": "Buscar coleções…",
