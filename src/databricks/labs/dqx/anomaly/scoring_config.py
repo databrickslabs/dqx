@@ -19,6 +19,12 @@ SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
     (100.0, "p100"),
 ]
 
+#: The two percentiles the severity tail is anchored to. Both are keys in SEVERITY_QUANTILE_KEYS above, so
+#: the tail stores nothing new and applies to models trained by any earlier release. Severity is exact at
+#: both, which is what keeps the default threshold of 95 a fixed point.
+TAIL_ANCHOR_PERCENTILE = 95.0
+TAIL_RATE_PERCENTILE = 99.0
+
 
 _DEFAULT_DRIFT_THRESHOLD_VALUE = 3.0
 

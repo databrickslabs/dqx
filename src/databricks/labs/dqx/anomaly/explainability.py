@@ -17,6 +17,7 @@ from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.pipeline import Pipeline
 
+from databricks.labs.dqx.anomaly.scoring_config import TAIL_ANCHOR_PERCENTILE, TAIL_RATE_PERCENTILE
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
@@ -110,15 +111,41 @@ _SEVERITY_GATE_EPSILON = 1e-6
 
 
 def severity_from_scores(scores: np.ndarray, quantile_points: list[tuple[float, float]]) -> np.ndarray:
-    """Map raw anomaly scores to severity percentiles via piecewise linear interpolation.
+    """Map raw anomaly scores to severity percentiles: linear up to p95, then an exponential tail.
 
-    Numpy counterpart of *add_severity_percentile_column* (same quantile points, same
-    clamping at both ends) for use inside scoring UDFs.
+    Numpy counterpart of *add_severity_percentile_column*, and it has to stay one: this function decides
+    which rows get SHAP inside the scoring UDF, so a disagreement between the two would drop contributions
+    from precisely the rows that were flagged.
+
+    The tail matches *_tail_severity_expr* term for term, and for the reason given there: linear
+    interpolation between p95, p99 and the training maximum is the wrong shape for a score quantile
+    function, so a threshold between those knots fired on well under the share of rows it promised.
     """
     points = sorted(quantile_points, key=lambda p: p[0])
-    percentiles = np.array([float(p) for p, _ in points])
-    score_knots = np.array([float(q) for _, q in points])
-    return np.interp(scores, score_knots, percentiles)
+    by_percentile = dict(points)
+    anchor = by_percentile.get(TAIL_ANCHOR_PERCENTILE)
+    rate = by_percentile.get(TAIL_RATE_PERCENTILE)
+
+    # Without both anchors there is no tail to fit, and a degenerate tail has no width to interpolate over.
+    # Either way every point stays a knot, which is the behaviour that predates the tail.
+    if anchor is None or rate is None or rate <= anchor:
+        percentiles = np.array([float(p) for p, _ in points])
+        score_knots = np.array([float(q) for _, q in points])
+        return np.interp(scores, score_knots, percentiles)
+
+    body = [(p, q) for p, q in points if p <= TAIL_ANCHOR_PERCENTILE]
+    values = np.asarray(scores, dtype=float)
+    severity = np.interp(
+        values,
+        np.array([float(q) for _, q in body]),
+        np.array([float(p) for p, _ in body]),
+    )
+
+    head_tail_probability = 100.0 - TAIL_ANCHOR_PERCENTILE
+    base = head_tail_probability / (100.0 - TAIL_RATE_PERCENTILE)
+    above = values > anchor
+    severity[above] = 100.0 - head_tail_probability * np.power(base, -(values[above] - anchor) / (rate - anchor))
+    return severity
 
 
 def compute_gated_shap_contributions(

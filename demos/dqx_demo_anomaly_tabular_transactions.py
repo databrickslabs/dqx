@@ -452,6 +452,10 @@ display(
 # MAGIC single anomaly exists. A row at severity 97 is not "97% likely to be a problem"; it is in the top 3%
 # MAGIC most unusual. This is the most commonly misread number in the feature.
 # MAGIC
+# MAGIC A batch that contains real problems therefore flags **more** than 5%, and that is correct rather
+# MAGIC than a fault: roughly 5% of the ordinary rows, plus the anomalies on top. The alert count grows with
+# MAGIC the size of the problem instead of being capped at a fixed share of the table.
+# MAGIC
 # MAGIC That also puts a hard ceiling on precision. Ask for the top 5% of 1,500 rows and you get 75 alerts;
 # MAGIC if only 30 rows are genuinely bad, the best precision anyone could achieve is 30/75 = **40%**. The
 # MAGIC table below prints that ceiling next to what the model actually achieved, which is the only fair way

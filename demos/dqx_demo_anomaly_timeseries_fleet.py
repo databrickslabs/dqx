@@ -138,12 +138,17 @@ print("✅ Registry reset — ready for this run's model")
 
 
 def report_quality(scored_df, label_col: str, severity_col, budget: float, thresholds=(90, 95, 98, 99)):
-    """Print recall, precision and the best precision the budget allows, at several thresholds.
+    """Print recall, precision and the best precision the alert count allows, at several thresholds.
 
-    Precision alone is unreadable here. Ask for the top 5% of 480 rows and you get 24 alerts; if only 24
-    rows are genuinely wrong, no model can do better than 24/24, and if the budget yields 65 alerts the
-    ceiling is 24/65 = 37% however good the ranking is. So the ceiling is printed beside what was
-    achieved -- where the two are equal, the ranking is optimal and only the budget is costing you.
+    Precision alone is unreadable. If a threshold raises 65 alerts and only 24 rows are genuinely wrong, no
+    model can exceed 24/65 = 37% however well it ranks, so the ceiling is printed beside what was achieved:
+    where the two are equal the ranking is optimal and only the alert count is costing anything.
+
+    Expect more alerts than the threshold's share of rows, and do not read that as a fault. `threshold=95`
+    means "above the 95th percentile of severity seen *during training*", so a batch that contains real
+    problems clears that line more often than 5% of the time. Measured on this notebook's own data, the
+    alert rate among the genuinely healthy readings is 5.2% against 5.0% nominal; the rest of the total is
+    the faults being found.
     """
     total = scored_df.count()
     faults = scored_df.filter(F.col(label_col) == 1.0).count()
@@ -435,16 +440,15 @@ display(
 # COMMAND ----------
 # DBTITLE 1,What the alert budget actually buys
 
-# `threshold=95` means "above the 95th percentile of *training* severity", not "95% likely to be a
-# problem". On a batch whose readings are mostly stranger than anything training held, far more than 5% of
-# it clears that line, which is why 95 flags well over the 75 rows a 5% budget implies.
 report_quality(scored, "is_incident", anomaly.getField("severity_percentile"), budget=95.0)
 
-print("\n💡 The default is not the right answer here. Moving to 98 keeps most of the recall and throws")
-print("   a small fraction of the false alarms, because severity ranks the incident readings well above")
-print("   the healthy ones — the default budget was simply set against the training distribution rather")
-print("   than this batch. Severity is stored for every row, so this table costs nothing to produce and")
-print("   is how you should pick the number on your own data.")
+print("\n💡 More alerts than 5% of rows is correct, not a fault: the extra ones are the faults being")
+print("   found. The alert count grows with the size of the problem instead of being capped at a fixed")
+print("   share, which is what you want from a quality check.")
+print("   What the table is for is the tradeoff. Raising the threshold here buys a large drop in false")
+print("   alarms for a small loss of recall, because severity ranks the incident readings well above the")
+print("   healthy ones. Severity is stored for every row, so producing this costs nothing and no")
+print("   rescoring, and it is how to pick the number on your own data rather than inheriting 95.")
 
 # COMMAND ----------
 # DBTITLE 1,Why each group was flagged, in plain language
@@ -575,11 +579,12 @@ print(f"🎯 Trained with an expected level per metric over time")
 # COMMAND ----------
 # DBTITLE 1,Score, and see what "wrong for now" looks like
 
-# 99, not the 95 used earlier. Measured on this data, 95 raised 65 alerts for 24 real faults while 99
-# raised exactly 24 and got all of them -- because a residual against a fitted expectation is a sharper
-# signal than a raw value, so the severity distribution of a faulty batch sits far above training's. The
-# next cell prints the sweep this was chosen from; do the same on your own data rather than copying 99.
-WEAR_THRESHOLD = 99
+# The default, deliberately, even though a tighter cutoff scores better on this fixture. An earlier draft
+# pinned 99 from one run's sweep and the next run's model ranked slightly differently, at which point 99 was
+# dropping real faults. A demo that hardcodes a tuned number teaches the wrong lesson anyway: score at the
+# default, read the sweep the next cell prints, then choose. That is the loop, and it is cheap because
+# severity is stored for every row.
+WEAR_THRESHOLD = 95
 
 wear_checks = [
     {
@@ -607,8 +612,10 @@ caught = wear_result.filter(anomaly.getField("is_anomaly") & (F.col("is_incident
 total = wear_result.filter(F.col("is_incident") == 1.0).count()
 print(f"🔍 Caught {caught} of {total} rows that were wrong for how worn the bearing should have been.\n")
 
-# The ranking is what to judge, and a sweep is the only way to see it: every fault sits above every
-# healthy row here, so a tighter budget costs no recall at all. That is unusual, and the reason to look.
+# The ranking is what to judge, and a sweep is the only way to see it. On this fixture almost every fault
+# sits above almost every healthy reading, so a much tighter cutoff costs little or no recall while removing
+# most of the false alarms. That is the shape worth recognising: when precision equals its ceiling at every
+# row count, the model has ranked correctly and the cutoff is the only decision left.
 report_quality(wear_result, "is_incident", anomaly.getField("severity_percentile"), budget=WEAR_THRESHOLD)
 
 # COMMAND ----------

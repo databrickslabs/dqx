@@ -148,7 +148,7 @@ DQM and DQX each provide distinct capabilities. Together, they complement one an
 
 Each row is scored and enriched with:
 - **Severity percentile (0–100)**: how unusual the row is compared to training data.
-- **Anomaly flag**: whether it crosses your chosen score threshold (default 95). You can tune this to control how many alerts you get.
+- **Anomaly flag**: whether it crosses your chosen score threshold (default 95). The threshold is a percentile of the severity seen during *training*, so a batch with real problems in it produces more alerts than the threshold's share of rows. See [How to choose a threshold](#how-to-choose-a-threshold).
 - **Top contributors (explainability)**: which fields most influenced the anomaly score, so you can see *why* a row was flagged. This turns a black-box score into an actionable insight.
 
 You can tune the threshold and other options later if you need to reduce alert noise or catch more edge cases, but the defaults should work well for most use cases.
@@ -305,51 +305,72 @@ display(
 )
 ```
 
-Scores are normalized into `severity_percentile` (0–100). The anomaly threshold is a percentile cutoff (default 95) that you should tune to your data.
+Scores are normalized into `severity_percentile` (0–100). The anomaly threshold is a cutoff on that value (default 95), calibrated against the severity distribution seen during training, that you should tune to your data.
 
 ## How to choose a threshold
 
-The threshold controls how many rows are flagged as anomalies (percentile cutoff; default 95). Lower values (for example 90) flag more rows; higher values (for example 98) flag fewer (only extreme anomalies). Start with the default (95). If you get too many alerts, raise the threshold; if you are missing issues you care about, lower it.
+The threshold controls how many rows are flagged as anomalies (percentile cutoff; default 95). Lower values
+(for example 90) flag more rows; higher values (for example 98) flag fewer (only extreme anomalies). Start
+with the default (95). If you are missing issues you care about, lower it; if you are investigating more
+rows than you have time for, raise it.
 
-### The threshold is a percentile of *training* severity, not of the batch you score
+### What the number means
 
-This is the most commonly misread part of the feature, so it is worth being precise about. `threshold=95`
-does not mean "flag 5% of these rows". It means "flag rows above the 95th percentile of the severity seen
-during *training*". The two agree only when the batch you score looks like the data the model trained on.
+`threshold=95` means "flag rows above the 95th percentile of the severity DQX saw **while training**". It
+does not mean "flag 5% of the rows I am scoring", and the difference matters in three separate ways.
 
-Measured on two runs against real training and real scoring:
+**A batch containing real problems produces more alerts than the budget, and should.** This is the design
+working, not drift and not miscalibration. Measured on a fixture of correlated machine telemetry where 4.0%
+of rows were genuinely faulty, `threshold=95` flagged 8.4% of the batch: 5.2% of the genuinely normal rows,
+which is the budget delivered almost exactly, plus most of the faults on top. The alert count grows with the
+size of the problem rather than being capped at a fixed share, which is what you want from a data quality
+check. If your batch has nothing wrong with it, you get roughly your budget and no more.
 
-| Batch | Rows | Genuinely wrong | `threshold` | Rows actually flagged |
-|---|---|---|---|---|
-| Correlated machine telemetry with a correlation break | 1,500 | 60 (4.0%) | 95 | 139 (9.3%) |
-| Trending metrics with a stale-level fault | 480 | 24 (5.0%) | 95 | 65 (13.5%) |
+**A batch whose distribution has moved produces many more, and that is a retraining signal.** On real
+server telemetry, scoring a later time period with a model fitted on an earlier one, `threshold=95` flagged
+9.8% to 21.7% of rows depending on the detector, while the same model on same-period held-out data flagged
+4.9% to 5.0%. Calibration itself is sound; the input moved. Set `drift_threshold=3.0` to be told when that
+has happened rather than inferring it from the alert volume.
 
-Both overshoot, and in the same direction, for the same reason: a batch containing real problems has more
-high-severity rows than training did, so more than 5% of it clears the training 95th percentile. On the
-second fixture the *ranking* was perfect, with the 24 highest-severity rows being exactly the 24 faults, so
-`threshold=99` gave 24 alerts with no false ones. Nothing was wrong with the detection; the budget was
-simply set against the wrong distribution.
+**Precision is capped by the alert count, so read it against that ceiling.** If a budget produces 65 alerts
+and only 24 rows are genuinely wrong, no model can exceed 24/65 = 37% precision however well it ranks. On
+one measured fixture observed precision equalled that ceiling exactly, with a perfect ranking underneath:
+the 24 highest-severity rows were exactly the 24 faults. Comparing precision to 100% would have called that
+a poor detector.
 
-Two practical consequences:
+### Calibrating on your own data
 
-- **Read precision against its ceiling, not against 100%.** If a budget yields 65 alerts and only 24 rows
-  are genuinely wrong, no model can do better than 24/65 = 37%. Where observed precision equals that
-  ceiling, the ranking is optimal and only the budget is costing you.
-- **Calibrate on a scored batch rather than guessing.** `severity_percentile` is computed for every row,
-  including rows below the threshold, so you can count would-be alerts at other cutoffs without rescoring:
+`severity_percentile` is computed for every row, including rows below the threshold, so you can count
+would-be alerts at other cutoffs without rescoring anything:
 
 ```python
 scored = spark.table("catalog.schema.scored")
 severity = F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("severity_percentile")
+total = scored.count()
 
-for cutoff in (90, 95, 98, 99):
+for cutoff in (90, 95, 98, 99, 99.5):
     alerts = scored.filter(severity >= cutoff).count()
-    print(f"threshold {cutoff}: {alerts} alerts ({alerts / scored.count():.1%} of rows)")
+    print(f"threshold {cutoff}: {alerts} alerts ({alerts / total:.2%} of rows)")
 ```
 
-Pick the cutoff whose alert count matches how many rows a person can actually investigate. Both anomaly
-demos under `demos/` print this table, and the second one chooses its threshold from it rather than
-inheriting the default.
+Pick the cutoff whose alert count matches how many rows someone can actually investigate. Both anomaly demos
+under `demos/` print this table, and one of them chooses its threshold from it rather than inheriting the
+default.
+
+A tuned threshold transfers only partly. Measured across machines in the same dataset, tuning on one half of
+a batch and applying to the other cut the median error against the requested budget from 3.1x to 1.7x and
+the spread across machines from 28 to 7.5 percentage points, but only 20-30% of machines landed within
+double their budget. Treat a tuned number as a much better starting point than a guess, not as a guarantee.
+
+:::note[Fixed in 0.16.0]
+Thresholds between the persisted quantile knots used to be silently stricter than requested, because
+severity was interpolated linearly in score space and the grid has knots at 95, 99 and 100 with nothing
+between. Measured against a training distribution scored with itself, `threshold=98` flagged 1.4% to 1.6% of
+rows rather than 2%, and `threshold=99.9` flagged nothing at all. That range is now interpolated in tail
+probability, which is what a percentile is. Severity at 90, 95 and 99 is unchanged, so the default
+configuration behaves exactly as before; 96 to 98 become slightly less strict, toward the budget you asked
+for, and 99.5 and above now fire on roughly what you asked for instead of on nothing.
+:::
 
 ## Group-aware anomaly detection
 

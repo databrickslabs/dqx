@@ -2,10 +2,13 @@
 
 from collections.abc import Callable
 
+import numpy as np
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.explainability import severity_from_scores
+from databricks.labs.dqx.anomaly.scoring_utils import add_severity_percentile_column
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from tests.constants import TEST_CATALOG
@@ -15,6 +18,7 @@ from tests.integration_anomaly.constants import (
 )
 from tests.integration_anomaly.conftest import (
     apply_anomaly_check_direct,
+    create_anomaly_check_rule,
     create_anomaly_dataset_rule,
     train_simple_2d_model,
 )
@@ -234,3 +238,72 @@ def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory
     # These are optional but good to have: precision, recall, f1_score, val_anomaly_rate
     # At least some metrics should be present
     assert len(metrics) >= 1
+
+
+def test_the_spark_and_numpy_severity_maps_agree_across_the_tail(spark: SparkSession):
+    """The two implementations must not diverge, and only a session can check the Spark one.
+
+    ``severity_from_scores`` decides which rows get SHAP inside the scoring UDF while
+    ``add_severity_percentile_column`` produces the severity everything downstream reads. A disagreement
+    would drop contributions from precisely the rows that were flagged, which is the one place a reader
+    looks. The probe grid deliberately spans past the last knot, because that whole range used to be a
+    single clamped value and is now where the two could most easily part company.
+    """
+    points = [
+        (0.0, 0.0),
+        (1.0, 0.4),
+        (5.0, 0.8),
+        (10.0, 1.0),
+        (25.0, 1.5),
+        (50.0, 2.0),
+        (75.0, 3.0),
+        (90.0, 4.0),
+        (95.0, 5.0),
+        (99.0, 8.0),
+        (100.0, 12.0),
+    ]
+    probes = [float(value) for value in np.linspace(-1.0, 60.0, 400)]
+
+    scored = add_severity_percentile_column(
+        spark.createDataFrame([(value,) for value in probes], "score double"),
+        score_col="score",
+        severity_col="severity",
+        quantile_points=points,
+    )
+    from_spark = np.array([row["severity"] for row in scored.orderBy("score").collect()])
+    from_numpy = severity_from_scores(np.array(sorted(probes)), points)
+
+    assert np.allclose(
+        from_spark, from_numpy, atol=1e-9
+    ), f"largest disagreement {np.max(np.abs(from_spark - from_numpy))}"
+
+
+def test_a_threshold_between_the_knots_flags_close_to_its_budget_through_real_scoring(
+    ws, spark: SparkSession, quick_model_factory
+):
+    """End to end, through a trained model and the public check, not just the mapping in isolation.
+
+    ``threshold=98`` used to flag well under the 2% it promises, because the persisted grid has no knot
+    between 95 and 99 and the interpolation ran in score space. Scoring data drawn from the same
+    distribution the model trained on is what isolates that: no drift, no planted anomalies, so the only
+    thing the realised rate can be measuring is the mapping.
+    """
+    rng = np.random.default_rng(29)
+    train_rows = [(float(a), float(b)) for a, b in rng.normal(100.0, 10.0, size=(4000, 2))]
+    model_name, registry_table, _ = quick_model_factory(
+        spark, train_data=train_rows, params=AnomalyParams(sample_fraction=1.0)
+    )
+
+    test_rows = [(float(a), float(b)) for a, b in rng.normal(100.0, 10.0, size=(4000, 2))]
+    test_df = spark.createDataFrame(test_rows, "amount double, quantity double")
+
+    result_df = DQEngine(ws, spark).apply_checks(
+        test_df,
+        [create_anomaly_check_rule(model_name=model_name, registry_table=registry_table, threshold=98.0)],
+    )
+    severity = F.col("_dq_info")[0].getField("anomaly").getField("severity_percentile")
+    realised = result_df.filter(severity >= 98.0).count() / result_df.count()
+
+    # Generous, because a 4,000-row sample of a 2% tail carries real binomial noise (sd about 0.2pp) on top
+    # of the grid's own approximation. The behaviour being guarded against realised 1.4% or less.
+    assert 0.014 < realised < 0.030, f"threshold 98 flagged {realised:.3%} of an unremarkable batch"
