@@ -63,7 +63,7 @@ class ResourceCheckers:
                 "Could not verify app service principal access to the wheels volume.",
             )
         missing = _missing_privileges(response, _VOLUME_PRIVILEGES)
-        if missing:
+        if missing and not self._is_owner("VOLUME", self._volume_full_name(), app_sp):
             return SetupStep(
                 id=SetupStepId.VOLUME,
                 state=StepState.ACTION_REQUIRED,
@@ -90,6 +90,10 @@ class ResourceCheckers:
             )
         missing_catalog = _missing_privileges(catalog_response, _CATALOG_PRIVILEGES)
         missing_schema = _missing_privileges(schema_response, _SCHEMA_PRIVILEGES)
+        if missing_catalog and self._is_owner("CATALOG", self._resources.volume.catalog, app_sp):
+            missing_catalog = frozenset()
+        if missing_schema and self._is_owner("SCHEMA", self._main_schema_full_name(), app_sp):
+            missing_schema = frozenset()
         if missing_catalog or missing_schema:
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
@@ -217,6 +221,21 @@ class ResourceCheckers:
             return self._workspace.grants.get_effective(securable_type, full_name, principal=app_sp)
         except Exception:
             return None
+
+    def _is_owner(self, securable_type: str, full_name: str, app_sp: str) -> bool:
+        try:
+            if securable_type == "VOLUME":
+                securable = self._workspace.volumes.read(full_name)
+            elif securable_type == "CATALOG":
+                securable = self._workspace.catalogs.get(full_name)
+            elif securable_type == "SCHEMA":
+                securable = self._workspace.schemas.get(full_name)
+            else:
+                return False
+        except Exception:
+            return False
+        owner = getattr(securable, "owner", None)
+        return isinstance(owner, str) and owner.casefold() == app_sp.casefold()
 
     def _volume_full_name(self) -> str:
         volume = self._resources.volume

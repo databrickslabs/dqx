@@ -24,14 +24,16 @@ type SetupGateProps = {
 };
 
 const SETUP_POLL_INTERVAL_MS = 2_000;
+const SETUP_WAITING_POLL_INTERVAL_MS = 10_000;
 
 export function setupPollingInterval(
   state: "checking" | "initializing" | "setup_required" | "ready" | undefined,
   isReconciling = false,
 ): number | false {
-  return isReconciling || state === "checking" || state === "initializing"
-    ? SETUP_POLL_INTERVAL_MS
-    : false;
+  if (isReconciling || state === "checking" || state === "initializing") {
+    return SETUP_POLL_INTERVAL_MS;
+  }
+  return state === "setup_required" ? SETUP_WAITING_POLL_INTERVAL_MS : false;
 }
 
 export function setupPollingInBackground(): boolean {

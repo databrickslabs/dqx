@@ -196,50 +196,6 @@ def _make_orchestrator(
 
 
 @pytest.mark.asyncio
-async def test_inspect_stops_at_first_unmet_external_capability(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    fixture.checkers.results[SetupStepId.VOLUME] = _action_required(SetupStepId.VOLUME, "volume_missing")
-
-    report = await fixture.orchestrator.inspect()
-
-    assert report.state == SetupState.SETUP_REQUIRED
-    assert report.current_step == SetupStepId.VOLUME
-    assert fixture.events == ["identity", "volume"]
-
-
-@pytest.mark.asyncio
-async def test_inspect_preserves_existing_ready_report(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    ready_report = await fixture.orchestrator.reconcile()
-    fixture.events.clear()
-
-    inspected_report = await fixture.orchestrator.inspect()
-
-    assert inspected_report is ready_report
-    assert fixture.runtime.report() is ready_report
-    assert fixture.events == []
-
-
-@pytest.mark.asyncio
-async def test_inspect_waits_for_reconciliation_and_returns_ready_report(resources: ActiveResources) -> None:
-    release_activation = asyncio.Event()
-    fixture = _make_orchestrator(resources, activation=FakeActivation([], wait_until=release_activation))
-
-    reconciliation = asyncio.create_task(fixture.orchestrator.reconcile())
-    while "activate" not in fixture.events:
-        await asyncio.sleep(0)
-    inspection = asyncio.create_task(fixture.orchestrator.inspect())
-    await asyncio.sleep(0)
-    release_activation.set()
-
-    ready_report, inspected_report = await asyncio.gather(reconciliation, inspection)
-
-    assert inspected_report is ready_report
-    assert ready_report.state == SetupState.READY
-    assert fixture.events.count("identity") == 1
-
-
-@pytest.mark.asyncio
 async def test_reconcile_stops_at_missing_catalog_grants(resources: ActiveResources) -> None:
     fixture = _make_orchestrator(resources)
     fixture.checkers.results[SetupStepId.UNITY_CATALOG] = _action_required(

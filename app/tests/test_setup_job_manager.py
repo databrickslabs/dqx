@@ -14,7 +14,7 @@ from databricks.sdk.service.jobs import (
 )
 
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob, TaskRunnerJobManager
-from databricks_labs_dqx_app.backend.setup.models import SetupStepId, StepState
+from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 
 
 @pytest.fixture
@@ -158,3 +158,5 @@ def test_validate_run_as_requires_a_distinct_service_principal(
 
     assert step.id == SetupStepId.TASK_RUNNER
     assert step.state == expected_state
+    if expected_state == StepState.ACTION_REQUIRED:
+        assert step.actions == (SetupActionId.VERIFY_AGAIN,)

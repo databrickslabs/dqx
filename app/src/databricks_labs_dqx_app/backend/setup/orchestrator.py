@@ -97,7 +97,7 @@ class StudioActivation(Protocol):
 
 
 class SetupOrchestrator:
-    """Inspect capabilities and reconcile Studio-owned setup actions in order."""
+    """Reconcile Studio-owned setup actions in order."""
 
     def __init__(
         self,
@@ -123,62 +123,6 @@ class SetupOrchestrator:
         self.publish_wheels = publish_wheels
         self.activation = activation
         self.app_sp_id = _sanitize_identity(app_sp_id) or ""
-
-    async def inspect(self) -> SetupReport:
-        """Run non-mutating capability checks and publish the first unmet step."""
-        async with self.runtime.activation_lock:
-            current_report = self.runtime.report()
-            if current_report.state == SetupState.READY:
-                return current_report
-            return await self._inspect_locked()
-
-    async def _inspect_locked(self) -> SetupReport:
-        steps: list[SetupStep] = []
-        for check in (
-            self.checkers.check_app_identity,
-            self.checkers.check_volume,
-            self.checkers.check_unity_catalog,
-        ):
-            step = await asyncio.to_thread(check)
-            steps.append(step)
-            if step.state != StepState.PASSED:
-                return self._publish_stopped(steps, step.id)
-
-        steps.append(_pending(SetupStepId.SCHEMAS, "Application schemas are reconciled during setup."))
-        for check in (self.checkers.check_lakebase, self.checkers.check_warehouse):
-            step = await asyncio.to_thread(check)
-            steps.append(step)
-            if step.state != StepState.PASSED:
-                return self._publish_stopped(steps, step.id)
-
-        job_id = self.runtime.job_id
-        configured_job_id = str(job_id) if job_id is not None else self.resources.job_id
-        if configured_job_id is None:
-            task_step = _pending(SetupStepId.TASK_RUNNER, "The Studio task-runner job is ready to be reconciled.")
-        else:
-            try:
-                resolved = await asyncio.to_thread(self.jobs.resolve, configured_job_id)
-                task_step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
-            except Exception:
-                task_step = _failed(
-                    SetupStepId.TASK_RUNNER,
-                    "task_runner_check_failed",
-                    "Could not verify the Studio task-runner job.",
-                )
-        steps.append(task_step)
-        if task_step.state != StepState.PASSED:
-            return self._publish_stopped(steps, task_step.id)
-
-        steps.extend(
-            (
-                _pending(SetupStepId.WHEELS, "Application wheels are reconciled during setup."),
-                _pending(SetupStepId.MIGRATIONS, "Database migrations are reconciled during setup."),
-                _pending(SetupStepId.ACTIVATION, "Studio activates after migrations succeed."),
-            )
-        )
-        report = SetupReport(state=SetupState.CHECKING, current_step=SetupStepId.SCHEMAS, steps=tuple(steps))
-        self.runtime.publish(report)
-        return report
 
     async def reconcile(self, setup_user: str | None = None) -> SetupReport:
         """Run retry-safe setup actions serially and activate only after migrations."""
@@ -360,10 +304,6 @@ class SetupOrchestrator:
 
 def _passed(step_id: SetupStepId, summary: str) -> SetupStep:
     return SetupStep(id=step_id, state=StepState.PASSED, summary=summary)
-
-
-def _pending(step_id: SetupStepId, summary: str) -> SetupStep:
-    return SetupStep(id=step_id, state=StepState.PENDING, summary=summary, actions=(SetupActionId.RECONCILE,))
 
 
 def _failed(step_id: SetupStepId, code: str, summary: str) -> SetupStep:

@@ -15,7 +15,7 @@ from databricks.sdk.service.jobs import (
     Task,
 )
 
-from databricks_labs_dqx_app.backend.setup.models import SetupStep, SetupStepId, StepState
+from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 
 _MANAGED_TAGS = {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
 _JOB_NAME = "dqx-studio-task-runner"
@@ -96,6 +96,7 @@ class TaskRunnerJobManager:
             state=StepState.ACTION_REQUIRED,
             code=_run_as_action_code(run_as, app_sp_id),
             summary="Assign a service principal distinct from the app identity as this job's run_as identity.",
+            actions=(SetupActionId.VERIFY_AGAIN,),
         )
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:

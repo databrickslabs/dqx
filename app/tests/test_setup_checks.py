@@ -173,6 +173,15 @@ def test_volume_with_all_privileges_passes(checkers: ResourceCheckers, workspace
     assert result.code == ""
 
 
+def test_volume_owner_passes_without_explicit_privileges(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.grants.get_effective.return_value = _effective_permissions()
+    workspace.volumes.read.return_value = SimpleNamespace(owner="app-sp-id")
+
+    result = checkers.check_volume()
+
+    assert result.state == StepState.PASSED
+
+
 @pytest.mark.parametrize(
     ("missing_privilege", "grant_privilege"),
     [(Privilege.USE_CATALOG, "USE CATALOG"), (Privilege.CREATE_SCHEMA, "CREATE SCHEMA")],
@@ -203,6 +212,18 @@ def test_catalog_and_schema_with_all_privileges_passes(checkers: ResourceChecker
 
     assert result.state == StepState.PASSED
     assert result.code == ""
+
+
+def test_catalog_and_schema_owners_pass_without_explicit_privileges(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = [_effective_permissions(), _effective_permissions()]
+    workspace.catalogs.get.return_value = SimpleNamespace(owner="app-sp-id")
+    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
+
+    result = checkers.check_unity_catalog()
+
+    assert result.state == StepState.PASSED
 
 
 @pytest.mark.parametrize(

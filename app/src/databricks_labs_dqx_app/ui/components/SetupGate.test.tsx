@@ -167,10 +167,10 @@ describe("SetupGate", () => {
     expect(markup).toContain('href="https://workspace.example.com/#job/list"');
   });
 
-  test("polls only while setup is checking or initializing", () => {
+  test("polls slowly while setup is waiting for external action", () => {
     expect(setupPollingInterval("checking")).toBe(2_000);
     expect(setupPollingInterval("initializing")).toBe(2_000);
-    expect(setupPollingInterval("setup_required")).toBe(false);
+    expect(setupPollingInterval("setup_required")).toBe(10_000);
     expect(setupPollingInterval("ready")).toBe(false);
   });
 
