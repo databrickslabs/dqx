@@ -140,14 +140,6 @@ export function ScheduleEditor({
         </Select>
       </div>
 
-      <SchedulePicker
-        cron={cron ?? DEFAULT_CADENCE_CRON}
-        timezone={timezone}
-        onChange={onChange}
-        onValidityChange={onValidityChange}
-        canEdit={canEdit}
-      />
-
       <div className="space-y-2">
         <Label>{t("schedule.sampleLabel")}</Label>
         <SampleSelector
@@ -163,7 +155,17 @@ export function ScheduleEditor({
           }}
           disablePercent
         />
-        <p className="text-xs text-muted-foreground">{t("schedule.sampleHint")}</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>{t("schedule.frequencyLabel")}</Label>
+        <SchedulePicker
+          cron={cron ?? DEFAULT_CADENCE_CRON}
+          timezone={timezone}
+          onChange={onChange}
+          onValidityChange={onValidityChange}
+          canEdit={canEdit}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

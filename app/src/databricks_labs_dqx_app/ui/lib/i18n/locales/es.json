@@ -17,7 +17,16 @@
       "dq_only": "Solo calidad de datos"
     },
     "sampleLabel": "Cuántos datos analiza cada ejecución",
-    "sampleHint": "La tabla completa es el valor predeterminado. Una muestra abarata las ejecuciones programadas, pero entonces la puntuación de calidad solo refleja las filas analizadas."
+    "frequencyLabel": "Frecuencia",
+    "weekday": {
+      "sunday": "domingo",
+      "monday": "lunes",
+      "tuesday": "martes",
+      "wednesday": "miércoles",
+      "thursday": "jueves",
+      "friday": "viernes",
+      "saturday": "sábado"
+    }
   },
   "lifecycle": {
     "rationaleLabel": "Comentarios",
@@ -2430,7 +2439,6 @@
     "scheduleCadenceHour": "Hora",
     "scheduleCadenceWeek": "Semana",
     "scheduleCronAriaLabel": "Expresión cron",
-    "scheduleCronHelp": "Cinco campos: minuto hora día-del-mes mes día-de-la-semana. Ejemplo: 0 6 * * * se ejecuta a diario a las 06:00.",
     "scheduleCronInvalid": "Esta expresión cron no es válida. Revisa el formato e inténtalo de nuevo.",
     "scheduleEmptyText": "Esta colección solo se ejecuta bajo demanda. Agrega una programación para ejecutarla automáticamente.",
     "scheduleEveryLabel": "Cada",
@@ -2438,7 +2446,7 @@
     "scheduleHintDaily": "Se ejecuta a diario a las {{time}} ({{tz}})",
     "scheduleHintHourly": "Se ejecuta cada hora en el minuto {{minute}} ({{tz}})",
     "scheduleHintRaw": "Se ejecuta en: {{cron}} ({{tz}})",
-    "scheduleHintWeekly": "Se ejecuta semanalmente los lunes a las {{time}} ({{tz}})",
+    "scheduleHintWeekly": "Se ejecuta semanalmente el {{day}} a las {{time}} ({{tz}})",
     "scheduleRemoveButton": "Quitar programación",
     "scheduleShowCronLabel": "Mostrar sintaxis cron",
     "scheduleTimezoneLabel": "Zona horaria",

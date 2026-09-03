@@ -17,7 +17,16 @@
       "dq_only": "Data quality only"
     },
     "sampleLabel": "How much data each run scans",
-    "sampleHint": "Full table is the default. A sample keeps scheduled runs cheap, but the quality score then reflects only the rows scanned."
+    "frequencyLabel": "Frequency",
+    "weekday": {
+      "sunday": "Sunday",
+      "monday": "Monday",
+      "tuesday": "Tuesday",
+      "wednesday": "Wednesday",
+      "thursday": "Thursday",
+      "friday": "Friday",
+      "saturday": "Saturday"
+    }
   },
   "lifecycle": {
     "rationaleLabel": "Comments",
@@ -2430,7 +2439,6 @@
     "scheduleCadenceHour": "Hour",
     "scheduleCadenceWeek": "Week",
     "scheduleCronAriaLabel": "Cron expression",
-    "scheduleCronHelp": "Five fields: minute hour day-of-month month day-of-week. Example: 0 6 * * * runs daily at 06:00.",
     "scheduleCronInvalid": "This cron expression isn't valid. Check the format and try again.",
     "scheduleEmptyText": "This collection runs on demand only. Add a schedule to run it automatically.",
     "scheduleEveryLabel": "Every",
@@ -2438,7 +2446,7 @@
     "scheduleHintDaily": "Runs daily at {{time}} ({{tz}})",
     "scheduleHintHourly": "Runs hourly at minute {{minute}} ({{tz}})",
     "scheduleHintRaw": "Runs on: {{cron}} ({{tz}})",
-    "scheduleHintWeekly": "Runs weekly on Monday at {{time}} ({{tz}})",
+    "scheduleHintWeekly": "Runs weekly on {{day}} at {{time}} ({{tz}})",
     "scheduleRemoveButton": "Remove schedule",
     "scheduleShowCronLabel": "Show cron syntax",
     "scheduleTimezoneLabel": "Timezone",

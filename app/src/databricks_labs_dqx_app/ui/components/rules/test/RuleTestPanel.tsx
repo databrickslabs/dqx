@@ -570,7 +570,7 @@ export function SampleSelector({
   return (
     <div className="flex items-center gap-1.5">
       <Select value={kind === "full" ? "full" : "sample"} onValueChange={(v) => onKind(v === "full" ? "full" : "records")}>
-        <SelectTrigger className="h-8 w-36 text-xs font-normal text-muted-foreground">
+        <SelectTrigger className="w-36">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -584,7 +584,7 @@ export function SampleSelector({
             type="number"
             min={1}
             max={kind === "percent" ? 100 : undefined}
-            className="h-8 w-24 text-xs font-normal text-muted-foreground"
+            className="w-24"
             value={value}
             onChange={(e) => {
               const n = Number(e.target.value);
@@ -593,7 +593,7 @@ export function SampleSelector({
           />
           {!disablePercent ? (
             <Select value={kind} onValueChange={(v) => onKind(v as "records" | "percent")}>
-              <SelectTrigger className="h-8 w-28 text-xs font-normal text-muted-foreground">
+              <SelectTrigger className="w-28">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -602,7 +602,7 @@ export function SampleSelector({
               </SelectContent>
             </Select>
           ) : (
-            <span className="text-xs text-muted-foreground w-28 px-1">{t("ruleTest.records")}</span>
+            <span className="text-sm text-muted-foreground w-28 px-1">{t("ruleTest.records")}</span>
           )}
         </>
       )}
