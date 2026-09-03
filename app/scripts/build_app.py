@@ -334,7 +334,7 @@ def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
         build_env["SOURCE_DATE_EPOCH"] = REPRODUCIBLE_BUILD_EPOCH
         build_env["PYTHONHASHSEED"] = "0"
         build_env["UV_BUILD_CONSTRAINT"] = str(DQX_DIR / ".build-constraints.txt")
-        for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "UV_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+        for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
             build_env.pop(name, None)
         try:
             _run(

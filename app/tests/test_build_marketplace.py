@@ -1,6 +1,7 @@
 """Artifact-contract tests for the Databricks Marketplace source folder."""
 
 import hashlib
+import os
 import subprocess
 import sys
 import tomllib
@@ -11,6 +12,7 @@ import pytest
 import yaml
 
 from scripts import build_marketplace as marketplace_builder
+from scripts.build_app import build_task_runner_wheel
 
 build = marketplace_builder.build
 
@@ -234,6 +236,32 @@ def test_marketplace_build_ignores_parent_uv_configuration(
 
     lock = tomllib.loads((output_dir / "uv.lock").read_text(encoding="utf-8"))
     assert "options" not in lock
+
+
+def test_task_runner_build_uses_configured_primary_package_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    captured_index = tmp_path / "captured-index"
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        """#!/bin/sh
+printf '%s' "$UV_INDEX_URL" > "$CAPTURED_INDEX_FILE"
+while [ "$1" != "--out-dir" ]; do shift; done
+mkdir -p "$2"
+touch "$2/databricks_labs_dqx_task_runner-0.1.0-py3-none-any.whl"
+""",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    monkeypatch.setenv("CAPTURED_INDEX_FILE", str(captured_index))
+    monkeypatch.setenv("UV_INDEX_URL", "https://mirror.example/simple")
+
+    build_task_runner_wheel(tmp_path / "wheel", "0.16.0")
+
+    assert captured_index.read_text(encoding="utf-8") == "https://mirror.example/simple"
 
 
 def test_marketplace_check_accepts_generated_artifact(
