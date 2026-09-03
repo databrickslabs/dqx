@@ -403,9 +403,22 @@ def test_the_public_check_scores_a_temporal_model_end_to_end(ws, spark: SparkSes
     The scoring path narrows the frame to features, grouping columns and internals before replaying the
     transform. The time column has to survive that select, or the fitted expectation has no axis to
     evaluate against and scoring fails outright on an unresolved column.
+
+    The training data carries noise deliberately. A noiseless trend leaves a residual of floating-point dust
+    once the fit is subtracted, and a detector trained on a column with no variance cannot order anything, so
+    every row comes back at the same severity and the comparison below becomes vacuous.
     """
+    hours = 24 * 30
+    rng = np.random.default_rng(41)
+    noise = rng.normal(0.0, 1.5, hours)
+    quantity_noise = rng.normal(0.0, 0.05, hours)
     train_data = [
-        (START + datetime.timedelta(hours=i), float(100.0 + 0.05 * i), 2.0 + 0.001 * i) for i in range(24 * 30)
+        (
+            START + datetime.timedelta(hours=i),
+            float(100.0 + 0.05 * i + noise[i]),
+            float(2.0 + 0.001 * i + quantity_noise[i]),
+        )
+        for i in range(hours)
     ]
 
     model_name, registry_table, _ = quick_model_factory(
@@ -418,11 +431,17 @@ def test_the_public_check_scores_a_temporal_model_end_to_end(ws, spark: SparkSes
         params=AnomalyParams(sample_fraction=1.0),
     )
 
-    # One row held at the level the metrics had 400 hours earlier: inside the training range on every
-    # column, and wrong only for where the trend had got to.
-    late = START + datetime.timedelta(hours=24 * 30 - 1)
+    # Two rows at the same late timestamp. One sits where the trend had actually got to; the other is held at
+    # the level of 400 hours earlier, which is inside the training range on every column and wrong only for
+    # its point in time. On a slope of 0.05 per hour against noise of 1.5, that rollback is roughly 13
+    # standard deviations, so the ordering asserted below is decisive rather than marginal.
+    latest_hour = hours - 1
+    late = START + datetime.timedelta(hours=latest_hour)
     test_df = spark.createDataFrame(
-        [(late, 100.0 + 0.05 * 319, 2.0 + 0.001 * 319), (late, 100.0 + 0.05 * 719, 2.719)],
+        [
+            (late, 100.0 + 0.05 * (latest_hour - 400), 2.0 + 0.001 * (latest_hour - 400)),
+            (late, 100.0 + 0.05 * latest_hour, 2.0 + 0.001 * latest_hour),
+        ],
         "event_ts timestamp, amount double, quantity double",
     )
 
@@ -439,7 +458,9 @@ def test_the_public_check_scores_a_temporal_model_end_to_end(ws, spark: SparkSes
     assert len(scored) == 2
     assert all(row["score"] is not None for row in scored), "every row must get a number"
     rolled_back, current = sorted(scored, key=lambda r: r["amount"])
-    assert rolled_back["score"] > current["score"], "the stale level must score worse than the current one"
+    assert rolled_back["score"] > current["score"], (
+        f"the stale level must score worse than the current one: " f"{rolled_back['score']} against {current['score']}"
+    )
 
 
 def test_the_public_check_reports_staleness_in_the_info_column(ws, spark: SparkSession, quick_model_factory):

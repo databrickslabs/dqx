@@ -340,6 +340,14 @@ def compute_score_quantiles_ensemble(
     return _quantiles_from_scored(scored, feature_metadata)
 
 
+#: How precisely the severity quantiles are estimated. Load-bearing since the severity tail takes its decay
+#: rate from (q99 - q95): `approxQuantile` may return the value at any rank within this much of the one
+#: requested, so at 0.01 a reported "p99" could be the true p100, and measured on an Isolation Forest
+#: ensemble that moved the alert rate at threshold 98 from 2.25% to 0.65% against the 2% requested. At 0.001
+#: the reported p99 is between ranks 98.9 and 99.1. Paid once, at training time, for one double column.
+SEVERITY_QUANTILE_RELATIVE_ERROR = 0.001
+
+
 def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMetadata) -> dict[str, float]:
     """Derive the global score quantiles, and the per-group ones as a side effect.
 
@@ -348,7 +356,7 @@ def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMeta
     and only when ``baseline_by`` is set — an ungrouped model behaves exactly as before.
     """
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
-    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
+    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, SEVERITY_QUANTILE_RELATIVE_ERROR)
 
     if feature_metadata.baseline_by:
         feature_metadata.baseline_score_quantiles = compute_baseline_score_quantiles(
@@ -371,8 +379,11 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
     if not baseline_by:
         return {}
 
+    # Accuracy stated rather than left to the default, so the per-group calibration cannot drift away from
+    # the global one above. `percentile_approx` expresses it as 1/relativeError.
+    accuracy = int(round(1.0 / SEVERITY_QUANTILE_RELATIVE_ERROR))
     quantile_exprs = [
-        F.percentile_approx(F.col("anomaly_score"), prob).alias(key)
+        F.percentile_approx(F.col("anomaly_score"), prob, accuracy).alias(key)
         for prob, key in zip(SCORE_QUANTILE_PROBS, SCORE_QUANTILE_KEYS, strict=True)
     ]
     # Read the key feature engineering already computed rather than rebuilding it from the raw
