@@ -1,12 +1,12 @@
 import json
 import logging
-import unicodedata
 from datetime import datetime, timezone
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
@@ -1084,5 +1084,5 @@ class AppSettingsService:
 def _sanitize_audit_identity(value: str | None) -> str | None:
     if value is None:
         return None
-    sanitized = "".join(" " if unicodedata.category(character) == "Cc" else character for character in value)
+    sanitized = replace_control_characters(value)
     return sanitized.strip() or None

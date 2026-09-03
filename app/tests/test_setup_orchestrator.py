@@ -75,6 +75,7 @@ class FakeJobs:
     events: list[str]
     resolved: ResolvedJob = ResolvedJob(job_id=27, created=False)
     run_as_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
+    grant_failure: Exception | None = None
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
@@ -82,6 +83,8 @@ class FakeJobs:
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
         self.events.append(f"grant_admin:{job_id}:{user_name}")
+        if self.grant_failure is not None:
+            raise self.grant_failure
 
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
         self.events.append(f"validate_run_as:{job_id}:{app_sp_id}")
@@ -414,3 +417,16 @@ async def test_concurrent_and_repeated_reconcile_activate_once(resources: Active
     assert first_report.state == second_report.state == third_report.state == SetupState.READY
     assert fixture.events.count("activate") == 1
     assert fixture.events.count("pg_migrations") == 1
+
+
+@pytest.mark.asyncio
+async def test_ready_reconcile_keeps_app_available_when_admin_grant_fails(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    ready_report = await fixture.orchestrator.reconcile()
+    fixture.jobs.grant_failure = RuntimeError("transient permissions failure")
+
+    report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report is ready_report
+    assert report.state == SetupState.READY
+    assert fixture.runtime.report() is ready_report

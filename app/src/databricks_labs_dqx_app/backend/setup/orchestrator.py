@@ -1,7 +1,7 @@
 """Serialized, deployment-agnostic setup reconciliation for DQX Studio."""
 
 import asyncio
-import unicodedata
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Protocol
@@ -19,6 +19,9 @@ from databricks_labs_dqx_app.backend.setup.models import (
 )
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+
+logger = logging.getLogger(__name__)
 
 _STEP_ORDER = (
     SetupStepId.IDENTITY,
@@ -273,13 +276,10 @@ class SetupOrchestrator:
         try:
             await asyncio.to_thread(self.jobs.grant_setup_admin, self.runtime.require_job_id(), setup_user)
         except Exception:
-            task_step = _failed(
-                SetupStepId.TASK_RUNNER,
-                "setup_admin_grant_failed",
-                "Could not grant the setup administrator access to the Studio task-runner job.",
+            logger.warning(
+                "Could not refresh setup administrator access to the Studio task-runner job; "
+                "the ready application remains available."
             )
-            steps = [task_step if step.id == SetupStepId.TASK_RUNNER else step for step in report.steps]
-            return self._publish_stopped(steps, SetupStepId.TASK_RUNNER)
         return report
 
     async def _reconcile_job(self, setup_user: str | None) -> SetupStep:
@@ -379,5 +379,5 @@ def _failed(step_id: SetupStepId, code: str, summary: str) -> SetupStep:
 def _sanitize_identity(value: str | None) -> str | None:
     if value is None:
         return None
-    sanitized = "".join(" " if unicodedata.category(character) == "Cc" else character for character in value)
+    sanitized = replace_control_characters(value)
     return sanitized.strip() or None

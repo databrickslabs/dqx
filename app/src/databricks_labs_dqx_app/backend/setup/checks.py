@@ -1,11 +1,10 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
-import unicodedata
-
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import EffectivePermissionsList
 
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
@@ -303,13 +302,9 @@ def _validated_identifier(value: str) -> str:
 
 
 def _instruction_identifier(value: str) -> str:
-    sanitized = "".join(" " if _is_control_character(character) else character for character in value)
+    sanitized = replace_control_characters(value)
     return "`" + sanitized.replace("`", "``") + "`"
 
 
 def _has_control_characters(value: str) -> bool:
-    return any(_is_control_character(character) for character in value)
-
-
-def _is_control_character(character: str) -> bool:
-    return unicodedata.category(character) == "Cc"
+    return replace_control_characters(value) != value

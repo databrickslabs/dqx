@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import os
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any
@@ -24,6 +23,7 @@ from .demo.status import DemoStatusStore
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
+from .sanitization import replace_control_characters
 from .setup.runtime import setup_runtime
 from .setup.orchestrator import SetupOrchestrator
 from .services.ai_gateway import AIGateway
@@ -1186,7 +1186,7 @@ def sanitize_setup_display(value: str | None) -> str | None:
     """Strip control characters from setup-related user and group display values."""
     if value is None:
         return None
-    sanitized = "".join(" " if unicodedata.category(character) == "Cc" else character for character in value)
+    sanitized = replace_control_characters(value)
     return sanitized.strip() or None
 
 
