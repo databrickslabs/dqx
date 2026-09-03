@@ -59,8 +59,6 @@ import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/dr
 import { ExportDialog } from "@/components/ExportDialog";
 import {
   LifecycleDecisionNote,
-  LifecycleRationaleDialog,
-  type LifecycleAction,
 } from "@/components/LifecycleRationaleDialog";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
@@ -318,7 +316,9 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const revertMut = useRevertDataProduct({ mutation: { onError: () => {} } });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [lifecycleDialog, setLifecycleDialog] = useState<LifecycleAction | null>(null);
+  // Reject discards the author's pending submission, so it keeps a plain
+  // yes/no confirm (no rationale textarea). Submit and approve fire directly.
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -531,7 +531,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
           {canEdit && (
             <Button
-              onClick={() => setLifecycleDialog("submit")}
+              onClick={() => void editState.handleSubmit(null)}
               disabled={editState.submitPending || needsDraftRun || (submitDisabledNoChanges && !editState.canSave)}
               size="sm"
               className="gap-2"
@@ -768,7 +768,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={() => setLifecycleDialog("approve")}
+                    onClick={() => void handleApprove(null)}
                     className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
                   >
                     {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -778,7 +778,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={() => setLifecycleDialog("reject")}
+                    onClick={() => setRejectConfirmOpen(true)}
                     className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
                   >
                     {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -793,45 +793,28 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
       {!isPending && <LifecycleDecisionNote rationale={product.last_decision_rationale} />}
 
-      <LifecycleRationaleDialog
-        open={lifecycleDialog !== null}
-        onOpenChange={(open) => {
-          if (!open) setLifecycleDialog(null);
-        }}
-        action={lifecycleDialog ?? "submit"}
-        title={
-          lifecycleDialog === "approve"
-            ? t("dataProducts.approveAction")
-            : lifecycleDialog === "reject"
-              ? t("dataProducts.rejectConfirmTitle")
-              : willAutoApprove
-                ? t("dataProducts.saveAndPublishButton")
-                : t("dataProducts.submitForReviewButton")
-        }
-        description={
-          lifecycleDialog === "reject"
-            ? t("dataProducts.rejectConfirmDescription", { name: product.name })
-            : t("dataProducts.pendingBannerBody")
-        }
-        confirmLabel={
-          lifecycleDialog === "approve"
-            ? t("dataProducts.approveAction")
-            : lifecycleDialog === "reject"
-              ? t("dataProducts.rejectAction")
-              : willAutoApprove
-                ? t("dataProducts.saveAndPublishButton")
-                : t("dataProducts.submitForReviewButton")
-        }
-        destructive={lifecycleDialog === "reject"}
-        busy={lifecycleBusy}
-        onConfirm={(rationale) => {
-          const action = lifecycleDialog;
-          setLifecycleDialog(null);
-          if (action === "approve") void handleApprove(rationale);
-          else if (action === "reject") void handleReject(rationale);
-          else if (action === "submit") void editState.handleSubmit(rationale);
-        }}
-      />
+      <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("dataProducts.rejectConfirmDescription", { name: product.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={lifecycleBusy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                setRejectConfirmOpen(false);
+                void handleReject(null);
+              }}
+            >
+              {t("dataProducts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

@@ -125,11 +125,7 @@ import {
   type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
-import {
-  LifecycleDecisionNote,
-  LifecycleRationaleDialog,
-  type LifecycleAction,
-} from "@/components/LifecycleRationaleDialog";
+import { LifecycleDecisionNote } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
@@ -176,7 +172,6 @@ import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestions
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
-import { RunSampleDialog } from "@/components/common/RunSampleDialog";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -455,7 +450,9 @@ function MonitoredTableDetailPage() {
   const rejectMutation = useRejectMonitoredTableWithRationale();
   const revertMutation = useRevertMonitoredTable();
   const deleteMutation = useDeleteMonitoredTable();
-  const [lifecycleDialog, setLifecycleDialog] = useState<LifecycleAction | null>(null);
+  // Reject discards the author's pending submission, so it keeps a plain
+  // yes/no confirm (no rationale textarea). Submit and approve fire directly.
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
@@ -659,7 +656,7 @@ function MonitoredTableDetailPage() {
                     <TooltipTrigger asChild>
                       <span className={cn(submitBlocked && "cursor-not-allowed")}>
                         <Button
-                          onClick={() => setLifecycleDialog("submit")}
+                          onClick={() => handleSubmit(null)}
                           disabled={lifecycleBusy || submitBlocked}
                           className="gap-2"
                         >
@@ -825,7 +822,7 @@ function MonitoredTableDetailPage() {
                       variant="outline"
                       size="sm"
                       disabled={lifecycleBusy}
-                      onClick={() => setLifecycleDialog("approve")}
+                      onClick={() => handleApprove(null)}
                       className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
                     >
                       {approveMutation.isPending ? (
@@ -839,7 +836,7 @@ function MonitoredTableDetailPage() {
                       variant="outline"
                       size="sm"
                       disabled={lifecycleBusy}
-                      onClick={() => setLifecycleDialog("reject")}
+                      onClick={() => setRejectConfirmOpen(true)}
                       className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
                     >
                       {rejectMutation.isPending ? (
@@ -860,45 +857,28 @@ function MonitoredTableDetailPage() {
           <LifecycleDecisionNote rationale={table.last_decision_rationale} />
         )}
 
-        <LifecycleRationaleDialog
-          open={lifecycleDialog !== null}
-          onOpenChange={(open) => {
-            if (!open) setLifecycleDialog(null);
-          }}
-          action={lifecycleDialog ?? "submit"}
-          title={
-            lifecycleDialog === "approve"
-              ? t("monitoredTables.approveAction")
-              : lifecycleDialog === "reject"
-                ? t("monitoredTables.rejectConfirmTitle")
-                : willAutoApprove
-                  ? t("monitoredTables.saveAndPublishButton")
-                  : t("monitoredTables.submitButton")
-          }
-          description={
-            lifecycleDialog === "reject"
-              ? t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })
-              : t("monitoredTables.pendingBannerBody")
-          }
-          confirmLabel={
-            lifecycleDialog === "approve"
-              ? t("monitoredTables.approveAction")
-              : lifecycleDialog === "reject"
-                ? t("monitoredTables.rejectAction")
-                : willAutoApprove
-                  ? t("monitoredTables.saveAndPublishButton")
-                  : t("monitoredTables.submitButton")
-          }
-          destructive={lifecycleDialog === "reject"}
-          busy={lifecycleBusy}
-          onConfirm={(rationale) => {
-            const action = lifecycleDialog;
-            setLifecycleDialog(null);
-            if (action === "approve") handleApprove(rationale);
-            else if (action === "reject") handleReject(rationale);
-            else if (action === "submit") handleSubmit(rationale);
-          }}
-        />
+        <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("monitoredTables.rejectConfirmTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={lifecycleBusy}>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-white hover:bg-destructive/90"
+                onClick={() => {
+                  setRejectConfirmOpen(false);
+                  handleReject(null);
+                }}
+              >
+                {t("monitoredTables.rejectAction")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
@@ -1136,19 +1116,6 @@ function RunTableAction({
   // mutation (not visible here), so without this a fast double-click could
   // fire a second save-then-run while the first save is still in flight.
   const [runDraftBusy, setRunDraftBusy] = useState(false);
-  // Scope is asked for AFTER pressing a run button rather than sitting in the
-  // header: it only ever applies to the run being started, so it has no
-  // meaning until that run is actually on its way. The run (and its pinned
-  // version, if any) is parked in `scopePrompt` and deliberately OUTLIVES the
-  // close — clearing it would swap the dialog's labels mid fade-out.
-  const [scopePrompt, setScopePrompt] = useState<{ source: "approved" | "draft"; version?: number }>({
-    source: "approved",
-  });
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const promptScope = (prompt: { source: "approved" | "draft"; version?: number }) => {
-    setScopePrompt(prompt);
-    setScopeOpen(true);
-  };
 
   const handleRun = (source: "approved" | "draft", sampleSize: number, version?: number) => {
     runMutation.mutate(
@@ -1237,7 +1204,7 @@ function RunTableAction({
       <TooltipTrigger asChild>
         <span className={cn(approvedDisabled && "cursor-not-allowed")}>
           <Button
-            onClick={() => promptScope({ source: "approved" })}
+            onClick={() => handleRun("approved", 0)}
             disabled={approvedDisabled}
             className="gap-2 rounded-r-none"
           >
@@ -1255,7 +1222,7 @@ function RunTableAction({
       <TooltipTrigger asChild>
         <span className={cn(draftDisabled && "cursor-not-allowed")}>
           <Button
-            onClick={() => promptScope({ source: "draft" })}
+            onClick={() => void handleRunDraft(0)}
             disabled={draftDisabled}
             className="gap-2 rounded-r-none"
           >
@@ -1268,28 +1235,6 @@ function RunTableAction({
     </Tooltip>
   );
 
-  const isDraftPrompt = scopePrompt.source === "draft";
-  const scopeDialog = (
-    <RunSampleDialog
-      open={scopeOpen}
-      onOpenChange={(next) => {
-        if (!next) setScopeOpen(false);
-      }}
-      title={isDraftPrompt ? t("monitoredTables.runDraftScopeTitle") : t("monitoredTables.runNowScopeTitle")}
-      description={isDraftPrompt ? t("monitoredTables.runDraftScopeHint") : t("monitoredTables.runNowScopeHint")}
-      confirmLabel={isDraftPrompt ? t("monitoredTables.runDraftAction") : t("monitoredTables.runNowButtonNoVersion")}
-      busy={busy}
-      // A draft run is a spot-check, so it opens on a 1000-row sample; a
-      // published run opens on the full table it has always scanned.
-      defaultKind={isDraftPrompt ? "records" : "full"}
-      onConfirm={(sampleSize) => {
-        setScopeOpen(false);
-        if (scopePrompt.source === "draft") void handleRunDraft(sampleSize);
-        else handleRun("approved", sampleSize, scopePrompt.version);
-      }}
-    />
-  );
-
   const runNowMenuItem = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -1298,7 +1243,7 @@ function RunTableAction({
             disabled={approvedDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              promptScope({ source: "approved" });
+              handleRun("approved", 0);
             }}
           >
             {t("monitoredTables.runNowApprovedOption")}
@@ -1317,7 +1262,7 @@ function RunTableAction({
             disabled={draftDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              promptScope({ source: "draft" });
+              void handleRunDraft(0);
             }}
           >
             {t("monitoredTables.runDraftAction")}
@@ -1351,7 +1296,7 @@ function RunTableAction({
               <DropdownMenuItem
                 key={v.version}
                 disabled={busy}
-                onSelect={() => promptScope({ source: "approved", version: v.version })}
+                onSelect={() => handleRun("approved", 0, v.version)}
               >
                 {t("monitoredTables.runVersionOption", { version: v.version })}
               </DropdownMenuItem>
@@ -1360,7 +1305,6 @@ function RunTableAction({
         </DropdownMenu>
       </TooltipProvider>
       </div>
-      {scopeDialog}
     </div>
   );
 }
