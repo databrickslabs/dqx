@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Callable, Generic, TypeVar, NoReturn
+from collections.abc import Callable
+from typing import Generic, TypeVar, NoReturn
 from sqlalchemy import (
     DateTime,
     Engine,
