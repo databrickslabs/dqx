@@ -150,7 +150,6 @@ import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availabil
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
-import { DescribeRuleDialog } from "@/components/apply-rules/DescribeRuleDialog";
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
@@ -2073,7 +2072,6 @@ function ApplyRulesTab({
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
-  const [describeOpen, setDescribeOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
@@ -2727,17 +2725,6 @@ function ApplyRulesTab({
                   {t("monitoredTables.suggestRulesButton")}
                 </Button>
               )}
-              {aiAvailability.available && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => setDescribeOpen(true)}
-                >
-                  <Sparkles className="h-3.5 w-3.5" stroke={AI_GRADIENT_URL} />
-                  {t("monitoredTables.describeRuleButton")}
-                </Button>
-              )}
               {/* Toolbar "Apply rules" button removed (item 36) — the wide
                   dashed CTA at the bottom of the by-rule list and the
                   per-column "+ Add rule" CTAs in the by-column lens now cover
@@ -2903,18 +2890,6 @@ function ApplyRulesTab({
         appliedRules={stagedRows}
         onAdd={stageNewRows}
         onApplied={() => {}}
-      />
-
-      <DescribeRuleDialog
-        open={describeOpen}
-        onOpenChange={setDescribeOpen}
-        bindingId={bindingId}
-        tableFqn={tableFqn}
-        columns={columns.map((c) => c.name)}
-        labelDefinitions={labelDefinitions}
-        onAdd={stageNewRows}
-        onApplied={() => {}}
-        reportUnavailable={reportUnavailable}
       />
 
       <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
