@@ -368,8 +368,11 @@ function RegistryApprovalsSection({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={rejectTarget ? pendingRuleId === rejectTarget.rule_id : false}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
+              disabled={rejectTarget ? pendingRuleId === rejectTarget.rule_id : false}
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={() => {
                 const target = rejectTarget;
@@ -549,8 +552,11 @@ function MonitoredTablesApprovalsSection({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={rejectTarget ? pendingId === rejectTarget.table.binding_id : false}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
+              disabled={rejectTarget ? pendingId === rejectTarget.table.binding_id : false}
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={() => {
                 const target = rejectTarget;
@@ -734,8 +740,11 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={rejectTarget ? pendingId === rejectTarget.product_id : false}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
+              disabled={rejectTarget ? pendingId === rejectTarget.product_id : false}
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={() => {
                 const target = rejectTarget;

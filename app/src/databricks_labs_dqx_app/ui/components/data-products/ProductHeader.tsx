@@ -34,7 +34,6 @@ import {
   useApproveDataProductWithRationale,
   useRejectDataProductWithRationale,
 } from "@/lib/api-custom";
-import { RunSampleDialog } from "@/components/common/RunSampleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -322,16 +321,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  // Scope (full table vs an N-row sample) is asked for AFTER pressing a run
-  // button, not parked in the header: it only applies to the run being
-  // started. The pending source deliberately OUTLIVES the close — resetting it
-  // would swap the dialog's labels mid fade-out.
-  const [scopePrompt, setScopePrompt] = useState<RunDataProductInSource>(RunDataProductInSource.approved);
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const promptScope = (source: RunDataProductInSource) => {
-    setScopePrompt(source);
-    setScopeOpen(true);
-  };
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
@@ -555,7 +544,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           {canRun &&
             (draftIsPrimary ? (
               <Button
-                onClick={() => promptScope(RunDataProductInSource.draft)}
+                onClick={() => void handleRunDraft(0)}
                 disabled={runPending}
                 size="sm"
                 className="gap-2"
@@ -566,7 +555,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             ) : (
               <Button
-                onClick={() => promptScope(RunDataProductInSource.approved)}
+                onClick={() => void handleRun(RunDataProductInSource.approved, 0)}
                 disabled={runPending || runnableCount === 0}
                 size="sm"
                 className="gap-2"
@@ -615,7 +604,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              promptScope(RunDataProductInSource.approved);
+                              void handleRun(RunDataProductInSource.approved, 0);
                             }}
                             disabled={runPending || runnableCount === 0}
                             className="gap-2"
@@ -638,7 +627,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              promptScope(RunDataProductInSource.draft);
+                              void handleRunDraft(0);
                             }}
                             disabled={runPending || !canRunDraft}
                             className="gap-2"
@@ -672,36 +661,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             onOpenChange={setExportOpen}
             fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
             fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
-          />
-          <RunSampleDialog
-            open={scopeOpen}
-            onOpenChange={(next) => {
-              if (!next) setScopeOpen(false);
-            }}
-            title={
-              scopePrompt === RunDataProductInSource.draft
-                ? t("dataProducts.runDraftScopeTitle")
-                : t("dataProducts.runNowScopeTitle")
-            }
-            description={
-              scopePrompt === RunDataProductInSource.draft
-                ? t("dataProducts.runDraftScopeHint")
-                : t("dataProducts.runNowScopeHint")
-            }
-            confirmLabel={
-              scopePrompt === RunDataProductInSource.draft
-                ? t("dataProducts.runDraftAction")
-                : t("dataProducts.runNowButton")
-            }
-            busy={runPending}
-            // A draft run is a spot-check, so it opens on a 1000-row sample;
-            // a published run opens on the full table it has always scanned.
-            defaultKind={scopePrompt === RunDataProductInSource.draft ? "records" : "full"}
-            onConfirm={(sampleSize) => {
-              setScopeOpen(false);
-              if (scopePrompt === RunDataProductInSource.draft) void handleRunDraft(sampleSize);
-              else void handleRun(scopePrompt, sampleSize);
-            }}
           />
         </div>
       </div>
