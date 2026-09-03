@@ -468,21 +468,29 @@ class DQProfiler(DQEngineBase):
         field_summary_stats: dict[str, Any],
         total_count: int,
     ) -> dict[str, Any]:
-        field_metric_aggregations = []
+        # count_non_null is computed inline rather than through PROFILE_COLUMN_METRIC_REGISTRY so a
+        # user-registered metric under the same key cannot break count_null derivation
+        # (total_count - count_non_null) by evaluating to SQL NULL.
+        field_metric_aggregations = [F.count(column_label).alias("count_non_null")]
         for metric_name, metric_function in PROFILE_COLUMN_METRIC_REGISTRY.items():
             metric_col = metric_function(field, column_label)
             if metric_col is not None:
                 field_metric_aggregations.append(metric_col.alias(metric_name))
 
         field_aggregation_stats: dict[str, Any] = {}
-        if field_metric_aggregations:
-            field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
-            if field_aggregation_row:
-                field_aggregation_stats = field_aggregation_row.asDict()
+        field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
+        if field_aggregation_row:
+            # Drop keys whose aggregation evaluated to SQL NULL so downstream consumers
+            # (profile builders, count_null derivation) can rely on int/comparable values.
+            field_aggregation_stats = {
+                metric_name: metric_value
+                for metric_name, metric_value in field_aggregation_row.asDict().items()
+                if metric_value is not None
+            }
 
         metrics: dict[str, Any] = {**field_summary_stats, **field_aggregation_stats}
         metrics["count"] = total_count
-        metrics["count_null"] = total_count - metrics.get("count_non_null", 0)
+        metrics["count_null"] = total_count - metrics["count_non_null"]
         return metrics
 
     def _build_profiles_for_column(

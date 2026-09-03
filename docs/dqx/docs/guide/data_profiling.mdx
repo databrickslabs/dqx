@@ -740,6 +740,18 @@ The *profile_column_metric_type* passed to the decorator becomes the key under w
   </TabItem>
 </Tabs>
 
+<Admonition type="warning" title="Registration has global side effects">
+`register_profile_column_metric` mutates a module-level registry, so a registered metric persists for the lifetime of the Python process and is aggregated on **every** subsequent `DQProfiler.profile(...)` call for every column it applies to. Leaving unused metrics registered adds work to every profiling run and can slow it down. Remove a metric you no longer need with `deregister_profile_column_metric`:
+
+```python
+from databricks.labs.dqx.profiler.profiler_column_metrics import deregister_profile_column_metric
+
+deregister_profile_column_metric("percentile_10")
+```
+
+The call is a no-op if the key is not registered, so it is safe to use unconditionally in cleanup paths (e.g. notebook teardown, test fixtures).
+</Admonition>
+
 Combine this with `register_profile_builder` to generate rules based on the metric:
 
 <Tabs>
@@ -771,3 +783,15 @@ Combine this with `register_profile_builder` to generate rules based on the metr
     ```
   </TabItem>
 </Tabs>
+
+<Admonition type="warning" title="Registration has global side effects">
+`register_profile_builder` mutates a module-level registry, so a registered builder persists for the lifetime of the Python process and runs on **every** subsequent `DQProfiler.profile(...)` call for every column. Leaving unused builders registered adds work to every profiling run and may emit unwanted rule candidates. Remove a builder you no longer need with `deregister_profile_builder`:
+
+```python
+from databricks.labs.dqx.profiler.profile_builder import deregister_profile_builder
+
+deregister_profile_builder("p10_lower_bound")
+```
+
+The call is a no-op if the key is not registered, so it is safe to use unconditionally in cleanup paths (e.g. notebook teardown, test fixtures).
+</Admonition>

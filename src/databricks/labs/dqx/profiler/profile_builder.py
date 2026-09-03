@@ -50,6 +50,17 @@ def register_profile_builder(profile_type: str) -> Callable:
     return wrapper
 
 
+def deregister_profile_builder(profile_type: str) -> None:
+    """
+    Removes a previously registered profile builder from *PROFILE_BUILDER_REGISTRY*.
+    No-op if no builder is registered under the given key.
+
+    Args:
+        profile_type: Key under which the builder was registered.
+    """
+    PROFILE_BUILDER_REGISTRY.pop(profile_type, None)
+
+
 @register_profile_builder("null_or_empty")
 def make_null_or_empty_profile(
     _: DataFrame,

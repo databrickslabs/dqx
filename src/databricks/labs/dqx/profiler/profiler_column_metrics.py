@@ -42,6 +42,17 @@ def register_profile_column_metric(
     return wrapper
 
 
+def deregister_profile_column_metric(profile_column_metric_type: str) -> None:
+    """
+    Removes a previously registered profile column metric from *PROFILE_COLUMN_METRIC_REGISTRY*.
+    No-op if no metric is registered under the given key.
+
+    Args:
+        profile_column_metric_type: Key under which the metric was registered.
+    """
+    PROFILE_COLUMN_METRIC_REGISTRY.pop(profile_column_metric_type, None)
+
+
 @register_profile_column_metric("empty_count")
 def empty_count(field: T.StructField, column_label: str) -> Column:
     """
@@ -57,11 +68,3 @@ def count_distinct(_field: T.StructField, column_label: str) -> Column:
     Profiling column metric for count distinct. Applicable for all columns.
     """
     return F.countDistinct(column_label)
-
-
-@register_profile_column_metric("count_non_null")
-def count_non_null(_field: T.StructField, column_label: str) -> Column:
-    """
-    Profiling column metric for count not null values. Applicable for all columns.
-    """
-    return F.count(column_label)

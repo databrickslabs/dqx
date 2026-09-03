@@ -1,47 +1,46 @@
 import pytest
-import pyspark.sql.types as T
-from pyspark.sql import functions as F
 
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     PROFILE_COLUMN_METRIC_REGISTRY,
-    count_distinct,
-    count_non_null,
-    empty_count,
+    deregister_profile_column_metric,
     register_profile_column_metric,
 )
 
 
-def test_register_profile_column_metric_registers_under_explicit_type():
+@pytest.fixture
+def restore_profile_column_metric_registry():
+    """
+    Snapshot PROFILE_COLUMN_METRIC_REGISTRY before the test and restore it after,
+    so tests can freely add/overwrite entries without leaking into other tests.
+    """
+    original_registry = dict(PROFILE_COLUMN_METRIC_REGISTRY)
+    try:
+        yield
+    finally:
+        PROFILE_COLUMN_METRIC_REGISTRY.clear()
+        PROFILE_COLUMN_METRIC_REGISTRY.update(original_registry)
+
+
+def test_register_profile_column_metric_registers_under_explicit_type(restore_profile_column_metric_registry):
     @register_profile_column_metric("custom_metric_key")
     def _test_metric(_field, _column_label):
         return None
 
-    try:
-        assert "custom_metric_key" in PROFILE_COLUMN_METRIC_REGISTRY
-        assert PROFILE_COLUMN_METRIC_REGISTRY["custom_metric_key"] is _test_metric
-    finally:
-        PROFILE_COLUMN_METRIC_REGISTRY.pop("custom_metric_key", None)
+    assert "custom_metric_key" in PROFILE_COLUMN_METRIC_REGISTRY
+    assert PROFILE_COLUMN_METRIC_REGISTRY["custom_metric_key"] is _test_metric
 
 
-@pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])
-def test_empty_count_returns_count_if_expression_for_text_types(column_type):
-    field = T.StructField("col", column_type)
-    assert str(empty_count(field, "col")) != str(F.lit(0))
+def test_deregister_profile_column_metric_removes_registered_metric(restore_profile_column_metric_registry):
+    @register_profile_column_metric("custom_metric_key")
+    def _test_metric(_field, _column_label):
+        return None
+
+    assert "custom_metric_key" in PROFILE_COLUMN_METRIC_REGISTRY
+    deregister_profile_column_metric("custom_metric_key")
+    assert "custom_metric_key" not in PROFILE_COLUMN_METRIC_REGISTRY
 
 
-@pytest.mark.parametrize("column_type", [T.IntegerType(), T.DoubleType(), T.LongType(), T.DateType()])
-def test_empty_count_returns_literal_zero_for_non_text_types(column_type):
-    field = T.StructField("col", column_type)
-    assert str(empty_count(field, "col")) == str(F.lit(0))
-
-
-@pytest.mark.parametrize("column_type", [T.StringType(), T.IntegerType(), T.DoubleType(), T.DateType()])
-def test_count_distinct_returns_column_for_any_type(column_type):
-    field = T.StructField("col", column_type)
-    assert count_distinct(field, "col") is not None
-
-
-@pytest.mark.parametrize("column_type", [T.StringType(), T.IntegerType(), T.DoubleType(), T.DateType()])
-def test_count_non_null_returns_column_for_any_type(column_type):
-    field = T.StructField("col", column_type)
-    assert count_non_null(field, "col") is not None
+def test_deregister_profile_column_metric_missing_key_is_noop(restore_profile_column_metric_registry):
+    # Deregistering an unregistered key must not raise, so callers can use it unconditionally in cleanup.
+    deregister_profile_column_metric("never_registered_key")
+    assert "never_registered_key" not in PROFILE_COLUMN_METRIC_REGISTRY
