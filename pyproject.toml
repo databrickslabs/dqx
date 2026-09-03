@@ -66,7 +66,7 @@ pii = [
 ]
 llm = [
     "dspy~=3.1.3",
-    "litellm>=1.64.0,<2.0",  # pin dspy transitive dependency (bound to 1.x)
+    "litellm>=1.64.0,<1.98",  # pin dspy transitive dep; <1.98 because 1.98 imports typing.NotRequired (drops Python 3.10)
     "databricks-langchain>=0.1.0,<1.0",
     "langchain-core>=0.1.0,<1.0",
 ]
