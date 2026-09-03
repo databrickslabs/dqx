@@ -315,6 +315,32 @@ class TestBreakdowns:
         out = compute_entity_results(rows, ResultFacets())
         assert [g.label for g in out.by_rule] == ["unattributed_check"]
 
+    def test_group_carries_frozen_pass_threshold(self):
+        # The frozen per-run threshold surfaces on the group so the drilldown
+        # can show "threshold used: N%".
+        rows = [make_row("c1", failed=1, total=10, dimension="Validity", pass_threshold=90)]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].pass_threshold == 90
+        assert out.by_dimension[0].pass_threshold == 90
+
+    def test_group_threshold_uses_newest_run_value(self):
+        # A group pools rows from several runs whose frozen thresholds differ;
+        # the group surfaces the threshold stamped on the NEWEST run.
+        rows = [
+            make_row("c1", failed=1, total=10, rule_id="r", run_id="old", run_date="2026-07-01 00:00:00", pass_threshold=80),
+            make_row("c1", failed=1, total=10, rule_id="r", run_id="new", run_date="2026-07-05 00:00:00", pass_threshold=95),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert len(out.by_rule) == 1
+        assert out.by_rule[0].pass_threshold == 95
+
+    def test_group_threshold_none_for_legacy_runs(self):
+        # Runs predating the stamp carry no frozen threshold; the group leaves
+        # pass_threshold None so the UI shows nothing.
+        rows = [make_row("c1", failed=1, total=10, dimension="Validity", pass_threshold=None)]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].pass_threshold is None
+
     def test_pass_rate_none_when_no_tests(self):
         rows = [make_row("c1", failed=0, total=None)]
         out = compute_entity_results(rows, ResultFacets())

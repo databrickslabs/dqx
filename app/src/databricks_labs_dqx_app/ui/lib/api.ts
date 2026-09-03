@@ -1884,6 +1884,8 @@ export type GroupRowOutTotalTests = number | null;
 
 export type GroupRowOutBreachCriticality = string | null;
 
+export type GroupRowOutPassThreshold = number | null;
+
 /**
  * One breakdown row (by dimension / severity / rule / column / table).
 
@@ -1898,6 +1900,12 @@ by_rule axis only (additive — the frozen registry rule id the group
 is keyed on, so the UI can facet-filter by rule IDENTITY across
 renames; None for legacy/untagged name-keyed groups and on every
 other axis).
+
+*pass_threshold* is the frozen per-run pass threshold (%) in effect for
+the group — the value stamped on the NEWEST run pooled into the group
+(mirroring how the by-rule label is taken from the newest run). None when
+no contributing run carried a frozen threshold (legacy runs predating the
+stamp). Surfaced so the UI can show "threshold used" in the drilldown.
  */
 export interface GroupRowOut {
   label?: GroupRowOutLabel;
@@ -1910,6 +1918,7 @@ export interface GroupRowOut {
   total_tests?: GroupRowOutTotalTests;
   breached?: boolean;
   breach_criticality?: GroupRowOutBreachCriticality;
+  pass_threshold?: GroupRowOutPassThreshold;
 }
 
 export interface HTTPValidationError {

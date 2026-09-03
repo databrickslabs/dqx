@@ -2859,7 +2859,8 @@
     "noColumnsForTable": "No hay columnas para esta tabla.",
     "invalidSamplesUnavailable": "Las muestras inválidas no pueden mostrarse para esta tabla.",
     "breachWarnTooltip": "Tasa de aprobación por debajo del umbral",
-    "breachErrorTooltip": "Tasa de aprobación por debajo del umbral"
+    "breachErrorTooltip": "Tasa de aprobación por debajo del umbral",
+    "thresholdUsed": "umbral usado: {{pct}} %"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

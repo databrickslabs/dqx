@@ -295,9 +295,19 @@ class _GroupAcc:
     # no resolver is supplied (breach evaluation is off).
     breached: bool = False
     breach_criticality: str | None = None
+    # The frozen per-run pass threshold (%) to DISPLAY for this group. A group
+    # can pool rows from several runs whose frozen thresholds differ; we surface
+    # the threshold stamped on the NEWEST run in the group (by run_date), which
+    # mirrors how the by-rule group takes its display label from the newest run.
+    # Stays None when no contributing row carried a frozen threshold (legacy runs).
+    pass_threshold: int | None = None
+    threshold_run_date: str = ""
 
     def add(self, row: CheckResultRow, resolve: ThresholdResolver | None = None) -> None:
         self.failed += row.failed
+        if row.pass_threshold is not None and (row.run_date or "") >= self.threshold_run_date:
+            self.pass_threshold = row.pass_threshold
+            self.threshold_run_date = row.run_date or ""
         if row.total is not None:
             self.total = (self.total or 0) + row.total
         self.rule_keys.add(_rule_key(row))
@@ -347,6 +357,7 @@ def _group_rows(
             total_tests=acc.total,
             breached=acc.breached,
             breach_criticality=acc.breach_criticality,
+            pass_threshold=acc.pass_threshold,
         )
         for label, acc in groups.items()
     ]

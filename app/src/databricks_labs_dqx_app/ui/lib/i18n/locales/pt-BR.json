@@ -2859,7 +2859,8 @@
     "noColumnsForTable": "Nenhuma coluna para esta tabela.",
     "invalidSamplesUnavailable": "As amostras inválidas não podem ser exibidas para esta tabela.",
     "breachWarnTooltip": "Taxa de aprovação abaixo do limite",
-    "breachErrorTooltip": "Taxa de aprovação abaixo do limite"
+    "breachErrorTooltip": "Taxa de aprovação abaixo do limite",
+    "thresholdUsed": "limite usado: {{pct}}%"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

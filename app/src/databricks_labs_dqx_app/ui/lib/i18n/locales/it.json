@@ -2859,7 +2859,8 @@
     "noColumnsForTable": "Nessuna colonna per questa tabella.",
     "invalidSamplesUnavailable": "I campioni non validi non possono essere mostrati per questa tabella.",
     "breachWarnTooltip": "Tasso di superamento sotto la soglia",
-    "breachErrorTooltip": "Tasso di superamento sotto la soglia"
+    "breachErrorTooltip": "Tasso di superamento sotto la soglia",
+    "thresholdUsed": "soglia utilizzata: {{pct}}%"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

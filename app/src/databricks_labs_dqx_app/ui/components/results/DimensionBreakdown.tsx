@@ -82,6 +82,10 @@ export type BreakdownRow = {
   /** Criticality of the breach (worst child): "error" | "warn" | null.
    *  Accepts the raw API string; BreachIcon renders nothing for non-"error"/"warn" values. */
   breach_criticality?: string | null;
+  /** Frozen per-run pass threshold (%) in effect for the group — the value
+   *  stamped on the newest run pooled into it. Null for legacy runs with no
+   *  frozen threshold. Rendered as "threshold used: N%" when `showThreshold`. */
+  pass_threshold?: number | null;
 };
 
 type SortKey =
@@ -134,6 +138,7 @@ export function DimensionBreakdown({
   rowLink,
   renderLabel,
   breachEnabled = true,
+  showThreshold = false,
 }: {
   title: string;
   rows: Array<BreakdownRow>;
@@ -189,6 +194,11 @@ export function DimensionBreakdown({
   /** When false, breach warning icons are hidden (pass-threshold feature is
    *  disabled globally). Defaults to true (fail-open). */
   breachEnabled?: boolean;
+  /** When true, each row surfaces its frozen per-run pass threshold as a small
+   *  "threshold used: N%" line under the label (only where a value is present).
+   *  Used by the By rule box so authors see the threshold each run was judged
+   *  against. Defaults to false. */
+  showThreshold?: boolean;
 }) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<SortState>(null);
@@ -342,21 +352,28 @@ export function DimensionBreakdown({
                       {r.label == null ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
-                        <span className="flex items-center gap-2">
-                          {colorMap?.[r.label] && (
-                            <span
-                              className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
-                              style={{ backgroundColor: colorMap[r.label] }}
-                            />
+                        <div className="min-w-0">
+                          <span className="flex items-center gap-2">
+                            {colorMap?.[r.label] && (
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: colorMap[r.label] }}
+                              />
+                            )}
+                            {renderLabel?.(r.label, facetValue) ?? (
+                              <TruncatedText text={r.label} className="min-w-0" />
+                            )}
+                            {breachEnabled && r.breached && (
+                              <BreachIcon criticality={r.breach_criticality} />
+                            )}
+                            {rowLink?.(r.label)}
+                          </span>
+                          {showThreshold && breachEnabled && r.pass_threshold != null && (
+                            <span className="mt-0.5 block truncate text-[10px] normal-case tracking-normal text-muted-foreground">
+                              {t("resultsUi.thresholdUsed", { pct: r.pass_threshold })}
+                            </span>
                           )}
-                          {renderLabel?.(r.label, facetValue) ?? (
-                            <TruncatedText text={r.label} className="min-w-0" />
-                          )}
-                          {breachEnabled && r.breached && (
-                            <BreachIcon criticality={r.breach_criticality} />
-                          )}
-                          {rowLink?.(r.label)}
-                        </span>
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
