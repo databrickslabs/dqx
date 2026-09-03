@@ -1716,6 +1716,7 @@ class DQEngine(DQEngineBase):
         config: BaseChecksStorageConfig,
         variables: dict[str, VariableValue] | None = None,
         semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
+        custom_checks: dict[str, Callable] | None = None
     ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
@@ -1759,7 +1760,7 @@ class DQEngine(DQEngineBase):
         if semantic_validation_mode is not None:
             ChecksSemanticValidator.apply(resolved_checks, mode=semantic_validation_mode)
         handler = self._checks_handler_factory.create(config)
-        handler.save(resolved_checks, config)
+        handler.save(resolved_checks, config, custom_checks)
 
     def _build_metrics_observation(
         self,
