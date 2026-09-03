@@ -311,6 +311,46 @@ Scores are normalized into `severity_percentile` (0–100). The anomaly threshol
 
 The threshold controls how many rows are flagged as anomalies (percentile cutoff; default 95). Lower values (for example 90) flag more rows; higher values (for example 98) flag fewer (only extreme anomalies). Start with the default (95). If you get too many alerts, raise the threshold; if you are missing issues you care about, lower it.
 
+### The threshold is a percentile of *training* severity, not of the batch you score
+
+This is the most commonly misread part of the feature, so it is worth being precise about. `threshold=95`
+does not mean "flag 5% of these rows". It means "flag rows above the 95th percentile of the severity seen
+during *training*". The two agree only when the batch you score looks like the data the model trained on.
+
+Measured on two runs against real training and real scoring:
+
+| Batch | Rows | Genuinely wrong | `threshold` | Rows actually flagged |
+|---|---|---|---|---|
+| Correlated machine telemetry with a correlation break | 1,500 | 60 (4.0%) | 95 | 139 (9.3%) |
+| Trending metrics with a stale-level fault | 480 | 24 (5.0%) | 95 | 65 (13.5%) |
+
+Both overshoot, and in the same direction, for the same reason: a batch containing real problems has more
+high-severity rows than training did, so more than 5% of it clears the training 95th percentile. On the
+second fixture the *ranking* was perfect, with the 24 highest-severity rows being exactly the 24 faults, so
+`threshold=99` gave 24 alerts with no false ones. Nothing was wrong with the detection; the budget was
+simply set against the wrong distribution.
+
+Two practical consequences:
+
+- **Read precision against its ceiling, not against 100%.** If a budget yields 65 alerts and only 24 rows
+  are genuinely wrong, no model can do better than 24/65 = 37%. Where observed precision equals that
+  ceiling, the ranking is optimal and only the budget is costing you.
+- **Calibrate on a scored batch rather than guessing.** `severity_percentile` is computed for every row,
+  including rows below the threshold, so you can count would-be alerts at other cutoffs without rescoring:
+
+```python
+scored = spark.table("catalog.schema.scored")
+severity = F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("severity_percentile")
+
+for cutoff in (90, 95, 98, 99):
+    alerts = scored.filter(severity >= cutoff).count()
+    print(f"threshold {cutoff}: {alerts} alerts ({alerts / scored.count():.1%} of rows)")
+```
+
+Pick the cutoff whose alert count matches how many rows a person can actually investigate. Both anomaly
+demos under `demos/` print this table, and the second one chooses its threshold from it rather than
+inheriting the default.
+
 ## Group-aware anomaly detection
 
 Some values are only wrong *in context*. If one country's daily order volume drops 80% while the overall total holds steady (because other countries absorbed the difference), the collapsed number still sits comfortably inside the range other countries occupy normally. A model that compares every row against the whole table cannot see it.

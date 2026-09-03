@@ -108,7 +108,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.config import AnomalyParams, InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 
@@ -132,6 +132,39 @@ spark.sql(f"DROP TABLE IF EXISTS {registry_table}")
 
 print(f"📋 Model registry: {registry_table}")
 print("✅ Registry reset — ready for this run's model")
+
+# COMMAND ----------
+# DBTITLE 1,A helper for reading detection quality honestly
+
+
+def report_quality(scored_df, label_col: str, severity_col, budget: float, thresholds=(90, 95, 98, 99)):
+    """Print recall, precision and the best precision the budget allows, at several thresholds.
+
+    Precision alone is unreadable here. Ask for the top 5% of 480 rows and you get 24 alerts; if only 24
+    rows are genuinely wrong, no model can do better than 24/24, and if the budget yields 65 alerts the
+    ceiling is 24/65 = 37% however good the ranking is. So the ceiling is printed beside what was
+    achieved -- where the two are equal, the ranking is optimal and only the budget is costing you.
+    """
+    total = scored_df.count()
+    faults = scored_df.filter(F.col(label_col) == 1.0).count()
+    print(f"🎚️  {total:,} rows, {faults} of them genuinely wrong ({faults / total:.1%}).\n")
+    print("Threshold | Alerts | Caught | Precision | Best possible | Recall")
+    print("-" * 68)
+    for threshold in thresholds:
+        alerts = scored_df.filter(severity_col >= threshold)
+        n_alerts = alerts.count()
+        n_caught = alerts.filter(F.col(label_col) == 1.0).count()
+        ceiling = min(n_alerts, faults) / n_alerts if n_alerts else 0.0
+        precision = n_caught / n_alerts if n_alerts else 0.0
+        recall = n_caught / faults if faults else 0.0
+        marker = "  ← used above" if abs(threshold - budget) < 0.01 else ""
+        print(
+            f"{threshold:9} | {n_alerts:6} | {n_caught:3}/{faults:<3} | {precision:8.1%}  | "
+            f"{ceiling:11.1%}   | {recall:6.1%}{marker}"
+        )
+
+
+print("✅ Helper ready")
 
 # COMMAND ----------
 # DBTITLE 1,How the metrics relate to each other
@@ -306,6 +339,9 @@ trained = anomaly_engine.train(
     columns=METRICS,
     baseline_by=[],
     profile="timeseries",
+    # Whole table rather than the default sample: 4,000 readings is small enough that sampling only makes
+    # the numbers printed below vary between runs, because the sample is drawn per partition.
+    params=AnomalyParams(sample_fraction=1.0),
 )
 
 print(f"\n✅ Model trained: {trained}")
@@ -378,7 +414,10 @@ print(f"✅ Scoring complete — {flagged.count()} of {total_readings:,} reading
 # DBTITLE 1,Which relationships broke
 
 caught = flagged.filter(F.col("is_incident") == 1.0).count()
-print(f"🔝 Caught {caught} of the {injected} incident readings — none of which any range check could see.\n")
+n_alerts = flagged.count()
+print(f"🔝 Caught {caught} of the {injected} incident readings — none of which any range check could see.")
+print(f"   That cost {n_alerts} alerts on {total_readings:,} readings, so {caught / n_alerts:.0%} of them were real.")
+print("   The next cell sweeps the threshold, which is the honest way to read that number.\n")
 
 display(
     flagged.select(
@@ -394,20 +433,36 @@ display(
 )
 
 # COMMAND ----------
+# DBTITLE 1,What the alert budget actually buys
+
+# `threshold=95` means "above the 95th percentile of *training* severity", not "95% likely to be a
+# problem". On a batch whose readings are mostly stranger than anything training held, far more than 5% of
+# it clears that line, which is why 95 flags well over the 75 rows a 5% budget implies.
+report_quality(scored, "is_incident", anomaly.getField("severity_percentile"), budget=95.0)
+
+print("\n💡 The default is not the right answer here. Moving to 98 keeps most of the recall and throws")
+print("   a small fraction of the false alarms, because severity ranks the incident readings well above")
+print("   the healthy ones — the default budget was simply set against the training distribution rather")
+print("   than this batch. Severity is stored for every row, so this table costs nothing to produce and")
+print("   is how you should pick the number on your own data.")
+
+# COMMAND ----------
 # DBTITLE 1,Why each group was flagged, in plain language
 
-print("🤖 AI explanations, one per group of similar anomalies:\n")
+# One explanation per *pattern*, not per row: readings driven by the same broken relationship share a
+# single ai_query call, so cost scales with how many distinct problems there are rather than with how many
+# readings have them. Grouping the display the same way is the only way to see that.
+print("🤖 AI explanations. One call per pattern, however many readings share it:\n")
 
 display(
-    flagged.select(
-        "machine_id",
-        "reading_seq",
+    flagged.groupBy(
         anomaly.getField("ai_explanation").getField("narrative").alias("narrative"),
         anomaly.getField("ai_explanation").getField("business_impact").alias("impact"),
         anomaly.getField("ai_explanation").getField("action").alias("action"),
     )
+    .agg(F.count("*").alias("readings"), F.min("machine_id").alias("example_machine"))
     .filter(F.col("narrative").isNotNull())
-    .limit(6)
+    .orderBy(F.desc("readings"))
 )
 
 print("💡 Note the wording: broken *relationships*, not abnormal metrics. DQX tells the model which")
@@ -512,6 +567,7 @@ anomaly_engine.train(
     columns=WEAR_METRICS,
     baseline_over_time="reading_ts",
     baseline_by=[],
+    params=AnomalyParams(sample_fraction=1.0),
 )
 
 print(f"🎯 Trained with an expected level per metric over time")
@@ -519,12 +575,22 @@ print(f"🎯 Trained with an expected level per metric over time")
 # COMMAND ----------
 # DBTITLE 1,Score, and see what "wrong for now" looks like
 
+# 99, not the 95 used earlier. Measured on this data, 95 raised 65 alerts for 24 real faults while 99
+# raised exactly 24 and got all of them -- because a residual against a fitted expectation is a sharper
+# signal than a raw value, so the severity distribution of a faulty batch sits far above training's. The
+# next cell prints the sweep this was chosen from; do the same on your own data rather than copying 99.
+WEAR_THRESHOLD = 99
+
 wear_checks = [
     {
         "criticality": "error",
         "check": {
             "function": "has_no_row_anomalies",
-            "arguments": {"model_name": wear_model, "registry_table": registry_table, "threshold": 95},
+            "arguments": {
+                "model_name": wear_model,
+                "registry_table": registry_table,
+                "threshold": WEAR_THRESHOLD,
+            },
         },
     }
 ]
@@ -536,9 +602,14 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
 )
 
 anomaly = F.col("_dq_info")[0].getField("anomaly")
-caught = spark.table(wear_scored).filter(anomaly.getField("is_anomaly") & (F.col("is_incident") == 1.0)).count()
-total = spark.table(wear_scored).filter(F.col("is_incident") == 1.0).count()
-print(f"🔍 Caught {caught} of {total} rows that were wrong for how worn the bearing should have been")
+wear_result = spark.table(wear_scored)
+caught = wear_result.filter(anomaly.getField("is_anomaly") & (F.col("is_incident") == 1.0)).count()
+total = wear_result.filter(F.col("is_incident") == 1.0).count()
+print(f"🔍 Caught {caught} of {total} rows that were wrong for how worn the bearing should have been.\n")
+
+# The ranking is what to judge, and a sweep is the only way to see it: every fault sits above every
+# healthy row here, so a tighter budget costs no recall at all. That is unusual, and the reason to look.
+report_quality(wear_result, "is_incident", anomaly.getField("severity_percentile"), budget=WEAR_THRESHOLD)
 
 # COMMAND ----------
 # DBTITLE 1,Read the contributions, which name the expected level

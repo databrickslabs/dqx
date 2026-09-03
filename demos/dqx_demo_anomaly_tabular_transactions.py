@@ -106,7 +106,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.check_funcs import is_in_range, is_not_null
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.config import AnomalyParams, InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 
@@ -329,6 +329,10 @@ trained = anomaly_engine.train(
     columns=["amount", "item_count"],
     baseline_by=["merchant_category"],
     profile="tabular",
+    # By default DQX trains on a sample, which is what makes training a table of a billion rows
+    # affordable. On 6,000 it only adds variance: the sample is seeded, but it is drawn per partition, so
+    # a different partition count draws different rows and the numbers printed below move between runs.
+    params=AnomalyParams(sample_fraction=1.0),
 )
 
 print(f"\n✅ Model trained: {trained}")
@@ -420,21 +424,20 @@ display(
 # COMMAND ----------
 # DBTITLE 1,Why each group was flagged, in plain language
 
-print("🤖 AI explanations, one per group of similar anomalies:\n")
+# One explanation per *pattern*, not per row: rows driven by the same combination of features share a
+# single ai_query call, so the cost scales with how many distinct problems there are rather than with how
+# many rows have them. Grouping the display the same way is the only way to see that.
+print("🤖 AI explanations. One call per pattern, however many rows share it:\n")
 
 display(
-    flagged.select(
-        "transaction_id",
-        "merchant_category",
-        "amount",
-        "item_count",
+    flagged.groupBy(
         anomaly.getField("ai_explanation").getField("top_features").alias("pattern"),
         anomaly.getField("ai_explanation").getField("narrative").alias("narrative"),
         anomaly.getField("ai_explanation").getField("action").alias("action"),
     )
+    .agg(F.count("*").alias("transactions"), F.collect_list("merchant_category")[0].alias("example_category"))
     .filter(F.col("narrative").isNotNull())
-    .orderBy("pattern")
-    .limit(10)
+    .orderBy(F.desc("transactions"))
 )
 
 # COMMAND ----------
