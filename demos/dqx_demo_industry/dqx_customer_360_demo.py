@@ -114,7 +114,8 @@ customer_360_data = [
         active_customer_flag=True
     ),
 
-    # Invalid: bad email format
+    # Warning-level issue: bad email format.
+    # Warning-level violations remain in valid_df and are not quarantined.
     Row(
         customer_id="CUST-003",
         customer_name="Invalid Email Customer",
@@ -153,7 +154,8 @@ customer_360_data = [
         active_customer_flag=True
     ),
 
-    # Invalid: active flag is false even though recent activity exists
+    # Warning-level issue: active flag is false even though recent activity exists.
+    # Warning-level violations remain in valid_df and are not quarantined.
     Row(
         customer_id="CUST-006",
         customer_name="Flag Mismatch Customer",
@@ -166,15 +168,28 @@ customer_360_data = [
         active_customer_flag=False
     ),
 
-    # Invalid: duplicate customer_id
+    # Invalid: first record in a duplicate customer_id pair
     Row(
-        customer_id="CUST-001",
-        customer_name="Duplicate Customer",
+        customer_id="CUST-DUP-001",
+        customer_name="Duplicate Customer One",
         email="duplicate.customer@example.com",
         customer_status="ACTIVE",
         total_revenue=100.00,
         last_purchase_date=date(2026, 7, 11),
         last_campaign_engagement_date=date(2026, 7, 12),
+        open_ticket_count=0,
+        active_customer_flag=True
+    ),
+
+    # Invalid: second record in a duplicate customer_id pair
+    Row(
+        customer_id="CUST-DUP-001",
+        customer_name="Duplicate Customer Two",
+        email="duplicate.customer.two@example.com",
+        customer_status="ACTIVE",
+        total_revenue=200.00,
+        last_purchase_date=date(2026, 7, 12),
+        last_campaign_engagement_date=date(2026, 7, 13),
         open_ticket_count=0,
         active_customer_flag=True
     ),
@@ -200,76 +215,76 @@ from databricks.labs.dqx.engine import DQEngine
 customer_360_checks_yaml = """
 # 1. Customer ID must be present
 - criticality: error
+  name: customer_id_not_null
   check:
     function: is_not_null_and_not_empty
     for_each_column:
     - customer_id
-    name: customer_id_not_null
   user_metadata:
     domain: customer_360
     rule_type: identity
 
 # 2. Customer ID should be unique
 - criticality: error
+  name: customer_id_unique
   check:
     function: is_unique
     arguments:
-      column: customer_id
-    name: customer_id_unique
+      columns:
+      - customer_id
   user_metadata:
     domain: customer_360
     rule_type: identity
 
 # 3. Email should follow a basic email pattern
 - criticality: warn
+  name: valid_email_format
   check:
     function: sql_expression
     arguments:
       expression: "email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Za-z]{2,}$'"
-    name: valid_email_format
   user_metadata:
     domain: customer_360
     rule_type: contact_quality
 
 # 4. Revenue should not be negative
 - criticality: error
+  name: total_revenue_non_negative
   check:
-    function: is_in_range
+    function: is_not_less_than
     arguments:
       column: total_revenue
-      min_limit: 0
-      max_limit: 999999999.99
-    name: total_revenue_non_negative
+      limit: 0
   user_metadata:
     domain: customer_360
     rule_type: revenue_quality
 
 # 5. Open ticket count should not be negative
 - criticality: error
+  name: open_ticket_count_non_negative
   check:
-    function: is_in_range
+    function: is_not_less_than
     arguments:
       column: open_ticket_count
-      min_limit: 0
-      max_limit: 999999
-    name: open_ticket_count_non_negative
+      limit: 0
   user_metadata:
     domain: customer_360
     rule_type: operational_quality
 
 # 6. Last purchase date should not be in the future
 - criticality: error
+  name: last_purchase_date_not_in_future
   check:
     function: sql_expression
     arguments:
       expression: "last_purchase_date <= current_date() OR last_purchase_date IS NULL"
-    name: last_purchase_date_not_in_future
   user_metadata:
     domain: customer_360
     rule_type: date_quality
 
 # 7. Active customer flag should align with recent customer activity
 - criticality: warn
+  name: active_customer_flag_consistency
   check:
     function: sql_expression
     arguments:
@@ -281,7 +296,6 @@ customer_360_checks_yaml = """
             OR last_campaign_engagement_date >= add_months(current_date(), -12)
           )
         )
-    name: active_customer_flag_consistency
   user_metadata:
     domain: customer_360
     rule_type: business_logic
@@ -305,7 +319,7 @@ assert not status.has_errors
 # MAGIC %md
 # MAGIC ### Apply Checks and Split Valid vs Invalid Records
 # MAGIC
-# MAGIC DQX can split records into valid and invalid DataFrames. Error-level violations are quarantined. Warning-level violations can be monitored based on the selected DQX behavior.
+# MAGIC DQX can split records into valid and invalid DataFrames. Error-level violations are quarantined in `invalid_df`. Warning-level violations remain in `valid_df` with warning metadata so they can be monitored without quarantining the record.
 
 # COMMAND ----------
 
@@ -347,8 +361,4 @@ print(f"Customer 360 invalid records saved to {quarantine_table}")
 # MAGIC %md
 # MAGIC ### Practical Takeaway
 # MAGIC
-# MAGIC Customer 360 pipelines are often used by dashboards, analytics teams, AI/BI tools, and operational users.
-# MAGIC
-# MAGIC A pipeline can be technically successful but still produce unreliable business output if identity, revenue, activity, and derived flags are not validated.
-# MAGIC
-# MAGIC DQX can help centralize these rules and apply them consistently before Customer 360 data becomes a trusted consumption layer.
+# MAGIC DQX provides a centralized and reusable way to enforce Customer 360 quality rules before publishing the data to downstream consumers.
