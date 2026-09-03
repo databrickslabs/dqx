@@ -10,6 +10,7 @@ against the public function rather than against the early return inside it.
 import datetime
 
 import numpy as np
+import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import DataFrame, Row, SparkSession
 from pyspark.sql import types as T
@@ -23,6 +24,9 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     apply_feature_engineering_from_metadata,
 )
+from databricks.labs.dqx.config import AnomalyParams
+from databricks.labs.dqx.engine import DQEngine
+from tests.integration_anomaly.conftest import create_anomaly_check_rule
 
 HOUR_SECONDS = 3600
 START = datetime.datetime(2025, 1, 6, 0, 0, 0)  # a Monday, so weekday/weekend features are meaningful
@@ -102,9 +106,10 @@ def test_a_time_relative_feature_is_appended_per_metric_and_appended_last(spark:
     """
     df = _trending_frame(spark)
 
-    _, metadata = apply_feature_engineering(
-        df, [_timestamp("event_ts"), _numeric("revenue")], baseline_over_time="event_ts"
-    )
+    # The axis is named only as `baseline_over_time`, never also as a feature: feature engineering
+    # expands a datetime feature into cyclical columns and drops the raw one, and
+    # `validate_baseline_over_time` refuses the combination for exactly that reason.
+    _, metadata = apply_feature_engineering(df, [_numeric("revenue")], baseline_over_time="event_ts")
 
     names = metadata.engineered_feature_names
     assert f"revenue{TEMPORAL_RELATIVE_SUFFIX}" in names
@@ -219,10 +224,14 @@ def test_the_fit_runs_on_the_group_relative_value_when_grouping_is_in_play(spark
                 (
                     START + datetime.timedelta(hours=i),
                     f"g{group}",
+                    f"g{group}",
                     float(level + slope * i + rng.normal(0, 1.5)),
                 )
             )
-    df = spark.createDataFrame(rows, "event_ts timestamp, grp string, revenue double")
+    # `label` duplicates `grp` and is not part of the group key, so it rides through the projection as an
+    # incidental column. The grouping columns themselves are dropped by design, being a comparison basis
+    # rather than a feature, which leaves nothing on the engineered frame to group the assertion by.
+    df = spark.createDataFrame(rows, "event_ts timestamp, grp string, label string, revenue double")
 
     engineered, metadata = apply_feature_engineering(
         df, [_numeric("revenue")], baseline_by=["grp"], baseline_over_time="event_ts"
@@ -237,8 +246,8 @@ def test_the_fit_runs_on_the_group_relative_value_when_grouping_is_in_play(spark
     # The composed residual must be stationary across both groups despite their different slopes. A fit
     # on raw values could not be, since one pooled line cannot follow two different slopes.
     spreads = {
-        row["grp"]: row["sd"]
-        for row in engineered.groupBy("grp")
+        row["label"]: row["sd"]
+        for row in engineered.groupBy("label")
         .agg({temporal: "stddev"})
         .withColumnRenamed(f"stddev({temporal})", "sd")
         .collect()
@@ -375,3 +384,108 @@ def test_a_model_with_no_temporal_baseline_gains_no_staleness_columns(spark: Spa
     marked = mark_stale_baselines(df, "", {}, stale_col="stale", horizon_col="horizon")
 
     assert set(marked.columns) == before
+
+
+# ============================================================================
+# The plumbing between the transform and the check
+# ============================================================================
+#
+# Everything above exercises `apply_feature_engineering` directly, which is where the maths lives. Two
+# defects escaped that and were only found by running a demo on a workspace, both in the layer that
+# prepares a frame for scoring rather than in the transform: the scoring select dropped the time column
+# before the transform could read it, and staleness was marked on the already-projected frame. So the
+# tests below go through the public check, which is the only path that covers that layer.
+
+
+def test_the_public_check_scores_a_temporal_model_end_to_end(ws, spark: SparkSession, quick_model_factory):
+    """Train and score through `has_no_row_anomalies`, the way a caller actually does.
+
+    The scoring path narrows the frame to features, grouping columns and internals before replaying the
+    transform. The time column has to survive that select, or the fitted expectation has no axis to
+    evaluate against and scoring fails outright on an unresolved column.
+    """
+    train_data = [
+        (START + datetime.timedelta(hours=i), float(100.0 + 0.05 * i), 2.0 + 0.001 * i) for i in range(24 * 30)
+    ]
+
+    model_name, registry_table, _ = quick_model_factory(
+        spark,
+        columns=["amount", "quantity"],
+        train_data=train_data,
+        train_schema="event_ts timestamp, amount double, quantity double",
+        baseline_over_time="event_ts",
+        baseline_by=[],
+        params=AnomalyParams(sample_fraction=1.0),
+    )
+
+    # One row held at the level the metrics had 400 hours earlier: inside the training range on every
+    # column, and wrong only for where the trend had got to.
+    late = START + datetime.timedelta(hours=24 * 30 - 1)
+    test_df = spark.createDataFrame(
+        [(late, 100.0 + 0.05 * 319, 2.0 + 0.001 * 319), (late, 100.0 + 0.05 * 719, 2.719)],
+        "event_ts timestamp, amount double, quantity double",
+    )
+
+    result_df = DQEngine(ws, spark).apply_checks(
+        test_df,
+        [create_anomaly_check_rule(model_name=model_name, registry_table=registry_table, threshold=50.0)],
+    )
+
+    anomaly = F.col("_dq_info")[0].getField("anomaly")
+    scored = result_df.select(
+        "amount", anomaly.getField("score").alias("score"), anomaly.getField("is_anomaly").alias("flagged")
+    ).collect()
+
+    assert len(scored) == 2
+    assert all(row["score"] is not None for row in scored), "every row must get a number"
+    rolled_back, current = sorted(scored, key=lambda r: r["amount"])
+    assert rolled_back["score"] > current["score"], "the stale level must score worse than the current one"
+
+
+def test_the_public_check_reports_staleness_in_the_info_column(ws, spark: SparkSession, quick_model_factory):
+    """The two staleness fields must reach the info column, which means surviving feature engineering.
+
+    They are computed from the caller's own time column, so they have to be attached before the frame is
+    projected down to features -- the projection drops that column, correctly, since a time axis is not a
+    feature.
+    """
+    train_data = [(START + datetime.timedelta(hours=i), float(100.0 + 0.05 * i), 2.0) for i in range(24 * 30)]
+
+    model_name, registry_table, _ = quick_model_factory(
+        spark,
+        columns=["amount", "quantity"],
+        train_data=train_data,
+        train_schema="event_ts timestamp, amount double, quantity double",
+        baseline_over_time="event_ts",
+        baseline_by=[],
+        params=AnomalyParams(sample_fraction=1.0),
+    )
+
+    inside = START + datetime.timedelta(hours=24 * 15)
+    far_past = START + datetime.timedelta(days=300)
+    test_df = spark.createDataFrame(
+        [(inside, 136.0, 2.0), (far_past, 136.0, 2.0)],
+        "event_ts timestamp, amount double, quantity double",
+    )
+
+    result_df = DQEngine(ws, spark).apply_checks(
+        test_df,
+        [create_anomaly_check_rule(model_name=model_name, registry_table=registry_table, threshold=50.0)],
+    )
+
+    anomaly = F.col("_dq_info")[0].getField("anomaly")
+    by_ts = {
+        row["event_ts"]: row
+        for row in result_df.select(
+            "event_ts",
+            anomaly.getField("score").alias("score"),
+            anomaly.getField("is_stale_baseline").alias("stale"),
+            anomaly.getField("stale_baseline_horizon").alias("horizon"),
+        ).collect()
+    }
+
+    assert by_ts[inside]["stale"] is False
+    assert by_ts[far_past]["stale"] is True
+    assert by_ts[far_past]["horizon"], "a stale row must say what window it is past"
+    # Flagged, never nulled: measured, the score one window out is still usable.
+    assert by_ts[far_past]["score"] is not None

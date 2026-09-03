@@ -190,6 +190,7 @@ def train_model_with_params(
     params: AnomalyParams,
     expected_anomaly_rate: float = 0.02,
     baseline_by: list[str] | None = None,
+    baseline_over_time: str | None = None,
     profile: str | None = None,
 ) -> str:
     """Train a model with internal params (test-only)."""
@@ -199,6 +200,7 @@ def train_model_with_params(
         model_name=model_name,
         registry_table=registry_table,
         baseline_by=baseline_by,
+        baseline_over_time=baseline_over_time,
         params=params,
         expected_anomaly_rate=expected_anomaly_rate,
         profile=profile,
@@ -852,6 +854,7 @@ def quick_model_factory(ws, make_random, make_schema):
         catalog: str = TEST_CATALOG,
         schema: str | None = None,
         baseline_by: list[str] | None = None,
+        baseline_over_time: str | None = None,
         train_schema: str | None = None,
         profile: str | None = None,
     ):
@@ -865,6 +868,7 @@ def quick_model_factory(ws, make_random, make_schema):
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
             params (AnomalyParams | None): Internal training params (test-only)
             baseline_by (list[str] | None): Group columns for baseline-conditioned models
+            baseline_over_time (str | None): Time column each metric's expected level is fitted along
             profile (str | None): Which detector to train ("tabular" / "timeseries"); None means
                 the default, so existing callers keep the IsolationForest path untouched.
             train_schema (str | None): Explicit DDL for train_data (needed when group columns
@@ -908,6 +912,7 @@ def quick_model_factory(ws, make_random, make_schema):
                 model_name=model_name,
                 registry_table=registry_table,
                 baseline_by=baseline_by,
+                baseline_over_time=baseline_over_time,
                 profile=profile,
             )
         else:
@@ -919,6 +924,7 @@ def quick_model_factory(ws, make_random, make_schema):
                 columns=columns,
                 params=params,
                 baseline_by=baseline_by,
+                baseline_over_time=baseline_over_time,
                 profile=profile,
             )
 
