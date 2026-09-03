@@ -1,15 +1,11 @@
 """Build the generated Databricks Marketplace source folder."""
 
 import argparse
-import hashlib
-import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import tomllib
-import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -99,10 +95,10 @@ def _validate_output_dir(output_dir: Path) -> None:
 def _require_build_inputs() -> None:
     required = [
         BUILD_DIR / "pyproject.toml",
-        BUILD_DIR / "uv.lock",
         BUILD_DIR / "src" / "databricks_labs_dqx_app" / "__dist__" / "index.html",
         TEMPLATE_DIR / "manifest.yaml",
         TEMPLATE_DIR / "app.yaml",
+        TEMPLATE_DIR / "uv.lock",
     ]
     if not all(path.is_file() for path in required):
         raise RuntimeError("Marketplace build inputs are missing; run the application build first")
@@ -122,14 +118,7 @@ def _assemble_runtime_tree(staging: Path, dqx_version: str) -> None:
         newline="\n",
     )
 
-    lock_seed = MARKETPLACE_DIR / "uv.lock"
-    if not lock_seed.is_file():
-        lock_seed = BUILD_DIR / "uv.lock"
-    seed_text = lock_seed.read_text(encoding="utf-8")
-    seed_text = _remove_toml_table(seed_text, "options.exclude-newer-package")
-    seed_text = _remove_toml_table(seed_text, "options")
-    (staging / "uv.lock").write_text(seed_text, encoding="utf-8", newline="\n")
-    _lock_release(staging)
+    _copy_committed_lock(staging / "uv.lock")
     build_task_runner_wheel(staging / "tasks", dqx_version)
 
 
@@ -172,128 +161,27 @@ def _remove_toml_table(source: str, table: str, *, remove_leading_comments: bool
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _lock_release(staging: Path) -> None:
-    lock_env = os.environ.copy()
-    lock_env["UV_FROZEN"] = "0"
-    lock_env["UV_NO_PROGRESS"] = "1"
-    wheelhouse = staging / ".release-wheels"
-    filename, public_url, expected_hash, upload_time = _stage_locked_wheel(
-        staging / "uv.lock",
-        wheelhouse,
-        "litellm",
-    )
-    try:
-        subprocess.run(
-            ["uv", "lock", "--directory", ".", "--find-links", ".release-wheels", "--no-config"],
-            cwd=staging,
-            check=True,
-            env=lock_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except subprocess.CalledProcessError as error:
-        raise RuntimeError("Marketplace dependency locking failed") from error
-    finally:
-        shutil.rmtree(wheelhouse, ignore_errors=True)
-    lock = staging / "uv.lock"
-    lock_text = _normalize_newlines(lock.read_text(encoding="utf-8"))
-    local_wheel = f"{{ path = {json.dumps(filename)} }}"
-    public_wheel_parts = [f"url = {json.dumps(public_url)}", f"hash = {json.dumps(expected_hash)}"]
-    if upload_time is not None:
-        public_wheel_parts.append(f"upload-time = {json.dumps(upload_time)}")
-    public_wheel = "{ " + ", ".join(public_wheel_parts) + " }"
-    lock_text, replacements = re.subn(
-        re.escape(local_wheel),
-        public_wheel,
-        lock_text,
-    )
-    if replacements > 1:
-        raise RuntimeError("Marketplace lock did not contain the staged release wheel")
-    package_marker = '[[package]]\nname = "litellm"\n'
-    package_start = lock_text.find(package_marker)
-    package_end = lock_text.find("\n[[package]]", package_start + len(package_marker))
-    if package_start < 0:
-        raise RuntimeError("Marketplace lock did not contain the staged LiteLLM package")
-    if package_end < 0:
-        package_end = len(lock_text)
-    package_block = lock_text[package_start:package_end]
-    staged_source = 'source = { registry = ".release-wheels" }'
-    public_source = f'source = {{ registry = "{PUBLIC_PACKAGE_REGISTRY}" }}'
-    staged_source_count = package_block.count(staged_source)
-    public_source_count = package_block.count(public_source)
-    if package_block.count(public_wheel) != 1:
-        raise RuntimeError("Marketplace lock did not contain the verified LiteLLM wheel")
-    if replacements == 0 and (staged_source_count != 0 or public_source_count != 1):
-        raise RuntimeError("Marketplace lock did not contain the public LiteLLM source")
-    if replacements == 1 and (staged_source_count != 1 or public_source_count != 0):
-        raise RuntimeError("Marketplace lock did not contain the staged LiteLLM source")
-    package_block = package_block.replace(staged_source, public_source)
-    lock_text = lock_text[:package_start] + package_block + lock_text[package_end:]
-    lock_text = re.sub(
-        r'registry = "https://[^"]*"',
-        f'registry = "{PUBLIC_PACKAGE_REGISTRY}"',
-        lock_text,
-    )
-    lock_text = re.sub(
-        r'url = "https://[^/"]+/packages/',
-        'url = "https://files.pythonhosted.org/packages/',
-        lock_text,
-    )
-    lock_text = re.sub(r", size = [0-9]+", "", lock_text)
-    lock.write_text(lock_text, encoding="utf-8", newline="\n")
+def _copy_committed_lock(destination: Path) -> None:
+    """Copy the committed, self-contained Marketplace lock into the artifact.
 
+    The Marketplace lock is maintained as a tracked template
+    (*marketplace_templates/uv.lock*), not regenerated at build time: the build
+    resolves nothing and downloads nothing, so it cannot drift with the package
+    index or a *uv* version, and needs no network. *_validate_artifact* still
+    asserts the copied lock is self-contained (public registries only, no path
+    or development dependencies). To refresh it after a dependency or DQX
+    version change, see the regeneration recipe in *DEPLOYMENT.md*.
 
-def _stage_locked_wheel(
-    lock_path: Path,
-    wheelhouse: Path,
-    package_name: str,
-) -> tuple[str, str, str, str | None]:
-    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
-    packages = lock.get("package", [])
-    package = next(
-        (
-            item
-            for item in packages
-            if isinstance(item, dict) and item.get("name") == package_name and isinstance(item.get("wheels"), list)
-        ),
-        None,
-    )
-    if package is None:
-        raise RuntimeError("Required release-lock package is missing")
-    wheel = next(
-        (
-            item
-            for item in package["wheels"]
-            if isinstance(item, dict) and isinstance(item.get("url"), str) and "py3-none-any.whl" in item["url"]
-        ),
-        None,
-    )
-    if wheel is None or not isinstance(wheel.get("hash"), str):
-        raise RuntimeError("Required release-lock wheel is missing")
-    url = wheel["url"]
-    expected_hash = wheel["hash"]
-    raw_upload_time = wheel.get("upload-time")
-    upload_time = raw_upload_time if isinstance(raw_upload_time, str) else None
-    parsed = urlsplit(url)
-    if parsed.hostname != "files.pythonhosted.org":
-        raise RuntimeError("Release-lock wheel does not use the public package CDN")
-    filename = Path(parsed.path).name
-    if not filename.endswith(".whl"):
-        raise RuntimeError("Release-lock wheel filename is invalid")
-
-    try:
-        with urllib.request.urlopen(url, timeout=60) as response:
-            content = response.read(50 * 1024 * 1024 + 1)
-    except OSError as error:
-        raise RuntimeError("Required release-lock wheel download failed") from error
-    if len(content) > 50 * 1024 * 1024:
-        raise RuntimeError("Required release-lock wheel exceeds the size limit")
-    algorithm, expected_digest = expected_hash.split(":", 1)
-    if algorithm != "sha256" or hashlib.sha256(content).hexdigest() != expected_digest:
-        raise RuntimeError("Required release-lock wheel hash does not match")
-    wheelhouse.mkdir()
-    (wheelhouse / filename).write_bytes(content)
-    return filename, url, expected_hash, upload_time
+    Args:
+        destination: Artifact *uv.lock* path to write.
+    """
+    source = TEMPLATE_DIR / "uv.lock"
+    if not source.is_file():
+        raise RuntimeError("Committed Marketplace lock is missing")
+    lock_text = _normalize_newlines(source.read_text(encoding="utf-8"))
+    lock_text = _remove_toml_table(lock_text, "options.exclude-newer-package")
+    lock_text = _remove_toml_table(lock_text, "options")
+    destination.write_text(lock_text, encoding="utf-8", newline="\n")
 
 
 def _copy_tree(source: Path, destination: Path) -> None:

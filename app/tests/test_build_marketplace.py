@@ -119,6 +119,57 @@ def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifa
     assert registry_sources == {"https://pypi.org/simple"}
 
 
+def test_marketplace_template_lock_matches_app_runtime_closure() -> None:
+    """Guard the committed Marketplace lock against silently drifting from the app deps.
+
+    The Marketplace lock is a tracked template (``marketplace_templates/uv.lock``), not
+    regenerated at build time, so an app dependency change that isn't mirrored there would
+    ship a stale runtime graph. Its package set must equal the *runtime closure* of
+    ``app/uv.lock`` — the app lock minus its development-only packages. If this fails,
+    refresh the Marketplace lock (see DEPLOYMENT.md).
+    """
+    app_lock = tomllib.loads((APP_DIR / "uv.lock").read_text(encoding="utf-8"))
+    template_names = {
+        package["name"]
+        for package in tomllib.loads((APP_DIR / "marketplace_templates" / "uv.lock").read_text(encoding="utf-8"))[
+            "package"
+        ]
+    }
+    pkgs = {package["name"]: package for package in app_lock["package"]}
+
+    # Fixpoint walk of the app package's runtime dependencies (activating their extras) and
+    # each reached package's dependencies + optional-dependencies. dev-dependencies groups are
+    # never followed, so development-only packages fall out of the closure.
+    reached: set[str] = {"databricks-labs-dqx-app"}
+    active_extras: dict[str, set[str]] = {}
+    pending: list[str] = []
+
+    def visit(dependency: dict) -> None:
+        name = dependency["name"]
+        extras = set(dependency.get("extra", []))
+        if name not in reached or extras - active_extras.get(name, set()):
+            pending.append(name)
+        reached.add(name)
+        active_extras.setdefault(name, set()).update(extras)
+
+    for dependency in pkgs["databricks-labs-dqx-app"].get("dependencies", []):
+        visit(dependency)
+    while pending:
+        package = pkgs.get(pending.pop())
+        if package is None:
+            continue
+        for dependency in package.get("dependencies", []):
+            visit(dependency)
+        for extra in active_extras.get(package["name"], set()):
+            for dependency in package.get("optional-dependencies", {}).get(extra, []):
+                visit(dependency)
+
+    assert template_names == reached, (
+        "marketplace_templates/uv.lock is stale vs app/uv.lock — regenerate it (see DEPLOYMENT.md). "
+        f"missing={sorted(reached - template_names)} unexpected={sorted(template_names - reached)}"
+    )
+
+
 def test_manifest_has_exact_resource_contract() -> None:
     manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     assert manifest["version"] == 1
