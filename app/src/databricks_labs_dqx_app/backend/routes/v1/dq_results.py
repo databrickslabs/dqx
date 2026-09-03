@@ -492,16 +492,23 @@ def _build_threshold_resolver(
     When a check spans several mapped columns, the STRICTEST (max) column
     override among its columns is used so one lax column can't hide a breach.
 
-    Breach evaluation always uses the **live** precedence chain so threshold
-    edits on applied rules take effect on historical runs' pass rates
-    immediately after save — without requiring a re-run. The per-run
-    ``pass_threshold`` stamped into ``checks_json`` at materialization time is
-    retained for audit/export but does not gate the Results UI verdict.
+    Breach evaluation PREFERS the per-run ``pass_threshold`` frozen into the
+    run's ``checks_json`` at materialization time (parsed onto
+    ``CheckResultRow.pass_threshold``): each run keeps the verdict it was
+    judged under, so a later admin/rule/registry threshold change can never
+    retroactively re-judge a historical run. The live precedence chain
+    (per-column -> per-rule -> registry -> admin) is used ONLY as a fallback
+    for legacy runs that predate the stamp (``pass_threshold`` is None).
     """
     rule_overrides = rule_overrides or {}
     column_overrides = column_overrides or {}
 
     def resolve(row: CheckResultRow) -> int:
+        # A run's own frozen threshold is the immutable source of truth for
+        # its breach verdict — retain it verbatim so historical runs are never
+        # re-judged against a later live threshold change.
+        if row.pass_threshold is not None:
+            return row.pass_threshold
         rid = row.rule_id or ""
         col_map = column_overrides.get(rid, {})
         col_candidates = [col_map[col] for col in row.columns if col in col_map]
