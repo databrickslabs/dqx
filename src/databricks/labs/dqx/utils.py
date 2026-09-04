@@ -78,6 +78,9 @@ T = TypeVar("T")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
+VALID_UNQUOTED_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SQL_EXPRESSION_STRUCTURE_PATTERN = re.compile(r"""[()\[\]{},;'"`*]""")
+SQL_EXPRESSION_OPERATOR_PATTERN = re.compile(r"[-+/%<>=!&|~^]\s|\s[-+/%<>=!&|~^]")
 _UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]*\}\}")
 
 # Destructive SQL statement keywords rejected by `is_sql_query_safe`. SELECT is intentionally
@@ -306,6 +309,62 @@ def quote_column_name(name: str) -> str:
     """
     escaped = name.replace("`", "``")
     return f"`{escaped}`"
+
+
+def unquote_column_name(name: str) -> str:
+    """
+    Removes surrounding back-quotes from a column name, reversing :func:`quote_column_name`.
+
+    A column reference that the user already back-quoted (e.g. "`Customer Name`") is unwrapped to its
+    plain form ("Customer Name") for use in display names and messages. Strings that are not a single
+    back-quoted identifier (plain names, dotted paths, SQL expressions) are returned unchanged.
+
+    Args:
+        name: Column reference provided as a string.
+
+    Returns:
+        The column name without surrounding back-quotes.
+    """
+    if len(name) >= 2 and name.startswith("`") and name.endswith("`"):
+        return name[1:-1].replace("``", "`")
+    return name
+
+
+def normalize_column_expr(column: str) -> str:
+    """
+    Prepares a column reference string for use with ``F.expr``, back-quoting names that require SQL
+    identifier escaping while leaving SQL expressions untouched.
+
+    Check functions accept a column as either a plain name or a SQL expression string. A plain name that
+    is not a valid bare identifier (spaces, dashes, non-ASCII letters, etc., e.g. "Customer Name",
+    "gross-margin" or "Päivämäärä") does not parse when passed to ``F.expr`` and must be back-quoted. A
+    SQL expression (e.g. "a + b", "substr(x, 1, 2)", "*") must be passed through as-is.
+
+    Name and expression cannot be told apart with certainty from a string alone. This function uses a
+    conservative heuristic. A string is treated as an expression, and returned unchanged, when it
+    contains characters that typically appear in expressions (parentheses, brackets, quotes, comma, star)
+    or arithmetic/comparison operators that are whitespace-separated (e.g. "a + b"). Everything else is
+    treated as a dotted column path: each segment is left alone if it is a valid bare identifier. Otherwise
+    it is back-quoted (e.g. "struct_col.field1" is unchanged, "Customer Name" becomes "`Customer Name`")
+
+    This heuristic intentionally excludes two ambiguous cases: names that contain expression characters
+    (e.g. "amount (usd)"), and operator-free SQL expressions such as "col IS NOT NULL" (which is treated
+    as a name). Callers with such columns should back-quote the name themselves, pass a Column expression,
+    or use the ``sql_expression`` check.
+
+    Args:
+        column: Column reference provided as a string (plain name, nested path, or SQL expression).
+
+    Returns:
+        A string safe to pass to ``F.expr``.
+    """
+    if SQL_EXPRESSION_STRUCTURE_PATTERN.search(column) or SQL_EXPRESSION_OPERATOR_PATTERN.search(column):
+        return column
+
+    return ".".join(
+        segment if VALID_UNQUOTED_IDENTIFIER_PATTERN.match(segment) else quote_column_name(segment)
+        for segment in column.split(".")
+    )
 
 
 def normalize_col_str(col_str: str) -> str:

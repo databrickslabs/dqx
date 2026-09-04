@@ -4668,6 +4668,56 @@ When using custom message expressions:
   </TabItem>
 </Tabs>
 
+## SQL escaping for checked columns
+Most rules accept a `column` argument that can be a column name or a SQL expression. DQX automatically back-quotes column names that are not valid SQL identifiers (e.g. `Customer Name` or `Päivämäärä`) on a best-effort basis. Columns that cannot be resolved are reported as skipped rather than failing a run.
+
+Because column names and a SQL expression cannot always be differentiated, some ambiguous cases are not back-quoted automatically: 
+* A name that contains expression characters such as parentheses (e.g. `amount (usd)`)
+* An operator-free expression that is treated as a name (e.g. `col not null`). 
+
+When working with these cases, back-quote the column name when defining the check.
+
+<Tabs>
+<TabItem value="YAML" label="YAML">
+```yaml
+# Back-quote ambiguous column names when defining checks
+- name: amount_is_null_or_empty
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: "`amount (usd)`"
+
+- name: col_not_null_is_null_or_empty
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: "`col not null`"
+```
+</TabItem>
+<TabItem value="Python" label="Python">
+```python
+import yaml
+import pyspark.sql.functions as F
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx import check_funcs
+
+# Back-quote ambiguous column names when defining checks
+checks = [
+  DQRowRule(
+    name="amount_is_null_or_empty",
+    check_func=check_funcs.is_not_null_and_not_empty,
+    column="`amount (usd)`",
+  ),
+  DQRowRule(
+    name="col_not_null_is_null_or_empty",
+    check_func=check_funcs.is_not_null_and_not_empty,
+    column="`col not null`",
+  ),
+]
+```
+</TabItem>
+</Tabs>
+
 ## Converting checks between formats
 
 In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are interchangeable and can be safely converted between one another.

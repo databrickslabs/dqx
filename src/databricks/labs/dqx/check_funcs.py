@@ -24,6 +24,8 @@ from databricks.labs.dqx.utils import (
     is_sql_query_safe,
     safe_filter_expr,
     normalize_col_str,
+    normalize_column_expr,
+    unquote_column_name,
     get_columns_as_strings,
     to_lowercase,
 )
@@ -4854,8 +4856,12 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
             - Spark Column expression corresponding to the input.
     """
     col_expr = _get_column_expr(column)
-    column_str = get_column_name_or_alias(col_expr)
-    col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
+    if isinstance(column, str):
+        column_str = unquote_column_name(column)
+        col_str_norm = normalize_col_str(column_str)
+    else:
+        column_str = get_column_name_or_alias(col_expr)
+        col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
 
@@ -4989,13 +4995,17 @@ def _get_column_expr(column: Column | str) -> Column:
     """
     Convert a column input (string or Column) into a Spark Column expression.
 
+    String inputs are normalized via *normalize_column_expr* so that column names requiring SQL identifier
+    escaping (e.g. column names with spaces, non-ASCII letters, etc.) are back-quoted and resolve correctly,
+    while genuine SQL expressions are passed through unchanged.
+
     Args:
         column: The input column, provided as either a string column name or a Spark Column expression.
 
     Returns:
         A Spark Column expression corresponding to the input.
     """
-    return F.expr(column) if isinstance(column, str) else column
+    return F.expr(normalize_column_expr(column)) if isinstance(column, str) else column
 
 
 def _handle_fk_composite_keys(
