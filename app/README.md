@@ -7,7 +7,7 @@ Web application for the DQX framework — a UI for authoring and managing data q
 
 ## Marketplace release artifacts
 
-The main branch tracks the canonical application source and Marketplace templates, while the generated `app/marketplace/` artifact remains untracked. An annotated signed version tag is the immutable input for a complete Marketplace release. A releaser runs `app/scripts/release_marketplace.sh vX.Y.Z`; the script verifies the tag and matching app version, builds and force-stages the self-contained artifact on local branch `marketplace/vX.Y.Z`, signs and verifies its commit, and never pushes. After inspection, publish it manually with `git push origin marketplace/vX.Y.Z`.
+The main branch tracks the canonical application source and Marketplace templates, while the generated `app/marketplace/` artifact remains untracked. An annotated signed Studio version tag is the immutable input for a complete Marketplace release. A releaser runs `app/scripts/release_marketplace.sh studio-vX.Y.Z`; the script verifies the tag and matching app version, builds and force-stages the self-contained artifact on local branch `dqx-studio/marketplace/vX.Y.Z`, signs and verifies its commit, and never pushes. After inspection, publish the branch and tag explicitly with `git push origin dqx-studio/marketplace/vX.Y.Z` and `git push origin studio-vX.Y.Z`.
 
 DAB deployments are independent and continue to build and consume `app/.build/`.
 

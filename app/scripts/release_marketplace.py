@@ -39,9 +39,10 @@ class SubprocessCommandRunner:
 
 def release_branch_name(tag: str) -> str:
     """Return the release branch name for a valid Marketplace version tag."""
-    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[A-Za-z0-9.-]*)?", tag) is None:
-        raise ValueError("TAG must use vX.Y.Z release syntax")
-    return f"marketplace/{tag}"
+    match = re.fullmatch(r"studio-v([0-9]+\.[0-9]+\.[0-9]+)", tag)
+    if match is None:
+        raise ValueError("TAG must use studio-vX.Y.Z release syntax")
+    return f"dqx-studio/marketplace/v{match.group(1)}"
 
 
 def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> str:
@@ -67,7 +68,7 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
         project_version = tomllib.loads(tagged_pyproject.stdout)["project"]["version"]
     except (KeyError, TypeError, tomllib.TOMLDecodeError) as error:
         raise RuntimeError("Tagged application version is missing") from error
-    if project_version != tag.removeprefix("v"):
+    if project_version != tag.removeprefix("studio-v"):
         raise RuntimeError("TAG version does not match the tagged application version")
 
     existing = commands.run(
@@ -120,7 +121,7 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
 def main() -> int:
     """Create a local Marketplace release branch and print its manual push command."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tag", required=True, help="annotated signed version tag, for example v0.16.1")
+    parser.add_argument("--tag", required=True, help="annotated signed version tag, for example studio-v0.1.0")
     args = parser.parse_args()
     try:
         branch = release_marketplace(args.tag, Path.cwd(), SubprocessCommandRunner())

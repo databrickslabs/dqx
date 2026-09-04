@@ -15,7 +15,7 @@ class RecordingCommandRunner:
     def __init__(
         self,
         *,
-        project_version: str = "0.16.1",
+        project_version: str = "0.1.0",
         fail_on: tuple[str, ...] | None = None,
         existing_branch: bool = False,
     ) -> None:
@@ -60,27 +60,30 @@ class RecordingCommandRunner:
 
 
 def test_release_branch_name_is_derived_from_version_tag() -> None:
-    assert release_branch_name("v0.16.1") == "marketplace/v0.16.1"
+    assert release_branch_name("studio-v0.1.0") == "dqx-studio/marketplace/v0.1.0"
 
 
-@pytest.mark.parametrize("tag", ["0.16.1", "v0.16", "vnext", "v0.16.1/extra"])
+@pytest.mark.parametrize(
+    "tag",
+    ["0.1.0", "v0.1.0", "studio-0.1.0", "studio-v0.1", "studio-vnext", "studio-v0.1.0/extra"],
+)
 def test_release_rejects_invalid_tag_names(tag: str) -> None:
-    with pytest.raises(ValueError, match="vX.Y.Z"):
+    with pytest.raises(ValueError, match="studio-vX.Y.Z"):
         release_branch_name(tag)
 
 
 def test_release_verifies_tag_before_creating_branch(tmp_path: Path) -> None:
     commands = RecordingCommandRunner(fail_on=("git", "verify-tag"))
     with pytest.raises(RuntimeError, match="signed tag"):
-        release_marketplace("v0.16.1", tmp_path, commands)
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert not commands.contains_prefix(("git", "worktree", "add"))
 
 
 def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(project_version="0.16.1")
-    branch = release_marketplace("v0.16.1", tmp_path, commands)
-    assert branch == "marketplace/v0.16.1"
-    assert commands.contains(("git", "show", "v0.16.1:app/pyproject.toml"))
+    commands = RecordingCommandRunner(project_version="0.1.0")
+    branch = release_marketplace("studio-v0.1.0", tmp_path, commands)
+    assert branch == "dqx-studio/marketplace/v0.1.0"
+    assert commands.contains(("git", "show", "studio-v0.1.0:app/pyproject.toml"))
     assert commands.contains(("make", "app-install"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
@@ -109,16 +112,16 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
 
 
 def test_release_refuses_existing_local_branch(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(project_version="0.16.1", existing_branch=True)
+    commands = RecordingCommandRunner(project_version="0.1.0", existing_branch=True)
     with pytest.raises(RuntimeError, match="already exists"):
-        release_marketplace("v0.16.1", tmp_path, commands)
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert not commands.contains_prefix(("git", "worktree", "add"))
 
 
 def test_release_rejects_tag_version_that_differs_from_app(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(project_version="0.16.0")
+    commands = RecordingCommandRunner(project_version="0.1.1")
     with pytest.raises(RuntimeError, match="does not match"):
-        release_marketplace("v0.16.1", tmp_path, commands)
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
 
 
 def test_shell_release_entrypoint_requires_one_tag_argument(tmp_path: Path) -> None:
@@ -133,7 +136,7 @@ def test_shell_release_entrypoint_requires_one_tag_argument(tmp_path: Path) -> N
     )
 
     assert completed.returncode == 2
-    assert "Usage: app/scripts/release_marketplace.sh vX.Y.Z" in completed.stderr
+    assert "Usage: app/scripts/release_marketplace.sh studio-vX.Y.Z" in completed.stderr
 
 
 def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) -> None:
@@ -157,7 +160,7 @@ def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) 
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
 
     completed = subprocess.run(
-        [str(script), "v0.16.1"],
+        [str(script), "studio-v0.1.0"],
         cwd=tmp_path,
         check=False,
         capture_output=True,
@@ -174,7 +177,7 @@ def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) 
         "python",
         "app/scripts/release_marketplace.py",
         "--tag",
-        "v0.16.1",
+        "studio-v0.1.0",
     ]
 
 
@@ -182,7 +185,7 @@ def test_makefile_exposes_marketplace_release_target() -> None:
     repo_root = Path(__file__).resolve().parents[2]
 
     completed = subprocess.run(
-        ["make", "--dry-run", "app-release-marketplace", "TAG=v0.16.1"],
+        ["make", "--dry-run", "app-release-marketplace", "TAG=studio-v0.1.0"],
         cwd=repo_root,
         check=False,
         capture_output=True,
@@ -190,4 +193,4 @@ def test_makefile_exposes_marketplace_release_target() -> None:
     )
 
     assert completed.returncode == 0
-    assert "app/scripts/release_marketplace.sh v0.16.1" in completed.stdout
+    assert "app/scripts/release_marketplace.sh studio-v0.1.0" in completed.stdout

@@ -22,7 +22,7 @@ import Link from '@docusaurus/Link';
 
 // GitHub release notes live at the tag; link version tags there so readers can see
 // what shipped in that release.
-const RELEASE_NOTES_BASE = 'https://github.com/databrickslabs/dqx/releases/tag/v';
+const RELEASE_NOTES_BASE = 'https://github.com/databrickslabs/dqx/releases/tag/';
 
 // The taggable lifecycle stages, each mapped to a DQX badge color-modifier class
 // (defined in src/css/custom.css) and the anchor of its explanation on the
@@ -95,20 +95,27 @@ export function FeatureLifecycleStage({
  * tags read as metadata rather than a status.
  *
  * @param version  the release the feature first shipped in, e.g. "0.15.0".
+ * @param releaseTag  the Git tag containing the release notes. Defaults to the
+ *                    DQX Core tag for *version*.
+ * @param productName  the product name used in the accessible link title.
  * @param heading  when true (default), uses heading-friendly sizing so the tag can sit
  *                 inline next to a page or section title; set false for body text.
  */
 export function AvailableSinceVersion({
   version,
+  releaseTag = `v${version}`,
+  productName = 'DQX',
   heading = true,
 }: {
   version: string;
+  releaseTag?: string;
+  productName?: string;
   heading?: boolean;
 }): JSX.Element {
   return (
     <Link
-      to={`${RELEASE_NOTES_BASE}${version}`}
-      title={`Available since DQX v${version}`}
+      to={`${RELEASE_NOTES_BASE}${releaseTag}`}
+      title={`Available since ${productName} v${version}`}
       style={{ textDecoration: 'none' }}
     >
       <span
@@ -144,7 +151,7 @@ export function DeprecatedInVersion({
     : `Deprecated in DQX v${version}`;
   return (
     <Link
-      to={`${RELEASE_NOTES_BASE}${version}`}
+      to={`${RELEASE_NOTES_BASE}v${version}`}
       title={title}
       style={{ textDecoration: 'none' }}
     >

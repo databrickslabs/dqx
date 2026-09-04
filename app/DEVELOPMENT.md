@@ -22,7 +22,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make app-build` | Compile UI, generate OpenAPI schema, assemble the `.build/` deploy tree (runs `app/scripts/build_app.py`) |
 | `make app-build-marketplace` | Generate a complete local `app/marketplace/` artifact for inspection |
 | `make app-check-marketplace` | Validate Marketplace generation and the signed-release tooling |
-| `app/scripts/release_marketplace.sh vX.Y.Z` | Create and verify local signed branch `marketplace/vX.Y.Z`; never pushes |
+| `app/scripts/release_marketplace.sh studio-vX.Y.Z` | Create and verify local signed branch `dqx-studio/marketplace/vX.Y.Z`; never pushes |
 | `make app-start-dev` | Build then start uvicorn + vite via `app/scripts/dev.py` (foreground; Ctrl+C to stop) |
 | `make app-stop-dev` | Stop dev servers started in another shell (`pkill`-based) |
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
@@ -39,11 +39,12 @@ project-specific CLI required. **Prefer `make` from the project root.**
 Main intentionally excludes the generated `app/marketplace/` artifact. Canonical application source and Marketplace templates remain tracked. Start a release from an annotated signed tag whose version matches `app/pyproject.toml`:
 
 ```bash
-app/scripts/release_marketplace.sh v0.16.1
-git push origin marketplace/v0.16.1
+make app-release-marketplace TAG=studio-v0.1.0
+git push origin dqx-studio/marketplace/v0.1.0
+git push origin studio-v0.1.0
 ```
 
-The first command creates the release branch in a temporary worktree, builds and validates its complete self-contained Marketplace source, signs and verifies the local commit, and removes the temporary worktree. It never pushes. The Studio package/tag version and the published DQX Core pin are separate: the tag matches `app/pyproject.toml`, while the artifact reads its DQX pin from `app/databricks.yml`. Inspect the branch before running the explicit push command. Normal DAB builds continue to use `.build/`.
+The first command creates the release branch in a temporary worktree, builds and validates its complete self-contained Marketplace source, signs and verifies the local commit, and removes the temporary worktree. It never pushes. The Studio package/tag version and the published DQX Core pin are separate: the tag matches `app/pyproject.toml`, while the artifact reads its DQX pin from `app/databricks.yml`. Inspect the branch before running the two explicit push commands. Normal DAB builds continue to use `.build/`.
 
 ## 1. Configure Authentication
 
