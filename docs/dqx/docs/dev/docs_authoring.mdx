@@ -206,7 +206,7 @@ leak the component markup into these elements.
 Any page, section, or subsection heading can be tagged. The following conventions are used for tagging
 feature documentation:
 
-* Untagged features represent generally-available functionality. If a version tag is missing, the feature has been available since before release version 0.9.0.
+* Untagged features represent generally available functionality. If a version tag is missing, the feature has been available since before release version 0.9.0.
 * If a feature page is tagged, all untagged subheadings share the same version and lifecycle stage.
 * If any subheading is tagged, that capability has it own version and lifecycle stage which differs from the page-level version and lifecycle stage.
 * Sections with structural content, explanations, or examples should not be tagged.
@@ -215,12 +215,10 @@ feature documentation:
 
 The following components are available:
 
-*`<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked
-  to the matching section of the [Feature lifecycle](/docs/reference/feature_lifecycle) reference.
-*`<AvailableSinceVersion version="0.14.0" />` — "Available since v0.14.0", linked to that release's notes.
-*`<DeprecatedInVersion version="0.16.0" replacement="the new_check function" />` — "Deprecated in
-  v0.16.0", with an optional replacement named in the tooltip.
-*`<FeatureTags>` — the row container that places the tags on their own line under the heading.
+* `<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked to the matching section of the [Feature Lifecycle](/docs/reference/feature_lifecycle) reference.
+* `<AvailableSinceVersion version="0.14.0" />` — "Available since v0.14.0", linked to that release's notes.
+* `<DeprecatedInVersion version="0.16.0" replacement="the new_check function" />` — "Deprecated in v0.16.0", with an optional replacement named in the tooltip.
+* `<FeatureTags>` — the row container that places the tags on their own line under the heading.
 
 ## Content alignment and structure of folders
 

@@ -24,12 +24,6 @@ You can explore the implementation details of the check functions [here](https:/
 All declarative check definitions (YAML, JSON, or Delta tables) support **variable substitution** for string-based fields using the `{{ variable_name }}` syntax. This allows for dynamic parameterization of column names, thresholds, and filters at load time. See the [User Guide](/docs/guide/quality_checks_definition/#variable-substitution) for more details.
 </Admonition>
 
-<Admonition type="note" title="Column names requiring escaping">
-A `column` argument can be a plain column name or a SQL expression. DQX back-quotes column names that are not valid SQL identifiers (spaces, dashes, non-ASCII letters, etc., e.g. `Customer Name` or `Päivämäärä`) automatically, so they can be used as-is.
-
-Because a name and a SQL expression cannot always be told apart, two ambiguous cases are not escaped automatically: a name that contains expression characters such as parentheses (e.g. `amount (usd)`), and an operator-free expression that is treated as a name (e.g. `col IS NOT NULL`). For these, back-quote the name yourself (e.g. `` `amount (usd)` ``), pass a column expression, or use the `sql_expression` check. A column that cannot be resolved is reported as skipped rather than failing the run.
-</Admonition>
-
 ## Row-level checks reference
 
 Row-level checks are applied to each row in a PySpark DataFrame. The quality check results are reported for individual rows in the result columns.
@@ -4643,6 +4637,56 @@ When using custom message expressions:
           limit: 0
     ```
   </TabItem>
+</Tabs>
+
+## SQL escaping for checked columns
+Most rules accept a `column` argument that can be a column name or a SQL expression. DQX automatically back-quotes column names that are not valid SQL identifiers (e.g. `Customer Name` or `Päivämäärä`) on a best-effort basis. Columns that cannot be resolved are reported as skipped rather than failing a run.
+
+Because column names and a SQL expression cannot always be differentiated, some ambiguous cases are not back-quoted automatically: 
+* A name that contains expression characters such as parentheses (e.g. `amount (usd)`)
+* An operator-free expression that is treated as a name (e.g. `col not null`). 
+
+When working with these cases, back-quote the column name when defining the check.
+
+<Tabs>
+<TabItem value="YAML" label="YAML">
+```yaml
+# Back-quote ambiguous column names when defining checks
+- name: amount_is_null_or_empty
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: "`amount (usd)`"
+
+- name: col_not_null_is_null_or_empty
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: "`col not null`"
+```
+</TabItem>
+<TabItem value="Python" label="Python">
+```python
+import yaml
+import pyspark.sql.functions as F
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx import check_funcs
+
+# Back-quote ambiguous column names when defining checks
+checks = [
+  DQRowRule(
+    name="amount_is_null_or_empty",
+    check_func=check_funcs.is_not_null_and_not_empty,
+    column="`amount (usd)`",
+  ),
+  DQRowRule(
+    name="col_not_null_is_null_or_empty",
+    check_func=check_funcs.is_not_null_and_not_empty,
+    column="`col not null`",
+  ),
+]
+```
+</TabItem>
 </Tabs>
 
 ## Converting checks between formats

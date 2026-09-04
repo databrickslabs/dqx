@@ -4638,9 +4638,6 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
     """
     col_expr = _get_column_expr(column)
     if isinstance(column, str):
-        # Derive display and normalized names from the input string, not the Column: back-quoting a name
-        # for execution changes its string representation (e.g. Spark renders `F.expr("`Customer Name`")`
-        # as ``Column<'`Customer Name`'>``), which would otherwise leak back-quotes into messages and names.
         column_str = unquote_column_name(column)
         col_str_norm = normalize_col_str(column_str)
     else:

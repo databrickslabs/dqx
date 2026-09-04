@@ -340,18 +340,17 @@ def normalize_column_expr(column: str) -> str:
     "gross-margin" or "Päivämäärä") does not parse when passed to ``F.expr`` and must be back-quoted. A
     SQL expression (e.g. "a + b", "substr(x, 1, 2)", "*") must be passed through as-is.
 
-    Name and expression cannot be told apart with certainty from a string alone, so this uses a
+    Name and expression cannot be told apart with certainty from a string alone. This function uses a
     conservative heuristic. A string is treated as an expression, and returned unchanged, when it
-    contains a character that only appears in expressions (parentheses, brackets, quotes, comma, star)
-    or an arithmetic/comparison operator that is whitespace-separated (e.g. "a + b"). Everything else is
-    treated as a dotted column path: each segment is left alone if it is a valid bare identifier and
-    back-quoted otherwise, so nested-field access (e.g. "struct_col.field1") keeps working while
-    "Customer Name" becomes "`Customer Name`".
+    contains characters that typically appear in expressions (parentheses, brackets, quotes, comma, star)
+    or arithmetic/comparison operators that are whitespace-separated (e.g. "a + b"). Everything else is
+    treated as a dotted column path: each segment is left alone if it is a valid bare identifier. Otherwise
+    it is back-quoted (e.g. "struct_col.field1" is unchanged, "Customer Name" becomes "`Customer Name`")
 
-    The heuristic intentionally does not cover two ambiguous cases: names that contain expression
-    characters (e.g. "amount (usd)"), and operator-free SQL expressions such as "col IS NOT NULL" (which
-    is treated as a name). Callers with such columns should back-quote the name themselves, pass a Column
-    expression, or use the ``sql_expression`` check.
+    This heuristic intentionally excludes two ambiguous cases: names that contain expression characters
+    (e.g. "amount (usd)"), and operator-free SQL expressions such as "col IS NOT NULL" (which is treated
+    as a name). Callers with such columns should back-quote the name themselves, pass a Column expression,
+    or use the ``sql_expression`` check.
 
     Args:
         column: Column reference provided as a string (plain name, nested path, or SQL expression).

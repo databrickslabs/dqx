@@ -338,7 +338,7 @@ class DQRuleManager:
         "Customer Name") first, so validation and execution agree and an unresolvable name is skipped
         rather than aborting the run.
         """
-        resolved = normalize_column_expr(column) if isinstance(column, str) else column
+        resolved: str | Column = normalize_column_expr(column) if isinstance(column, str) else column
         return self._is_invalid_column(resolved)
 
     def _is_invalid_column(self, column: str | Column) -> bool:
