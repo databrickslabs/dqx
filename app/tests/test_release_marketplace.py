@@ -81,9 +81,25 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     branch = release_marketplace("v0.16.1", tmp_path, commands)
     assert branch == "marketplace/v0.16.1"
     assert commands.contains(("git", "show", "v0.16.1:app/pyproject.toml"))
+    assert commands.contains(("make", "app-install"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
-    assert not commands.contains_prefix(("make",))
+    assert commands.contains(
+        (
+            "uv",
+            "run",
+            "--frozen",
+            "--group",
+            "test",
+            "pytest",
+            "tests/test_build_marketplace.py",
+            "tests/test_release_marketplace.py",
+            "-v",
+        )
+    )
+    assert commands.commands.index(("make", "app-install")) < commands.commands.index(
+        ("uv", "run", "--frozen", "python", "app/scripts/build_app.py")
+    )
     assert commands.contains(("git", "add", "-f", "-A", "app/marketplace"))
     assert commands.contains_prefix(("git", "commit", "-S"))
     assert commands.contains(("git", "verify-commit", "HEAD"))
@@ -160,3 +176,18 @@ def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) 
         "--tag",
         "v0.16.1",
     ]
+
+
+def test_makefile_exposes_marketplace_release_target() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    completed = subprocess.run(
+        ["make", "--dry-run", "app-release-marketplace", "TAG=v0.16.1"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert "app/scripts/release_marketplace.sh v0.16.1" in completed.stdout

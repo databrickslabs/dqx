@@ -143,6 +143,10 @@ app-check-marketplace: ## Validate Marketplace generation and signed-release too
 	test -z "$$tracked" || test "$$tracked" = "$$deleted" || \
 	  (echo "Generated Marketplace artifacts must not be tracked on main."; exit 1)
 
+app-release-marketplace: ## Create and verify a local signed Marketplace release branch (TAG=vX.Y.Z)
+	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=vX.Y.Z"; exit 1)
+	app/scripts/release_marketplace.sh $(TAG)
+
 app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)
 	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ -v
@@ -465,4 +469,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

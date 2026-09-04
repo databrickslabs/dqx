@@ -84,6 +84,7 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
         try:
             commands.run(("git", "worktree", "add", "-b", branch, str(worktree), tag), cwd=resolved_root)
             created = True
+            commands.run(("make", "app-install"), cwd=worktree)
             commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"), cwd=worktree)
             commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"), cwd=worktree)
             commands.run(
@@ -94,11 +95,11 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
                     "--group",
                     "test",
                     "pytest",
-                    "app/tests/test_build_marketplace.py",
-                    "app/tests/test_release_marketplace.py",
+                    "tests/test_build_marketplace.py",
+                    "tests/test_release_marketplace.py",
                     "-v",
                 ),
-                cwd=worktree,
+                cwd=worktree / "app",
             )
             commands.run(("git", "add", "-f", "-A", "app/marketplace"), cwd=worktree)
             changed = commands.run(("git", "diff", "--cached", "--quiet"), cwd=worktree, check=False)
