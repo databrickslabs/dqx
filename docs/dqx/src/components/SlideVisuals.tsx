@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Highlight, themes } from 'prism-react-renderer';
 import type { Token, RenderProps } from 'prism-react-renderer';
 
 export type VisualKey =
   | 'title' | 'known-unknowns' | 'dqx-rules' | 'trucks-dqm'
   | 'gap' | 'row-level' | 'features' | 'isolation-forest'
-  | 'shap' | 'summary' | 'coming-soon';
+  | 'baseline-groups' | 'correlation' | 'shap' | 'summary' | 'coming-soon';
 
 // ── Data ────────────────────────────────────────────────────────────
 
@@ -49,6 +49,50 @@ const TRUCK_CONFIGS: Array<{ bananaCount: number; label: string; isAnomaly: bool
 
 const BANANA_FEATURES = ['size', 'colour', 'shape', 'flavour', 'smell'] as const;
 
+// Baseline conditioning: one arriving size, judged three times. 18cm is unremarkable across the whole
+// crate -- it sits inside the combined range -- and clearly wrong for a lady finger. That is the whole
+// argument for `baseline_by` in one number.
+const ARRIVING_SIZE_CM = 18;
+const BANANA_VARIETIES: Array<{ name: string; emoji: string; scale: number; low: number; high: number }> = [
+  { name: 'Plantain', emoji: '🍌', scale: 1.3, low: 22, high: 30 },
+  { name: 'Cavendish', emoji: '🍌', scale: 1.0, low: 16, high: 22 },
+  { name: 'Lady finger', emoji: '🍌', scale: 0.72, low: 10, high: 14 },
+];
+
+// Correlation break, as a packing line. One crate at one ripeness -- colour deliberately does NOT vary,
+// because it is the most salient channel on screen and varying it makes the eye nominate the wrong fruit,
+// which then makes the gate's verdict look arbitrary. What varies visibly is LENGTH, one of the two numbers
+// the check reads. WEIGHT is invisible, which is the whole reason a check is needed.
+const CRATE_RIPENESS = [
+  'sepia(.08) saturate(1.04)',
+  'sepia(.13) saturate(1.02)',
+  'sepia(.05) saturate(1.06)',
+  'sepia(.1) saturate(1.03)',
+];
+const CRATE_NORMAL: Array<{ len: number; wt: number }> = [
+  { len: 15, wt: 83 },
+  { len: 16, wt: 90 },
+  { len: 17, wt: 97 },
+  { len: 18, wt: 104 },
+  { len: 20, wt: 117 },
+  { len: 21, wt: 124 },
+  { len: 22, wt: 131 },
+  { len: 23, wt: 138 },
+];
+// 19cm sits mid-pack, so nothing about it looks wrong. 19cm of banana weighs ~110g; this one is 38g.
+const CRATE_ODD = { len: 19, wt: 38, bad: true };
+
+// Longer fruit is drawn larger, so the visible variation is a variable the check actually reads.
+const fruitSize = (len: number) => `${(1.3 + ((len - 15) / 8) * 0.8).toFixed(2)}rem`;
+const expectedWeight = (len: number) => Math.round(len * 5.8);
+
+// Belt geometry, in percent of track width per second.
+const LINE_GATE_X = 50;
+const LINE_SPEED = 4.6;      // a banana crosses the gate about every 4.3s -- slow enough to read
+const LINE_SPACING = 20;
+const LINE_COUNT = 8;
+const LINE_HOLD_MS = 4200;   // the line halts this long on a failure
+
 const DQX_RULES_CODE = `from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null, is_in_range, is_in_list
 
@@ -85,11 +129,11 @@ const SUMMARY_BULLETS: Array<{ title: string; detail?: string; code?: string }> 
   },
   {
     title: 'No ML expertise needed',
-    detail: 'DQX auto-discovers which columns to use, engineers features, and even segments your data when it makes sense. You just point it at a table.',
+    detail: 'DQX auto-discovers which columns to use, engineers features, and even finds a grouping to judge each row against when one makes sense. You just point it at a table.',
   },
   {
     title: 'Explainable results',
-    detail: 'Every flagged row comes with a breakdown of why — which columns drove the score. Powered by SHAP, so you can act on it, not just stare at a number.',
+    detail: 'Every flagged row comes with a breakdown of why — which columns drove the score. So you can act on it, not just stare at a number.',
   },
   {
     title: 'Works with batch and streaming',
@@ -475,7 +519,7 @@ function ShapCarousel() {
 
   return (
     <div className="bv-shap" aria-hidden>
-      <p className="bv-shap__subtitle">Why was this banana flagged? SHAP top contributors</p>
+      <p className="bv-shap__subtitle">Why was this banana flagged? Top contributing features</p>
       <div className="bv-shap__cards">
         {[-1, 0, 1].map(off => {
           const i = (center + off + n) % n;
@@ -560,6 +604,190 @@ function ComingSoonSlide() {
 
 // ── Export ───────────────────────────────────────────────────────────
 
+function BaselineGroups() {
+  const [activeIdx, setActiveIdx] = useState(BANANA_VARIETIES.length - 1);
+  useEffect(() => {
+    const id = setInterval(() => setActiveIdx(i => (i + 1) % BANANA_VARIETIES.length), 2200);
+    return () => clearInterval(id);
+  }, []);
+
+  const combinedLow = Math.min(...BANANA_VARIETIES.map(v => v.low));
+  const combinedHigh = Math.max(...BANANA_VARIETIES.map(v => v.high));
+
+  return (
+    <div className="bv-baseline" aria-hidden>
+      <p className="bv-baseline__intro">
+        A <strong>{ARRIVING_SIZE_CM}cm</strong> banana arrives. Is it odd?
+      </p>
+      <div className="bv-baseline__groups">
+        {BANANA_VARIETIES.map((variety, i) => {
+          const isOdd = ARRIVING_SIZE_CM < variety.low || ARRIVING_SIZE_CM > variety.high;
+          const isActive = i === activeIdx;
+          return (
+            <div
+              key={variety.name}
+              className={`bv-baseline__card ${isActive ? 'bv-baseline__card--active' : ''} ${
+                isOdd ? 'bv-baseline__card--odd' : 'bv-baseline__card--normal'
+              }`}
+            >
+              <span className="bv-baseline__emoji" style={{ fontSize: `${1.6 * variety.scale}rem` }}>
+                {variety.emoji}
+              </span>
+              <strong className="bv-baseline__name">{variety.name}</strong>
+              <small className="bv-baseline__range">
+                usually {variety.low}–{variety.high}cm
+              </small>
+              <span className="bv-baseline__verdict">{isOdd ? 'odd here' : 'normal here'}</span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="bv-baseline__whole">
+        Across the whole crate: {combinedLow}–{combinedHigh}cm — so {ARRIVING_SIZE_CM}cm looks fine, and a
+        model comparing against the whole crate never flags it.
+      </p>
+    </div>
+  );
+}
+
+type LineItem = { len: number; wt: number; bad?: boolean; filter: string };
+type Rider = { item: LineItem; x: number; lift: number };
+
+function CorrelationBreak() {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const elsRef = useRef<Array<HTMLSpanElement | null>>([]);
+  const [reading, setReading] = useState<LineItem | null>(null);
+
+  useEffect(() => {
+    const seqRef = { n: 0 };
+    const pick = (): LineItem => {
+      seqRef.n += 1;
+      const base = seqRef.n % 4 === 0 ? CRATE_ODD : CRATE_NORMAL[seqRef.n % CRATE_NORMAL.length];
+      return { ...base, filter: CRATE_RIPENESS[seqRef.n % CRATE_RIPENESS.length] };
+    };
+
+    const riders: Rider[] = Array.from({ length: LINE_COUNT }, (_, i) => ({
+      item: pick(),
+      x: 105 - i * LINE_SPACING,
+      lift: 0,
+    }));
+
+    // A percentage in translateX resolves against the ELEMENT's width, not the track's, so positions are
+    // converted to pixels here. The trailing -50% is kept because centring the glyph on its position is the
+    // one place percent-of-self is what we want.
+    const place = (r: Rider, el: HTMLSpanElement | null, trackWidth: number) => {
+      if (!el) return;
+      el.style.transform =
+        `translateX(${((r.x / 100) * trackWidth).toFixed(1)}px) translateX(-50%) translateY(${-r.lift.toFixed(1)}px)`;
+      el.style.filter = r.item.filter;
+      el.style.fontSize = fruitSize(r.item.len);
+    };
+
+    let raf = 0;
+    let last = performance.now();
+    let holdUntil = 0;
+    let culprit: number | null = null;
+
+    const frame = (now: number) => {
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      const width = trackRef.current?.clientWidth || 1;
+
+      if (now < holdUntil) {
+        // Hollow, so it drifts up off the belt rather than dropping. That is the only visible tell.
+        if (culprit !== null) {
+          riders[culprit].lift = Math.min(riders[culprit].lift + 16 * dt, 26);
+          place(riders[culprit], elsRef.current[culprit], width);
+        }
+        raf = requestAnimationFrame(frame);
+        return;
+      }
+
+      if (culprit !== null) {
+        const r = riders[culprit];
+        r.x = 105;
+        r.lift = 0;
+        r.item = pick();
+        culprit = null;
+        setReading(null);
+      }
+
+      riders.forEach((r, i) => {
+        const was = r.x;
+        r.x -= LINE_SPEED * dt;
+        if (was > LINE_GATE_X && r.x <= LINE_GATE_X) {
+          setReading(r.item);
+          if (r.item.bad) {
+            culprit = i;
+            holdUntil = now + LINE_HOLD_MS;
+          }
+        }
+        if (r.x < -8) {
+          r.x = 105;
+          r.item = pick();
+        }
+        place(r, elsRef.current[i], width);
+      });
+
+      raf = requestAnimationFrame(frame);
+    };
+
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const fail = !!reading?.bad;
+
+  return (
+    <div className={`bv-line ${fail ? 'bv-line--hold' : ''}`} aria-hidden>
+      <span className={`bv-line__badge ${fail ? 'bv-line__badge--fail' : ''}`}>
+        {reading
+          ? <>{reading.len}cm · {reading.wt}g &nbsp;<b>pair {fail ? '✗' : '✓'}</b></>
+          : 'waiting…'}
+      </span>
+
+      <span className={`bv-line__gantry ${fail ? 'bv-line__gantry--fail' : ''}`}>
+        <span className="bv-line__scan" />
+      </span>
+      <span className={`bv-line__chute ${fail ? 'bv-line__chute--on' : ''}`} />
+
+      <div className="bv-line__track" ref={trackRef}>
+        {Array.from({ length: LINE_COUNT }, (_, i) => (
+          <span
+            key={i}
+            className="bv-line__fruit"
+            ref={el => { elsRef.current[i] = el; }}
+          >🍌</span>
+        ))}
+      </div>
+
+      <span className="bv-line__belt">
+        <span className="bv-line__slats" />
+        <span className="bv-line__lip bv-line__lip--top" />
+        <span className="bv-line__lip bv-line__lip--bottom" />
+      </span>
+      <span className="bv-line__rollers">
+        {Array.from({ length: 9 }, (_, i) => <span key={i} className="bv-line__roller" />)}
+      </span>
+      <span className="bv-line__legs">
+        {['0%', '33%', '66%', '100%'].map(left => <span key={left} className="bv-line__leg" style={{ left }} />)}
+      </span>
+      <span className="bv-line__floor" />
+
+      <p className="bv-line__caption">
+        {fail ? (
+          <>
+            <strong>19 cm, 38 g.</strong> Both mid-range, so every one-column rule says pass — but a banana
+            that long weighs about {expectedWeight(CRATE_ODD.len)} g. It is hollow, and only the pair gives it away.
+          </>
+        ) : (
+          <>Two numbers read off each banana. Both ordinary, and consistent with each other. <strong>Pass.</strong></>
+        )}
+      </p>
+    </div>
+  );
+}
+
 export default function SlideVisuals({ visual }: { visual: VisualKey }) {
   switch (visual) {
     case 'title': return <TitleCarousel />;
@@ -570,6 +798,8 @@ export default function SlideVisuals({ visual }: { visual: VisualKey }) {
     case 'row-level': return <RowLevelCycle />;
     case 'features': return <FeaturesSlide />;
     case 'isolation-forest': return <IsolationForest />;
+    case 'baseline-groups': return <BaselineGroups />;
+    case 'correlation': return <CorrelationBreak />;
     case 'shap': return <ShapCarousel />;
     case 'summary': return <SummarySlide />;
     case 'coming-soon': return <ComingSoonSlide />;

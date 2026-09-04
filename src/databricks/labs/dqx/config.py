@@ -22,7 +22,6 @@ __all__ = [
     "AnomalyParams",
     "IsolationForestConfig",
     "FeatureEngineeringConfig",
-    "TemporalAnomalyConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -168,14 +167,6 @@ class IsolationForestConfig:
 
 
 @dataclass
-class TemporalAnomalyConfig:
-    """Configuration for temporal feature extraction."""
-
-    timestamp_column: str
-    temporal_features: list[str] = field(default_factory=lambda: ["hour", "day_of_week", "month"])
-
-
-@dataclass
 class FeatureEngineeringConfig:
     """Configuration for multi-type feature engineering in anomaly detection."""
 
@@ -207,6 +198,16 @@ class AnomalyParams:
             Performance: Optimized ensemble scoring makes this negligible overhead.
         algorithm_config: Isolation Forest parameters (contamination, num_trees, seed).
         feature_engineering: Feature engineering parameters (temporal features, scaling, etc.).
+        baseline_by: Columns identifying the group a row belongs to, so a metric is judged against
+            its own group's baseline rather than against the whole table. Each numeric metric gains
+            its deviation from that baseline as an extra feature, on one pooled model, so cost does
+            not grow with the group count. Normally set by passing *baseline_by* to
+            ``AnomalyEngine.train()``, which populates this.
+        baseline_over_time: The time column each metric is judged along, so a value is compared with
+            what its own history says to expect at that point in time rather than only with the whole
+            table or its own group. Composes with *baseline_by*: with both set the expectation is
+            fitted on the group-relative value, which keeps one pooled model. Normally set by passing
+            *baseline_over_time* to ``AnomalyEngine.train()``, which populates this.
     """
 
     sample_fraction: float = 0.3
@@ -215,6 +216,8 @@ class AnomalyParams:
     ensemble_size: int | None = 3  # Default 3-model ensemble for robustness, tie-breaking, and confidence scores
     algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
     feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
+    baseline_by: list[str] | None = None
+    baseline_over_time: str | None = None
 
 
 @dataclass
@@ -222,9 +225,20 @@ class AnomalyConfig:
     """Configuration for row anomaly detection."""
 
     columns: list[str] | None = None  # Auto-discovered if omitted
-    segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)
     model_name: str | None = None  # Optional in workflows; defaults to dqx_anomaly_<run_config.name>
     registry_table: str | None = None
+    # Declares the basis each metric is judged against, on one pooled model. Optional, so installed
+    # run-config YAML written before it existed still loads.
+    baseline_by: list[str] | None = None
+    # Which detector to train. None means the tabular default, so YAML written before this existed
+    # loads and trains exactly as it did. Scheduled retraining has to be able to pick the detector:
+    # without this the choice was reachable only from the Python API, and a run config could not
+    # reproduce a model a user had trained by hand.
+    profile: str | None = None
+    # The time column each metric's expected level is fitted along. Optional for the same reason as
+    # the two above: a run config written before it existed keeps training a model with no temporal
+    # notion, which is byte-identical to what it produced before.
+    baseline_over_time: str | None = None
 
 
 @dataclass

@@ -6,7 +6,6 @@ end-to-end. Tests that need a live endpoint skip themselves when the workspace c
 configured endpoint (override with the DQX_AI_QUERY_TEST_ENDPOINT env var).
 """
 
-import os
 import re
 
 import pytest
@@ -16,20 +15,18 @@ from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
-from tests.integration_anomaly.conftest import qualify_model_name
+from tests.integration_anomaly.conftest import (
+    AI_QUERY_TEST_ENDPOINT,
+    ai_query_llm_config,
+    qualify_model_name,
+)
 from tests.integration_anomaly.constants import (
-    DEFAULT_AI_QUERY_ENDPOINT,
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
 
 _LLM_EXPLAINER_LOGGER = "databricks.labs.dqx.anomaly.anomaly_llm_explainer"
-_AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", DEFAULT_AI_QUERY_ENDPOINT)
-
-
-def _ai_query_llm_cfg(endpoint: str) -> LLMModelConfig:
-    return LLMModelConfig(model_name=endpoint)
 
 
 def _score_with_explanation(scorer, df, model_meta, *, llm_model_config, **overrides):
@@ -55,37 +52,6 @@ def _make_outlier_df(spark, factory, *, repeat: int = 1):
     )
 
 
-def _ai_query_endpoint_available(spark: SparkSession) -> tuple[bool, str | None]:
-    """Cheap probe — does ai_query against the configured endpoint succeed?
-
-    Returns ``(available, error_message)``. The error message is surfaced in the skip reason so
-    a failing probe doesn't masquerade as 'endpoint not provisioned' — knowing why the probe
-    failed (auth, missing entitlement, wrong name) is what lets the user decide whether to set
-    DQX_AI_QUERY_TEST_ENDPOINT.
-    """
-    try:
-        spark.sql(
-            f"SELECT ai_query('{_AI_QUERY_TEST_ENDPOINT}', 'reply with the single word: ok', "
-            f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
-        ).collect()
-        return True, None
-    except Exception as exc:
-        return False, repr(exc)
-
-
-@pytest.fixture
-def ai_query_endpoint(ws, spark):
-    """Skip the test when the workspace cannot reach the configured ai_query endpoint."""
-    assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
-    available, error = _ai_query_endpoint_available(spark)
-    if not available:
-        pytest.skip(
-            f"ai_query endpoint {_AI_QUERY_TEST_ENDPOINT!r} not reachable; "
-            f"set DQX_AI_QUERY_TEST_ENDPOINT to override. Probe error: {error}"
-        )
-    return _AI_QUERY_TEST_ENDPOINT
-
-
 def test_ai_query_explanation_populated_for_anomalous_row(
     spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
 ):
@@ -96,7 +62,7 @@ def test_ai_query_explanation_populated_for_anomalous_row(
     """
     test_df = _make_outlier_df(spark, test_df_factory)
     result_df = _score_with_explanation(
-        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(ai_query_endpoint)
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=ai_query_llm_config(ai_query_endpoint)
     )
     row = result_df.collect()[0]
     anomaly_info = row["_dq_info"][0]["anomaly"]
@@ -112,6 +78,12 @@ def test_ai_query_explanation_populated_for_anomalous_row(
     assert explanation["top_features"]
     for feat in explanation["top_features"].split("+"):
         assert feat in {"amount", "quantity", "discount"}
+    # top_drivers is the same drivers rendered for a reader, with weights. For these plain numeric
+    # features the human label is the column name itself, so each top feature appears with a percent.
+    assert explanation["top_drivers"]
+    assert "%" in explanation["top_drivers"]
+    for feat in explanation["top_features"].split("+"):
+        assert feat in explanation["top_drivers"]
     assert explanation["group_size"] == 1
     # Single-row group: group_avg_severity is the row's severity. The struct's
     # severity_percentile is rounded to 1 decimal while group_avg_severity is full precision,
@@ -135,7 +107,7 @@ def test_ai_query_explanation_null_for_non_anomalous_row(
         columns_schema="amount double, quantity double, discount double",
     )
     result_df = _score_with_explanation(
-        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(_AI_QUERY_TEST_ENDPOINT)
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=ai_query_llm_config(AI_QUERY_TEST_ENDPOINT)
     )
     row = result_df.collect()[0]
     anomaly_info = row["_dq_info"][0]["anomaly"]
@@ -154,7 +126,7 @@ def test_ai_query_explanation_redact_columns_filters_output(
         anomaly_scorer,
         test_df,
         shared_3d_model,
-        llm_model_config=_ai_query_llm_cfg(ai_query_endpoint),
+        llm_model_config=ai_query_llm_config(ai_query_endpoint),
         redact_columns=["amount"],
     )
     row = result_df.collect()[0]
@@ -171,7 +143,7 @@ def test_ai_query_explanation_redact_columns_filters_output(
 def test_ai_query_explanation_one_call_per_group(
     spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
 ):
-    """Multiple identical anomalous rows collapse into a single (segment, pattern) group.
+    """Multiple identical anomalous rows collapse into a single pattern group.
 
     The ai_query call runs on executors so we can't intercept it directly; instead we assert the
     *observable* contract: every flagged row in the group shares the same narrative and
@@ -180,7 +152,7 @@ def test_ai_query_explanation_one_call_per_group(
     """
     test_df = _make_outlier_df(spark, test_df_factory, repeat=5)
     result_df = _score_with_explanation(
-        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(ai_query_endpoint)
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=ai_query_llm_config(ai_query_endpoint)
     )
     rows = result_df.collect()
     explanations = [
@@ -205,7 +177,7 @@ def test_ai_query_explanation_references_dominant_feature_within_word_caps(
     """
     test_df = _make_outlier_df(spark, test_df_factory)
     result_df = _score_with_explanation(
-        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(ai_query_endpoint)
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=ai_query_llm_config(ai_query_endpoint)
     )
     explanation = result_df.collect()[0]["_dq_info"][0]["anomaly"]["ai_explanation"]
     assert explanation is not None
@@ -266,7 +238,7 @@ def test_ai_query_response_shape_portability(
 
     test_df = _make_outlier_df(spark, test_df_factory)
     result_df = _score_with_explanation(
-        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(endpoint)
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=ai_query_llm_config(endpoint)
     )
     row = result_df.collect()[0]
     anomaly_info = row["_dq_info"][0]["anomaly"]
@@ -338,7 +310,7 @@ def test_ai_query_explanation_disabled_without_contributions(
             anomaly_scorer,
             test_df,
             shared_3d_model,
-            llm_model_config=_ai_query_llm_cfg(_AI_QUERY_TEST_ENDPOINT),
+            llm_model_config=ai_query_llm_config(AI_QUERY_TEST_ENDPOINT),
             enable_contributions=False,  # overrides the default-True; explanation is downgraded off
         )
         anomaly = result_df.collect()[0]["_dq_info"][0]["anomaly"]

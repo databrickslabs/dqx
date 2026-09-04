@@ -1,10 +1,15 @@
 """Unit tests for anomaly detection configuration classes."""
 
+from databricks.labs.blueprint.installation import MockInstallation
+
 from databricks.labs.dqx.config import (
     AnomalyConfig,
     AnomalyParams,
     FeatureEngineeringConfig,
+    InputConfig,
     IsolationForestConfig,
+    RunConfig,
+    WorkspaceConfig,
 )
 
 # ============================================================================
@@ -192,21 +197,43 @@ def test_anomaly_config_defaults():
     """Test AnomalyConfig defaults."""
     cfg = AnomalyConfig()
     assert cfg.columns is None
-    assert cfg.segment_by is None
+    assert cfg.baseline_by is None
     assert cfg.model_name is None
     assert cfg.registry_table is None
+    assert cfg.profile is None
+    assert cfg.baseline_over_time is None
 
 
-def test_anomaly_config_with_columns_and_segments():
-    """Test AnomalyConfig with custom columns and segmentation."""
+def test_anomaly_config_carries_the_profile():
+    """The detector choice has to survive a round trip through run-config YAML.
+
+    Without it the choice is reachable only from the Python API, so a scheduled retrain silently falls
+    back to the tabular default and produces a different model from the one the user trained by hand.
+    """
+    cfg = AnomalyConfig(columns=["a"], profile="timeseries")
+    assert cfg.profile == "timeseries"
+
+
+def test_anomaly_config_omitting_profile_keeps_the_tabular_default():
+    """A run config written before *profile* existed must still load, and train as it always did.
+
+    ``None`` rather than the literal ``"tabular"`` so the default lives in one place, next to the
+    detector resolution, rather than being duplicated into every persisted config.
+    """
+    cfg = AnomalyConfig(columns=["a"])
+    assert cfg.profile is None
+
+
+def test_anomaly_config_with_columns_and_baseline():
+    """Test AnomalyConfig with custom columns and a baseline grouping."""
     cfg = AnomalyConfig(
         columns=["a", "b"],
-        segment_by=["region"],
+        baseline_by=["region"],
         model_name="demo_model",
         registry_table="main.default.dqx_anomaly_models",
     )
     assert cfg.columns == ["a", "b"]
-    assert cfg.segment_by == ["region"]
+    assert cfg.baseline_by == ["region"]
     assert cfg.model_name == "demo_model"
     assert cfg.registry_table == "main.default.dqx_anomaly_models"
 
@@ -313,3 +340,75 @@ def test_feature_engineering_config_with_algo_config():
     assert params.algorithm_config.num_trees == 250
     assert feature_config.categorical_cardinality_threshold == 15
     assert feature_config.max_input_columns == 12
+
+
+def test_anomaly_config_survives_a_real_yaml_round_trip():
+    """Save and load through an installation, not just construct the dataclass.
+
+    The two tests above assert that `AnomalyConfig` *holds* a profile, which is not the same claim as
+    "a run config can express it". The workflow reads its configuration back out of the installation, so
+    a field that the serializer dropped would leave a scheduled retrain silently training the default
+    while the YAML on disk said otherwise. `MockInstallation` exercises that path with no workspace.
+    """
+    installation = MockInstallation()
+    installation.save(
+        WorkspaceConfig(
+            run_configs=[
+                RunConfig(
+                    name="fleet",
+                    input_config=InputConfig(location="catalog.schema.telemetry"),
+                    anomaly_config=AnomalyConfig(
+                        columns=["spindle_load", "motor_current"],
+                        model_name="catalog.schema.fleet_monitor",
+                        registry_table="catalog.schema.dqx_anomaly_models",
+                        baseline_by=["machine_id"],
+                        profile="timeseries",
+                        baseline_over_time="reading_ts",
+                    ),
+                )
+            ]
+        )
+    )
+
+    loaded = installation.load(WorkspaceConfig).get_run_config("fleet").anomaly_config
+
+    assert loaded is not None
+    assert loaded.columns == ["spindle_load", "motor_current"]
+    assert loaded.baseline_by == ["machine_id"]
+    assert loaded.profile == "timeseries"
+    assert loaded.baseline_over_time == "reading_ts"
+
+
+def test_an_installation_written_before_these_fields_existed_still_loads():
+    """The backwards-compatibility guarantee, against a payload rather than against a constructor.
+
+    An installed run config predates every field this release added. Loading it must produce a config that
+    trains exactly what it trained before, which means all three arrive as None rather than raising on an
+    absent key.
+    """
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {
+                        "name": "orders",
+                        "input_config": {"location": "catalog.schema.orders"},
+                        "anomaly_config": {
+                            "columns": ["amount", "quantity"],
+                            "model_name": "catalog.schema.orders_monitor",
+                            "registry_table": "catalog.schema.dqx_anomaly_models",
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+    loaded = installation.load(WorkspaceConfig).get_run_config("orders").anomaly_config
+
+    assert loaded is not None
+    assert loaded.columns == ["amount", "quantity"]
+    assert loaded.baseline_by is None
+    assert loaded.profile is None
+    assert loaded.baseline_over_time is None

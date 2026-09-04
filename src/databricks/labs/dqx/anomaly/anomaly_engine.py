@@ -41,7 +41,7 @@ class AnomalyEngine(DQEngineBase):
             model_name="catalog.schema.regional_model",
             registry_table="catalog.schema.dqx_anomaly_models",
             columns=["revenue", "transactions"],
-            segment_by=["region"]
+            baseline_by=["region"]
         )
     """
 
@@ -60,21 +60,27 @@ class AnomalyEngine(DQEngineBase):
         model_name: str,
         registry_table: str,
         columns: list[str] | None = None,
-        segment_by: list[str] | None = None,
         params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
         expected_anomaly_rate: float = 0.02,
+        baseline_by: list[str] | None = None,
+        profile: str | None = None,
+        baseline_over_time: str | None = None,
     ) -> str:
         """
-            Train row anomaly detection model(s) with intelligent auto-discovery.
+            Train a row anomaly detection model with intelligent auto-discovery.
 
             Requires Spark >= 3.4 and the 'anomaly' extras installed:
                 pip install 'databricks-labs-dqx[anomaly]'
 
             Auto-discovery behavior:
-            - columns=None, segment_by=None: Auto-discovers both (simplest)
-            - columns specified, segment_by=None: Uses columns, no segmentation
-            - columns=None, segment_by specified: Auto-discovers columns, uses segments
+            - columns=None, baseline_by=None: Auto-discovers both the feature columns and a grouping
+            - columns specified, baseline_by=None: Uses the columns and compares against the whole
+              table. Naming the columns means you decided what to measure, so no grouping is added
+              on your behalf. If the data looks grouped, a warning names the grouping to pass.
+            - baseline_by=[]: Compares against the whole table, and suppresses both the grouping
+              discovery above and that warning
+            - baseline_by specified: Conditions on that grouping
 
         Args:
             df: Input DataFrame containing historical "normal" data.
@@ -83,18 +89,53 @@ class AnomalyEngine(DQEngineBase):
             registry_table: Registry table (REQUIRED). Must be fully qualified Unity Catalog table as
                             'catalog.schema.table'.
             columns: Columns to use for row anomaly detection (auto-discovered if omitted).
-            segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
+            profile: What kind of data this is, which selects the detector. Defaults to
+                ``"tabular"`` -- IsolationForest, exactly the behaviour before this option existed.
+                ``"timeseries"`` selects a correlation-aware detector suited to multivariate metrics,
+                where anomalies are broken correlations rather than extreme single values. It needs no
+                timestamp column, and trains a single model rather than an ensemble because it is
+                deterministic. There is no automatic option: DQX never changes the algorithm on your
+                behalf, because the choice cannot be verified without labels. The resolved profile is
+                logged on every run. Measured detection quality, with the protocol it was measured
+                under, is in the row anomaly detection guide -- deliberately not repeated here, because
+                a benchmark figure copied into a docstring is how five files came to disagree about it.
+            baseline_by: Columns identifying the group a row belongs to, so a metric is judged
+                      against its own group's baseline rather than against the whole table. Each
+                      numeric metric gains its deviation from that baseline as an extra feature on
+                      a single pooled model, so the cost does not grow with the group count. This
+                      is what catches a value that is unremarkable across the table but wrong for
+                      its own group. Auto-discovered only when *columns* is also omitted; pass
+                      ``baseline_by=[]`` to compare against the whole table and suppress both that
+                      discovery and the advisory warning.
+            baseline_over_time: A timestamp or date column each metric is judged *along*, so a value is
+                      compared with what its own history says to expect at that point in time. Each
+                      numeric metric gains its deviation from that expected level as an extra feature,
+                      on the same single pooled model. This is what catches a value that is ordinary
+                      against the whole training range and wrong for where the trend had got to.
+                      Independent of *profile*: measured across nine anomaly types it was worth about the
+                      same on both detectors. Composes with *baseline_by*, and the expectation is then
+                      fitted on the group-relative value, so one model still covers every group.
+                      Never auto-discovered: whether a metric's history is worth comparing against is a
+                      judgement about the data, so DQX will warn when the training window shows little
+                      trend but will not turn this on for you. **Not a forecaster.** It models the level
+                      expected at a time, not the next value, and it does not use the previous row.
+                      A seasonal term is fitted only where the training window holds enough complete
+                      cycles to identify one; skipped periods are logged with the reason. The named
+                      column must not also appear in *columns*, since a time axis is not a metric.
             params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Exclusions always take precedence over `columns` if both are provided.
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
             expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
-                                   Used as the default contamination parameter for the Isolation Forest
-                                   algorithm, which controls the proportion of training data that the model
-                                   treats as outliers when learning the decision boundary. A higher value
-                                   makes the model flag more rows as anomalous.
-                                   Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
+                                   Supplies the default *contamination* for the estimator, which places
+                                   scikit-learn's own ``predict`` / ``offset_`` boundary.
+                                   **It does not change which rows DQX flags.** Scoring reads
+                                   ``score_samples`` and ranks it against the training score quantiles,
+                                   so the rows you see are decided by the *threshold* on the check, not
+                                   by this. Nor does it mitigate anomalies present in the training
+                                   sample: nothing downweights them. Set it if you load the registered
+                                   model yourself and call ``predict``; otherwise tune *threshold*.
                                    Overridden if params.algorithm_config.contamination is set explicitly.
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
@@ -102,9 +143,7 @@ class AnomalyEngine(DQEngineBase):
             - See documentation for detailed column selection best practices.
 
         Returns:
-            Base model name (e.g., 'catalog.schema.model_name'). For segmented models,
-            individual segments are stored with suffixes like '__seg_region=APAC', but
-            the base name is returned for simplified API usage.
+            The model name (e.g., 'catalog.schema.model_name').
 
         Examples:
             # Auto-discovery with default 2% expected anomaly rate (simplest)
@@ -143,6 +182,16 @@ class AnomalyEngine(DQEngineBase):
                 registry_table="catalog.schema.dqx_anomaly_models",
                 columns=["revenue", "transactions"],
             )
+
+            # Judge each row against its own group's baseline rather than the whole table, on a
+            # single model however many groups there are.
+            anomaly_engine.train(
+                df,
+                model_name="catalog.schema.regional_model",
+                registry_table="catalog.schema.dqx_anomaly_models",
+                columns=["event_count"],
+                baseline_by=["country", "product"],
+            )
         """
         training_service = AnomalyTrainingService(self.spark)
         context = training_service.build_context(
@@ -150,10 +199,12 @@ class AnomalyEngine(DQEngineBase):
             model_name,
             registry_table,
             columns=columns,
-            segment_by=segment_by,
             params=params,
             exclude_columns=exclude_columns,
             expected_anomaly_rate=expected_anomaly_rate,
+            baseline_by=baseline_by,
+            profile=profile,
+            baseline_over_time=baseline_over_time,
         )
 
         log_telemetry(self.ws, "anomaly_num_features", str(len(context.columns)))

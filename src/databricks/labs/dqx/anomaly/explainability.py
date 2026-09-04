@@ -17,6 +17,7 @@ from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.pipeline import Pipeline
 
+from databricks.labs.dqx.anomaly.scoring_config import TAIL_ANCHOR_PERCENTILE, TAIL_RATE_PERCENTILE
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
@@ -63,27 +64,43 @@ def format_shap_contributions(
     return contributions
 
 
-def compute_shap_values(
+def compute_row_attributions(
     model_local: Any,
     feature_matrix: pd.DataFrame,
     engineered_feature_cols: list[str],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute SHAP values for a model and feature matrix."""
+    """Per-feature attribution for each row, from whichever estimator the model wraps.
+
+    Two sources, one output shape. A tree model goes through ``SHAP.TreeExplainer``, which is
+    approximate and the only SHAP explainer fast enough to be worth running here. An estimator that
+    exposes ``feature_contributions`` supplies its own *exact* attribution instead -- the Mahalanobis
+    detector's leave-one-out decomposition, which needs no SHAP at all.
+
+    Dispatch is by duck typing rather than an ``isinstance`` check on purpose: this module is imported
+    at rule-registration time and by both scorers, so importing a concrete estimator here would drag it
+    into all of them and make the dependency direction harder to reason about.
+
+    Whatever the source, the values feed the same *format_shap_contributions*, so the emitted map has
+    identical keys, scaling and null handling either way, and everything downstream -- redaction,
+    human labels, the LLM prompt, the ``_dq_info`` schema -- is unaffected by which branch ran.
+    """
     scaler = getattr(model_local, "named_steps", {}).get("scaler")
-    tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
+    estimator = getattr(model_local, "named_steps", {}).get("model", model_local)
 
-    shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-    valid_indices = ~pd.isna(shap_data).any(axis=1)
+    feature_values = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+    valid_indices = ~pd.isna(feature_values).any(axis=1)
 
-    shap_values = np.array([])
+    attribution = np.array([])
     if valid_indices.any():
         if len(engineered_feature_cols) == 1:
-            shap_values = np.ones((len(shap_data[valid_indices]), 1))
+            attribution = np.ones((len(feature_values[valid_indices]), 1))
+        elif hasattr(estimator, "feature_contributions"):
+            attribution = estimator.feature_contributions(feature_values[valid_indices])
         else:
-            explainer = SHAP.TreeExplainer(tree_model)
-            shap_values = explainer.shap_values(shap_data[valid_indices])
+            explainer = SHAP.TreeExplainer(estimator)
+            attribution = explainer.shap_values(feature_values[valid_indices])
 
-    return shap_values, valid_indices
+    return attribution, valid_indices
 
 
 # Severity-gating margin for in-UDF SHAP computation. The UDF recomputes severity from raw
@@ -94,15 +111,41 @@ _SEVERITY_GATE_EPSILON = 1e-6
 
 
 def severity_from_scores(scores: np.ndarray, quantile_points: list[tuple[float, float]]) -> np.ndarray:
-    """Map raw anomaly scores to severity percentiles via piecewise linear interpolation.
+    """Map raw anomaly scores to severity percentiles: linear up to p95, then an exponential tail.
 
-    Numpy counterpart of *add_severity_percentile_column* (same quantile points, same
-    clamping at both ends) for use inside scoring UDFs.
+    Numpy counterpart of *add_severity_percentile_column*, and it has to stay one: this function decides
+    which rows get SHAP inside the scoring UDF, so a disagreement between the two would drop contributions
+    from precisely the rows that were flagged.
+
+    The tail matches *_tail_severity_expr* term for term, and for the reason given there: linear
+    interpolation between p95, p99 and the training maximum is the wrong shape for a score quantile
+    function, so a threshold between those knots fired on well under the share of rows it promised.
     """
     points = sorted(quantile_points, key=lambda p: p[0])
-    percentiles = np.array([float(p) for p, _ in points])
-    score_knots = np.array([float(q) for _, q in points])
-    return np.interp(scores, score_knots, percentiles)
+    by_percentile = dict(points)
+    anchor = by_percentile.get(TAIL_ANCHOR_PERCENTILE)
+    rate = by_percentile.get(TAIL_RATE_PERCENTILE)
+
+    # Without both anchors there is no tail to fit, and a degenerate tail has no width to interpolate over.
+    # Either way every point stays a knot, which is the behaviour that predates the tail.
+    if anchor is None or rate is None or rate <= anchor:
+        percentiles = np.array([float(p) for p, _ in points])
+        score_knots = np.array([float(q) for _, q in points])
+        return np.interp(scores, score_knots, percentiles)
+
+    body = [(p, q) for p, q in points if p <= TAIL_ANCHOR_PERCENTILE]
+    values = np.asarray(scores, dtype=float)
+    severity = np.interp(
+        values,
+        np.array([float(q) for _, q in body]),
+        np.array([float(p) for p, _ in body]),
+    )
+
+    head_tail_probability = 100.0 - TAIL_ANCHOR_PERCENTILE
+    base = head_tail_probability / (100.0 - TAIL_RATE_PERCENTILE)
+    above = values > anchor
+    severity[above] = 100.0 - head_tail_probability * np.power(base, -(values[above] - anchor) / (rate - anchor))
+    return severity
 
 
 def compute_gated_shap_contributions(
@@ -123,17 +166,17 @@ def compute_gated_shap_contributions(
     """
     num_rows = len(feature_matrix)
     if not quantile_points or threshold is None:
-        shap_values, valid_indices = compute_shap_values(model_local, feature_matrix, engineered_feature_cols)
-        return list(format_shap_contributions(shap_values, valid_indices, num_rows, engineered_feature_cols))
+        attribution, valid_indices = compute_row_attributions(model_local, feature_matrix, engineered_feature_cols)
+        return list(format_shap_contributions(attribution, valid_indices, num_rows, engineered_feature_cols))
 
     severity = severity_from_scores(np.asarray(scores, dtype=float), quantile_points)
     anomalous_positions = np.flatnonzero(severity >= (float(threshold) - _SEVERITY_GATE_EPSILON))
     contributions: list[dict[str, float | None] | None] = [None] * num_rows
     if anomalous_positions.size:
         subset = feature_matrix.iloc[anomalous_positions]
-        shap_values, valid_indices = compute_shap_values(model_local, subset, engineered_feature_cols)
+        attribution, valid_indices = compute_row_attributions(model_local, subset, engineered_feature_cols)
         subset_contributions = format_shap_contributions(
-            shap_values, valid_indices, len(subset), engineered_feature_cols
+            attribution, valid_indices, len(subset), engineered_feature_cols
         )
         for position, contribution in zip(anomalous_positions.tolist(), subset_contributions):
             contributions[position] = contribution
@@ -192,10 +235,14 @@ def compute_contributions_for_matrix(
     """Compute normalized SHAP contributions for a feature matrix."""
     # If model is a Pipeline (due to feature scaling), extract components
     # SHAP's TreeExplainer only supports tree models, not pipelines
+    # A Pipeline no longer necessarily contains a scaler: DQX fits the forest without one, since an
+    # affine per-feature transform cannot change axis-parallel splits. Models trained before that
+    # still carry a RobustScaler, so the step is looked up rather than assumed -- indexing
+    # named_steps["scaler"] directly would raise KeyError on anything trained by this version.
     if isinstance(model_local, Pipeline):
-        scaler = model_local.named_steps["scaler"]
+        scaler = model_local.named_steps.get("scaler")
         tree_model = model_local.named_steps["model"]
-        needs_scaling = True
+        needs_scaling = scaler is not None
     else:
         scaler = None
         tree_model = model_local

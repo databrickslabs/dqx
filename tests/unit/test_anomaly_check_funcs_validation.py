@@ -15,7 +15,7 @@ from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
     compute_config_hash,
 )
@@ -231,7 +231,7 @@ def test_resolve_scoring_strategy_returns_strategy_for_isolation_forest():
 
 
 def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
-    """When get_active_model returns None and segmented fallback returns None, InvalidParameterError is raised."""
+    """When get_active_model returns None, InvalidParameterError is raised."""
     mock_spark = create_autospec(SparkSession, instance=True)
     mock_df = create_autospec(DataFrame, instance=True)
     mock_df.sparkSession = mock_spark
@@ -241,17 +241,14 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
     registry_table = "catalog.schema.registry"
     model_name = "catalog.schema.my_model"
 
-    # Minimal record so discovery (fetch_model_columns_and_segments) succeeds.
+    # Minimal record so discovery (fetch_model_columns) succeeds.
     record = create_autospec(AnomalyModelRecord, instance=True)
     record.training = create_autospec(TrainingMetadata, instance=True)
     record.training.columns = ["a", "b"]
-    record.segmentation = create_autospec(SegmentationConfig, instance=True)
-    record.segmentation.segment_by = None  # global model for discovery
 
     mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
     # Discovery calls get_active_model once -> return record; orchestrator calls it -> None.
     mock_registry.get_active_model.side_effect = [record, None]
-    mock_registry.get_all_segment_models.return_value = []  # fallback returns None
     with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
         with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
             mock_cls_disc.return_value = mock_registry
@@ -267,70 +264,6 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
     assert model_name in str(exc_info.value)
     assert registry_table in str(exc_info.value)
     assert "Train first" in str(exc_info.value)
-
-
-def test_load_segment_models_raises_when_no_segments():
-    """Loading segment models raises when get_all_segment_models returns empty on second call."""
-    registry_table = "catalog.schema.registry"
-    model_name = "catalog.schema.my_model"
-    mock_spark = create_autospec(SparkSession, instance=True)
-    mock_df = create_autospec(DataFrame, instance=True)
-    mock_df.sparkSession = mock_spark
-    mock_df.withColumn.return_value = mock_df
-    mock_df.columns = ["a", "b"]
-
-    segment = create_autospec(AnomalyModelRecord, instance=True)
-    segment.identity = create_autospec(ModelIdentity, instance=True)
-    segment.identity.model_name = model_name
-    segment.identity.algorithm = "IsolationForestV1"
-    segment.training = create_autospec(TrainingMetadata, instance=True)
-    segment.training.columns = ["a", "b"]
-    segment.training.training_time = datetime.min
-    segment.segmentation = create_autospec(SegmentationConfig, instance=True)
-    segment.segmentation.segment_by = ["region"]
-
-    # Discovery and orchestrator both create a registry; patch both so the same mock is used.
-    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-    mock_registry.get_active_model.return_value = None
-    mock_registry.get_all_segment_models.side_effect = [[segment], []]
-    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
-        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
-            mock_cls_disc.return_value = mock_registry
-            mock_cls_orch.return_value = mock_registry
-
-            _, apply_fn, _ = has_no_row_anomalies(
-                model_name=model_name,
-                registry_table=registry_table,
-            )
-            with pytest.raises(InvalidParameterError) as exc_info:
-                apply_fn(mock_df)
-
-    assert "No segment models found for base model" in str(exc_info.value)
-    assert model_name in str(exc_info.value)
-    assert "Train segmented models first" in str(exc_info.value)
-
-
-def test_score_segmented_raises_when_no_segments():
-    """Scoring strategy raises when no segment models are passed (all_segments empty)."""
-    mock_df = create_autospec(DataFrame, instance=True)
-    registry_table = "catalog.schema.registry"
-    model_name = "catalog.schema.my_model"
-    config = ScoringConfig(
-        columns=["a", "b"],
-        model_name=model_name,
-        registry_table=registry_table,
-        threshold=95.0,
-        merge_columns=[],
-    )
-    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-
-    strategy = resolve_scoring_strategy("IsolationForestV1")
-    with pytest.raises(InvalidParameterError) as exc_info:
-        strategy.score_segmented(mock_df, config, mock_registry, all_segments=[])
-
-    assert "No segment models found for base model" in str(exc_info.value)
-    assert model_name in str(exc_info.value)
-    assert "Train segmented models first" in str(exc_info.value)
 
 
 def test_extract_quantile_points_raises_when_score_quantiles_missing():
@@ -387,13 +320,11 @@ def test_apply_fn_raises_when_global_model_has_no_feature_metadata():
     record.training.columns = columns
     record.training.training_time = datetime(2024, 1, 1)
     record.features = FeatureEngineering(feature_metadata=None)
-    record.segmentation = create_autospec(SegmentationConfig, instance=True)
-    record.segmentation.segment_by = None
-    record.segmentation.config_hash = config_hash
+    record.grouping = create_autospec(GroupingConfig, instance=True)
+    record.grouping.config_hash = config_hash
 
     mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
     mock_registry.get_active_model.return_value = record
-    mock_registry.get_all_segment_models.return_value = []
 
     with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
         with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
@@ -409,43 +340,3 @@ def test_apply_fn_raises_when_global_model_has_no_feature_metadata():
 
     assert "missing feature_metadata" in str(exc_info.value)
     assert model_name in str(exc_info.value)
-
-
-def test_apply_fn_raises_when_segment_model_has_no_segment_by():
-    """When segment fallback returns a segment with segment_by None, apply_fn raises InvalidParameterError."""
-    mock_spark = create_autospec(SparkSession, instance=True)
-    mock_df = create_autospec(DataFrame, instance=True)
-    mock_df.sparkSession = mock_spark
-    mock_df.withColumn.return_value = mock_df
-    mock_df.columns = ["a", "b"]
-
-    registry_table = "catalog.schema.registry"
-    model_name = "catalog.schema.my_model"
-
-    segment = create_autospec(AnomalyModelRecord, instance=True)
-    segment.identity = create_autospec(ModelIdentity, instance=True)
-    segment.identity.model_name = model_name
-    segment.identity.algorithm = "IsolationForestV1"
-    segment.training = create_autospec(TrainingMetadata, instance=True)
-    segment.training.columns = ["a", "b"]
-    segment.training.training_time = datetime.min
-    segment.segmentation = create_autospec(SegmentationConfig, instance=True)
-    segment.segmentation.segment_by = None
-
-    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-    mock_registry.get_active_model.return_value = None
-    mock_registry.get_all_segment_models.return_value = [segment]
-
-    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
-        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
-            mock_cls_disc.return_value = mock_registry
-            mock_cls_orch.return_value = mock_registry
-
-            _, apply_fn, _ = has_no_row_anomalies(
-                model_name=model_name,
-                registry_table=registry_table,
-            )
-            with pytest.raises(InvalidParameterError) as exc_info:
-                apply_fn(mock_df)
-
-    assert "Segment model must have segment_by" in str(exc_info.value)

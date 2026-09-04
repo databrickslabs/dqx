@@ -702,6 +702,194 @@ button {
 .bv-iso__crowd { display: flex; flex-wrap: wrap; gap: 0.2rem; justify-content: center; font-size: 1.5rem; }
 .bv-iso__vs { font-size: 1.25rem; color: #a8a29e; }
 
+/* ── Baseline conditioning (`baseline_by`) ───────────────────────── */
+.bv-baseline { margin-top: 0.75rem; }
+.bv-baseline__intro { font-size: 0.9rem; color: #44403c; margin-bottom: 0.6rem; text-align: center; }
+.bv-baseline__groups {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.bv-baseline__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.5rem;
+  min-width: 8rem;
+  /* Transition only the properties the active cycle changes, so the border colour set by the
+     --odd / --normal modifiers is not animated on first paint. */
+  transition: transform 0.4s ease, box-shadow 0.4s ease;
+}
+.bv-baseline__card--normal { background: rgba(220, 252, 231, 0.8); border: 2px solid rgba(74, 222, 128, 0.5); }
+.bv-baseline__card--odd    { background: rgba(254, 243, 199, 0.8); border: 2px solid rgba(251, 191, 36, 0.6); }
+.bv-baseline__card--active { transform: translateY(-3px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+.bv-baseline__emoji { line-height: 1.2; }
+.bv-baseline__name { font-size: 0.85rem; color: #292524; }
+.bv-baseline__range { font-size: 0.72rem; color: #57534e; }
+.bv-baseline__verdict { font-size: 0.75rem; font-weight: 600; margin-top: 0.15rem; }
+.bv-baseline__card--normal .bv-baseline__verdict { color: #166534; }
+.bv-baseline__card--odd .bv-baseline__verdict { color: #92400e; }
+.bv-baseline__whole {
+  margin-top: 0.7rem;
+  font-size: 0.8rem;
+  color: #57534e;
+  text-align: center;
+}
+
+/* ── Correlation break: the inspection line (`profile="timeseries"`) ─ */
+.bv-line { position: relative; height: 10.6rem; margin: 0.75rem 0.25rem 0; overflow: hidden; }
+
+/* One pill carries the verdict. An earlier multi-row readout grew until it was more complicated than the
+   idea it was explaining, and the argument ended up being read rather than seen. */
+.bv-line__badge {
+  position: absolute;
+  left: 50%;
+  top: 0.35rem;
+  transform: translateX(-50%);
+  z-index: 6;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #44403c;
+  background: #fff;
+  border: 1px solid #d6d3d1;
+  border-radius: 999px;
+  padding: 0.22rem 0.6rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+.bv-line__badge b { color: #15803d; }
+.bv-line__badge--fail { border-color: #ef4444; background: #fef2f2; color: #b91c1c; }
+.bv-line__badge--fail b { color: #b91c1c; }
+
+/* the scanner the fruit passes through */
+.bv-line__gantry {
+  position: absolute;
+  left: 50%;
+  top: 2.35rem;
+  transform: translateX(-50%);
+  width: 6rem;
+  height: 3.5rem;
+  z-index: 4;
+  border: 3px solid #78716c;
+  border-top: 0;
+  border-radius: 0 0 0.4rem 0.4rem;
+  background: linear-gradient(180deg, rgba(120, 113, 108, 0.05), rgba(120, 113, 108, 0.13));
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.bv-line__gantry--fail { border-color: #ef4444; background: rgba(239, 68, 68, 0.09); }
+.bv-line__scan {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, #fbbf24, transparent);
+  animation: bvLineScan 1.4s ease-in-out infinite;
+}
+.bv-line__gantry--fail .bv-line__scan { background: linear-gradient(90deg, transparent, #ef4444, transparent); }
+@keyframes bvLineScan { 0%, 100% { top: 10%; } 50% { top: 80%; } }
+
+.bv-line__chute {
+  position: absolute;
+  left: 50%;
+  top: 7.15rem;
+  transform: translateX(-50%);
+  width: 6rem;
+  height: 2.2rem;
+  z-index: 1;
+  border: 2px dashed #d6d3d1;
+  border-top: 0;
+  border-radius: 0 0 0.45rem 0.45rem;
+  transition: border-color 0.2s ease;
+}
+.bv-line__chute--on { border-color: #ef4444; }
+
+/* the fruit rides here; the animation loop writes transform directly onto these */
+.bv-line__track { position: absolute; left: 0; right: 0; top: 3.85rem; height: 2rem; z-index: 3; }
+.bv-line__fruit { position: absolute; left: 0; bottom: 0; line-height: 1; will-change: transform; }
+
+/* belt assembly — slats, lit top lip, spinning rollers, legs, floor */
+.bv-line__belt {
+  position: absolute;
+  left: -1%;
+  right: -1%;
+  top: 5.85rem;
+  height: 1.3rem;
+  z-index: 2;
+  background: #57534e;
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.18);
+}
+.bv-line__slats {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, #3f3b38 0 3px, #57534e 3px 15px);
+  animation: bvLineSlats 0.5s linear infinite;
+}
+@keyframes bvLineSlats { to { transform: translateX(-15px); } }
+.bv-line__lip { position: absolute; left: 0; right: 0; height: 3px; }
+.bv-line__lip--top { top: 0; background: linear-gradient(180deg, #e7e5e4, #a8a29e); }
+.bv-line__lip--bottom { bottom: 0; background: #78716c; }
+
+.bv-line__rollers {
+  position: absolute;
+  left: -1%;
+  right: -1%;
+  top: 7rem;
+  display: flex;
+  justify-content: space-between;
+  z-index: 1;
+}
+.bv-line__roller {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, #d6d3d1 0 25%, #8b8684 25% 50%, #d6d3d1 50% 75%, #8b8684 75%);
+  box-shadow: inset 0 0 0 2px #6b6664, 0 1px 2px rgba(0, 0, 0, 0.25);
+  animation: bvLineSpin 0.5s linear infinite;
+}
+@keyframes bvLineSpin { to { transform: rotate(360deg); } }
+
+.bv-line__legs { position: absolute; left: 8%; right: 8%; top: 7.9rem; height: 1.6rem; z-index: 0; }
+.bv-line__leg {
+  position: absolute;
+  width: 0.36rem;
+  height: 100%;
+  border-radius: 1px;
+  background: linear-gradient(90deg, #d6d3d1, #a8a29e);
+}
+.bv-line__floor {
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 9.45rem;
+  height: 3px;
+  background: #d6d3d1;
+  border-radius: 2px;
+}
+
+/* The whole line halts while a failure is on screen, so the stop is itself the signal. */
+.bv-line--hold .bv-line__slats,
+.bv-line--hold .bv-line__roller { animation-play-state: paused; }
+
+.bv-line__caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.35rem;
+  margin: 0;
+  text-align: center;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #44403c;
+}
+
 /* ── SHAP carousel ────────────────────────────────────────────────── */
 .bv-shap { margin-top: 0.75rem; width: 100%; }
 .bv-shap__subtitle { font-size: 0.8rem; color: #78716c; text-align: center; margin: 0 0 0.5rem; }

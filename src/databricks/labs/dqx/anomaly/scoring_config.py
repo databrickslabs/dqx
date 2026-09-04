@@ -19,6 +19,12 @@ SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
     (100.0, "p100"),
 ]
 
+#: The two percentiles the severity tail is anchored to. Both are keys in SEVERITY_QUANTILE_KEYS above, so
+#: the tail stores nothing new and applies to models trained by any earlier release. Severity is exact at
+#: both, which is what keeps the default threshold of 95 a fixed point.
+TAIL_ANCHOR_PERCENTILE = 95.0
+TAIL_RATE_PERCENTILE = 99.0
+
 
 _DEFAULT_DRIFT_THRESHOLD_VALUE = 3.0
 
@@ -52,19 +58,26 @@ class ScoringConfig:
     drift_threshold: float | None = None
     enable_contributions: bool = True
     enable_confidence_std: bool = False
-    segment_by: list[str] | None = None
     driver_only: bool = False
     enable_ai_explanation: bool = True
     llm_model_config: LLMModelConfig | None = None
     redact_columns: list[str] = field(default_factory=list)
     # Global upper bound on the number of LLM calls per scoring run when
-    # *enable_ai_explanation* is True. Anomalous rows are bucketed by (segment, pattern)
-    # and one LLM call per bucket is made; *max_groups* caps the number of buckets that
-    # actually receive an explanation, ranked by ``group_size * group_avg_severity``.
-    # For segmented scoring (*segment_by* set), the budget is split equally across
-    # eligible segments — total LLM calls stay <= *max_groups* regardless of segment
-    # count.
+    # *enable_ai_explanation* is True. Anomalous rows are bucketed by their contribution pattern
+    # and one LLM call per bucket is made; *max_groups* caps the number of buckets that actually
+    # receive an explanation, ranked by ``group_size * group_avg_severity``.
     max_groups: int = 500
+    # Whether a row whose group was absent from training counts as a violation. Such a row gets a
+    # null score and severity because neither encoder can represent an unseen category honestly,
+    # so `severity >= threshold` is null and the verdict has to be chosen rather than computed.
+    #
+    # Deliberately not exposed on has_no_row_anomalies. "Is this group value one I recognise?" is a
+    # set-membership question, and DQX already has foreign_key / is_in_list for exactly that — a
+    # flag here would duplicate a better-suited check while pushing the anomaly check past the
+    # argument count the project holds itself to. Kept as an internal seam so the behaviour is
+    # testable and reachable programmatically; False keeps "could not judge" distinct from
+    # "is anomalous", and is_new_baseline reports the fact either way.
+    flag_unseen_baseline_as_violation: bool = False
     output_columns: ScoringOutputColumns = field(default_factory=ScoringOutputColumns)
 
     @property

@@ -160,3 +160,47 @@ def test_anomaly_workflow_succeeds_with_valid_config(monkeypatch):
     assert train_called["called"] is True
     assert train_called["kwargs"]["model_name"] == "catalog.schema.my_model"
     assert train_called["kwargs"]["registry_table"] == "catalog.schema.my_registry"
+    # Unset in the run config, so the detector default is resolved downstream rather than here.
+    assert train_called["kwargs"]["profile"] is None
+
+
+def test_anomaly_workflow_passes_the_configured_profile(monkeypatch):
+    """A profile named in the run config reaches ``train()``.
+
+    Scheduled retraining is the whole point of the workflow, so a detector choice that cannot be
+    expressed in a run config is not really a configurable option. This is the assertion that the
+    parameter is genuinely reachable from YAML and not merely from Python.
+    """
+    train_called: dict = {"kwargs": {}}
+
+    class FakeEngine:
+        def __init__(self, _ws, _spark):
+            pass
+
+        def train(self, **kwargs):
+            train_called["kwargs"] = kwargs
+            return "catalog.schema.my_model"
+
+    monkeypatch.setattr("databricks.labs.dqx.anomaly.anomaly_engine.AnomalyEngine", FakeEngine)
+    monkeypatch.setattr(anomaly_workflow, "read_input_data", lambda _spark, _input_config: Mock())
+
+    run_config = RunConfig(
+        name="Fleet Telemetry",
+        input_config=InputConfig(location="catalog.schema.telemetry"),
+        anomaly_config=AnomalyConfig(
+            model_name="catalog.schema.my_model",
+            registry_table="catalog.schema.my_registry",
+            baseline_by=["machine_id"],
+            profile="timeseries",
+            baseline_over_time="reading_ts",
+        ),
+    )
+    ctx = SimpleNamespace(run_config=run_config, spark=Mock(), workspace_client=Mock())
+
+    anomaly_workflow.AnomalyTrainerWorkflow().train_model(ctx)
+
+    assert train_called["kwargs"]["profile"] == "timeseries"
+    assert train_called["kwargs"]["baseline_by"] == ["machine_id"]
+    # All three comparison bases, because a scheduled retrain that silently drops one produces a different
+    # model from the YAML it was given, and nothing downstream would report the discrepancy.
+    assert train_called["kwargs"]["baseline_over_time"] == "reading_ts"

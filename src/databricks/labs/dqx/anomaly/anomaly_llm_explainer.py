@@ -1,10 +1,10 @@
 """LLM-based group explanation for row anomaly detection.
 
 The algorithm is group-based: anomalous rows are grouped by a deterministic
-(segment, pattern) key — pattern being the sorted top-2 contributing features —
-and the LLM is invoked once per group. Every row in a
-group shares the same narrative/business_impact/action; group_size and
-group_avg_severity signal that the explanation describes a pattern, not a row.
+pattern key — the sorted top-2 contributing features — and the LLM is invoked
+once per group. Every row in a group shares the same
+narrative/business_impact/action; group_size and group_avg_severity signal that
+the explanation describes a pattern, not a row.
 
 The LLM call runs entirely inside Spark via the SQL ``ai_query`` function against a
 Databricks Model Serving endpoint — no driver collect of LLM output, scales with the
@@ -23,6 +23,8 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
+from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_label
+from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -37,13 +39,53 @@ _PROMPT_INSTRUCTIONS = (
     "not a specific row.\n"
     "Be direct and concrete. Avoid hedging phrases like 'The data shows', 'It appears that', or "
     "'might indicate'. Do not restate the input field names back to the user, and do not invent "
-    "feature names, values, or segments that are not present in the input."
+    "feature names, values, or baseline groups that are not present in the input."
 )
+# What a contribution means, per detector family. Keyed by the ``ModelIdentity.algorithm`` prefix that is
+# persisted in the registry, so a model trained by any version resolves as long as that string is stable.
+# The fallback is the value-based reading, which is what every algorithm before the correlation-aware one
+# meant and is the safer default: it claims less about relationships than the other way round would.
+_ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
+    (
+        "Mahalanobis",
+        "relationships between metrics. A high contribution means this metric departed from its usual "
+        "relationship with the others -- its own value may sit well inside its normal range. Describe the "
+        "pattern as a broken relationship between metrics, and do NOT call an individual metric abnormal, "
+        "high, low, or deviating unless the contributions are concentrated in a single metric.",
+    ),
+    (
+        "IsolationForest",
+        "individual feature values. A high contribution means this feature's own value was unusual for the "
+        "rows it was compared against.",
+    ),
+)
+_DEFAULT_ATTRIBUTION_SEMANTICS = _ATTRIBUTION_SEMANTICS[-1][1]
+
+
+def attribution_semantics(algorithm: str | None) -> str:
+    """What a high contribution means for *algorithm*, as a sentence for the prompt.
+
+    Falls back to the value-based reading when the algorithm is unknown or absent, which is both the
+    historical behaviour and the more conservative claim.
+    """
+    for prefix, meaning in _ATTRIBUTION_SEMANTICS:
+        if algorithm and algorithm.startswith(prefix):
+            return meaning
+    return _DEFAULT_ATTRIBUTION_SEMANTICS
+
+
 _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
+        "attribution_basis",
+        "What the feature_contributions below are measuring. Read them accordingly -- this decides "
+        "whether the pattern is 'these values were extreme' or 'these metrics stopped agreeing'.",
+    ),
+    (
         "feature_contributions",
-        "Mean SHAP contributions across the group, e.g. 'amount (82%), quantity (11%), "
-        "discount (5%)'. These are aggregated relative importances — not raw data values.",
+        "Mean contributions across the group, already named for a reader, e.g. 'amount vs its "
+        "group baseline (82%), quantity (11%), discount (5%)'. A phrase like 'X vs its group "
+        "baseline' means X was unusual relative to its own baseline group, not in absolute terms. "
+        "These are aggregated relative importances — not raw data values.",
     ),
     ("group_size", "Number of rows in this group, e.g. '312 rows'."),
     ("severity_range", "Severity percentile range across the group, e.g. 'mean 97.4, min 95.1, max 99.8'."),
@@ -53,9 +95,10 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "for single-model scoring.",
     ),
     (
-        "segment",
-        "Data segment this group belongs to, e.g. 'region=US, product=electronics'. Empty string "
-        "if no segmentation was used.",
+        "baseline_grouping",
+        "The columns whose values define each row's baseline group, e.g. 'region' or "
+        "'region, product'. Anomalies are judged relative to the row's own group baseline; "
+        "'none' when the model is not grouped.",
     ),
     ("threshold", "The severity percentile threshold configured by the user (0–100)."),
     (
@@ -86,23 +129,23 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 # smaller serving models. Kept short so the prompt stays well within token budgets.
 _PROMPT_EXAMPLES = (
     "Example (no drift):\n"
-    "feature_contributions: amount (61%), quantity (22%)\n"
+    "feature_contributions: amount vs its group baseline (61%), quantity (22%)\n"
     "group_size: 312 rows\n"
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
     "confidence: high\n"
-    "segment: region=US\n"
+    "baseline_grouping: region\n"
     "threshold: 95.0\n"
     "drift_summary: none\n"
-    'Response: {"narrative":"312 rows are driven mainly by amount (61%) with quantity secondary '
-    '(22%); values sit far above the US-segment norm.","business_impact":"Inflated amount fields '
-    'overstate revenue if these rows are processed unchanged.","action":"Reconcile amount against '
-    'source orders for this US group."}\n\n'
+    'Response: {"narrative":"312 rows are driven mainly by amount, which sits far above the norm '
+    'for its own region (61%), with quantity secondary (22%).","business_impact":"Inflated amount '
+    'fields overstate revenue if these rows are processed unchanged.","action":"Reconcile amount '
+    'against source orders within each affected region."}\n\n'
     "Example (with drift):\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
     "group_size: 88 rows\n"
     "severity_range: mean 98.9, min 97.0, max 99.9\n"
     "confidence: mixed\n"
-    "segment: \n"
+    "baseline_grouping: none\n"
     "threshold: 95.0\n"
     "drift_summary: drift detected: latency_ms=4.12\n"
     'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which has also drifted from '
@@ -117,7 +160,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TOP_N = 5
-# Default working-column name for the (segment, pattern) group key. Production scoring overrides
+# Default working-column name for the pattern group key. Production scoring overrides
 # this with a UUID-suffixed name via *ScoringConfig.pattern_col* (threaded through
 # *ExplanationContext.pattern_col*) so it can never collide with a user column; the constant is
 # only the fallback for direct *ExplanationContext* construction.
@@ -193,13 +236,28 @@ class ExplanationContext:
     # the absolute cap on LLM calls for that one call.
     max_groups: int = 500
     redact_columns: tuple[str, ...] = ()
-    # Internal working-column name for the (segment, pattern) group key. Defaults to a fixed
+    # Internal working-column name for the (baseline group, pattern) group key. Defaults to a fixed
     # name for direct construction; production scoring passes a UUID-suffixed name so it can
     # never collide with a user-supplied column.
     pattern_col: str = _DEFAULT_PATTERN_COL
+    # The model's feature metadata, threaded through so redaction can drop every feature derived
+    # from a redacted column (not just the column itself) and so contribution keys can be rendered
+    # as human labels. Optional: a caller that builds the context directly without it falls back to
+    # best-effort redaction of the baseline-relative feature only, and to raw engineered keys.
+    feature_metadata: SparkFeatureMetadata | None = None
+    # The trained model's algorithm, from ``ModelIdentity.algorithm``. Decides how the prompt tells the
+    # model to read a contribution -- as an extreme value or as a broken relationship between metrics.
+    # Optional, and absent means the value-based reading, which is what every algorithm before the
+    # correlation-aware one meant.
+    algorithm: str | None = None
 
     @classmethod
-    def from_scoring_config(cls, config: "ScoringConfig") -> "ExplanationContext":
+    def from_scoring_config(
+        cls,
+        config: "ScoringConfig",
+        feature_metadata: SparkFeatureMetadata | None = None,
+        algorithm: str | None = None,
+    ) -> "ExplanationContext":
         return cls(
             severity_col=config.severity_col,
             contributions_col=config.contributions_col,
@@ -211,7 +269,32 @@ class ExplanationContext:
             max_groups=config.max_groups,
             redact_columns=tuple(config.redact_columns or ()),
             pattern_col=config.pattern_col,
+            feature_metadata=feature_metadata,
+            algorithm=algorithm,
         )
+
+
+def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadata | None = None) -> frozenset[str]:
+    """Columns to redact, plus every engineered feature derived from them.
+
+    Redaction matches contribution keys exactly, and contribution keys are *engineered* feature
+    names. So redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of
+    the same column -- and redacting ``country`` must stop ``country_US``, ``country_DE``,
+    ``country_freq`` and ``country_is_null``. A caller naming a column sensitive means every feature
+    derived from it is sensitive too.
+
+    With *metadata*, the derived features are enumerated exactly via *engineered_from*, which closes
+    the one-hot and frequency gap that the source column alone could not. Without it (a caller who
+    built the context directly and did not thread metadata through), only the baseline-relative
+    feature is reconstructable from the column name, so that alone is covered -- best effort.
+    """
+    expanded = set(redact_columns)
+    if metadata is not None:
+        for column in redact_columns:
+            expanded.update(engineered_from(column, metadata))
+    else:
+        expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
+    return frozenset(expanded)
 
 
 def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
@@ -240,17 +323,35 @@ def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> C
     return F.expr(sql)
 
 
-def _format_segment(segment_values: dict[str, str] | None, redact_set: frozenset[str]) -> str:
-    """Format segment values as 'k1=v1, k2=v2' or empty string.
+def _baseline_grouping_str(metadata: SparkFeatureMetadata | None) -> str:
+    """The baseline grouping columns as a prompt string, e.g. 'region, product' or 'none'.
 
-    Segment ``key=value`` pairs are sent verbatim to the LLM prompt, so any key listed in
-    *redact_set* is emitted as ``key=<redacted>`` to keep sensitive segmentation values out of
-    the prompt (the value, not just the contribution, can be PII).
+    A per-run constant: the anomalies in this run are all judged against a group baseline defined by
+    these columns (or against a global baseline when the model is not grouped). The column *names*
+    are structural, not row values, so unlike the old segment values they carry no PII and need no
+    redaction.
     """
-    if not segment_values:
-        return ""
-    parts = [f"{k}=<redacted>" if k in redact_set else f"{k}={v}" for k, v in segment_values.items()]
-    return ", ".join(parts)
+    if metadata is None or not metadata.baseline_by:
+        return "none"
+    return ", ".join(metadata.baseline_by)
+
+
+def _human_labels(metadata: SparkFeatureMetadata | None) -> dict[str, str]:
+    """Engineered-name -> human-label map for the model's features, omitting identity labels.
+
+    Used to render contribution keys for a reader (``amount_rel_baseline`` ->
+    ``amount vs its group baseline``). Only entries whose label differs from the raw name are
+    included, so the SQL lookup stays small; anything not in the map falls back to its raw name.
+    Empty when no metadata was threaded through, in which case raw engineered names are shown.
+    """
+    if metadata is None:
+        return {}
+    labels: dict[str, str] = {}
+    for name in metadata.engineered_feature_names:
+        label = human_label(name, metadata)
+        if label != name:
+            labels[name] = label
+    return labels
 
 
 def _build_empty_explanation_column() -> Column:
@@ -318,12 +419,19 @@ def _resolve_ai_query_endpoint(model_name: str) -> str:
     return endpoint
 
 
-def _format_contributions_sql(top_n: int) -> Column:
+def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) -> Column:
     """Spark expression producing 'feat_a (82%), feat_b (11%)' from a ``mean_contributions`` map.
 
     Mirrors *format_contributions_map* but stays inside Spark so per-group prompts can be
     assembled without a driver-side loop. Null/empty maps yield 'unknown'; entries are sorted by
     absolute value descending and percentages are normalised against the L1 sum of |value|.
+
+    *labels* maps an engineered feature name to its human label; when supplied, each key is
+    rendered as its label ('amount_rel_baseline' -> 'amount vs its group baseline'), falling back
+    to the raw key for anything unmapped. The map keys and values are user-derived (column names),
+    so both are escaped before interpolation. Rendering happens here, after redaction has already
+    dropped sensitive keys upstream in *_aggregate_groups_spark*, so labelling never re-exposes a
+    redacted feature.
     """
     entries = "filter(map_entries(`mean_contributions`), e -> e.value is not null)"
     sorted_entries = (
@@ -333,8 +441,13 @@ def _format_contributions_sql(top_n: int) -> Column:
     )
     top = f"slice({sorted_entries}, 1, {int(top_n)})"
     abs_sum = f"aggregate({sorted_entries}, 0.0D, (acc, e) -> acc + abs(e.value))"
+    if labels:
+        pairs = ", ".join(f"'{_sql_string_literal(k)}', '{_sql_string_literal(v)}'" for k, v in labels.items())
+        key_expr = f"coalesce(element_at(map({pairs}), e.key), e.key)"
+    else:
+        key_expr = "e.key"
     formatted = (
-        f"transform({top}, e -> concat(e.key, ' (', "
+        f"transform({top}, e -> concat({key_expr}, ' (', "
         f"cast(round((abs(e.value) / case when {abs_sum} = 0 then 1 else {abs_sum} end) * 100) as int), '%)'))"
     )
     sql = (
@@ -346,7 +459,6 @@ def _format_contributions_sql(top_n: int) -> Column:
 
 def _build_ai_query_prompt_column(
     ctx: ExplanationContext,
-    segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
 ) -> Column:
@@ -356,6 +468,7 @@ def _build_ai_query_prompt_column(
     constants for the whole call. The shared header (*_AI_QUERY_PROMPT_HEADER*) holds the
     instructions and field semantics.
     """
+    baseline_grouping = _baseline_grouping_str(ctx.feature_metadata)
     confidence_expr = (
         F.when((F.col("mean_std").isNull()) | F.lit(not is_ensemble), F.lit("n/a"))
         .when(F.col("mean_std") < F.lit(_CONFIDENCE_HIGH_BELOW), F.lit("high"))
@@ -371,6 +484,9 @@ def _build_ai_query_prompt_column(
     group_size_expr = F.concat(F.col("group_size").cast(StringType()), F.lit(" rows"))
     return F.concat(
         F.lit(_AI_QUERY_PROMPT_HEADER),
+        F.lit("attribution_basis: "),
+        F.lit(attribution_semantics(ctx.algorithm)),
+        F.lit("\n"),
         F.lit("feature_contributions: "),
         F.col("feature_contributions"),
         F.lit("\n"),
@@ -383,8 +499,8 @@ def _build_ai_query_prompt_column(
         F.lit("confidence: "),
         confidence_expr,
         F.lit("\n"),
-        F.lit("segment: "),
-        F.lit(segment_str),
+        F.lit("baseline_grouping: "),
+        F.lit(baseline_grouping),
         F.lit("\n"),
         F.lit("threshold: "),
         F.lit(str(ctx.threshold)),
@@ -474,7 +590,6 @@ def _aggregate_groups_spark(
 def _call_llm_for_groups_ai_query(
     kept_groups_sdf: DataFrame,
     ctx: ExplanationContext,
-    segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
 ) -> DataFrame:
@@ -488,12 +603,14 @@ def _call_llm_for_groups_ai_query(
     llm_cfg = ctx.llm_model_config or LLMModelConfig()
     endpoint = _resolve_ai_query_endpoint(llm_cfg.model_name)
     pattern_col = ctx.pattern_col
+    # feature_contributions is rendered with human labels (empty map -> raw keys); it feeds both the
+    # prompt and the struct's top_drivers, so a reader sees the same human phrasing the LLM did.
     enriched = kept_groups_sdf.withColumn(
         "feature_contributions",
-        _format_contributions_sql(_TOP_N),
+        _format_contributions_sql(_TOP_N, _human_labels(ctx.feature_metadata)),
     ).withColumn(
         "__prompt",
-        _build_ai_query_prompt_column(ctx, segment_str, is_ensemble, drift_summary),
+        _build_ai_query_prompt_column(ctx, is_ensemble, drift_summary),
     )
 
     # ai_query is parameterised through the SQL string. *endpoint* is matched against the strict
@@ -548,6 +665,9 @@ def _call_llm_for_groups_ai_query(
         _sanitize("narrative").alias("narrative"),
         _sanitize("business_impact").alias("business_impact"),
         _sanitize("action").alias("action"),
+        # Human-labelled drivers carried through for the struct's top_drivers. Built by us from the
+        # contributions map, not the LLM, so it needs no sanitisation.
+        F.col("feature_contributions").alias("top_drivers"),
         F.col("group_size").cast(LongType()).alias("group_size"),
         F.col("group_avg_severity").cast(DoubleType()).alias("group_avg_severity"),
     )
@@ -572,6 +692,7 @@ def _attach_explanation_struct(
                 F.col("narrative").alias("narrative"),
                 F.col("business_impact").alias("business_impact"),
                 F.col(pattern_col).alias("top_features"),
+                F.col("top_drivers").alias("top_drivers"),
                 F.col("action").alias("action"),
                 F.col("group_size").alias("group_size"),
                 F.col("group_avg_severity").alias("group_avg_severity"),
@@ -581,6 +702,7 @@ def _attach_explanation_struct(
         pattern_col,
         "narrative",
         "business_impact",
+        "top_drivers",
         "action",
         "group_size",
         "group_avg_severity",
@@ -634,7 +756,6 @@ def probe_endpoint_reachable(spark: object, llm_model_config: LLMModelConfig | N
 def _add_explanation_column_ai_query(
     df_with_pattern: DataFrame,
     ctx: ExplanationContext,
-    segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
     endpoint_reachable: bool | None = None,
@@ -648,7 +769,7 @@ def _add_explanation_column_ai_query(
     the documented "one call per group per scoring run" cost model. The collected payload is
     small and bounded: at most ``max_groups`` rows, each holding three length-capped text fields.
     """
-    redact_set = frozenset(ctx.redact_columns)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
     kept_sdf, dropped_groups_count, dropped_rows_count, total_groups = _aggregate_groups_spark(
         anomalous,
@@ -677,7 +798,7 @@ def _add_explanation_column_ai_query(
             ctx.pattern_col
         )
     _log_dropped_groups(dropped_groups_count, dropped_rows_count, ctx.max_groups)
-    result_sdf = _call_llm_for_groups_ai_query(kept_sdf, ctx, segment_str, is_ensemble, drift_summary)
+    result_sdf = _call_llm_for_groups_ai_query(kept_sdf, ctx, is_ensemble, drift_summary)
     # Pin the LLM responses: one ai_query execution per scoring run, regardless of how many
     # actions the caller takes on the returned DataFrame afterwards.
     result_rows = result_sdf.collect()
@@ -688,18 +809,17 @@ def _add_explanation_column_ai_query(
 def add_explanation_column(
     df: DataFrame,
     ctx: ExplanationContext,
-    segment_values: dict[str, str] | None,
     is_ensemble: bool,
     drift_summary: str = "none",
     endpoint_reachable: bool | None = None,
 ) -> DataFrame:
     """Add the AI explanation column to df using the group-based algorithm.
 
-    Anomalous rows are bucketed by a deterministic (segment, pattern) key — pattern =
-    sorted top-2 contributing SHAP features. The LLM is called once per group via the Spark SQL
-    ``ai_query`` function against a Databricks Model Serving endpoint, and every row in that group
-    receives the same narrative/business_impact/action, plus the group's size and mean severity.
-    Rows below threshold or in groups exceeding ``ctx.max_groups`` receive a null struct.
+    Anomalous rows are bucketed by a deterministic pattern key — the sorted top-2 contributing SHAP
+    features. The LLM is called once per group via the Spark SQL ``ai_query`` function against a
+    Databricks Model Serving endpoint, and every row in that group receives the same
+    narrative/business_impact/action, plus the group's size and mean severity. Rows below threshold
+    or in groups exceeding ``ctx.max_groups`` receive a null struct.
 
     Preconditions (caller's responsibility):
       - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
@@ -707,20 +827,16 @@ def add_explanation_column(
     Args:
         df: Scored DataFrame to annotate with the explanation column.
         ctx: Explanation inputs (columns, threshold, model, redaction, budget).
-        segment_values: Segment key/value pairs for this run, or None for a global model.
         is_ensemble: Whether the scoring model is an ensemble (drives the confidence label).
         drift_summary: Baseline-drift summary string for the prompt, or "none".
         endpoint_reachable: Pre-computed serving-endpoint reachability. When None (default) the
-            endpoint is probed here with a single 1-token ai_query call. Callers that invoke this
-            repeatedly in one scoring run (e.g. once per segment) should probe once via
-            probe_endpoint_reachable and pass the result to avoid one billable probe per call.
+            endpoint is probed here with a single 1-token ai_query call.
 
     Raises:
       InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
     """
-    redact_set = frozenset(ctx.redact_columns)
-    segment_str = _format_segment(segment_values, redact_set)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(
-        df_with_pattern, ctx, segment_str, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
+        df_with_pattern, ctx, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
     )

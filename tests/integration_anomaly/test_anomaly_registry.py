@@ -5,6 +5,7 @@ import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
@@ -14,12 +15,17 @@ from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRegistry,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
 )
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidParameterError
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
+    create_anomaly_check_rule,
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     score_with_anomaly_check,
@@ -222,7 +228,7 @@ def test_registry_table_schema(
 
     # Verify all expected nested struct columns exist
     registry_df = spark.table(registry_table)
-    expected_top_level_columns = ["identity", "training", "features", "segmentation"]
+    expected_top_level_columns = ["identity", "training", "features", "grouping"]
 
     actual_columns = registry_df.columns
 
@@ -247,9 +253,7 @@ def test_registry_table_schema(
         "temporal_config",
         "column_types",
         "feature_metadata",
-        "segment_by",
-        "segment_values",
-        "is_global_model",
+        "baseline_by",
         "sklearn_version",
         "config_hash",
     ]
@@ -329,16 +333,6 @@ def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry
     assert model is None
 
 
-def test_get_segment_model_returns_none_when_registry_table_does_not_exist(
-    spark: SparkSession, anomaly_registry_prefix
-):
-    """Test that get_segment_model returns None when registry table does not exist."""
-    registry = AnomalyModelRegistry(spark)
-    nonexistent_table = f"{anomaly_registry_prefix}.nonexistent_registry_table"
-    result = registry.get_segment_model(nonexistent_table, "base_model", {"region": "US"})
-    assert result is None
-
-
 def test_nonexistent_model_returns_none(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
 ):
@@ -360,11 +354,11 @@ def test_nonexistent_model_returns_none(
 def test_config_hash_stability():
     """Test that config_hash is stable for same inputs."""
     columns = ["amount", "quantity", "discount"]
-    segment_by = ["region", "category"]
+    baseline_by = ["region", "category"]
 
     # Compute hash multiple times
-    hash1 = compute_config_hash(columns, segment_by)
-    hash2 = compute_config_hash(columns, segment_by)
+    hash1 = compute_config_hash(columns, baseline_by)
+    hash2 = compute_config_hash(columns, baseline_by)
 
     assert hash1 == hash2
     assert len(hash1) == 16  # 16 hex characters
@@ -386,8 +380,8 @@ def test_config_hash_differentiation():
     hash3 = compute_config_hash(["amount", "quantity"], ["region"])
 
     assert hash1 != hash2  # Different columns
-    assert hash1 != hash3  # Different segment_by
-    assert hash2 != hash3  # Different columns and segment_by
+    assert hash1 != hash3  # Different baseline_by
+    assert hash2 != hash3  # Different columns and baseline_by
 
 
 def test_config_hash_stored_during_training(
@@ -407,11 +401,11 @@ def test_config_hash_stored_during_training(
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
 
     assert record is not None
-    assert record["segmentation"]["config_hash"] is not None
+    assert record["grouping"]["config_hash"] is not None
 
     # Verify hash matches expected
     expected_hash = compute_config_hash(columns, None)
-    assert record["segmentation"]["config_hash"] == expected_hash
+    assert record["grouping"]["config_hash"] == expected_hash
 
 
 def test_config_change_warning(
@@ -474,7 +468,7 @@ def test_registry_active_model_and_archiving(
             baseline_stats={"amount": {"mean": 1.0, "std": 0.1}},
         ),
         features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="hash_v1"),
+        grouping=GroupingConfig(config_hash="hash_v1"),
     )
 
     record_v2 = AnomalyModelRecord(
@@ -492,7 +486,7 @@ def test_registry_active_model_and_archiving(
             metrics={"precision": 0.95},
         ),
         features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="hash_v2"),
+        grouping=GroupingConfig(config_hash="hash_v2"),
     )
 
     registry.save_model(record_v1, registry_table)
@@ -533,7 +527,7 @@ def test_save_model_when_table_does_not_exist_creates_table_no_archive(
             training_time=datetime.utcnow(),
         ),
         features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="h"),
+        grouping=GroupingConfig(config_hash="h"),
     )
 
     registry.save_model(record, registry_table)
@@ -543,82 +537,150 @@ def test_save_model_when_table_does_not_exist_creates_table_no_archive(
     assert rows[0]["identity"]["status"] == "active"
 
 
-def test_registry_segment_lookup(spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix):
-    """Test segment model lookup and listing."""
-    unique_id = make_random(8).lower()
-    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+# ============================================================================
+# Migration from the pre-release schema
+# ============================================================================
 
-    registry = AnomalyModelRegistry(spark)
-    base_name = f"{anomaly_registry_prefix}.seg_model_{make_random(4).lower()}"
-    segment_name = f"{base_name}__seg_region=US"
-
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=segment_name,
-            model_uri="models:/seg_model/1",
-            algorithm="isolation_forest",
-            mlflow_run_id="run_seg",
-        ),
-        training=TrainingMetadata(
-            columns=["amount"],
-            hyperparameters={},
-            training_rows=50,
-            training_time=datetime.utcnow(),
-        ),
-        features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(
-            segment_by=["region"],
-            segment_values={"region": "US"},
-            is_global_model=False,
-            config_hash="hash_seg",
-        ),
-    )
-
-    registry.save_model(record, registry_table)
-
-    fetched = registry.get_segment_model(registry_table, base_name, {"region": "US"})
-    assert fetched is not None
-    assert fetched.identity.model_name == segment_name
-
-    all_segments = registry.get_all_segment_models(registry_table, base_name)
-    assert len(all_segments) == 1
+#: The registry schema as it stood before `segment_by` was removed. Reproduced verbatim rather than
+#: derived, because a test of backwards compatibility that builds its "old" table from today's code proves
+#: nothing -- it would keep passing while the compatibility it claims to check rotted away.
+LEGACY_ANOMALY_MODEL_TABLE_SCHEMA = (
+    "identity struct<model_name:string, model_uri:string, algorithm:string, mlflow_run_id:string, status:string>, "
+    "training struct<columns:array<string>, hyperparameters:map<string,string>, training_rows:bigint, "
+    "training_time:timestamp, metrics:map<string,double>, score_quantiles:map<string,double>, "
+    "baseline_stats:map<string,map<string,double>>>, "
+    "features struct<mode:string, column_types:map<string,string>, feature_metadata:string, "
+    "feature_importance:map<string,double>, temporal_config:map<string,string>>, "
+    "segmentation struct<segment_by:array<string>, segment_values:map<string,string>, "
+    "is_global_model:boolean, sklearn_version:string, config_hash:string>"
+)
 
 
-def test_registry_segment_lookup_uses_canonical_order(
-    spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix
+def _write_legacy_registry(spark: SparkSession, table: str, model_name: str, segment_by: list[str]) -> None:
+    """Create a registry table in the pre-release schema, holding one active model."""
+    row = {
+        "identity": {
+            "model_name": model_name,
+            "model_uri": "models:/legacy/1",
+            "algorithm": "IsolationForest",
+            "mlflow_run_id": "legacy-run",
+            "status": "active",
+        },
+        "training": {
+            "columns": ["amount", "quantity"],
+            "hyperparameters": {"num_trees": "200"},
+            "training_rows": 500,
+            "training_time": datetime(2025, 1, 1),
+            "metrics": {"roc_auc": 0.9},
+            "score_quantiles": {"p50": 0.1},
+            "baseline_stats": {},
+        },
+        "features": {
+            "mode": "multi_type",
+            "column_types": {"amount": "numeric"},
+            "feature_metadata": "",
+            "feature_importance": {},
+            "temporal_config": {},
+        },
+        "segmentation": {
+            "segment_by": segment_by,
+            "segment_values": {"region": "eu"},
+            "is_global_model": False,
+            "sklearn_version": "1.5.0",
+            "config_hash": "a-hash-from-before-baseline_by-joined-it",
+        },
+    }
+    spark.createDataFrame([row], schema=LEGACY_ANOMALY_MODEL_TABLE_SCHEMA).write.mode("overwrite").saveAsTable(table)
+
+
+def test_a_pre_release_registry_can_still_be_read(spark: SparkSession, make_schema, make_random):
+    """Reading must not raise, or the caller never reaches the message that tells them what to do.
+
+    A model registered before this release cannot be scored: the configuration hash formula changed, so the
+    recomputed hash always mismatches and scoring raises with instructions to retrain. That error is the
+    useful one. Before this fix the read died first on ``KeyError: 'grouping'``, and the caller saw an
+    internal error instead of the instructions.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    table = f"{TEST_CATALOG}.{schema.name}.legacy_reg_{make_random(6).lower()}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.legacy_model"
+    _write_legacy_registry(spark, table, model_name, ["region", "product"])
+
+    record = AnomalyModelRegistry(spark).get_active_model(table, model_name)
+
+    assert record is not None
+    # segment_by carried across to baseline_by; the two dropped fields have no meaning to preserve now.
+    assert record.grouping.baseline_by == ["region", "product"]
+    assert record.grouping.sklearn_version == "1.5.0"
+
+
+def test_retraining_migrates_a_pre_release_registry_and_leaves_nothing_behind(
+    ws, spark: SparkSession, make_schema, make_random
 ):
-    """Segment lookup should be deterministic regardless of input dictionary order."""
-    unique_id = make_random(8).lower()
-    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+    """The remedy the migration guide prescribes, tested end to end from the failing state.
 
-    registry = AnomalyModelRegistry(spark)
-    base_name = f"{anomaly_registry_prefix}.seg_model_{make_random(4).lower()}"
-    segment_name = f"{base_name}__seg_region=US_tier=gold"
+    Retraining is what both the guide and the stale-hash error tell a user to do. It reads the registry
+    during training, so before this fix it raised ``KeyError: 'grouping'`` and the documented remedy could
+    not be followed at all.
 
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=segment_name,
-            model_uri="models:/seg_model/1",
-            algorithm="isolation_forest",
-            mlflow_run_id="run_seg",
-        ),
-        training=TrainingMetadata(
-            columns=["amount"],
-            hyperparameters={},
-            training_rows=50,
-            training_time=datetime.utcnow(),
-        ),
-        features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(
-            segment_by=["region", "tier"],
-            segment_values={"region": "US", "tier": "gold"},
-            is_global_model=False,
-            config_hash="hash_seg",
-        ),
+    The assertion that matters most is the absence of ``segmentation`` afterwards. Appending with
+    ``mergeSchema`` would also make retraining "work", while leaving the user's table carrying both columns
+    for good -- which is what this replaced.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(6).lower()
+    table = f"{TEST_CATALOG}.{schema.name}.legacy_reg_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.legacy_model_{suffix}"
+    _write_legacy_registry(spark, table, model_name, ["region"])
+
+    train_df = spark.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
+    AnomalyEngine(ws, spark).train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=table,
+        baseline_by=[],
+        params=AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1, random_seed=42)),
     )
 
-    registry.save_model(record, registry_table)
+    migrated = spark.table(table)
+    assert "segmentation" not in migrated.columns, "the pre-release column must be gone, not carried alongside"
+    assert "grouping" in migrated.columns
 
-    fetched = registry.get_segment_model(registry_table, base_name, {"tier": "gold", "region": "US"})
-    assert fetched is not None
-    assert fetched.identity.model_name == segment_name
+    # The historical row survived the rewrite and now carries grouping, mapped from its segment_by.
+    archived = migrated.filter(F.col("identity.status") != "active").select("grouping.baseline_by").collect()
+    assert archived, "the previous version must be migrated, not dropped"
+    assert archived[0]["baseline_by"] == ["region"]
+
+
+def test_scoring_a_pre_release_model_says_to_retrain_rather_than_failing_internally(
+    ws, spark: SparkSession, make_schema, make_random
+):
+    """The error a user upgrading actually meets, and the reason the read path stays tolerant.
+
+    A model registered before this release cannot be scored: the configuration hash formula changed, so the
+    recomputed hash never matches and scoring refuses. That refusal is correct and is not what this pins.
+    What it pins is *which* error arrives. Before the migration work, the registry read raised
+    ``KeyError: 'grouping'`` first, so the user saw an internal failure with no indication that retraining
+    was the answer.
+
+    Written after an earlier draft of this test asserted the opposite -- that scoring still worked -- which
+    was wrong about the hash check and would have encoded a promise DQX does not make.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(6).lower()
+    table = f"{TEST_CATALOG}.{schema.name}.legacy_reg_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.legacy_model_{suffix}"
+    _write_legacy_registry(spark, table, model_name, ["region"])
+
+    test_df = spark.createDataFrame([(100.0, 2.0), (900.0, 40.0)], "amount double, quantity double")
+
+    with pytest.raises(InvalidParameterError) as raised:
+        DQEngine(ws, spark).apply_checks(
+            test_df,
+            [create_anomaly_check_rule(model_name=model_name, registry_table=table, threshold=95.0)],
+        ).collect()
+
+    message = str(raised.value)
+    assert "Retrain" in message or "retrain" in message, f"the remedy must be in the message: {message}"
+    assert "KeyError" not in message

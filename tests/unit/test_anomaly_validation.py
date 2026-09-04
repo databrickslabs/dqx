@@ -11,7 +11,7 @@ from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility, validate_training_params
@@ -523,7 +523,7 @@ def _make_record(sklearn_version: str | None) -> AnomalyModelRecord:
             training_time=datetime.now(),
         ),
         features=FeatureEngineering(),
-        segmentation=SegmentationConfig(sklearn_version=sklearn_version),
+        grouping=GroupingConfig(sklearn_version=sklearn_version),
     )
 
 

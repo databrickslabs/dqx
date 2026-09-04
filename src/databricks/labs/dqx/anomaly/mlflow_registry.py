@@ -164,6 +164,22 @@ def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
     return {f"hyperparam_{k}": v for k, v in hyperparams.items() if v is not None}
 
 
+#: Serialization format for logged sklearn models, stated rather than defaulted.
+#:
+#: MLflow 3 validates a saved sklearn model against skops' set of trusted types and refuses anything it
+#: does not recognise. ``IsolationForest`` is recognised; :class:`MahalanobisDetector` is DQX's own class,
+#: so ``profile="timeseries"`` failed outright at registration with "The saved sklearn model references
+#: untrusted types". MLflow 2 defaulted to cloudpickle and never ran that check, so naming cloudpickle
+#: here restores the behaviour every DQX model has always been written with rather than introducing new
+#: behaviour, and it works identically on both major versions -- unlike ``skops_trusted_types``, which
+#: exists only on MLflow 3 and would need a second version branch below.
+#:
+#: The trust model is unchanged and is documented: DQX loads models only from the Unity Catalog registry
+#: the caller owns, and cloudpickle deserialization executes code, so a model URI is as trusted as the
+#: registry it names.
+SKLEARN_SERIALIZATION_FORMAT = "cloudpickle"
+
+
 def log_sklearn_model_compatible(
     *,
     model: TrainedModel,
@@ -181,12 +197,14 @@ def log_sklearn_model_compatible(
             name="model",
             registered_model_name=model_name,
             signature=signature,
+            serialization_format=SKLEARN_SERIALIZATION_FORMAT,
         )
     return mlflow.sklearn.log_model(
         sk_model=model,
         artifact_path="model",
         registered_model_name=model_name,
         signature=signature,
+        serialization_format=SKLEARN_SERIALIZATION_FORMAT,
     )
 
 
