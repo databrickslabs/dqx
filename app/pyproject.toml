@@ -3,7 +3,7 @@ name = "databricks-labs-dqx-app"
 version = "0.16.1"
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",

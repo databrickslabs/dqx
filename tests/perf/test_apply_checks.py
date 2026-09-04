@@ -1296,7 +1296,8 @@ def test_benchmark_foreach_is_aggr_not_equal(benchmark, ws, generated_integer_df
     assert actual_count == EXPECTED_ROWS
 
 
-def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
+@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True], ids=["lazy_pairing", "strict"])
+def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df, raise_on_duplicate_keys):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQDatasetRule(
@@ -1306,12 +1307,12 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
             check_func_kwargs={
                 "ref_columns": ["ref_col1", "ref_col2"],
                 "ref_df_name": "ref_df",
+                "raise_on_duplicate_keys": raise_on_duplicate_keys,
             },
         ),
     ]
     refs_df = {"ref_df": make_ref_df}
-    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
-    actual_count = benchmark(lambda: checked.count())
+    actual_count = benchmark(lambda: dq_engine.apply_checks(generated_df, checks, refs_df).count())
     assert actual_count == EXPECTED_ROWS
 
 

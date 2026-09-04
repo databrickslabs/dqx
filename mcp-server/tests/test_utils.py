@@ -952,11 +952,22 @@ class TestSweepStaleResultFiles:
         run.job_parameters = [JobParameter(name="requesting_user", value="user@example.com")]
         ws.jobs.get_run.return_value = run
 
+        # get_run_status busy-polls until a real-time deadline. Drive a fake monotonic clock so the
+        # loop crosses the deadline after a few polls instead of spinning for the full wait budget
+        # (~30s), which otherwise accumulates millions of mock calls and OOMs CI. time.sleep is also
+        # patched out, so no wall-clock time passes.
+        monotonic_calls = {"n": 0}
+
+        def fake_monotonic() -> float:
+            monotonic_calls["n"] += 1
+            return 0.0 if monotonic_calls["n"] <= 3 else 1e9
+
         tok = _user_email_var.set("user@example.com")  # caller owns the run (IDOR guard passes)
         try:
             with (
                 patch("server.utils._get_sp_client", return_value=ws),
                 patch("server.utils.time.sleep"),
+                patch("server.utils.time.monotonic", side_effect=fake_monotonic),
             ):
                 result = get_run_status(123)
         finally:
