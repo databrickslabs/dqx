@@ -529,18 +529,24 @@ tabular data and weak when the anomaly *is* a broken relationship: if CPU is nor
 normal, no single-feature split separates the row, even though "high CPU with idle memory" never happens
 on a healthy machine.
 
-Measured on the Server Machine Dataset — real machine telemetry with labelled incidents — this is the
-share of incidents each detector surfaces while the alert budget is capped at 1% of rows:
+Measured on the full Server Machine Dataset: real machine telemetry, 28 machines, 38 metrics, 327 labelled
+incidents across 708,420 rows. This is the share of incidents each detector surfaces while the alert budget
+is capped at 1% of rows:
 
 | `profile` | Incidents surfaced |
 |---|---|
-| `"tabular"` | 33% |
-| `"timeseries"` | **79%** |
+| `"tabular"` | 57.3% |
+| `"timeseries"` | **67.6%** |
 
 An incident counts as surfaced if the detector flags at least one of its rows, so this measures whether
 you would have been paged, not how many rows you would have had to read. Both detectors were trained on
-data that still contained the anomalies, which is what DQX does when it fits a sample of your table; on a
-curated clean training split the same comparison is 36% against 82%.
+data that still contained the anomalies, which is what DQX does when it fits a sample of your table.
+
+**Read this as an average, not a promise.** Per machine the gap has a standard deviation of 38 points, and
+the correlation-aware detector wins on 16 of the 28 and loses on 7, so it is the better default for this
+shape of data rather than a guarantee on any particular machine. The most consistent difference is average
+precision, 0.425 against 0.278, because that is an aggregate over the whole ranking rather than a count of
+incidents caught inside a budget.
 
 That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data the two detectors are
 closer than this table might suggest, so choose on the *shape* of the anomaly you expect rather than on an

@@ -6,6 +6,7 @@ anomaly detection using on-the-fly heuristics.
 """
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -25,6 +26,9 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+# The sampling defaults live with sampling. profiler does not otherwise depend on core, and core does
+# not import profiler, so this direction adds no cycle.
+from databricks.labs.dqx.anomaly.core import DEFAULT_SAMPLE_FRACTION, DEFAULT_TRAIN_RATIO
 from databricks.labs.dqx.anomaly.group_config import (
     MAX_BASELINE_COLUMN_CARDINALITY,
     MAX_BASELINE_GROUPS,
@@ -235,6 +239,8 @@ def _is_grouping_candidate(
     null_rate: float,
     is_id_column: bool,
     total_count: int,
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
 ) -> bool:
     """Whether a column may be *considered* as a baseline grouping.
 
@@ -246,11 +252,35 @@ def _is_grouping_candidate(
         2 <= distinct_count <= MAX_BASELINE_COLUMN_CARDINALITY
         and null_rate < 0.1
         and not is_id_column
-        and (total_count / distinct_count) >= MIN_ROWS_PER_BASELINE_GROUP
+        and (total_count / distinct_count) >= effective_min_rows_per_group(sample_fraction, train_ratio)
     )
 
 
-def select_baseline_columns(candidates: list[tuple[str, int, float]], total_count: int) -> list[str]:
+def effective_min_rows_per_group(sample_fraction: float | None = None, train_ratio: float | None = None) -> int:
+    """Rows a group needs *on the full table* for the fit to see MIN_ROWS_PER_BASELINE_GROUP of them.
+
+    Discovery runs before sampling, so checking the nominal minimum against the full table overstated what
+    the model would get by roughly 4x at the defaults: sampling keeps 0.3 and the train split keeps 0.8 of
+    that, leaving about 7 rows from a group that just cleared 30. A per-group median fitted on 7 rows is not
+    the representative baseline the constant is there to guarantee.
+
+    Raising the bar on the full table is preferred to re-validating afterwards, which would mean choosing a
+    grouping, sampling, finding it too fine, and choosing again.
+    """
+    retained = (sample_fraction if sample_fraction is not None else DEFAULT_SAMPLE_FRACTION) * (
+        train_ratio if train_ratio is not None else DEFAULT_TRAIN_RATIO
+    )
+    if retained <= 0.0 or retained >= 1.0:
+        return MIN_ROWS_PER_BASELINE_GROUP
+    return int(math.ceil(MIN_ROWS_PER_BASELINE_GROUP / retained))
+
+
+def select_baseline_columns(
+    candidates: list[tuple[str, int, float]],
+    total_count: int,
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
+) -> list[str]:
     """Choose a grouping for baseline conditioning, given candidates ordered by cardinality.
 
     Adds columns while every resulting group still holds enough rows for a representative median and
@@ -272,7 +302,7 @@ def select_baseline_columns(candidates: list[tuple[str, int, float]], total_coun
         prospective = groups * int(distinct_count)
         if prospective > MAX_BASELINE_GROUPS:
             continue
-        if total_count / prospective < MIN_ROWS_PER_BASELINE_GROUP:
+        if total_count / prospective < effective_min_rows_per_group(sample_fraction, train_ratio):
             continue
         selected.append(name)
         groups = prospective
@@ -288,7 +318,7 @@ def select_baseline_columns(candidates: list[tuple[str, int, float]], total_coun
         if skipped:
             logger.debug(
                 f"Not added to the baseline grouping (would leave under "
-                f"{MIN_ROWS_PER_BASELINE_GROUP} rows/group, or exceed {MAX_BASELINE_GROUPS} "
+                f"{effective_min_rows_per_group()} rows/group before sampling, or exceed {MAX_BASELINE_GROUPS} "
                 f"groups): {skipped}"
             )
     return selected

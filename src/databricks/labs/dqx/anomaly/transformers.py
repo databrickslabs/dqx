@@ -1006,7 +1006,14 @@ def _fit_temporal_from_buckets(
 
     seconds = _epoch_seconds(time_column, t_min)
     bucket_width = span / TEMPORAL_FIT_BUCKETS
-    bucketed = df.withColumn("__dqx_time_bucket", F.floor(seconds / lit(bucket_width)))
+    # Rows with no timestamp are dropped from the fit rather than bucketed. A null timestamp yields a null
+    # bucket whose min(seconds) is also null, and that null reached float() below as a TypeError -- one
+    # unparseable row was enough to fail training outright. Dropping them removes the bucket rather than
+    # guarding its symptom; the all-null case is already refused above, with an explanation.
+    # Scoring has always tolerated a null timestamp by emitting a zero residual, so this aligns the two.
+    bucketed = df.filter(col(time_column).cast(TimestampType()).isNotNull()).withColumn(
+        "__dqx_time_bucket", F.floor(seconds / lit(bucket_width))
+    )
     aggregations = [F.percentile_approx(col(source), 0.5).alias(name) for name, source in source_columns.items()]
     rows = (
         bucketed.groupBy("__dqx_time_bucket")

@@ -493,15 +493,22 @@ def aggregate_ensemble_metrics(all_metrics: list[dict[str, float]]) -> dict[str,
 def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatureMetadata) -> pd.DataFrame:
     """Prepare engineered pandas DataFrame from Spark DataFrame.
 
-    Applies feature engineering transformations and collects to pandas.
-    Used for MLflow signature inference.
+    Applies feature engineering transformations, projects to the columns the model was fitted on, and
+    collects to pandas. Used for MLflow signature inference.
+
+    The projection is load-bearing. Feature engineering deliberately preserves columns it did not
+    produce -- the group key among them, because the group-relative transform needs it at scoring time --
+    so the engineered frame is wider than the feature list. Handing that frame to ``model.predict`` for
+    signature inference passes the estimator a string column it was never fitted on, which fails for any
+    grouped model on the single-model path (``profile="timeseries"``, or ``ensemble_size=1``). The default
+    three-model ensemble registers by URI and never comes through here, which is why this was invisible.
 
     Args:
         train_df: Training Spark DataFrame
         feature_metadata: Feature engineering metadata from training
 
     Returns:
-        Pandas DataFrame with engineered features
+        Pandas DataFrame holding exactly the engineered feature columns, in their persisted order
     """
     engineered_train_df, _ = apply_feature_engineering_from_metadata(train_df, feature_metadata)
-    return engineered_train_df.toPandas()
+    return engineered_train_df.select(*feature_metadata.engineered_feature_names).toPandas()

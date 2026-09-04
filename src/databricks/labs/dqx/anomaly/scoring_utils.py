@@ -193,17 +193,17 @@ def add_info_column(
 
     # Surface the extrapolation verdict and where the evidence ran out. Both null when the model has no
     # temporal baseline, which is what keeps the struct's meaning unchanged for every existing model.
-    stale_present = stale is not None and stale.stale_col in df.columns
-    anomaly_info_fields["is_stale_baseline"] = (
-        F.coalesce(F.col(stale.stale_col), F.lit(False))  # type: ignore[union-attr]
-        if stale_present
-        else F.lit(None).cast(BooleanType())
-    )
-    anomaly_info_fields["stale_baseline_horizon"] = (
-        F.col(stale.horizon_col)  # type: ignore[union-attr]
-        if stale_present and stale.horizon_col in df.columns  # type: ignore[union-attr]
-        else F.lit(None).cast(StringType())
-    )
+    # Written as a plain if/else rather than two conditional expressions, matching the group_key_col block
+    # above: it narrows *stale* to non-null for the type checker in one place, instead of asserting the
+    # narrowing three times at the point of use.
+    if stale is not None and stale.stale_col in df.columns:
+        anomaly_info_fields["is_stale_baseline"] = F.coalesce(F.col(stale.stale_col), F.lit(False))
+        anomaly_info_fields["stale_baseline_horizon"] = (
+            F.col(stale.horizon_col) if stale.horizon_col in df.columns else F.lit(None).cast(StringType())
+        )
+    else:
+        anomaly_info_fields["is_stale_baseline"] = F.lit(None).cast(BooleanType())
+        anomaly_info_fields["stale_baseline_horizon"] = F.lit(None).cast(StringType())
 
     anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()]).cast(
         anomaly_info_struct_schema
@@ -263,11 +263,31 @@ def _tail_severity_expr(score_expr: Column, anchor: Column, rate: Column) -> Col
     span = rate - anchor
     head_tail_probability = 100.0 - TAIL_ANCHOR_PERCENTILE
     base = head_tail_probability / (100.0 - TAIL_RATE_PERCENTILE)
-    # A degenerate tail (p95 and p99 at the same score) has no width to interpolate over, so the anchor
-    # percentile is the answer outright, matching how a zero-width segment is handled below.
-    return F.when(span <= F.lit(0.0), F.lit(TAIL_ANCHOR_PERCENTILE)).otherwise(
-        F.lit(100.0) - F.lit(head_tail_probability) * F.pow(F.lit(base), -(score_expr - anchor) / span)
-    )
+    # A degenerate tail is not handled here: this function has only the two anchors, and the sensible
+    # fallback needs the knots above them. :func:`_piecewise_severity_expr` selects between the two.
+    return F.lit(100.0) - F.lit(head_tail_probability) * F.pow(F.lit(base), -(score_expr - anchor) / span)
+
+
+def _linear_severity_chain(score_expr: Column, points: list[tuple[float, Column]]) -> Column:
+    """Piecewise-linear severity over *points*, clamped at both ends.
+
+    The behaviour that predates the exponential tail, kept as a named function because it is now needed in
+    two places: for the knots at or below p95, and as the fallback when the tail has no width to fit.
+    """
+    prev_p, prev_q = points[0]
+    expr = F.when(score_expr <= prev_q, F.lit(float(prev_p)))
+
+    for current_p, current_q in points[1:]:
+        span = current_q - prev_q
+        # A degenerate segment (equal bounds) would divide by zero. It means every score in this
+        # band sits on one point, so the upper percentile is the answer outright.
+        interpolated = F.when(span == F.lit(0.0), F.lit(float(current_p))).otherwise(
+            F.lit(float(prev_p)) + ((score_expr - prev_q) * F.lit(float(current_p) - float(prev_p)) / span)
+        )
+        expr = expr.when(score_expr <= current_q, interpolated)
+        prev_p, prev_q = current_p, current_q
+
+    return expr.otherwise(F.lit(float(prev_p)))
 
 
 def _piecewise_severity_expr(score_expr: Column, points: list[tuple[float, Column]]) -> Column:
@@ -288,30 +308,26 @@ def _piecewise_severity_expr(score_expr: Column, points: list[tuple[float, Colum
     by_percentile = dict(points)
     anchor = by_percentile.get(TAIL_ANCHOR_PERCENTILE)
     rate = by_percentile.get(TAIL_RATE_PERCENTILE)
+    null_guard = F.when(score_expr.isNull(), F.lit(None).cast(DoubleType()))
+
     # A caller supplying its own points need not include the two anchors. Without them there is no tail to
-    # fit, so every point stays a knot and the behaviour is the pre-existing one. Built here rather than at
-    # the point of use so both anchors are narrowed to non-null in one place.
-    tail_expr = _tail_severity_expr(score_expr, anchor, rate) if anchor is not None and rate is not None else None
-    body = [(p, q) for p, q in points if p <= TAIL_ANCHOR_PERCENTILE] if tail_expr is not None else points
+    # fit, so every point stays a knot and the behaviour is the one that predates the tail.
+    if anchor is None or rate is None:
+        return null_guard.otherwise(_linear_severity_chain(score_expr, points))
 
-    expr = F.when(score_expr.isNull(), F.lit(None).cast(DoubleType()))
+    head = [(p, q) for p, q in points if p <= TAIL_ANCHOR_PERCENTILE]
+    # Above the anchor, two shapes. Normally the exponential tail. But when p95 and p99 sit on the same
+    # score there is no width to interpolate a tail probability over, and the alternative -- pinning every
+    # higher score to 95 -- makes every threshold between 95 and 100 unreachable and leaves those rows
+    # unordered. So fall back to the plain linear chain across the remaining knots, which is exactly what
+    # the numpy counterpart in explainability.py does. The two must agree: that function gates whether a
+    # row gets SHAP inside the scoring UDF, so a disagreement drops contributions from flagged rows.
+    above_anchor = [(p, q) for p, q in points if p >= TAIL_ANCHOR_PERCENTILE]
+    tail = F.when(rate - anchor <= F.lit(0.0), _linear_severity_chain(score_expr, above_anchor)).otherwise(
+        _tail_severity_expr(score_expr, anchor, rate)
+    )
 
-    prev_p, prev_q = body[0]
-    expr = expr.when(score_expr <= prev_q, F.lit(float(prev_p)))
-
-    for current_p, current_q in body[1:]:
-        span = current_q - prev_q
-        # A degenerate segment (equal bounds) would divide by zero. It means every score in this
-        # band sits on one point, so the upper percentile is the answer outright.
-        interpolated = F.when(span == F.lit(0.0), F.lit(float(current_p))).otherwise(
-            F.lit(float(prev_p)) + ((score_expr - prev_q) * F.lit(float(current_p) - float(prev_p)) / span)
-        )
-        expr = expr.when(score_expr <= current_q, interpolated)
-        prev_p, prev_q = current_p, current_q
-
-    if tail_expr is None:
-        return expr.otherwise(F.lit(float(prev_p)))
-    return expr.otherwise(tail_expr)
+    return null_guard.otherwise(F.when(score_expr <= anchor, _linear_severity_chain(score_expr, head)).otherwise(tail))
 
 
 def add_baseline_severity_percentile_column(

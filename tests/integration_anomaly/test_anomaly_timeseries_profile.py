@@ -31,14 +31,18 @@ import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.anomaly.training_strategies import MAHALANOBIS_ALGORITHM
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.config import AnomalyParams
+from databricks.labs.dqx.engine import DQEngine
+from tests.constants import TEST_CATALOG
 
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.quality_metrics import pr_auc, trivial_baselines
 from tests.integration_anomaly.synthetic_generators import generate_correlated_multivariate_data
-from tests.integration_anomaly.conftest import ai_query_llm_config
+from tests.integration_anomaly.conftest import ai_query_llm_config, create_anomaly_check_rule
 
 # The gap the correlation-aware detector must clear against IsolationForest on data whose anomalies are
 # *only* joint. Loose on purpose: the claim is the direction and rough size, not a tripwire on the
@@ -280,3 +284,70 @@ def test_timeseries_profile_end_to_end(
     # 6. Scores must be finite everywhere. A singular covariance would surface as NaN or inf rather
     #    than as an exception, and every metric above would silently degrade instead of failing.
     assert np.isfinite(timeseries["score"]).all(), "the timeseries model produced non-finite scores"
+
+
+def test_a_grouped_timeseries_model_trains_and_scores(ws, spark: SparkSession, make_schema, make_random):
+    """The combination that failed: the correlation-aware profile together with a grouping.
+
+    Feature engineering deliberately preserves the group key, so the engineered frame is wider than the
+    feature list. Signature inference passed that whole frame to ``model.predict``, handing the estimator a
+    string column it was never fitted on. Every grouped model on the single-model path hit it --
+    ``profile="timeseries"`` always, and the tabular profile at ``ensemble_size=1`` -- while the default
+    three-model ensemble registers by URI and never comes through that code, which is why the existing
+    coverage passed: it uses ``baseline_by=[]``.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(6).lower()
+    model_name = f"{TEST_CATALOG}.{schema.name}.grouped_ts_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
+
+    rng = np.random.default_rng(5)
+    rows = []
+    for region in ("eu", "us", "apac"):
+        offset = {"eu": 0.0, "us": 40.0, "apac": 80.0}[region]
+        for _ in range(300):
+            latent = rng.normal(0.0, 1.0)
+            rows.append((region, float(100.0 + offset + 6.0 * latent), float(20.0 + 1.4 * latent)))
+    train_df = spark.createDataFrame(rows, "region string, load double, current double")
+
+    trained = AnomalyEngine(ws, spark).train(
+        df=train_df,
+        columns=["load", "current"],
+        model_name=model_name,
+        registry_table=registry_table,
+        baseline_by=["region"],
+        profile="timeseries",
+        params=AnomalyParams(sample_fraction=1.0),
+    )
+
+    # Registering is where it failed; scoring proves the registered signature is usable.
+    result_df = DQEngine(ws, spark).apply_checks(
+        train_df.limit(20),
+        [create_anomaly_check_rule(model_name=trained, registry_table=registry_table, threshold=95.0)],
+    )
+    scored = result_df.select(F.col("_dq_info")[0].getField("anomaly").getField("score").alias("score")).collect()
+
+    assert len(scored) == 20
+    assert all(row["score"] is not None for row in scored)
+
+
+def test_a_grouped_single_forest_trains_and_scores(ws, spark: SparkSession, make_schema, make_random):
+    """The second live path into the same defect: the tabular profile with one model instead of three."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(6).lower()
+    model_name = f"{TEST_CATALOG}.{schema.name}.grouped_single_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
+
+    rows = [("eu" if i % 2 else "us", float(100 + i % 23), float(5 + i % 7)) for i in range(600)]
+    train_df = spark.createDataFrame(rows, "region string, amount double, quantity double")
+
+    trained = AnomalyEngine(ws, spark).train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+        baseline_by=["region"],
+        params=AnomalyParams(sample_fraction=1.0, ensemble_size=1),
+    )
+
+    assert AnomalyModelRegistry(spark).get_active_model(registry_table, trained) is not None

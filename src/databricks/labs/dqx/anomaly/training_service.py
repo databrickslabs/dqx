@@ -29,6 +29,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     ModelIdentity,
     TrainingMetadata,
 )
+from databricks.labs.dqx.anomaly.group_config import MAX_BASELINE_GROUPS
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_baseline_columns
 from databricks.labs.dqx.anomaly.temporal_advisory import (
     TREND_STRENGTH_ADVISORY_FLOOR,
@@ -241,7 +242,10 @@ class AnomalyTrainingService:
             return
         try:
             strength = measure_trend_strength(df_filtered, time_column, numeric)
-        except Exception as exc:  # noqa: BLE001 - an advisory must never fail a training run
+        # Broad on purpose: an advisory must never fail a training run, which is the same reason
+        # telemetry.py and table_manager.py catch broadly. No suppression comment, because the rule that
+        # would flag this is not enabled -- one was here and suppressed nothing.
+        except Exception as exc:
             logger.debug(f"Could not measure trend strength: {exc}")
             return
         if strength >= TREND_STRENGTH_ADVISORY_FLOOR:
@@ -283,6 +287,30 @@ class AnomalyTrainingService:
             f"measured, it took group-contextual detection from 72% to 0% by diluting the metric it was "
             f"meant to support. Pass exclude_columns={safe} to leave them out, or "
             f"baseline_over_time='{safe[0]}' to use it as a time axis instead of as features."
+        )
+
+    @staticmethod
+    def _reject_unbounded_grouping(df: DataFrame, baseline_by: list[str]) -> None:
+        """Refuse a grouping whose group count exceeds what can be persisted and broadcast.
+
+        Auto-discovery has always honoured ``MAX_BASELINE_GROUPS`` by skipping a column that would breach
+        it. An explicit *baseline_by* bypassed that entirely, and the failure mode is not a slow run: the
+        per-group medians and the per-group score quantiles are each collected to the driver, one row per
+        group, and both are persisted into the feature metadata. An identifier-like grouping exhausts the
+        driver before it can produce a model, with nothing in the error to say why.
+
+        One ``countDistinct`` action, paid only when a grouping is declared. Reuses the ceiling
+        auto-discovery already respects rather than introducing a second, so the two cannot drift.
+        """
+        group_count = df.select(*baseline_by).distinct().count()
+        if group_count <= MAX_BASELINE_GROUPS:
+            return
+        safe_columns = [sanitize_for_logging(name) for name in baseline_by]
+        raise InvalidParameterError(
+            f"baseline_by={safe_columns} produces {group_count:,} groups, above the supported ceiling of "
+            f"{MAX_BASELINE_GROUPS:,}. Every group's median and score quantiles are held in the model's "
+            f"metadata and broadcast at scoring, so this would exhaust the driver rather than run slowly. "
+            f"Group on a coarser dimension, or drop the finest column from baseline_by."
         )
 
     def build_context(
@@ -333,6 +361,7 @@ class AnomalyTrainingService:
 
         validate_baseline_columns(df, baseline_by, columns)
         if baseline_by:
+            self._reject_unbounded_grouping(df_filtered, baseline_by)
             logger.info(f"Judging each metric against its own group's baseline, grouped by {baseline_by}")
 
         resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time

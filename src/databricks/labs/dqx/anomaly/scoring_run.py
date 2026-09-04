@@ -127,9 +127,9 @@ def score_global_model(
             f"  Trained baseline_by: {trained_baseline_by or None}\n"
             f"  Trained baseline_over_time: {trained_baseline_over_time or None}\n\n"
             f"This model was trained with a different configuration, or by a DQX version before\n"
-            f"baseline_by became part of the configuration hash (0.17.0). Either:\n"
+            f"baseline_by became part of the configuration hash. Either:\n"
             f"  1. Use the columns that match the trained model\n"
-            f"  2. Retrain the model — required for any model registered before 0.17.0"
+            f"  2. Retrain the model — required for any model registered before that change"
         )
 
     check_model_staleness(record, config.model_name)

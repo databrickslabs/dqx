@@ -20,7 +20,16 @@ BASELINE_KEY_SEPARATOR = "\x1f"
 
 # Stand-in for a NULL group value. NULLs must map to a real key rather than propagating,
 # or every row in a group with a missing dimension silently loses its baseline.
-BASELINE_KEY_NULL = "MISSING"
+#
+# A control character rather than a word, for the same reason the separator above is one: this was
+# "MISSING", which a group column can genuinely contain, and then a NULL region and a region literally
+# named MISSING shared one persisted key and one baseline without any complaint. \x00 is not a value a
+# categorical dimension carries in practice, so the two are now distinguishable.
+#
+# This changes the persisted key format. It is done in the same release as the configuration-hash change
+# that already forces every model to be retrained, so it costs no additional retrain -- deferring it would
+# have made it a second forced retrain later.
+BASELINE_KEY_NULL = "\x00"
 
 # The single column every stage reads the group key from. See :func:`with_baseline_key`.
 BASELINE_KEY_COLUMN = "__dqx_baseline_key"

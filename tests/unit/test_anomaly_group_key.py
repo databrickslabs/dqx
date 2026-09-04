@@ -86,3 +86,18 @@ def test_separator_inside_a_value_is_a_documented_collision():
     left = build_baseline_key({"a": f"x{BASELINE_KEY_SEPARATOR}y", "b": "z"})
     right = build_baseline_key({"a": "x", "b": f"y{BASELINE_KEY_SEPARATOR}z"})
     assert left == right
+
+
+def test_a_null_and_a_literal_missing_are_different_groups():
+    """The regression this exists for: the two used to share one key, and therefore one baseline.
+
+    ``BASELINE_KEY_NULL`` was the string ``"MISSING"``, which a categorical dimension can genuinely
+    contain -- a region named MISSING in an upstream feed, a status column with an explicit MISSING
+    level. Those rows and the rows with a NULL region were persisted under one key and conditioned
+    against one median, silently, with nothing to indicate the two populations had been merged.
+    """
+    with_null = build_baseline_key({"region": None, "product": "casino"})
+    with_literal = build_baseline_key({"region": "MISSING", "product": "casino"})
+
+    assert with_null != with_literal
+    assert "MISSING" in with_literal

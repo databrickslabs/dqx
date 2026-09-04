@@ -17,7 +17,9 @@ from databricks.labs.dqx.anomaly.model_registry import (
     GroupingConfig,
     TrainingMetadata,
 )
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
     get_standard_2d_training_data,
@@ -529,3 +531,119 @@ def test_save_model_when_table_does_not_exist_creates_table_no_archive(
     rows = spark.table(registry_table).collect()
     assert len(rows) == 1
     assert rows[0]["identity"]["status"] == "active"
+
+
+# ============================================================================
+# Migration from the pre-release schema
+# ============================================================================
+
+#: The registry schema as it stood before `segment_by` was removed. Reproduced verbatim rather than
+#: derived, because a test of backwards compatibility that builds its "old" table from today's code proves
+#: nothing -- it would keep passing while the compatibility it claims to check rotted away.
+LEGACY_ANOMALY_MODEL_TABLE_SCHEMA = (
+    "identity struct<model_name:string, model_uri:string, algorithm:string, mlflow_run_id:string, status:string>, "
+    "training struct<columns:array<string>, hyperparameters:map<string,string>, training_rows:bigint, "
+    "training_time:timestamp, metrics:map<string,double>, score_quantiles:map<string,double>, "
+    "baseline_stats:map<string,map<string,double>>>, "
+    "features struct<mode:string, column_types:map<string,string>, feature_metadata:string, "
+    "feature_importance:map<string,double>, temporal_config:map<string,string>>, "
+    "segmentation struct<segment_by:array<string>, segment_values:map<string,string>, "
+    "is_global_model:boolean, sklearn_version:string, config_hash:string>"
+)
+
+
+def _write_legacy_registry(spark: SparkSession, table: str, model_name: str, segment_by: list[str]) -> None:
+    """Create a registry table in the pre-release schema, holding one active model."""
+    row = {
+        "identity": {
+            "model_name": model_name,
+            "model_uri": "models:/legacy/1",
+            "algorithm": "IsolationForest",
+            "mlflow_run_id": "legacy-run",
+            "status": "active",
+        },
+        "training": {
+            "columns": ["amount", "quantity"],
+            "hyperparameters": {"num_trees": "200"},
+            "training_rows": 500,
+            "training_time": datetime(2025, 1, 1),
+            "metrics": {"roc_auc": 0.9},
+            "score_quantiles": {"p50": 0.1},
+            "baseline_stats": {},
+        },
+        "features": {
+            "mode": "multi_type",
+            "column_types": {"amount": "numeric"},
+            "feature_metadata": "",
+            "feature_importance": {},
+            "temporal_config": {},
+        },
+        "segmentation": {
+            "segment_by": segment_by,
+            "segment_values": {"region": "eu"},
+            "is_global_model": False,
+            "sklearn_version": "1.5.0",
+            "config_hash": "a-hash-from-before-baseline_by-joined-it",
+        },
+    }
+    spark.createDataFrame([row], schema=LEGACY_ANOMALY_MODEL_TABLE_SCHEMA).write.mode("overwrite").saveAsTable(table)
+
+
+def test_a_pre_release_registry_can_still_be_read(spark: SparkSession, make_schema, make_random):
+    """Reading must not raise, or the caller never reaches the message that tells them what to do.
+
+    A model registered before this release cannot be scored: the configuration hash formula changed, so the
+    recomputed hash always mismatches and scoring raises with instructions to retrain. That error is the
+    useful one. Before this fix the read died first on ``KeyError: 'grouping'``, and the caller saw an
+    internal error instead of the instructions.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    table = f"{TEST_CATALOG}.{schema.name}.legacy_reg_{make_random(6).lower()}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.legacy_model"
+    _write_legacy_registry(spark, table, model_name, ["region", "product"])
+
+    record = AnomalyModelRegistry(spark).get_active_model(table, model_name)
+
+    assert record is not None
+    # segment_by carried across to baseline_by; the two dropped fields have no meaning to preserve now.
+    assert record.grouping.baseline_by == ["region", "product"]
+    assert record.grouping.sklearn_version == "1.5.0"
+
+
+def test_retraining_migrates_a_pre_release_registry_and_leaves_nothing_behind(
+    ws, spark: SparkSession, make_schema, make_random
+):
+    """The remedy the migration guide prescribes, tested end to end from the failing state.
+
+    Retraining is what both the guide and the stale-hash error tell a user to do. It reads the registry
+    during training, so before this fix it raised ``KeyError: 'grouping'`` and the documented remedy could
+    not be followed at all.
+
+    The assertion that matters most is the absence of ``segmentation`` afterwards. Appending with
+    ``mergeSchema`` would also make retraining "work", while leaving the user's table carrying both columns
+    for good -- which is what this replaced.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(6).lower()
+    table = f"{TEST_CATALOG}.{schema.name}.legacy_reg_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.legacy_model_{suffix}"
+    _write_legacy_registry(spark, table, model_name, ["region"])
+
+    train_df = spark.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
+    AnomalyEngine(ws, spark).train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=table,
+        baseline_by=[],
+        params=AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1, random_seed=42)),
+    )
+
+    migrated = spark.table(table)
+    assert "segmentation" not in migrated.columns, "the pre-release column must be gone, not carried alongside"
+    assert "grouping" in migrated.columns
+
+    # The historical row survived the rewrite and now carries grouping, mapped from its segment_by.
+    archived = migrated.filter(F.col("identity.status") != "active").select("grouping.baseline_by").collect()
+    assert archived, "the previous version must be migrated, not dropped"
+    assert archived[0]["baseline_by"] == ["region"]

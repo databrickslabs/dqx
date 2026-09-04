@@ -510,3 +510,36 @@ def test_the_public_check_reports_staleness_in_the_info_column(ws, spark: SparkS
     assert by_ts[far_past]["horizon"], "a stale row must say what window it is past"
     # Flagged, never nulled: measured, the score one window out is still usable.
     assert by_ts[far_past]["score"] is not None
+
+
+def test_a_null_timestamp_in_training_does_not_fail_the_fit(spark: SparkSession):
+    """One unparseable timestamp used to end training with a TypeError.
+
+    Null timestamps fell into a null bucket whose ``min(seconds)`` is also null, and that null reached
+    ``float()`` unguarded -- while the metric values beside it were guarded. Only the all-null case was
+    handled, and that one raises deliberately with an explanation. Scoring has always tolerated a null
+    timestamp by emitting a zero residual, so training was the odd one out.
+    """
+    # Annotated because the timestamp is genuinely optional here: inference from the first element alone
+    # would make the null rows below a type error, and they are the point of the test.
+    rows: list[tuple[datetime.datetime | None, float]] = [
+        (START + datetime.timedelta(hours=i), float(100.0 + 0.05 * i)) for i in range(24 * 30)
+    ]
+    # A handful of rows with no timestamp, carrying a perfectly good metric value.
+    rows += [(None, 150.0), (None, 151.0), (None, 149.0)]
+    df = spark.createDataFrame(
+        rows,
+        T.StructType(
+            [
+                T.StructField("event_ts", T.TimestampType(), True),
+                T.StructField("revenue", T.DoubleType(), True),
+            ]
+        ),
+    )
+
+    engineered, metadata = apply_feature_engineering(df, [_numeric("revenue")], baseline_over_time="event_ts")
+
+    assert f"revenue{TEMPORAL_RELATIVE_SUFFIX}" in metadata.engineered_feature_names
+    # The basis was fitted from the rows that do carry a timestamp.
+    assert metadata.temporal_coefficients
+    assert engineered.count() == len(rows)
