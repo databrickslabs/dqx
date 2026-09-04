@@ -311,8 +311,10 @@ def test_the_app_is_given_a_checkpoint_since_the_bootstrap_defaults_it_off() -> 
     dropped, the app would fall back to atexit alone and lose coverage whenever the platform's
     shutdown budget is exceeded.
     """
-    assert 'DQX_COVERAGE_CHECKPOINT_SECONDS", "0"' in _BOOTSTRAP_INIT.read_text(
-        encoding="utf-8"
+    bootstrap = _BOOTSTRAP_INIT.read_text(encoding="utf-8")
+    assert (
+        'os.getenv("DQX_COVERAGE_CHECKPOINT_SECONDS", "")' in bootstrap
+        and "return float(raw) if raw else 0.0" in bootstrap
     ), "the bootstrap should default the checkpoint off; the runner's entry point flushes instead"
     assert "DQX_COVERAGE_CHECKPOINT_SECONDS" in _BUNDLE.read_text(
         encoding="utf-8"

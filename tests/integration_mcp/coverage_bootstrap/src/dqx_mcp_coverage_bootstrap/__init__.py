@@ -11,88 +11,89 @@ production source needs to be coverage-aware. Nothing here may break the app or 
 every path is wrapped and failures are logged, never raised.
 
 Why a ``.pth`` and not ``sitecustomize.py``: see README.md.
+
+Concurrency, gathered here because it is easy to get wrong:
+
+* ``_upload_lock`` serializes every remote publish. Two writers on one remote path is not a
+  "stale bytes" problem: the FUSE write truncates then streams, the Files API PUT has no
+  ordering, and there is no rename primitive to publish atomically. A torn ``.coverage.*`` makes
+  ``coverage combine`` raise ``DataError``, and the CI merge step runs it under ``|| true`` — so
+  one interleaved write silently zeroes the WHOLE report while the job stays green. Concurrent
+  same-path writes must be impossible, not merely unlikely.
+* ``_lock`` guards the tracer and its data file, and is **never** held across a network call.
+  Reading the file under it is load-bearing: coverage opens its SQLite with ``journal_mode=off``
+  and ``synchronous=off``, so there is no atomic commit and a copy taken while a writer is
+  mid-save can be structurally invalid, not merely out of date. That is safe only because our
+  ``save()`` calls are the sole disk writers — ``Coverage`` is built without ``auto_data`` and
+  without ``sigterm=True``, so its own atexit hook does not save. Setting either would introduce
+  a writer that does not hold ``_lock``.
+* Lock order is ``_upload_lock`` then ``_lock``, never the reverse.
+* No forking. With ``suffix=None`` a forked child re-derives the same ``/tmp`` path and
+  ``erase()``s it, and ``_key`` is fixed pre-fork so every child would publish to one remote
+  path. ``mcp-server/server/main.py`` calls ``uvicorn.run`` with no ``workers``; setting
+  ``workers>1`` would break this design and no in-process lock would help.
 """
 
 import atexit
-import collections
 import io
 import os
 import sys
 import threading
-import time
 
 # The live data file always lives on local disk: coverage's data file is SQLite, and SQLite over
 # a FUSE mount is a known locking hazard. Only finished copies go to the UC volume.
 _LOCAL_DIR = "/tmp"  # noqa: S108 — container-local scratch, not a shared host
 
-# Periodic flush interval, in seconds. OFF by default, and deliberately so.
-#
-# The runner does not need it: the dev-coverage bundle target points the wheel task at a wrapping
-# entry point (see runner_entry) that persists coverage from ordinary code once the work is done.
-# That is deterministic — it runs on main()'s own call stack, with the task arguments already in
-# sys.argv so the results volume resolves.
-#
-# A timer cannot offer that. The .pth executes at interpreter start, before the task arguments
-# exist, so an early tick can only log "no destination could be resolved" and leave the data in
-# /tmp. Measured with a 15s interval and no wrapper: 7 of 21 runner runs produced a data file at
-# all, and which ones did tracked process lifetime rather than outcome — the reported coverage of
-# unchanged code therefore wandered between 49% and 75%.
-#
-# The app is the exception and sets this explicitly (see the dev-coverage app_environment): it is a
-# uvicorn process with no entry point to wrap, relying on a graceful SIGTERM plus atexit, and the
-# interval bounds the loss if the platform's ~15s shutdown budget is exceeded.
-_CHECKPOINT_SECONDS = float(os.getenv("DQX_COVERAGE_CHECKPOINT_SECONDS", "0"))
+# How long the final (atexit) flush waits for an in-flight publish before publishing beside it.
+# Short on purpose: atexit is LIFO and this module registers from the .pth at interpreter start, so
+# every hook registered later runs first and much of the platform's ~15s budget is already gone.
+_FINAL_WAIT_SECONDS = 2.0
 
 _cov = None
 _data_file = ""
-# Every diagnostic this module emits, in order. Uploaded next to the data file so the bootstrap's
-# own story is readable from the volume: a Databricks job's retained output carries neither raw
-# stderr nor records logged before the task configures logging, which left three separate
-# investigations of lost coverage with nothing to read.
-#
-# Bounded as a safety net. Breadcrumbs are written only at a few informative moments (see
-# _write_breadcrumb), so a healthy process emits a handful of lines and never approaches the cap. It
-# exists for a pathological repeating failure, where each attempt logs — and then the tail, which is
-# the part worth reading, is what survives.
-_MAX_MESSAGES = 400
-_messages: collections.deque[str] = collections.deque(maxlen=_MAX_MESSAGES)
-_lock = threading.Lock()
-# A SEPARATE lock for the message buffer. _log is called from inside _flush_locked's `with _lock`
-# block, so it cannot take _lock as well (plain Lock, not RLock: that would deadlock). Without a lock
-# of its own, list(_messages) races _log's append and `deque` raises "mutated during iteration" —
-# which escapes _write_breadcrumb, and via flush_at_task_end's bare finally would replace the
-# runner's real exception with a coverage one.
-_messages_lock = threading.Lock()
-# Set by flush_at_task_end. The checkpoint exists only because nothing else reliably persists a
-# runner's data; once the wrapping entry point has done so deterministically there is nothing left
-# for the thread to do, and another tick would only re-upload the same bytes.
-_checkpoint_stopped = False
 # Fixed at startup: see _instance_key. The data file is cumulative for the interpreter, so every
 # flush overwrites one file with a superset — last write wins, and nothing depends on run boundaries.
 _key = ""
+_lock = threading.Lock()
+_upload_lock = threading.Lock()
+# An Event rather than a bool: `wait(timeout)` returns the moment it is set, whereas a flag checked
+# after `time.sleep` is only noticed a whole interval later. That mattered — a tick could wake during
+# interpreter finalization and run Python (including _log's lazy `import logging`) while the import
+# machinery was being torn down.
+_stop_event = threading.Event()
+# Cached SDK client, created on first use. Deliberately NOT warmed at import: doing client setup
+# there is how an earlier version ended up doing network work inside the .pth exec, before uvicorn
+# booted. For the app the first checkpoint tick warms it long before shutdown, so the atexit path
+# does no client setup either way.
+_ws = None
+# Remote directories already created. A check-then-add race here is harmless — the worst outcome is
+# calling create_directory twice, which is idempotent — so this deliberately takes no lock.
+_created_dirs: set[str] = set()
 
 
 def _log(message: str, warning: bool = False) -> None:
-    """Emit a diagnostic through BOTH the logging module and raw stderr.
+    """Emit a diagnostic to stderr and through the logging module. Never raises.
 
-    ``[dqx-coverage] tracing started`` is the primary signal that instrumentation is live; a silent
-    0% report is almost always this line missing.
+    Both channels, because they are retained differently. Verified against a real runner job's
+    retained output (``jobs get-run-output``): messages emitted once the task is running appear on
+    both, while anything emitted at interpreter start — ``tracing started`` — appears on neither,
+    because the .pth runs before the task's log capture begins.
 
-    Why both: a Databricks job run's retained output (``jobs get-run-output``) carries records from
-    the **logging** module but not raw ``sys.stderr`` writes, so a stderr-only diagnostic is
-    invisible exactly where a failing runner needs to be diagnosed — which is how a lost-coverage
-    bug stayed unexplained across three full suite runs. The app, whose stderr *is* captured,
-    keeps working either way, and stderr is retained so a pre-logging-config failure still surfaces.
-
-    Routine events log at INFO and only real problems at WARNING (*warning*), so a long-lived app does
-    not emit a steady stream of spurious warnings from the flush path. Nothing is lost before the task
-    configures logging — where ``lastResort`` would drop INFO — because the raw stderr write above is
-    unconditional.
+    Routine events log at INFO and only real problems at WARNING (*warning*), so a long-lived app
+    does not emit a steady stream of spurious warnings from the flush path. The messages saying the
+    mechanism itself is broken stay at WARNING deliberately: they can fire before the task calls
+    ``basicConfig``, where ``lastResort`` drops INFO, and they are the lines whose absence explains
+    a silent 0% report.
     """
-    with _messages_lock:
-        _messages.append(message)
-    sys.stderr.write(f"[dqx-coverage] {message}\n")
-    sys.stderr.flush()
+    try:
+        # Inside the guard, not outside it: by teardown ``sys.stderr`` can be closed or detached (the
+        # runner's task runs in a Databricks python shell whose log capture is torn down with it),
+        # and a ValueError from here would propagate out of runner_entry's bare ``finally`` —
+        # replacing the operation's real exception and failing an otherwise successful run.
+        sys.stderr.write(f"[dqx-coverage] {message}\n")
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001 — diagnostics must never break the app or fail a job
+        pass
     try:
         import logging
 
@@ -101,7 +102,7 @@ def _log(message: str, warning: bool = False) -> None:
             logger.warning(message)
         else:
             logger.info(message)
-    except Exception:  # noqa: BLE001 — diagnostics must never break the app or fail a job
+    except Exception:  # noqa: BLE001 — same reason
         pass
 
 
@@ -139,14 +140,23 @@ def _destination_dir() -> str:
     return f"{base}/coverage" if base else ""
 
 
+def _is_app() -> bool:
+    """Whether this interpreter is the Databricks App rather than a runner job task.
+
+    This decides how a publish is written, so it must not be inferred from a failed filesystem
+    write: if ``/Volumes/...`` happened to be locally creatable, the data would land on ephemeral
+    disk and be reported as delivered while never reaching the volume.
+    """
+    return bool(os.getenv("DATABRICKS_APP_NAME"))
+
+
 def _instance_key() -> str:
     """Stable identity for THIS interpreter, decided once and never re-derived from argv.
 
-    The runner does not get a process per job run: its task executes inside a long-lived Databricks
-    python shell (``db_ipykernel_launcher.py``) that serves many runs, and at interpreter start —
-    when the ``.pth`` executes — the task's ``--run-id`` is not in ``sys.argv`` at all. Keying the
-    output file on the run id therefore produced a NEW file name per run for one cumulative data
-    file, while the real lifetime being measured is the interpreter's.
+    The runner's task runs inside a Databricks python shell and, when the ``.pth`` executes, the
+    task's ``--run-id`` is not in ``sys.argv`` at all. Keying the output file on the run id
+    therefore produced a new filename per run for one cumulative data file, while the real lifetime
+    being measured is the interpreter's.
 
     A pid alone can repeat across containers, so a random suffix keeps concurrent writers apart.
     """
@@ -158,162 +168,168 @@ def _instance_key() -> str:
     return f"{role}.{label}.{os.getpid()}.{uuid4().hex[:8]}"
 
 
-_announced_copies: set[str] = set()
+def _client():
+    """The cached SDK client, created on first use."""
+    global _ws  # noqa: PLW0603 — module-level singleton, created lazily and reused
+    if _ws is None:
+        from databricks.sdk import WorkspaceClient
+
+        _ws = WorkspaceClient()
+    return _ws
 
 
-def _write_to_volume(remote_path: str, payload: bytes, announce: str = "") -> bool:
-    """Write *payload* to the UC volume. Never raises. Returns whether it landed.
+def _publish(payload: bytes, remote_path: str) -> bool:
+    """Write *payload* to the volume. Never raises. Returns whether it landed.
 
-    One helper carries the platform fallback for both the coverage data and the breadcrumb, because
-    there is exactly one thing to know here and it is easy to get wrong: serverless jobs have a
-    ``/Volumes`` FUSE mount, so a plain filesystem write works, while Databricks Apps do **not**
-    (go/apps/faq: "Can I mount a Unity Catalog volume in my app?" — "Not today"; request XTA-11566)
-    and need the Files API. Two copies of that had already drifted apart, one logging and the other
-    silent.
+    Callers must hold ``_upload_lock`` and must NOT hold ``_lock`` — with one deliberate exception,
+    the shutdown fallback in ``_final_flush``, which could not get the lock and publishes to a
+    unique sibling path instead. That is safe only because the path is unique: two unlocked writers
+    may briefly race ``_client()``'s lazy assignment (constructing one client twice, wasteful but
+    harmless) and ``_created_dirs`` (an idempotent create), never one remote object.
 
-    *announce* names the payload in a one-off success log; empty means log only failures. A failure is
-    always logged: this module exists to explain missing uploads, so a silent write failure here is
-    the one blind spot that must not exist.
+    The write path is chosen by runtime, not by catching an exception: serverless job tasks have a
+    ``/Volumes`` FUSE mount so a filesystem write works, while Databricks Apps do not
+    (go/apps/faq: "Can I mount a Unity Catalog volume in my app?" — "Not today"; request
+    XTA-11566) and use the Files API.
     """
     directory = os.path.dirname(remote_path)
     try:
-        try:
-            os.makedirs(directory, exist_ok=True)
-            with open(remote_path, "wb") as handle:
-                handle.write(payload)
-            _announce_once(remote_path, announce, "copied")
-            return True
-        except OSError as exc:
-            # Which platform path this process took, said once per directory. This is the line that
-            # tells you whether the FUSE mount was there, so it must read as a sentence.
-            _log_once(f"fuse:{directory}", f"no FUSE mount at {directory} ({exc}); using the Files API")
-        from databricks.sdk import WorkspaceClient
-
-        ws = WorkspaceClient()
-        ws.files.create_directory(directory)  # upload does not create parents
+        if not _is_app():
+            try:
+                os.makedirs(directory, exist_ok=True)
+                with open(remote_path, "wb") as handle:
+                    handle.write(payload)
+                _log(f"copied {len(payload)} bytes -> {remote_path}")
+                return True
+            except OSError as exc:
+                # A real fallback, not the normal path: the runner's mount should be there.
+                _log(f"no FUSE write at {remote_path} ({exc}); using the Files API", warning=True)
+        ws = _client()
+        if directory not in _created_dirs:
+            ws.files.create_directory(directory)  # upload does not create parents
+            _created_dirs.add(directory)
         ws.files.upload(remote_path, io.BytesIO(payload), overwrite=True)
-        _announce_once(remote_path, announce, "uploaded")
+        _log(f"uploaded {len(payload)} bytes -> {remote_path}")
         return True
     except Exception as exc:  # noqa: BLE001 — must never break the app or fail a job
-        _log(f"could not write {announce or 'breadcrumb'} to {remote_path}: {exc!r}", warning=True)
+        _log(f"could not write {remote_path}: {exc!r}", warning=True)
         return False
 
 
-def _announce_once(remote_path: str, announce: str, verb: str) -> None:
-    """Note a successful write once per destination, and never again.
+def _snapshot(final: bool) -> tuple[bytes, str] | None:
+    """Save the tracer's data and read it back under ``_lock``. Never raises.
 
-    A periodic checkpoint writes to the same path every tick; logging each one grew the message
-    buffer, so the breadcrumb traffic scaled with run length. Empty *announce* stays silent entirely.
+    Returns ``(payload, remote_path)``, or None when there is nothing to publish. No network here:
+    holding ``_lock`` across a round trip is what let the final flush queue behind an in-flight
+    publish and lose the shutdown budget.
     """
-    if not announce:
-        return
-    _log_once(remote_path, f"{verb} {announce} -> {remote_path}")
-
-
-def _log_once(key: str, message: str) -> None:
-    """Log *message* the first time *key* is seen, and never again."""
-    if key in _announced_copies:
-        return
-    _announced_copies.add(key)
-    _log(message)
-
-
-def _persist(local_path: str, remote_path: str) -> bool:
-    """Ship the saved coverage data file to the volume. Never raises.
-
-    Reads the file into memory rather than streaming it, so one helper can carry the platform fallback
-    for both payloads instead of two copies that drift. The data files this ships are ~50KB (measured
-    on a full suite run), so buffering them is immaterial; revisit if that ever stops being true.
-    """
-    try:
-        with open(local_path, "rb") as handle:
-            payload = handle.read()
-    except OSError as exc:
-        _log(f"could not read {local_path}: {exc!r}", warning=True)
-        return False
-    return _write_to_volume(remote_path, payload, announce="coverage data")
-
-
-def _write_breadcrumb() -> None:
-    """Publish the diagnostics collected so far. Never raises.
-
-    Written at a few explicit moments rather than on every flush: process start, the deterministic
-    task-end flush, a final (shutdown) flush, and any flush that failed. That is a handful of writes
-    per process instead of one per checkpoint tick, and it removes the need to deduplicate identical
-    uploads — which is what previously let a failed write mark itself as delivered and never retry.
-
-    The filename deliberately does NOT start with ``.coverage.``: ``coverage combine`` globs that
-    prefix and would choke on a text file.
-    """
-    destination = _destination_dir()
-    if not destination:
-        return
-    # Snapshot under the buffer's own lock: _log appends from whichever thread is running, and a deque
-    # raises if it is mutated while being iterated.
-    with _messages_lock:
-        snapshot = list(_messages)
-    _write_to_volume(f"{destination}/dqxcov-log.{_key}.txt", ("\n".join(snapshot) + "\n").encode())
-
-
-def _flush(final: bool) -> bool:
-    """Save the collected data and persist it to the volume. Never raises. True if it landed.
-
-    *final* stops the tracer first (process is exiting); a checkpoint leaves it running. Only
-    ``save()`` is called mid-run — never ``stop()``/``start()`` from the checkpoint thread, which
-    would blind other threads while they execute.
-    """
-    if _cov is None:
-        return False
-    persisted = _flush_locked(final)
-    # Breadcrumbs are NOT written per flush. A routine checkpoint tick that succeeded says nothing new,
-    # and writing one every time meant the diagnostics had to be deduplicated to keep the traffic flat
-    # — which in turn let a failed write mark itself delivered and never retry. Write at the moments
-    # that carry information instead: a final (shutdown) flush, and any flush that did not land.
-    if final or not persisted:
-        _write_breadcrumb()
-    return persisted
-
-
-def _flush_locked(final: bool) -> bool:
-    """Save and ship the data. Never raises. Returns whether it reached the volume."""
     cov = _cov
     if cov is None:
-        return False
+        return None
     try:
         with _lock:
             if final:
-                # Only the app ever reaches this: its process really does exit. The runner shares a
-                # long-lived interpreter with later runs, so stopping the tracer there would blind
-                # every operation that followed.
+                # Only the app reaches this: its process really does exit. Stopping the tracer in a
+                # runner would blind anything that ran afterwards.
                 cov.stop()
             cov.save()
             destination = _destination_dir()
             if not destination:
                 # Routine on an early checkpoint tick, where the runner's task arguments are not in
-                # sys.argv yet. Callers for whom it is NOT routine say so themselves — see
-                # flush_at_task_end.
+                # sys.argv yet. Callers for whom it is NOT routine say so — see flush_at_task_end.
                 _log("no destination could be resolved; data left in /tmp only")
-                return False
+                return None
+            with open(_data_file, "rb") as handle:
+                payload = handle.read()
             # The name must start with '.coverage.' (and never be exactly '.coverage') or
             # `coverage combine` will not glob it.
-            return _persist(_data_file, f"{destination}/.coverage.{_key}")
+            return payload, f"{destination}/.coverage.{_key}"
     except Exception as exc:  # noqa: BLE001 — coverage must never break the app or fail a job
-        _log(f"flush failed (non-fatal): {exc!r}", warning=True)
+        _log(f"snapshot failed (non-fatal): {exc!r}", warning=True)
+        return None
+
+
+def _flush(final: bool, remote_suffix: str = "") -> bool:
+    """Snapshot then publish. Never raises. Returns whether the data reached the volume.
+
+    Callers must hold ``_upload_lock`` (see ``_publish`` for the single documented exception); the
+    module docstring says why it is not acquired here.
+    *remote_suffix* publishes to a sibling name, used by the final flush when it cannot get the
+    lock in time and must not race the canonical object.
+    """
+    snapshot = _snapshot(final)
+    if snapshot is None:
         return False
+    payload, remote_path = snapshot
+    return _publish(payload, remote_path + remote_suffix)
 
 
-def _checkpoint_loop() -> None:
-    """Periodically flush so an ungraceful death costs at most one interval."""
-    while not _checkpoint_stopped:
-        time.sleep(_CHECKPOINT_SECONDS)
-        if _checkpoint_stopped:
-            return
+def _checkpoint_seconds() -> float:
+    """The periodic flush interval, in seconds. OFF by default, and deliberately so.
+
+    The runner does not need it: the dev-coverage bundle target points the wheel task at a wrapping
+    entry point (see runner_entry) that persists coverage from ordinary code once the work is done.
+    That is deterministic — it runs on main()'s own call stack, with the task arguments already in
+    ``sys.argv`` so the results volume resolves.
+
+    A timer cannot offer that. The .pth executes at interpreter start, before the task arguments
+    exist, so an early tick can only log "no destination could be resolved" and leave the data in
+    /tmp. Measured with a 15s interval and no wrapper: 7 of 21 runner runs produced a data file at
+    all, and which ones did tracked process lifetime rather than outcome — so the reported coverage
+    of unchanged code wandered between 49% and 75%.
+
+    The app is the exception and sets this explicitly (see the dev-coverage app_environment): it is a
+    uvicorn process with no entry point to wrap, relying on a graceful SIGTERM plus atexit, and the
+    interval bounds the loss if the platform's ~15s shutdown budget is exceeded.
+
+    Read here rather than at module scope: an env var that renders empty or non-numeric would raise
+    while site.py is exec'ing the .pth, where the failure is swallowed — coverage would never start
+    AND the "NOT started" diagnostic this module promises would never be emitted, leaving only a
+    site.py traceback and a silent 0%. Called from ``_start()``, inside its try.
+    """
+    raw = os.getenv("DQX_COVERAGE_CHECKPOINT_SECONDS", "")
+    try:
+        return float(raw) if raw else 0.0
+    except ValueError:
+        _log(f"ignoring non-numeric DQX_COVERAGE_CHECKPOINT_SECONDS={raw!r}; checkpoint off", warning=True)
+        return 0.0
+
+
+def _checkpoint_loop(interval: float) -> None:
+    """Periodically publish, so an ungraceful death costs at most one interval."""
+    while not _stop_event.wait(interval):
+        # Skip rather than queue: a tick's payload is a subset of whatever publish is already in
+        # flight, and waiting here is how a tick could delay the final flush past the shutdown
+        # budget.
+        if not _upload_lock.acquire(blocking=False):
+            continue
         try:
             _flush(final=False)
         except Exception as exc:  # noqa: BLE001 — the thread must outlive any single bad tick
             # Without this, one escaped exception ends the thread for the life of the process and
             # silently reinstates the atexit-only failure this whole mechanism exists to avoid.
             _log(f"checkpoint tick failed (non-fatal): {exc!r}", warning=True)
+        finally:
+            _upload_lock.release()
+
+
+def _final_flush() -> None:
+    """The atexit hook: stop checkpointing, then publish what we have. Never raises."""
+    _stop_event.set()
+    if _upload_lock.acquire(timeout=_FINAL_WAIT_SECONDS):
+        try:
+            _flush(final=True)
+        finally:
+            _upload_lock.release()
+        return
+    # A publish is still running and the budget is short. Writing the canonical path anyway could
+    # interleave with it and corrupt the object, which aborts `coverage combine` and costs the
+    # entire report — so publish beside it. `coverage combine` globs '.coverage.*' and picks this up
+    # as simply another data file.
+    # Deliberately WITHOUT _upload_lock — we just failed to get it. Safe only because the sibling
+    # path is unique to this write, so nothing can interleave on one object; see _publish's contract.
+    _log("upload busy at shutdown; publishing to a sibling path", warning=True)
+    _flush(final=True, remote_suffix=".final")
 
 
 def flush_at_task_end() -> None:
@@ -325,24 +341,23 @@ def flush_at_task_end() -> None:
     results volume resolves. Compare the checkpoint thread, whose early ticks fire before argv is
     populated and can only leave the data in /tmp.
 
-    Deliberately a non-final flush: the tracer is left running so nothing that executes after this
-    point is silently untraced, and so a second call cannot blind an interpreter that turns out to be
-    shared.
+    Deliberately a non-final flush: the tracer is left running so nothing executing after this point
+    is silently untraced. It waits for the upload lock rather than skipping, unlike a checkpoint
+    tick — there is no shutdown budget here, and this publish is the whole point.
+
+    The atexit hook still publishes afterwards, so a runner writes the same path twice. That is not
+    redundant: because this flush leaves the tracer running, the second payload is a superset
+    including whatever executed during teardown, and each write is a whole cumulative file so the
+    last one simply wins. Suppressing it would need "already published" state, and that is exactly
+    the dedup that previously let a failed write mark itself delivered and never retry.
     """
-    global _checkpoint_stopped  # noqa: PLW0603 — module-level singleton, mirrors the other hooks
-    _checkpoint_stopped = True
-    # Logged so the breadcrumb attributes the upload. Without this the deterministic flush and a
-    # checkpoint tick are indistinguishable in the record, which is precisely the ambiguity that made
-    # an earlier attempt at this look like it worked when it had never run at all.
+    _stop_event.set()
     _log("task-end flush (deterministic; checkpoint retired)")
-    # _flush publishes the breadcrumb itself when the flush did not land, so only the success path
-    # needs one here — otherwise the same bytes would be uploaded twice on the failure path.
-    if _flush(final=False):
-        _write_breadcrumb()
-    else:
-        # Not benign here, unlike an early checkpoint tick: the work is finished, so if this did not
-        # reach the volume the run's coverage is lost. WARNING because the breadcrumb cannot help —
-        # an unresolved destination is exactly the case where it has nowhere to be written either.
+    with _upload_lock:
+        landed = _flush(final=False)
+    if not landed:
+        # Not benign here, unlike an early tick: the work is finished, so if this did not reach the
+        # volume then this run's coverage is lost.
         _log("task-end flush did not reach the volume; this run's coverage is lost", warning=True)
 
 
@@ -360,18 +375,20 @@ def _start() -> None:
         config_file=os.path.join(os.path.dirname(os.path.abspath(__file__)), "coveragerc"),
         # sigterm=True is deliberately NOT set: its handler re-raises SIGTERM via os.kill()
         # immediately after saving, which kills the process before atexit runs — so the upload
-        # would never happen. Graceful shutdown + the checkpoint thread cover that instead.
+        # would never happen. Graceful shutdown plus the checkpoint thread cover that instead, and
+        # leaving it off is also what keeps our save() calls the only disk writers (see the module
+        # docstring).
     )
     _cov.start()
     # Registered after start(), so with atexit's LIFO ordering this runs BEFORE coverage's own
-    # atexit hook — hence _flush does its own stop()/save() rather than relying on coverage's.
-    atexit.register(_flush, True)
-    if _CHECKPOINT_SECONDS > 0:
-        threading.Thread(target=_checkpoint_loop, daemon=True, name="dqx-coverage").start()
-    # WARNING, not INFO: emitted from the .pth before the task calls basicConfig, where lastResort
-    # drops INFO — and this is the line whose absence explains a silent 0% report. Once per process.
+    # atexit hook — hence _final_flush does its own stop()/save().
+    atexit.register(_final_flush)
+    interval = _checkpoint_seconds()
+    if interval > 0:
+        threading.Thread(target=_checkpoint_loop, args=(interval,), daemon=True, name="dqx-coverage").start()
+    # WARNING, not INFO: this fires from the .pth before the task configures logging, where
+    # lastResort drops INFO, and it is the line whose absence explains a silent 0% report.
     _log(f"tracing started (key={_key}, data_file={_data_file}, argv0={sys.argv[0]!r})", warning=True)
-    _write_breadcrumb()
 
 
 try:

@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from uuid import uuid4
 
+import coverage
 import pytest
 import requests
 from databricks.sdk import WorkspaceClient
@@ -465,46 +466,58 @@ def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -
         downloaded = _download_coverage_files(ws, coverage_dir, since, owns_dir=owns_dir)
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
-    # Reporting lives in one place, and counts data files rather than the mixed list: the download
-    # now also brings back breadcrumbs, so "did anything arrive" and "did any COVERAGE arrive" are
-    # different questions — a breadcrumb-only run is precisely the case worth shouting about, and
-    # testing the mixed list would silence the warning exactly then.
-    _log_collected_coverage(downloaded, coverage_dir)
-    return downloaded
+    # Reporting and the readability check live in one place, so "files arrived" and "usable coverage
+    # arrived" cannot drift apart. Return only what survived: the discarded files no longer exist.
+    return _log_collected_coverage(downloaded, coverage_dir)
 
 
-def _log_collected_coverage(downloaded: list[str], coverage_dir: str) -> None:
-    """Report what arrived, and print the bootstrap's own diagnostics.
+def _log_collected_coverage(downloaded: list[str], coverage_dir: str) -> list[str]:
+    """Report what arrived, drop any data file the merge step could not read, and return the rest.
 
     Coverage is keyed to the *interpreter*, not to a job run: one cumulative file per interpreter,
     rewritten as a superset on every flush. So there is no per-run file to account for, and counting
     files against submitted runs would always look short and mean nothing.
 
-    The ``dqxcov-log.*`` breadcrumbs are what make a shortfall diagnosable at all — a Databricks job
-    retains neither raw stderr nor anything logged before the task configures logging, which is why
-    the shape of this mechanism went unexamined for so long. Print them.
+    The unreadable-file check matters more than it looks. ``coverage combine`` raises ``DataError``
+    on a single corrupt member, and the CI merge step runs it under ``|| true`` — so one truncated
+    file would silently zero the ENTIRE report while every job stayed green. A process SIGKILLed
+    mid-upload can leave exactly that, and the Files API has no rename to publish atomically, so it
+    cannot be prevented at the writing end. Dropping the bad file here costs one interpreter's data
+    instead of all of it.
     """
-    data_files = [p for p in downloaded if Path(p).name.startswith(".coverage")]
-    breadcrumbs = [p for p in downloaded if Path(p).name.startswith("dqxcov-log")]
-    sys.stderr.write(
-        f"coverage: {len(data_files)} data file(s), {len(breadcrumbs)} breadcrumb(s) from {coverage_dir}\n"
-    )
-    for path in breadcrumbs:
-        try:
-            text = Path(path).read_text(encoding="utf-8")
-        except OSError as exc:
-            sys.stderr.write(f"coverage: could not read {path}: {exc}\n")
-            continue
-        sys.stderr.write(f"coverage: --- {Path(path).name} ---\n{text}\n")
-    if not data_files:
+    # No second filter: _download_coverage_files already admits only names starting with
+    # '.coverage', so everything here is a data file.
+    usable, unusable = _partition_readable(downloaded)
+    for path in unusable:
+        sys.stderr.write(f"coverage: WARNING discarding unreadable data file {Path(path).name}\n")
+        with contextlib.suppress(OSError):
+            Path(path).unlink()
+    sys.stderr.write(f"coverage: {len(usable)} usable data file(s) from {coverage_dir}\n")
+    if not usable:
         # Loud, and naming the directory. A silent empty download is how a wrong coverage path went
         # unnoticed once already: the workflow logged "no remote coverage data", skipped the upload,
         # and every job still went green.
         sys.stderr.write(
-            f"coverage: WARNING 0 data files from {coverage_dir} — the mcp flag will not be uploaded. "
-            "Check the app/runner installed the bootstrap wheel (dev-coverage target) and that this "
-            "path matches the deployed tmp schema. The breadcrumbs above, if any, say how far it got.\n"
+            f"coverage: WARNING 0 usable data files from {coverage_dir} — the mcp flag will not be "
+            "uploaded. Check the app/runner installed the bootstrap wheel (dev-coverage target) and "
+            "that this path matches the deployed tmp schema. The bootstrap logs its own progress to "
+            "the app/job output under the 'dqx-coverage' logger.\n"
         )
+    return usable
+
+
+def _partition_readable(data_files: list[str]) -> tuple[list[str], list[str]]:
+    """Split *data_files* into those ``coverage`` can read and those it cannot."""
+    usable: list[str] = []
+    unusable: list[str] = []
+    for path in data_files:
+        try:
+            coverage.CoverageData(basename=path).read()
+        except Exception:  # noqa: BLE001 — any unreadable file is one to drop, whatever the cause
+            unusable.append(path)
+        else:
+            usable.append(path)
+    return usable, unusable
 
 
 def _coverage_dir(tmp_schema: str = "") -> str:
@@ -556,7 +569,7 @@ def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str, since: floa
     for entry in ws.files.list_directory_contents(coverage_dir):
         path = entry.path or ""
         name = path.rsplit("/", 1)[-1]
-        if not path or not (name.startswith(".coverage") or name.startswith("dqxcov-log")):
+        if not path or not name.startswith(".coverage"):
             continue
         # last_modified is epoch MILLIS on this API (files.get_metadata returns an HTTP date string
         # instead — do not mix them). An absent or non-numeric value is treated as current, so
