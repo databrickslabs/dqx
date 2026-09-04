@@ -536,23 +536,40 @@ normal, no single-feature split separates the row, even though "high CPU with id
 on a healthy machine.
 
 Measured on the full Server Machine Dataset: real machine telemetry, 28 machines, 38 metrics, 327 labelled
-incidents across 708,420 rows. This is the share of incidents each detector surfaces while the alert budget
-is capped at 1% of rows:
+incidents across 708,420 rows. Both detectors were trained the way DQX trains — a 30% sample of the table
+being scored, 80% of that sample used to fit — so the training data contains the anomalies, as it does on
+your table:
 
-| `profile` | Incidents surfaced |
-|---|---|
-| `"tabular"` | 57.3% |
-| `"timeseries"` | **67.6%** |
+| `profile` | Incidents surfaced, 1% budget | 5% budget | Precision at 1% | ROC-AUC | Average precision |
+|---|---|---|---|---|---|
+| `"tabular"` | 65.4% | 92.8% | 54.6% | 0.826 | 0.374 |
+| `"timeseries"` | **96.8%** | **99.3%** | 55.4% | **0.845** | 0.380 |
 
-An incident counts as surfaced if the detector flags at least one of its rows, so this measures whether
-you would have been paged, not how many rows you would have had to read. Both detectors were trained on
-data that still contained the anomalies, which is what DQX does when it fits a sample of your table.
+An incident counts as surfaced if the detector flags at least one of its rows, so this measures whether you
+would have been paged, not how many rows you would have had to read. The best precision a 1% budget allows
+on this data is 95.7%, so both detectors are well short of the ceiling; the difference between them is
+*which* incidents they find, not how cleanly.
 
-**Read this as an average, not a promise.** Per machine the gap has a standard deviation of 38 points, and
-the correlation-aware detector wins on 16 of the 28 and loses on 7, so it is the better default for this
-shape of data rather than a guarantee on any particular machine. The most consistent difference is average
-precision, 0.425 against 0.278, because that is an aggregate over the whole ranking rather than a count of
-incidents caught inside a budget.
+**Coverage is the difference that holds up per machine.** The gap at a 1% budget averages +31 points with a
+standard deviation of 30, and the correlation-aware detector wins on 22 of the 28 machines and loses on 1.
+Average precision, by contrast, is a wash under this protocol: +0.006, and 14 wins to 14 losses. So choose
+`"timeseries"` for telemetry because it surfaces more incidents, not because it ranks rows better.
+
+<Admonition type="note" title="Why a clean training split looks worse for both">
+Fitting SMD's own held-out training period instead — the conventional protocol, with no overlap between
+training and scored rows — gives 57.5% against 65.3% at a 1% budget, with average precision 0.277 against
+0.423. Both detectors do *worse* that way, because SMD's training period drifts from its test period, and a
+model fitted on a sample of the rows it will score does not inherit that drift.
+
+That is a property of how DQX trains rather than of the benchmark, so the table above is the representative
+one. It is not an artefact of scoring rows that were trained on: restricting the ranking metrics to the rows
+the model never saw gives ROC-AUC 0.826 against 0.845 and average precision 0.380 against 0.382 — the same
+numbers. Event coverage is not reported for that check, because dropping a quarter of the rows breaks
+incidents into fragments and would count a different set of events.
+
+Both protocols come from one archived run. The comparison is between *estimators* on raw metric matrices:
+DQX's own feature engineering, including `baseline_by` and `baseline_over_time`, is not part of it.
+</Admonition>
 
 That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data the two detectors are
 closer than this table might suggest, so choose on the *shape* of the anomaly you expect rather than on an

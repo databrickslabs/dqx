@@ -47,8 +47,10 @@
 # MAGIC This notebook uses `"timeseries"`, because the bearing story above is exactly its case. The default
 # MAGIC detector splits on one column at a time, so a broken relationship between two in-range values is close
 # MAGIC to invisible to it. On the **Server Machine Dataset**, 28 machines of real telemetry with labelled
-# MAGIC incidents, the correlation-aware detector surfaces **79%** of incidents inside an alert budget of 1% of
-# MAGIC rows, against **33%** for the default.
+# MAGIC incidents, trained the way DQX trains, the correlation-aware detector surfaces **96.8%** of incidents
+# MAGIC inside an alert budget of 1% of rows against **65.4%** for the default, and it wins on 22 of the 28
+# MAGIC machines while losing on 1. See the guide for the full protocol and for the metrics where the two are
+# MAGIC level.
 # MAGIC
 # MAGIC #### 2. Compared to its own group (`baseline_by`)
 # MAGIC

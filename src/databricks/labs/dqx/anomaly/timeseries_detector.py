@@ -2,14 +2,16 @@
 
 IsolationForest splits on one randomly chosen feature at a time, which is why it is strong on tabular
 data and weak on multivariate metrics whose anomalies are *broken correlations* rather than extreme
-single values. Measured on SMD (28 machines, 38 metrics, fit on the train split and scored on the test
-split, no point adjustment) it catches 36% of incidents inside a 1%-of-rows alert budget; the
-Mahalanobis detector here catches 82%. Refitting on training data that still contains anomalies -- what
-DQX actually does -- costs both of them a few points and does not change the conclusion: 33% against
-79%. That was the result that could have sunk the approach, because sample covariance is not robust and
-a few extreme rows inflate it along the very direction that needs to stay tight. Detection quality on
-DQX's own synthetic fixtures is published in the benchmarks report and measured by
-``tests/perf/test_anomaly_benchmark.py``.
+single values. On real machine telemetry this detector surfaces substantially more incidents inside a
+fixed alert budget, and does so consistently across machines; the figures and the protocol they were
+measured under live in the row anomaly detection guide rather than here, because a benchmark number
+copied into a docstring is how five files in this repository came to disagree about one.
+
+The result that could have sunk the approach was training on data that still contains anomalies, which
+is what DQX does when it fits a sample of a live table: sample covariance is not robust, and a few
+extreme rows inflate it along the very direction that needs to stay tight. Measured, it does not --
+that protocol is the one the guide leads with. Detection quality on DQX's own synthetic fixtures is
+published in the benchmarks report and measured by ``tests/perf/test_anomaly_benchmark.py``.
 
 The distance is the ordinary squared Mahalanobis distance from the training centre,
 ``d² = (x−μ)ᵀ Σ⁻¹ (x−μ)``, with three deliberate choices.

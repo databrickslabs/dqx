@@ -92,13 +92,13 @@ class AnomalyEngine(DQEngineBase):
             profile: What kind of data this is, which selects the detector. Defaults to
                 ``"tabular"`` -- IsolationForest, exactly the behaviour before this option existed.
                 ``"timeseries"`` selects a correlation-aware detector suited to multivariate metrics,
-                where anomalies are broken correlations rather than extreme single values; measured on
-                the SMD benchmark it surfaces 79% of incidents inside a 1%-of-rows alert budget against
-                33% for the tabular detector, both trained on data that still contains anomalies as DQX
-                does (82% against 36% on a clean training split). It needs no timestamp column, and trains a single model
-                rather than an ensemble because it is deterministic. There is no automatic option: DQX
-                never changes the algorithm on your behalf, because the choice cannot be verified
-                without labels. The resolved profile is logged on every run.
+                where anomalies are broken correlations rather than extreme single values. It needs no
+                timestamp column, and trains a single model rather than an ensemble because it is
+                deterministic. There is no automatic option: DQX never changes the algorithm on your
+                behalf, because the choice cannot be verified without labels. The resolved profile is
+                logged on every run. Measured detection quality, with the protocol it was measured
+                under, is in the row anomaly detection guide -- deliberately not repeated here, because
+                a benchmark figure copied into a docstring is how five files came to disagree about it.
             baseline_by: Columns identifying the group a row belongs to, so a metric is judged
                       against its own group's baseline rather than against the whole table. Each
                       numeric metric gains its deviation from that baseline as an extra feature on
