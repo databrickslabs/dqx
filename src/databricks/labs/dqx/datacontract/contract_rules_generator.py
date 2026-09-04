@@ -103,6 +103,13 @@ class DataContractRulesGenerator(DQEngineBase):
         has_valid_schema rule per schema is generated. strict_schema_validation is passed as the
         strict argument to has_valid_schema (default True = exact match).
 
+        Explicit rules carry their quality entry's ``dimension``, ``description`` and flattened
+        ``customProperties`` in ``user_metadata`` alongside the contract provenance keys, so
+        contract-authored context is not lost on import. A quality ``owner`` or ``steward``
+        custom property (or, failing that, the first ODCS ``team`` member with an
+        owner/steward-like role) is emitted as a top-level ``owner`` on the generated rule
+        for Rules Registry ownership.
+
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
                 - DataContract(data_contract_file=path) - from a file path
@@ -137,6 +144,7 @@ class DataContractRulesGenerator(DQEngineBase):
             strict_schema_validation,
             default_criticality,
         )
+        self._apply_contract_owners(dq_rules, odcs)
         valid_rules = self._validate_generated_rules(dq_rules)
 
         return valid_rules
@@ -1255,7 +1263,12 @@ class DataContractRulesGenerator(DQEngineBase):
     ) -> dict | None:
         """Build a DQX rule from a quality rule's implementation."""
         return self._build_explicit_rule_from_implementation(
-            quality_rule.implementation, property_name, schema_name, odcs, default_criticality
+            quality_rule.implementation,
+            property_name,
+            schema_name,
+            odcs,
+            default_criticality,
+            quality_rule=quality_rule,
         )
 
     def _build_explicit_rule_from_implementation(
@@ -1265,6 +1278,7 @@ class DataContractRulesGenerator(DQEngineBase):
         schema_name: str,
         odcs: OpenDataContractStandard,
         default_criticality: str,
+        quality_rule: DataQuality | None = None,
     ) -> dict | None:
         """Build a DQX rule from an explicit implementation in the contract.
 
@@ -1275,8 +1289,11 @@ class DataContractRulesGenerator(DQEngineBase):
             if check is None:
                 logger.warning("Implementation missing 'check' attribute, skipping rule")
                 return None
+            filter_rule = filter_rule or self._quality_row_filter(quality_rule)
 
-            return self._build_rule_dict(check, name, criticality, filter_rule, schema_name, property_name, odcs)
+            return self._build_rule_dict(
+                check, name, criticality, filter_rule, schema_name, property_name, odcs, quality_rule
+            )
         except (AttributeError, KeyError, TypeError) as e:
             # Malformed contract structure - fail fast
             raise ODCSContractError(
@@ -1299,6 +1316,114 @@ class DataContractRulesGenerator(DQEngineBase):
         filter_rule: str | None = impl.get("filter")
         return check, name, criticality, filter_rule
 
+    # Provenance keys this generator owns. Contract-authored metadata may add
+    # tags but must never overwrite these, or downstream consumers that filter
+    # on provenance (which contract a rule came from, which schema/field) would
+    # be reading attacker- or typo-controlled values.
+    _PROVENANCE_METADATA_KEYS: frozenset[str] = frozenset(
+        {"contract_id", "contract_version", "odcs_version", "schema", "rule_type", "field"}
+    )
+    _ROW_FILTER_PROPERTY_KEYS: frozenset[str] = frozenset({"row_filter", "rowFilter"})
+    # Accept both legacy ODCS ``steward`` and preferred ``owner`` customProperty keys.
+    _OWNER_PROPERTY_KEYS: frozenset[str] = frozenset({"steward", "owner"})
+    # ODCS team roles that imply ownership of generated rules (legacy steward roles kept).
+    _OWNER_TEAM_ROLES: frozenset[str] = frozenset({"steward", "data steward", "owner"})
+
+    @classmethod
+    def _quality_row_filter(cls, quality_rule: DataQuality | None) -> str | None:
+        """Read an operational row filter from ODCS custom properties.
+
+        ``implementation.filter`` remains authoritative. This fallback lets
+        contracts carry the filter through the standard ODCS extension point.
+        """
+        if quality_rule is None:
+            return None
+        for custom_property in quality_rule.customProperties or []:
+            key = getattr(custom_property, "property", None)
+            value = getattr(custom_property, "value", None)
+            normalized_key = key.strip() if isinstance(key, str) else None
+            if normalized_key in cls._ROW_FILTER_PROPERTY_KEYS and isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @classmethod
+    def _iter_team_members(cls, odcs: OpenDataContractStandard):
+        """Yield ODCS team members whether ``team`` is a list or a Team object."""
+        team = getattr(odcs, "team", None)
+        if team is None:
+            return
+        members = team if isinstance(team, list) else getattr(team, "members", None) or []
+        yield from members
+
+    @classmethod
+    def _contract_owner(cls, odcs: OpenDataContractStandard) -> str | None:
+        """First contract ``team`` member with an owner/steward-like role."""
+        for member in cls._iter_team_members(odcs):
+            role = getattr(member, "role", None)
+            username = getattr(member, "username", None)
+            if not isinstance(username, str) or not username.strip():
+                continue
+            if isinstance(role, str) and role.strip().lower() in cls._OWNER_TEAM_ROLES:
+                return username.strip()
+        return None
+
+    @classmethod
+    def _quality_owner(cls, quality_rule: DataQuality | None) -> str | None:
+        """Per-quality owner override from customProperties (``owner`` or ``steward``)."""
+        if quality_rule is None:
+            return None
+        for custom_property in quality_rule.customProperties or []:
+            key = getattr(custom_property, "property", None)
+            value = getattr(custom_property, "value", None)
+            normalized_key = key.strip() if isinstance(key, str) else None
+            if normalized_key in cls._OWNER_PROPERTY_KEYS and isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @classmethod
+    def _resolve_owner(cls, odcs: OpenDataContractStandard, quality_rule: DataQuality | None = None) -> str | None:
+        return cls._quality_owner(quality_rule) or cls._contract_owner(odcs)
+
+    @classmethod
+    def _apply_contract_owners(cls, rules: list[dict], odcs: OpenDataContractStandard) -> None:
+        """Fill missing top-level ``owner`` from the contract team (predefined/schema rules)."""
+        default_owner = cls._contract_owner(odcs)
+        if not default_owner:
+            return
+        for rule in rules:
+            if isinstance(rule, dict) and not rule.get("owner"):
+                rule["owner"] = default_owner
+
+    @classmethod
+    def _quality_metadata(cls, quality_rule: DataQuality | None) -> dict[str, str]:
+        """Collect the ODCS quality fields that belong in ``user_metadata``.
+
+        ``customProperties`` is the ODCS extension point, so it is flattened to
+        ``{property: value}`` entries. The first-class ``dimension`` and
+        ``description`` fields are applied afterwards, so they win over a
+        same-named custom property. Provenance keys are dropped.
+
+        Values are stringified because ``user_metadata`` is a string map;
+        nested structures are JSON-encoded rather than discarded.
+        """
+        if quality_rule is None:
+            return {}
+
+        metadata: dict[str, str] = {}
+        for custom_property in quality_rule.customProperties or []:
+            key = getattr(custom_property, "property", None)
+            value = getattr(custom_property, "value", None)
+            if not isinstance(key, str) or not key.strip() or value is None:
+                continue
+            metadata[key.strip()] = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+
+        for key, value in (("dimension", quality_rule.dimension), ("description", quality_rule.description)):
+            if isinstance(value, str) and value.strip():
+                metadata[key] = value.strip()
+
+        operational_keys = cls._PROVENANCE_METADATA_KEYS | cls._ROW_FILTER_PROPERTY_KEYS | cls._OWNER_PROPERTY_KEYS
+        return {k: v for k, v in metadata.items() if k not in operational_keys}
+
     def _build_rule_dict(
         self,
         check_dict: dict,
@@ -1308,6 +1433,7 @@ class DataContractRulesGenerator(DQEngineBase):
         schema_name: str,
         property_name: str | None,
         odcs: OpenDataContractStandard,
+        quality_rule: DataQuality | None = None,
     ) -> dict:
         """Build the final rule dictionary with metadata."""
         user_metadata: dict = {
@@ -1319,6 +1445,7 @@ class DataContractRulesGenerator(DQEngineBase):
         }
         if property_name:
             user_metadata["field"] = property_name
+        user_metadata.update(self._quality_metadata(quality_rule))
 
         rule = {
             "check": check_dict,
@@ -1328,4 +1455,7 @@ class DataContractRulesGenerator(DQEngineBase):
         }
         if filter_rule:
             rule["filter"] = filter_rule
+        owner = self._resolve_owner(odcs, quality_rule)
+        if owner:
+            rule["owner"] = owner
         return rule

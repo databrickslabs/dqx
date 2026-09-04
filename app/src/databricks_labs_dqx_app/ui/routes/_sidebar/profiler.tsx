@@ -6,6 +6,7 @@ import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
+import { FadeIn } from "@/components/anim/FadeIn";
 import {
   Card,
   CardContent,
@@ -14,6 +15,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -91,7 +98,7 @@ function ProfilerRoute() {
   return (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary onReset={reset} fallbackRender={ProfilerError}>
+        <ErrorBoundary onReset={reset} FallbackComponent={ProfilerError}>
           <Suspense fallback={null}>
             <ProfilerPage />
           </Suspense>
@@ -339,6 +346,7 @@ function ProfilerPage() {
 
 function ProfilerPageInner() {
   const { t } = useTranslation();
+  const { canRunRules } = usePermissions();
 
   // ── Single-table run state (used when one table + column subset via single-table API) ──
   const [jobRunId, setJobRunId] = useState<number | null>(null);
@@ -871,6 +879,7 @@ function ProfilerPageInner() {
   };
 
   return (
+    <FadeIn>
     <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb items={[{ label: t("rulesCreate.breadcrumb"), to: "/rules/create" }]} page={t("profiler.breadcrumb")} />
@@ -959,16 +968,27 @@ function ProfilerPageInner() {
                   : t("profiler.stopRun")}
               </Button>
             ) : (
-              <Button
-                onClick={handleProfileRun}
-                disabled={selectedTables.length === 0}
-                className="gap-2 mb-6"
-              >
-                <Play className="h-4 w-4" />
-                {selectedTables.length > 1
-                  ? t("profiler.runTables", { count: selectedTables.length })
-                  : t("profiler.runProfile")}
-              </Button>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className={!canRunRules ? "cursor-not-allowed" : undefined}>
+                      <Button
+                        onClick={handleProfileRun}
+                        disabled={selectedTables.length === 0 || !canRunRules}
+                        className="gap-2 mb-6"
+                      >
+                        <Play className="h-4 w-4" />
+                        {selectedTables.length > 1
+                          ? t("profiler.runTables", { count: selectedTables.length })
+                          : t("profiler.runProfile")}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {!canRunRules && (
+                    <TooltipContent>{t("permissions.cannotRunTooltip")}</TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
             )}
           </div>
 
@@ -1513,6 +1533,7 @@ function ProfilerPageInner() {
         </DialogContent>
       </Dialog>
     </div>
+    </FadeIn>
   );
 }
 

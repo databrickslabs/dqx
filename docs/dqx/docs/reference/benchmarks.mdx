@@ -23,7 +23,8 @@ sidebar_position: 508
 | test_benchmark_apply_checks_all_dataset_checks | 45.448403 | 37.252727 | 36.099833 | 66.430547 | 13.300848 | 18.550409 | 36.338184 | 54.888593 | 5 | 0 | 1 | 0.02 |
 | test_benchmark_apply_checks_all_row_checks | 0.987636 | 0.994011 | 0.794045 | 1.170753 | 0.147722 | 0.229299 | 0.873213 | 1.102513 | 5 | 0 | 2 | 1.01 |
 | test_benchmark_are_polygons_mutually_disjoint | 0.543028 | 0.530832 | 0.461183 | 0.649264 | 0.068385 | 0.070691 | 0.506159 | 0.576850 | 5 | 0 | 2 | 1.84 |
-| test_benchmark_compare_datasets | 3.598445 | 3.556993 | 3.430710 | 3.793938 | 0.158157 | 0.280218 | 3.466942 | 3.747160 | 5 | 0 | 2 | 0.28 |
+| test_benchmark_compare_datasets[lazy_pairing] | 7.713215 | 7.710461 | 6.015724 | 10.965409 | 1.997065 | 2.442362 | 6.104391 | 8.546753 | 5 | 0 | 1 | 0.13 |
+| test_benchmark_compare_datasets[strict] | 6.779206 | 6.706592 | 6.686954 | 7.080397 | 0.168787 | 0.111965 | 6.698219 | 6.810184 | 5 | 1 | 1 | 0.15 |
 | test_benchmark_foreach_compare_datasets[n_rows_100000000_n_columns_5] | 25.879615 | 25.919933 | 25.536855 | 26.071184 | 0.217230 | 0.307223 | 25.748681 | 26.055904 | 5 | 0 | 1 | 0.04 |
 | test_benchmark_foreach_foreign_key[n_rows_100000000_n_columns_5] | 24.264873 | 22.893218 | 20.587308 | 29.037093 | 4.062789 | 7.705522 | 20.652819 | 28.358341 | 5 | 0 | 1 | 0.04 |
 | test_benchmark_foreach_has_no_outliers[n_rows_100000000_n_columns_5] | 22.524313 | 22.347593 | 22.104944 | 22.924248 | 0.374170 | 0.646915 | 22.271984 | 22.918899 | 5 | 0 | 3 | 0.04 |
@@ -220,6 +221,10 @@ sidebar_position: 508
 | test_benchmark_is_valid_subdivision_code[col1_subdivision_code] | 0.573532 | 0.589911 | 0.537240 | 0.606590 | 0.032409 | 0.057540 | 0.539428 | 0.596968 | 5 | 0 | 3 | 1.74 |
 | test_benchmark_is_valid_subdivision_code[col2_subdivision_code] | 0.688682 | 0.622486 | 0.578258 | 0.974504 | 0.163387 | 0.152607 | 0.593352 | 0.745959 | 5 | 0 | 1 | 1.45 |
 | test_benchmark_is_valid_timestamp | 0.255469 | 0.243023 | 0.227099 | 0.330808 | 0.042948 | 0.038765 | 0.229012 | 0.267777 | 5 | 1 | 1 | 3.91 |
+| test_benchmark_is_valid_url[col1_url_standard] | 0.269205 | 0.260469 | 0.257201 | 0.308815 | 0.022186 | 0.014211 | 0.258474 | 0.272685 | 5 | 1 | 1 | 3.71 |
+| test_benchmark_is_valid_url[col2_url_with_path_and_query] | 0.265206 | 0.265952 | 0.251770 | 0.276679 | 0.009532 | 0.013727 | 0.258553 | 0.272280 | 5 | 0 | 2 | 3.77 |
+| test_benchmark_is_valid_url[col3_url_with_userinfo_and_port] | 0.284804 | 0.289532 | 0.253068 | 0.302737 | 0.018962 | 0.019602 | 0.276681 | 0.296282 | 5 | 0 | 1 | 3.51 |
+| test_benchmark_is_valid_url[col4_url_with_pct_encoding] | 0.282268 | 0.274966 | 0.272086 | 0.311798 | 0.016815 | 0.015681 | 0.272328 | 0.288010 | 5 | 1 | 1 | 3.54 |
 | test_benchmark_is_valid_uuid[col1_uuid_v4_lowercase] | 0.298155 | 0.297274 | 0.268009 | 0.320050 | 0.019473 | 0.022858 | 0.289119 | 0.311978 | 5 | 0 | 2 | 3.35 |
 | test_benchmark_is_valid_uuid[col2_uuid_v4_uppercase] | 0.330708 | 0.327877 | 0.287387 | 0.381252 | 0.034273 | 0.040219 | 0.309855 | 0.350074 | 5 | 0 | 2 | 3.02 |
 | test_benchmark_is_valid_uuid[col3_uuid_v1_lowercase] | 0.269367 | 0.263780 | 0.258446 | 0.287743 | 0.011568 | 0.014467 | 0.262364 | 0.276831 | 5 | 0 | 1 | 3.71 |

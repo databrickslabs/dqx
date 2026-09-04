@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from uuid import uuid4
 
+import coverage
 import pytest
 import requests
 from databricks.sdk import WorkspaceClient
@@ -233,7 +234,11 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
     finally:
         # Collect coverage BEFORE teardown destroys the app, and do it here rather than at the end of
         # the test body so a FAILING test still yields its data — that is when it is most useful.
-        collect_remote_coverage(deployment["app_name"], started_at, deployment.get("tmp_schema") or "")
+        collect_remote_coverage(
+            deployment["app_name"],
+            started_at,
+            deployment.get("tmp_schema") or "",
+        )
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
 
 
@@ -440,6 +445,7 @@ def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -
     this run, so the merged report describes THIS code and no other. The volume outlives any single
     deployment, so without that bound `coverage combine` silently merges every prior run's data —
     which is how a report ends up citing lines that the current source no longer has.
+
     """
     if not os.environ.get("DQX_MCP_COVERAGE_DIR"):
         return []
@@ -460,18 +466,58 @@ def collect_remote_coverage(app_name: str, since: float, tmp_schema: str = "") -
         downloaded = _download_coverage_files(ws, coverage_dir, since, owns_dir=owns_dir)
     except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
         sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
-    if not downloaded:
-        # Say so loudly and name the directory. A silent empty download is how a wrong path went
-        # unnoticed: the workflow just logged "no remote coverage data" and skipped the upload, so
-        # the flag stopped reporting while every job still passed.
+    # Reporting and the readability check live in one place, so "files arrived" and "usable coverage
+    # arrived" cannot drift apart. Return only what survived: the discarded files no longer exist.
+    return _log_collected_coverage(downloaded, coverage_dir)
+
+
+def _log_collected_coverage(downloaded: list[str], coverage_dir: str) -> list[str]:
+    """Report what arrived, drop any data file the merge step could not read, and return the rest.
+
+    Coverage is keyed to the *interpreter*, not to a job run: one cumulative file per interpreter,
+    rewritten as a superset on every flush. So there is no per-run file to account for, and counting
+    files against submitted runs would always look short and mean nothing.
+
+    The unreadable-file check matters more than it looks. ``coverage combine`` raises ``DataError``
+    on a single corrupt member, and the CI merge step runs it under ``|| true`` — so one truncated
+    file would silently zero the ENTIRE report while every job stayed green. A process SIGKILLed
+    mid-upload can leave exactly that, and the Files API has no rename to publish atomically, so it
+    cannot be prevented at the writing end. Dropping the bad file here costs one interpreter's data
+    instead of all of it.
+    """
+    # No second filter: _download_coverage_files already admits only names starting with
+    # '.coverage', so everything here is a data file.
+    usable, unusable = _partition_readable(downloaded)
+    for path in unusable:
+        sys.stderr.write(f"coverage: WARNING discarding unreadable data file {Path(path).name}\n")
+        with contextlib.suppress(OSError):
+            Path(path).unlink()
+    sys.stderr.write(f"coverage: {len(usable)} usable data file(s) from {coverage_dir}\n")
+    if not usable:
+        # Loud, and naming the directory. A silent empty download is how a wrong coverage path went
+        # unnoticed once already: the workflow logged "no remote coverage data", skipped the upload,
+        # and every job still went green.
         sys.stderr.write(
-            f"coverage: WARNING downloaded 0 data files from {coverage_dir} — the mcp flag will not "
-            "be uploaded. Check the app/runner actually installed the bootstrap wheel (dev-coverage "
-            "target) and that this path matches the deployed tmp schema.\n"
+            f"coverage: WARNING 0 usable data files from {coverage_dir} — the mcp flag will not be "
+            "uploaded. Check the app/runner installed the bootstrap wheel (dev-coverage target) and "
+            "that this path matches the deployed tmp schema. The bootstrap logs its own progress to "
+            "the app/job output under the 'dqx-coverage' logger.\n"
         )
-    else:
-        sys.stderr.write(f"coverage files downloaded: {len(downloaded)} from {coverage_dir}\n")
-    return downloaded
+    return usable
+
+
+def _partition_readable(data_files: list[str]) -> tuple[list[str], list[str]]:
+    """Split *data_files* into those ``coverage`` can read and those it cannot."""
+    usable: list[str] = []
+    unusable: list[str] = []
+    for path in data_files:
+        try:
+            coverage.CoverageData(basename=path).read()
+        except Exception:  # noqa: BLE001 — any unreadable file is one to drop, whatever the cause
+            unusable.append(path)
+        else:
+            usable.append(path)
+    return usable, unusable
 
 
 def _coverage_dir(tmp_schema: str = "") -> str:

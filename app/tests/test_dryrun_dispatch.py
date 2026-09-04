@@ -12,8 +12,6 @@ handles them. They therefore have no ``sql_query`` — a synthetic rule
 that lacks one is a malformed cross-table rule, not a schema rule.
 """
 
-from __future__ import annotations
-
 from databricks_labs_dqx_app.backend.routes.v1.dryrun import _extract_sql_query
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 

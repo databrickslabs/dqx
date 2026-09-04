@@ -19,7 +19,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make` (from root) | What it does |
 |---|---|
 | `make app-install` | Install JS dependencies (yarn) |
-| `make app-build` | Compile UI, generate OpenAPI schema, package wheels (runs `app/scripts/build_app.py`) |
+| `make app-build` | Compile UI, generate OpenAPI schema, assemble the `.build/` deploy tree (runs `app/scripts/build_app.py`) |
 | `make app-start-dev` | Build then start uvicorn + vite via `app/scripts/dev.py` (foreground; Ctrl+C to stop) |
 | `make app-stop-dev` | Stop dev servers started in another shell (`pkill`-based) |
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
@@ -110,7 +110,9 @@ Or directly from the `app/` directory:
 uv run python scripts/build_app.py
 ```
 
-This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist__/`, and packages everything into a wheel. The wheel filename and METADATA both carry a build-tag local-version segment (e.g. `.b20260530t012345`) so successive deploys at the same git commit force a fresh pip install in Databricks Apps' persistent venv.
+This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist__/`, and assembles `.build/` — the source tree Databricks Apps runs via `uv run` (no application wheel). The tree carries `pyproject.toml`, `uv.lock`, the package `src/`, and `requirements.txt` = `uv`, so the container resolves the locked environment (and its own Python) at launch.
+
+While `pyproject.toml` resolves `databricks-labs-dqx` from the parent checkout, the build also copies that library into `.build/_vendor/dqx` and retargets the *copied* `pyproject.toml` / `uv.lock` at it. The container only ever receives the `app/` directory, so a path source pointing outside it cannot resolve there — `uv run` fails at launch with `does not appear to be a Python project`. The tracked lock is never rewritten, so the deployed resolution is the one that was tested. Once a DQX release carries the symbols the backend imports, drop `[tool.uv.sources]` and the vendoring step becomes a no-op automatically.
 
 ## 4. Start Dev Servers
 

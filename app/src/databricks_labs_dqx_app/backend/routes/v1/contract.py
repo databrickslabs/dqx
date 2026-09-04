@@ -52,7 +52,6 @@ def generate_rules_from_contract(
         result = service.generate(
             contract_text=body.contract_text,
             generate_predefined_rules=body.generate_predefined_rules,
-            process_text_rules=body.process_text_rules,
             generate_schema_validation=body.generate_schema_validation,
             strict_schema_validation=body.strict_schema_validation,
             default_criticality=body.default_criticality,

@@ -245,3 +245,77 @@ class TestCoverageTargetMirrorsBase:
             f"wheels={sorted(literal_wheels)}; derive them from ${{var.dqx_version}} so a release bump "
             "touches only that one value and production and CI can never test different releases."
         )
+
+
+# --- the coverage target's wrapping entry point ---------------------------------------------------
+#
+# Nothing else couples these files. The bundle names an entry point; the test-only bootstrap wheel is
+# what provides it; and the bootstrap defaults its checkpoint thread off precisely because that entry
+# point persists coverage deterministically instead. Break any one of those and the failure is silent:
+# the runner runs its pristine entry point, no flush happens, and the mcp flag quietly reports less
+# coverage than the suite actually exercised — which is the exact failure mode this whole area exists
+# to have fixed.
+
+_BOOTSTRAP_PYPROJECT = (
+    Path(__file__).resolve().parents[2] / "tests" / "integration_mcp" / "coverage_bootstrap" / "pyproject.toml"
+)
+_BOOTSTRAP_INIT = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "integration_mcp"
+    / "coverage_bootstrap"
+    / "src"
+    / "dqx_mcp_coverage_bootstrap"
+    / "__init__.py"
+)
+
+
+def test_the_coverage_target_runs_an_entry_point_the_bootstrap_wheel_actually_declares() -> None:
+    """The overridden entry point must exist as a console script in the bootstrap wheel.
+
+    A rename on either side deploys cleanly and then fails at task start, where the only symptom is
+    missing coverage.
+    """
+    bundle = _BUNDLE.read_text(encoding="utf-8")
+    entry_points = re.findall(r"^\s*entry_point:\s*(\S+)\s*$", bundle, re.MULTILINE)
+    assert "dqx-mcp-runner-coverage" in entry_points, f"dev-coverage override missing; found {entry_points}"
+
+    scripts = _BOOTSTRAP_PYPROJECT.read_text(encoding="utf-8")
+    declared = re.findall(r"^(\S+)\s*=\s*\"dqx_mcp_coverage_bootstrap\.\S+\"\s*$", scripts, re.MULTILINE)
+    assert "dqx-mcp-runner-coverage" in declared, f"bootstrap declares {declared}, not the overridden entry point"
+
+
+def test_the_coverage_override_names_the_package_that_provides_the_entry_point() -> None:
+    """``package_name`` selects the distribution the entry point is looked up in, so it must switch too."""
+    bundle = _BUNDLE.read_text(encoding="utf-8")
+    packages = re.findall(r"^\s*package_name:\s*(\S+)\s*$", bundle, re.MULTILINE)
+    assert "dqx_mcp_runner" in packages, "the base task should still run the pristine runner package"
+    assert "dqx_mcp_coverage_bootstrap" in packages, "the coverage override must name the bootstrap package"
+
+
+def test_the_coverage_override_reuses_the_base_task_key() -> None:
+    """DAB merges a target's task list into the base by ``task_key``.
+
+    Naming a different key would append a second task instead of overriding the first, so the runner
+    job would run the pristine entry point AND the wrapper.
+    """
+    bundle = _BUNDLE.read_text(encoding="utf-8")
+    task_keys = re.findall(r"^\s*-\s*task_key:\s*(\S+)\s*$", bundle, re.MULTILINE)
+    assert task_keys.count("dqx_run") == 2, f"expected the base task and one override, found {task_keys}"
+
+
+def test_the_app_is_given_a_checkpoint_since_the_bootstrap_defaults_it_off() -> None:
+    """The app has no wheel entry point to wrap, so it is the one runtime that still needs the thread.
+
+    The bootstrap defaults the interval to 0 for the runner's sake; if the app's explicit value were
+    dropped, the app would fall back to atexit alone and lose coverage whenever the platform's
+    shutdown budget is exceeded.
+    """
+    bootstrap = _BOOTSTRAP_INIT.read_text(encoding="utf-8")
+    assert (
+        'os.getenv("DQX_COVERAGE_CHECKPOINT_SECONDS", "")' in bootstrap
+        and "return float(raw) if raw else 0.0" in bootstrap
+    ), "the bootstrap should default the checkpoint off; the runner's entry point flushes instead"
+    assert "DQX_COVERAGE_CHECKPOINT_SECONDS" in _BUNDLE.read_text(
+        encoding="utf-8"
+    ), "the dev-coverage app environment must set a checkpoint interval for the app"
