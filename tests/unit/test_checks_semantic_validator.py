@@ -2,6 +2,7 @@
 
 import logging
 import pytest
+import pyspark.sql.functions as F
 
 from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidator, ChecksSemanticValidationMode
 
@@ -332,6 +333,26 @@ def test_unhashable_value_beyond_normalization_is_skipped(caplog):
         assert not ChecksSemanticValidator.detect_duplicates(checks)
         assert not ChecksSemanticValidator.detect_conflicts(checks)
     assert any("Skipping" in r.message for r in caplog.records)
+
+
+def test_column_valued_argument_does_not_crash_conflict_detection(caplog):
+    """A Column-valued 'column' argument (e.g. a generated indicator expression) must not raise on
+    truthiness testing in conflict detection (regression: PySparkValueError from an 'or' chain).
+    """
+    indicator = F.when(F.col("email").isNull(), F.lit(100.0)).otherwise(F.lit(0.0))
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_aggr_equal", "arguments": {"column": indicator, "aggr_type": "avg", "limit": 1}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_aggr_equal", "arguments": {"column": indicator, "aggr_type": "avg", "limit": 2}},
+        },
+    ]
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.checks_semantic_validator"):
+        # Must not raise; the Column value is unhashable so conflict grouping is skipped.
+        assert not ChecksSemanticValidator.detect_conflicts(checks)
 
 
 # ---------------------------------------------------------------------------
