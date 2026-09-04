@@ -200,7 +200,7 @@ async def save_compute_settings(
         warehouse_id = body.sql_warehouse_id.strip()
         if warehouse_id:
             step = await asyncio.to_thread(orchestrator.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
-            if step.state != StepState.PASSED:
+            if step.state != StepState.PASSED and step.code != "warehouse_permission_unknown":
                 raise HTTPException(
                     status_code=409,
                     detail={

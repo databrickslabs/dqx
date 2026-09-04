@@ -110,7 +110,7 @@ def resolve_lakebase_connection(
     _reject_control_characters(host, "Lakebase host")
     port = _parse_port(environ.get("PGPORT", "5432"))
     database = _required_value(
-        environ.get("PGDATABASE", config.lakebase_database_name),
+        environ.get("PGDATABASE") or config.lakebase_database_name,
         "Lakebase database",
     )
     username = environ.get("PGUSER", "").strip() or None

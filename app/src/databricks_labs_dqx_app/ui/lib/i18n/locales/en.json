@@ -2932,6 +2932,7 @@
   },
   "setup": {
     "title": "Set up DQX Studio",
+    "description": "Complete the required steps below to make DQX Studio available.",
     "checkingTitle": "Checking Studio readiness",
     "checkingDescription": "DQX Studio is checking the capabilities required to start safely.",
     "waitingTitle": "Studio setup needs an administrator",

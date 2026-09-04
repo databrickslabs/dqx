@@ -2932,6 +2932,7 @@
   },
   "setup": {
     "title": "Configurar DQX Studio",
+    "description": "Completa los pasos obligatorios que aparecen a continuación para que DQX Studio esté disponible.",
     "checkingTitle": "Comprobando la preparación de Studio",
     "checkingDescription": "DQX Studio está comprobando las capacidades necesarias para iniciarse de forma segura.",
     "waitingTitle": "La configuración de Studio necesita un administrador",

@@ -121,6 +121,7 @@ class FakeActivation:
     events: list[str]
     wait_until: asyncio.Event | None = None
     runtime: SetupRuntime | None = None
+    background_failure: Exception | None = None
 
     async def activate(self) -> None:
         self.events.append("activate")
@@ -130,6 +131,8 @@ class FakeActivation:
     async def start_background(self) -> None:
         if self.runtime is None:
             raise RuntimeError("setup runtime is unavailable")
+        if self.background_failure is not None:
+            raise self.background_failure
         self.events.append(f"start_background:{self.runtime.report().state.value}")
 
 
@@ -351,6 +354,18 @@ async def test_background_services_start_only_after_ready_is_published(resources
 
     assert report.state == SetupState.READY
     assert fixture.events[-2:] == ["activate", "start_background:ready"]
+
+
+@pytest.mark.asyncio
+async def test_background_start_failure_keeps_activated_app_ready(resources: ActiveResources) -> None:
+    """A background-service failure must not re-gate an activated application."""
+    activation = FakeActivation([], background_failure=RuntimeError("background unavailable"))
+    fixture = _make_orchestrator(resources, activation=activation)
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert fixture.runtime.report() is report
 
 
 @pytest.mark.asyncio

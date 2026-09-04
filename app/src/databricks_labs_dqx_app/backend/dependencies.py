@@ -99,6 +99,7 @@ def get_oltp_executor() -> OltpExecutorProtocol | None:
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
 _CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
+_SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interval
 
 
 # ---------------------------------------------------------------------------
@@ -1154,8 +1155,28 @@ def setup_access(user: User, admin_group: str) -> SetupAccess:
 async def get_setup_access(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     config: Annotated[AppConfig, Depends(get_conf)],
+    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> SetupAccess:
-    """Resolve setup access from exactly one caller OBO SCIM lookup."""
+    """Resolve setup access, briefly caching platform callers by token hash."""
+    cache_key: str | None = None
+    if token:
+        cache_hash = hashlib.sha256(f"{token}\0{config.admin_group}".encode()).hexdigest()
+        cache_key = f"auth:setup-access:{cache_hash}"
+        cached = await app_cache.get(cache_key)
+        if isinstance(cached, SetupAccess):
+            return cached
+
+    access = await get_live_setup_access(obo_ws, config)
+    if cache_key is not None:
+        await app_cache.set(cache_key, access, ttl=_SETUP_ACCESS_TTL)
+    return access
+
+
+async def get_live_setup_access(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    config: Annotated[AppConfig, Depends(get_conf)],
+) -> SetupAccess:
+    """Resolve setup access from a fresh caller OBO SCIM lookup."""
     user = await asyncio.to_thread(obo_ws.current_user.me)
     return setup_access(user, config.admin_group)
 
@@ -1163,7 +1184,7 @@ async def get_setup_access(
 def require_setup_admin() -> object:
     """Require bootstrap membership without querying Lakebase role mappings."""
 
-    async def _check(access: Annotated[SetupAccess, Depends(get_setup_access)]) -> SetupAccess:
+    async def _check(access: Annotated[SetupAccess, Depends(get_live_setup_access)]) -> SetupAccess:
         if not access.can_manage:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

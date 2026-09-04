@@ -213,6 +213,22 @@ class TestSettings:
         checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws)
         route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
 
+    def test_save_warehouse_accepts_candidate_when_acl_is_unreadable(
+        self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock
+    ) -> None:
+        """An inconclusive ACL read must not reject a potentially usable warehouse."""
+        checkers.check_warehouse.return_value = SetupStep(
+            id=SetupStepId.WAREHOUSE,
+            state=StepState.ACTION_REQUIRED,
+            code="warehouse_permission_unknown",
+            summary="Could not determine app service principal access to the SQL warehouse.",
+        )
+
+        response = client.put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
+
+        assert response.status_code == 200
+        route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
+
     def test_clear_warehouse_override_skips_validation_and_returns_to_bound_default(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock
     ) -> None:

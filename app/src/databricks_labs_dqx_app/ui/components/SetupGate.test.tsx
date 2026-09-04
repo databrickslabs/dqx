@@ -106,6 +106,17 @@ describe("SetupGate", () => {
     expect(markup).not.toContain("setup.actions.openJobs");
   });
 
+  test("explains remediation instead of checking in the administrator wizard", () => {
+    const markup = renderGate(setupStatus(true));
+
+    expect(markup).toContain(
+      "Complete the required steps below to make DQX Studio available.",
+    );
+    expect(markup).not.toContain(
+      "DQX Studio is checking the capabilities required to start safely.",
+    );
+  });
+
   test("renders backend actions disabled while reconciliation is in flight", () => {
     const view = setupView(setupStatus(true, ["verify_again"]));
     const markup = renderSetup(

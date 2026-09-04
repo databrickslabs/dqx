@@ -85,6 +85,20 @@ def test_platform_lakebase_values_are_normalized() -> None:
     )
 
 
+def test_empty_platform_database_uses_configured_fallback() -> None:
+    """An empty platform binding must not discard the configured database name."""
+    config = AppConfig(
+        _env_file=None,
+        lakebase_endpoint="",
+        lakebase_database_name="databricks_postgres",
+    )
+
+    result = resolve_lakebase_connection(config, {"PGHOST": "db.example", "PGDATABASE": ""})
+
+    assert result is not None
+    assert result.database == "databricks_postgres"
+
+
 def test_missing_lakebase_input_is_unresolved() -> None:
     config = AppConfig(_env_file=None, lakebase_endpoint="")
 

@@ -206,12 +206,10 @@ class SetupOrchestrator:
             try:
                 await self.activation.start_background()
             except Exception:
-                activation_step = _failed(
-                    SetupStepId.ACTIVATION,
-                    "studio_background_start_failed",
-                    "Could not start Studio background services.",
+                logger.warning(
+                    "Could not start Studio background services; the activated application remains available.",
+                    exc_info=True,
                 )
-                return self._publish_stopped([*steps[:-1], activation_step], SetupStepId.ACTIVATION)
             return report
 
     async def _reconcile_ready(self, report: SetupReport, setup_user: str | None) -> SetupReport:

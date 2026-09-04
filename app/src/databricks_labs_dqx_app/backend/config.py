@@ -3,7 +3,7 @@ from importlib import resources
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .._metadata import app_name, app_slug
@@ -59,6 +59,14 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_ADMIN_GROUP",
         description="Databricks workspace group name for bootstrap Admin access",
     )
+
+    @field_validator("admin_group")
+    @classmethod
+    def validate_admin_group(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("DQX_ADMIN_GROUP must name a Databricks workspace group.")
+        return value
+
     # Registered Databricks App slug — the unique per-workspace name the app is
     # registered under (e.g. "dqx-studio"). Distinct from ``app_name`` which is
     # the human-readable display title ("DQX Studio"). Used by the
@@ -66,9 +74,7 @@ class AppConfig(BaseSettings):
     # Resolution order: DQX_APP_NAME env var → DATABRICKS_APP_NAME (injected by
     # the Apps runtime) → "dqx-studio" (default matching the bundle var default).
     app_slug_name: str = Field(
-        default_factory=lambda: (
-            os.environ.get("DQX_APP_NAME") or os.environ.get("DATABRICKS_APP_NAME") or "dqx-studio"
-        ),
+        default_factory=lambda: os.environ.get("DQX_APP_NAME") or os.environ.get("DATABRICKS_APP_NAME") or "dqx-studio",
         validation_alias="DQX_APP_NAME",
         description="Registered Databricks App slug used for app-permissions lookups.",
     )
@@ -143,9 +149,7 @@ class AppConfig(BaseSettings):
     lakebase_token_refresh_retry_seconds: int = Field(
         default=10,
         validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_RETRY_SECONDS",
-        description=(
-            "Base back-off between failed token-refresh attempts. " "Jittered by ±retry_jitter on each retry."
-        ),
+        description=("Base back-off between failed token-refresh attempts. Jittered by ±retry_jitter on each retry."),
     )
     lakebase_token_refresh_retry_jitter: float = Field(
         default=0.3,

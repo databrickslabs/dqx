@@ -279,7 +279,9 @@ export function SetupWizard({
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
             {isWaiting
               ? t("setup.waitingDescription", { adminGroup: view.adminGroup })
-              : t("setup.checkingDescription")}
+              : view.kind === "checking"
+                ? t("setup.checkingDescription")
+                : t("setup.description")}
           </p>
           {reconciliationFailed && (
             <p className="text-sm text-destructive">

@@ -93,6 +93,17 @@ def test_status_marks_non_admin_as_waiting(client: TestClient, obo_ws: MagicMock
     assert response.json()["can_manage"] is False
 
 
+def test_status_reuses_setup_access_for_the_same_caller_token(client: TestClient, obo_ws: MagicMock) -> None:
+    """Polling setup status must not repeat the same SCIM lookup on every request."""
+    headers = {"X-Forwarded-Access-Token": "caller-token"}
+
+    first = client.get("/api/v1/setup/status", headers=headers)
+    second = client.get("/api/v1/setup/status", headers=headers)
+
+    assert first.status_code == second.status_code == 200
+    assert obo_ws.current_user.me.call_count == 1
+
+
 def test_status_sanitizes_the_configured_administrator_group(client: TestClient, obo_ws: MagicMock) -> None:
     """A control character in the configured group must not reach the setup UI."""
     app.dependency_overrides[get_conf] = lambda: AppConfig(admin_group="admin\ns")
@@ -112,6 +123,18 @@ def test_reconcile_requires_bootstrap_admin_group(client: TestClient, obo_ws: Ma
     response = client.post("/api/v1/setup/reconcile")
 
     assert response.status_code == 403
+
+
+def test_reconcile_does_not_trust_cached_setup_access(client: TestClient, obo_ws: MagicMock) -> None:
+    """A cached status lookup must not extend setup privileges after group removal."""
+    headers = {"X-Forwarded-Access-Token": "caller-token"}
+    assert client.get("/api/v1/setup/status", headers=headers).status_code == 200
+    obo_ws.current_user.me.return_value = user_in_groups("users")
+
+    response = client.post("/api/v1/setup/reconcile", headers=headers)
+
+    assert response.status_code == 403
+    assert obo_ws.current_user.me.call_count == 2
 
 
 def test_reconcile_passes_authenticated_admin_to_orchestrator(client: TestClient, orchestrator: MagicMock) -> None:
