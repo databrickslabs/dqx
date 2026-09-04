@@ -3196,6 +3196,15 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
+        # Keep rows outside the check filter in the output, but isolate them from reference pairing so they
+        # cannot consume a duplicate-key row number. Coalesce NULL to false to match Spark filter semantics.
+        df = df.withColumn(filter_col, safe_filter_expr(row_filter))
+        pairing_scope_col = f"__match_scope_{unique_id}"
+        df, ref_df = (
+            df.withColumn(pairing_scope_col, F.coalesce(F.col(filter_col), F.lit(False))),
+            ref_df.withColumn(pairing_scope_col, F.lit(True)),
+        )
+
         # A per-group sequence number is appended to the join keys so that _add_row_diffs can tell a
         # present row whose matching-key value is null (matched via null-safe equality) apart from a
         # missing side of the join. Without it, both look "null" and the row is wrongly flagged as both
@@ -3205,11 +3214,13 @@ def compare_datasets(
             order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
             df = df.withColumn(
                 row_number_col,
-                F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
+                F.row_number().over(Window.partitionBy(*pk_column_names, pairing_scope_col).orderBy(*order_columns)),
             )
             ref_df = ref_df.withColumn(
                 row_number_col,
-                F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
+                F.row_number().over(
+                    Window.partitionBy(*ref_pk_column_names, pairing_scope_col).orderBy(*order_columns)
+                ),
             )
         else:
             match_count_col = f"__match_count_{unique_id}"
@@ -3217,7 +3228,9 @@ def compare_datasets(
                 ("source", df, pk_column_names),
                 ("reference", ref_df, ref_pk_column_names),
             ):
-                matchable_rows = dataset if null_safe_row_matching else dataset.dropna(subset=matching_columns)
+                matchable_rows = dataset.where(F.col(pairing_scope_col))
+                if not null_safe_row_matching:
+                    matchable_rows = matchable_rows.dropna(subset=matching_columns)
                 duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
                 if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
                     raise InvalidParameterError(
@@ -3229,11 +3242,8 @@ def compare_datasets(
             df = df.withColumn(row_number_col, F.lit(1))
             ref_df = ref_df.withColumn(row_number_col, F.lit(1))
 
-        join_columns = [*pk_column_names, row_number_col]
-        ref_join_columns = [*ref_pk_column_names, row_number_col]
-
-        # apply filter before aliasing to avoid ambiguity
-        df = df.withColumn(filter_col, safe_filter_expr(row_filter))
+        join_columns = [*pk_column_names, pairing_scope_col, row_number_col]
+        ref_join_columns = [*ref_pk_column_names, pairing_scope_col, row_number_col]
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
@@ -4380,8 +4390,9 @@ def _add_compare_condition(
     return df.withColumn(
         condition_col,
         F.when(
-            # apply filter but skip it for missing rows (null filter col)
-            (F.col(f"df.{filter_col}").isNull() | F.col(f"df.{filter_col}")) & ~all_is_ok,
+            # Missing rows have no source-side filter value and must still be reported. A present source
+            # row whose filter evaluates to NULL follows Spark filter semantics and remains out of scope.
+            (F.col(row_missing_col) | F.col(f"df.{filter_col}")) & ~all_is_ok,
             F.struct(
                 F.col(row_missing_col).alias("row_missing"),
                 F.col(row_extra_col).alias("row_extra"),
