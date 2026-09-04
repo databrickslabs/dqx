@@ -5,12 +5,16 @@ The attribution tests are the most valuable ones here. A distance decomposition 
 narrative, so the rejected alternative is asserted explicitly rather than described in a comment.
 """
 
+import tempfile
+
+import mlflow
 import numpy as np
 import pytest
 from sklearn.base import clone
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
+from databricks.labs.dqx.anomaly.mlflow_registry import SKLEARN_SERIALIZATION_FORMAT
 from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
 
 # The correlated 2x2 case used throughout: rho = 0.9, so the off-diagonal precision terms are large
@@ -251,3 +255,36 @@ def test_a_redundant_dummy_costs_nothing_and_an_unseen_category_scores_high():
     known = -both.score_samples(np.array([[10.0, 1.0, 0.0]]))[0]
     assert np.isfinite(unseen)
     assert unseen > known
+
+
+# ── the serialization format DQX's own estimator needs ───────────────────────────────────────────────
+
+
+def test_the_detector_round_trips_through_mlflow_in_the_format_dqx_declares():
+    """MLflow 3 refuses to save an sklearn model referencing types skops does not trust.
+
+    ``IsolationForest`` is trusted; :class:`MahalanobisDetector` is DQX's own class, so raising the
+    mlflow floor to 3.x broke ``profile="timeseries"`` at registration with "The saved sklearn model
+    references untrusted types", after every unit test still passed. Naming cloudpickle restores what
+    MLflow 2 did by default.
+
+    Round-tripping rather than only saving, because scoring loads the model back: a format that writes
+    but does not read would move the failure from training to the first scored batch. Scores must be
+    identical, not merely finite -- a persisted model that scores differently from the fitted one is
+    the same defect wearing a different hat.
+    """
+    rng = np.random.default_rng(0)
+    train = rng.normal(0, 1, (300, 4))
+    probe = np.vstack([rng.normal(0, 1, (3, 4)), rng.normal(8, 1, (1, 4))])
+
+    detector = MahalanobisDetector().fit(train)
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = f"{directory}/model"
+        mlflow.sklearn.save_model(sk_model=detector, path=path, serialization_format=SKLEARN_SERIALIZATION_FORMAT)
+        reloaded = mlflow.sklearn.load_model(path)
+
+    np.testing.assert_allclose(reloaded.score_samples(probe), detector.score_samples(probe), rtol=1e-12)
+    # Attribution is the reason this detector exists in DQX rather than raw scipy, so it has to survive
+    # the round trip too.
+    np.testing.assert_allclose(reloaded.feature_contributions(probe), detector.feature_contributions(probe))
