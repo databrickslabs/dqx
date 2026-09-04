@@ -2,6 +2,8 @@
 
 import logging
 import warnings
+
+import pytest
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -19,9 +21,12 @@ from databricks.labs.dqx.anomaly.model_registry import (
 )
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
+    create_anomaly_check_rule,
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     score_with_anomaly_check,
@@ -647,3 +652,36 @@ def test_retraining_migrates_a_pre_release_registry_and_leaves_nothing_behind(
     archived = migrated.filter(F.col("identity.status") != "active").select("grouping.baseline_by").collect()
     assert archived, "the previous version must be migrated, not dropped"
     assert archived[0]["baseline_by"] == ["region"]
+
+
+def test_scoring_a_pre_release_model_says_to_retrain_rather_than_failing_internally(
+    ws, spark: SparkSession, make_schema, make_random
+):
+    """The error a user upgrading actually meets, and the reason the read path stays tolerant.
+
+    A model registered before this release cannot be scored: the configuration hash formula changed, so the
+    recomputed hash never matches and scoring refuses. That refusal is correct and is not what this pins.
+    What it pins is *which* error arrives. Before the migration work, the registry read raised
+    ``KeyError: 'grouping'`` first, so the user saw an internal failure with no indication that retraining
+    was the answer.
+
+    Written after an earlier draft of this test asserted the opposite -- that scoring still worked -- which
+    was wrong about the hash check and would have encoded a promise DQX does not make.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(6).lower()
+    table = f"{TEST_CATALOG}.{schema.name}.legacy_reg_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.legacy_model_{suffix}"
+    _write_legacy_registry(spark, table, model_name, ["region"])
+
+    test_df = spark.createDataFrame([(100.0, 2.0), (900.0, 40.0)], "amount double, quantity double")
+
+    with pytest.raises(InvalidParameterError) as raised:
+        DQEngine(ws, spark).apply_checks(
+            test_df,
+            [create_anomaly_check_rule(model_name=model_name, registry_table=table, threshold=95.0)],
+        ).collect()
+
+    message = str(raised.value)
+    assert "Retrain" in message or "retrain" in message, f"the remedy must be in the message: {message}"
+    assert "KeyError" not in message

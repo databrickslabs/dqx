@@ -312,14 +312,18 @@ def test_autodiscovery_with_datetime_columns(spark: SparkSession):
 
 def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
     """Test string column analysis with low/medium/high cardinality (lines 130-148)."""
-    # Create DataFrame with strings of varying cardinality
+    # 1,000 rows so `category` clears the *effective* rows-per-group floor. Discovery runs before sampling,
+    # so a candidate needs MIN_ROWS_PER_BASELINE_GROUP / (sample_fraction * train_ratio) rows per group on the
+    # full table for the fit to see the minimum it promises. At 200 rows this fixture gave `category` 40 rows
+    # per group, which is 9.6 by the time anything is fitted, so it is correctly no longer a grouping
+    # candidate. 1,000 rows gives it 200, and ~48 after sampling.
     data = []
-    for i in range(200):
+    for i in range(1000):
         data.append(
             (
-                f"cat_{i % 5}",  # Low cardinality (5 distinct)
+                f"cat_{i % 5}",  # Low cardinality (5 distinct), 200 rows/group
                 f"user_{i % 50}",  # Medium cardinality (50 distinct)
-                f"tx_{i}",  # High cardinality (200 distinct) - avoid "id" pattern
+                f"tx_{i}",  # High cardinality (1000 distinct) - avoid "id" pattern
                 100.0 + i,
             )
         )
@@ -336,12 +340,12 @@ def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
     assert profile.column_types is not None
     assert profile.column_types["category"] == "categorical"
 
-    # user_code has 50 distinct values - stays a feature: adding it as a second baseline column
-    # would push groups past the rows-per-group floor, so it is not selected for grouping.
+    # user_code has 50 distinct values - stays a feature: as a second baseline column it would give
+    # 5 * 50 = 250 groups over 1,000 rows, 4 rows each, far under the floor, so it is not selected.
     assert "user_code" in profile.recommended_columns
     assert profile.column_types["user_code"] == "categorical"
 
-    # transaction_ref has 200 distinct values (>100) - should be excluded with warning (lines 144-148)
+    # transaction_ref has 1000 distinct values (>100) - should be excluded with warning (lines 144-148)
     assert "transaction_ref" not in profile.recommended_columns
     warnings_text = " ".join(profile.warnings)
     assert "transaction_ref" in warnings_text
