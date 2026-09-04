@@ -174,7 +174,7 @@ def test_a_straight_series_earns_no_changepoints():
     rng = np.random.default_rng(11)
     seconds = _hourly_axis(2000)
 
-    basis, _ = select_basis(seconds, _linear_metric(seconds, rng))
+    basis, _ = select_basis(seconds, {"metric": _linear_metric(seconds, rng)})
 
     assert not basis.changepoints
 
@@ -188,7 +188,7 @@ def test_a_series_whose_slope_doubles_earns_changepoints():
     values = 100.0 + TRUE_SLOPE_PER_SECOND * np.minimum(seconds, knee)
     values = values + 3.0 * TRUE_SLOPE_PER_SECOND * np.maximum(0.0, seconds - knee) + rng.normal(0, 3.0, seconds.size)
 
-    basis, _ = select_basis(seconds, values)
+    basis, _ = select_basis(seconds, {"metric": values})
 
     assert basis.changepoints
 
@@ -205,7 +205,7 @@ def test_changepoints_are_never_placed_in_the_recent_tail():
     values = 100.0 + TRUE_SLOPE_PER_SECOND * np.minimum(seconds, knee)
     values = values + 4.0 * TRUE_SLOPE_PER_SECOND * np.maximum(0.0, seconds - knee) + rng.normal(0, 2.0, seconds.size)
 
-    basis, _ = select_basis(seconds, values)
+    basis, _ = select_basis(seconds, {"metric": values})
 
     assert all(changepoint <= 0.8 for changepoint in basis.changepoints)
 
@@ -317,7 +317,80 @@ def test_select_basis_reports_what_it_skipped(caplog):
     seconds = _hourly_axis(48)  # two days: nothing is admissible
 
     with caplog.at_level(logging.DEBUG):
-        basis, rejected = select_basis(seconds, _linear_metric(seconds, rng))
+        basis, rejected = select_basis(seconds, {"metric": _linear_metric(seconds, rng)})
 
     assert not basis.periods
     assert set(rejected) == set(CANDIDATE_PERIODS_SECONDS)
+
+
+# ── the basis is a property of the table, not of whichever column came first ────────────────────────
+
+
+def _bent_metric(seconds: np.ndarray, rng: np.random.Generator, bend: float = 3.0) -> np.ndarray:
+    """A metric whose slope changes partway through: the shape changepoints exist for."""
+    knee = seconds[seconds.size // 2]
+    values = 100.0 + TRUE_SLOPE_PER_SECOND * np.minimum(seconds, knee)
+    return values + bend * TRUE_SLOPE_PER_SECOND * np.maximum(0.0, seconds - knee) + rng.normal(0, 3.0, seconds.size)
+
+
+def test_the_basis_does_not_depend_on_metric_order():
+    """One basis is shared by every metric, so column order must not decide it.
+
+    The defect this pins: the basis was scored on the *first* usable metric alone, and the period search
+    read that metric's time axis too, so reordering a schema changed every fitted residual for every
+    column. A straight metric first chose one changepoint count where a bent metric chose another.
+    """
+    rng = np.random.default_rng(11)
+    seconds = _hourly_axis(2000)
+    straight = _linear_metric(seconds, rng)
+    bent = _bent_metric(seconds, np.random.default_rng(12))
+
+    straight_first, _ = select_basis(seconds, {"straight": straight, "bent": bent})
+    bent_first, _ = select_basis(seconds, {"bent": bent, "straight": straight})
+
+    assert straight_first == bent_first
+
+
+def test_a_metric_with_gaps_is_scored_on_the_buckets_it_has():
+    """Each metric carries NaN where it had no observation, and is masked on its own gaps.
+
+    A shared axis with per-metric masking is what lets one sparse column take part at all: before, a
+    sparse metric either decided the basis alone or was ignored entirely, depending on its position.
+    """
+    rng = np.random.default_rng(5)
+    seconds = _hourly_axis(2000)
+    dense = _linear_metric(seconds, rng)
+    sparse = _linear_metric(seconds, np.random.default_rng(6))
+    sparse[::3] = np.nan  # a third of its buckets never saw a value
+
+    basis, _ = select_basis(seconds, {"dense": dense, "sparse": sparse})
+
+    assert not basis.changepoints  # both metrics are straight, so flexibility is still unearned
+
+
+def test_a_metric_that_needs_flexibility_can_win_it_for_the_table():
+    """The aggregate must still be able to select changepoints, or the invariance would be worthless."""
+    seconds = _hourly_axis(2000)
+    first = _bent_metric(seconds, np.random.default_rng(21), bend=4.0)
+    second = _bent_metric(seconds, np.random.default_rng(22), bend=4.0)
+
+    basis, _ = select_basis(seconds, {"a": first, "b": second})
+
+    assert basis.changepoints
+
+
+def test_a_metric_measured_in_large_units_does_not_outvote_the_others():
+    """Why the aggregate is a ratio rather than a sum of residual scales.
+
+    Residual scale carries the metric's own units, so a column measured in millions would dominate any
+    raw sum and choose the basis for every other column. Here one straight metric is rescaled by 1e6:
+    the selected basis must not move, because a per-metric ratio is unitless.
+    """
+    seconds = _hourly_axis(2000)
+    bent = _bent_metric(seconds, np.random.default_rng(31), bend=4.0)
+    straight = _linear_metric(seconds, np.random.default_rng(32))
+
+    modest, _ = select_basis(seconds, {"bent": bent, "straight": straight})
+    inflated, _ = select_basis(seconds, {"bent": bent, "straight": straight * 1e6})
+
+    assert modest == inflated

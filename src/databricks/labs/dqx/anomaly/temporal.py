@@ -223,22 +223,81 @@ def _holdout_residual_scale(seconds: np.ndarray, values: np.ndarray, basis: Temp
     return float(np.median(np.abs(residual - np.median(residual))) * MAD_TO_SIGMA)
 
 
-def select_basis(seconds: np.ndarray, values: np.ndarray) -> tuple[TemporalBasis, dict[float, str]]:
+def _standardise(values: np.ndarray) -> np.ndarray | None:
+    """Centre and scale a metric robustly, or ``None`` if it has no spread to scale by.
+
+    Used only to compare candidate bases with each other, never to fit a coefficient. Median and MAD
+    rather than mean and standard deviation for the usual reason: a handful of anomalous buckets should
+    not set the scale that every basis is then judged against.
+    """
+    if values.size == 0:
+        return None
+    centre = float(np.median(values))
+    spread = float(np.median(np.abs(values - centre)) * MAD_TO_SIGMA)
+    if not np.isfinite(spread) or spread <= 0:
+        return None  # A constant metric ranks every basis equally, so it carries no signal here.
+    return (values - centre) / spread
+
+
+def select_basis(seconds: np.ndarray, metrics: dict[str, np.ndarray]) -> tuple[TemporalBasis, dict[float, str]]:
     """Choose the basis for a table: which periods, and how many changepoints.
 
-    *values* is a representative metric, used only to score changepoint counts. The periods depend on the
-    time axis alone, so they are the same for every metric in the table, which is what keeps one basis and
-    one column order for the whole model.
+    One basis is shared by every metric, which is what keeps one column order for the whole model, so the
+    choice has to be a property of the table rather than of any one metric. It reads every metric to that
+    end. An earlier version scored changepoints on whichever metric happened to be first in the schema
+    and took its time axis for the period search too, which made every fitted residual depend on column
+    order: a linear metric first chose one changepoint where a bent metric chose six.
 
-    Returns the basis and the rejected periods with their reasons.
+    Candidates are compared on the **mean across metrics of the ratio** between a candidate's holdout
+    residual scale and the same metric's scale under the simplest basis, each metric first standardised
+    to a robust unit scale. Both halves are needed and neither is cosmetic:
+
+    - the *ratio* stops a large-magnitude column outvoting the rest, which a raw sum of residual scales
+      would let it do, because a residual scale carries the metric's own units
+    - the *standardisation* is what makes the ratio genuinely magnitude-free. The underlying fit is
+      penalised (``HUBER_ALPHA``), and that penalty is absolute, so the same shape expressed in millions
+      is effectively fitted with less regularisation than one expressed in tens. Measured: rescaling one
+      straight metric by 1e6 moved the selected count from three changepoints to six until each metric
+      was standardised first. Only the basis *choice* is made on standardised values; ``fit_temporal``
+      fits the raw metric, so no coefficient is affected.
+
+    Args:
+        seconds: Bucket centres, the full time axis. Periods and *span* are read from all of it rather
+            than from one metric's usable subset.
+        metrics: metric name -> values aligned to *seconds*, ``NaN`` where that metric had no
+            observation in a bucket. Each metric is scored on its own non-NaN subset.
+
+    Returns:
+        The basis and the rejected periods with their reasons.
     """
     seconds = np.asarray(seconds, dtype=float)
     span = float(np.max(seconds) - np.min(seconds)) if seconds.size > 1 else 1.0
     periods, rejected = candidate_periods(seconds)
     base = TemporalBasis(trend=True, periods=periods, harmonics=SEASONAL_HARMONICS, span=max(span, 1.0))
 
-    values = np.asarray(values, dtype=float)
-    best_basis, best_scale = base, _holdout_residual_scale(seconds, values, base)
+    scored: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for name, raw in metrics.items():
+        values = np.asarray(raw, dtype=float)
+        mask = ~np.isnan(values)
+        standardised = _standardise(values[mask])
+        if standardised is not None:
+            scored[name] = (seconds[mask], standardised)
+
+    # Each metric's own yardstick, under the simplest basis. A metric the simple basis already predicts
+    # perfectly (scale 0) or cannot be scored on at all (inf) says nothing about whether flexibility
+    # helps, so it is left out of the comparison rather than given an arbitrary ratio.
+    references = {}
+    for name, (metric_seconds, values) in scored.items():
+        scale = _holdout_residual_scale(metric_seconds, values, base)
+        if np.isfinite(scale) and scale > 0:
+            references[name] = scale
+    if not references:
+        return base, rejected
+
+    # Strictly better than 1.0, so a tie leaves the simpler basis in place. Flexibility has to earn its
+    # keep: in-sample fit was identical across 0 to 25 changepoints while extrapolation ranged 1.2% to
+    # 100%.
+    best_basis, best_ratio = base, 1.0
     for count in CHANGEPOINT_CANDIDATES:
         if count == 0:
             continue
@@ -246,11 +305,14 @@ def select_basis(seconds: np.ndarray, values: np.ndarray) -> tuple[TemporalBasis
         candidate = TemporalBasis(
             trend=True, periods=periods, harmonics=SEASONAL_HARMONICS, changepoints=changepoints, span=base.span
         )
-        scale = _holdout_residual_scale(seconds, values, candidate)
-        # Strictly better, so a tie leaves the simpler basis in place. Flexibility has to earn its keep:
-        # in-sample fit was identical across 0 to 25 changepoints while extrapolation ranged 1.2% to 100%.
-        if scale < best_scale:
-            best_basis, best_scale = candidate, scale
+        # A candidate that cannot be scored on any one metric scores ``inf`` overall and is refused for
+        # all of them, which is the conservative reading of a single shared basis.
+        ratios = [
+            _holdout_residual_scale(*scored[name], candidate) / reference for name, reference in references.items()
+        ]
+        mean_ratio = float(np.mean(ratios))
+        if mean_ratio < best_ratio:
+            best_basis, best_ratio = candidate, mean_ratio
 
     return best_basis, rejected
 

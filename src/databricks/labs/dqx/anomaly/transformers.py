@@ -785,15 +785,22 @@ def _process_numeric_columns(
     numeric_cols: list[ColumnTypeInfo],
     engineered_features: list[str],
 ) -> DataFrame:
-    """Process numeric columns with null imputation."""
+    """Register each numeric column as a feature, cast to double, nulls still null.
+
+    Casting here and imputing in :func:`_impute_numeric_features` at the very end is deliberate, and
+    the two used to be one ``coalesce(col.cast(...), 0.0)`` on this line. That imputed before the
+    group and time baselines were fitted, so a missing observation contributed a fabricated zero to its
+    group's median and then received a fabricated deviation from it -- ``0 - expected(t)`` -- on top of
+    its null indicator. Both baselines now see the null and skip the row, which is what the null
+    indicator was always supposed to be the sole record of.
+    """
     for col_info in numeric_cols:
         col_name = col_info.name
 
         # Add null indicator if needed
         transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
 
-        # Impute nulls with 0
-        transformed_df = transformed_df.withColumn(col_name, coalesce(col(col_name).cast(DoubleType()), lit(0.0)))
+        transformed_df = transformed_df.withColumn(col_name, col(col_name).cast(DoubleType()))
         engineered_features.append(col_name)
 
     return transformed_df
@@ -893,9 +900,11 @@ def _process_baseline_relative_features(
     falls back to the global baseline, which makes it look ordinary rather than extreme — the
     conservative direction, and the case a caller can detect explicitly via ``is_new_baseline``.
 
-    Must run last. ``engineered_feature_names`` is positional: the sklearn pipeline is handed
-    columns in this order, so features may only ever be appended at the tail. Inserting a
-    transform before this one would silently reorder an already-trained model's inputs.
+    ``engineered_feature_names`` is positional: the sklearn pipeline is handed columns in this order,
+    so features may only ever be appended at the tail. Inserting a feature-producing transform before
+    this one would silently reorder an already-trained model's inputs. Two things do run afterwards,
+    and neither appends a feature: the temporal block, which reads the column produced here, and
+    numeric imputation, which must not run before the medians below are collected.
     """
     if not baseline_by or not numeric_cols:
         return transformed_df
@@ -1064,15 +1073,10 @@ def _fit_temporal_from_buckets(
     # buckets per metric rather than dropping the metric, so one sparse column does not cost the rest.
     usable = {name: ~np.isnan(values) for name, values in metrics.items()}
 
-    representative = next(
-        (metrics[name][usable[name]] for name in source_columns if usable[name].sum() > 2),
-        np.array([], dtype=float),
-    )
-    representative_seconds = next(
-        (bucket_seconds[usable[name]] for name in source_columns if usable[name].sum() > 2),
-        np.array([], dtype=float),
-    )
-    basis, rejected = select_basis(representative_seconds, representative)
+    # Every metric, not the first usable one. select_basis masks each on its own NaNs and reads the full
+    # bucket axis for the period search, so neither the periods nor the changepoint count depends on
+    # schema order any more.
+    basis, rejected = select_basis(bucket_seconds, metrics)
 
     coefficients: dict[str, list[float]] = {}
     for name, values in metrics.items():
@@ -1152,6 +1156,41 @@ def _process_temporal_baseline_features(
             feature_name, coalesce(col(source_columns[metric]) - expected_level, lit(0.0))
         )
         engineered_features.append(feature_name)
+
+    return transformed_df
+
+
+def _impute_numeric_features(
+    transformed_df: DataFrame,
+    numeric_cols: list[ColumnTypeInfo],
+    baseline_by: list[str],
+    baseline_over_time: str,
+) -> DataFrame:
+    """Replace every remaining numeric null with a neutral zero. Must run last.
+
+    Last because both comparison bases are fitted from the raw metric, and imputing first would let a
+    missing observation move the very baseline it is then measured against. By the time this runs the
+    medians are collected and the temporal coefficients are fitted, so filling in is free of
+    consequence: the estimators need a dense matrix, and the ``_is_null`` indicator already carries the
+    fact that the value was absent.
+
+    Zero is neutral for the derived features by construction -- it is exactly "no deviation from the
+    baseline" -- which the raw metric cannot claim, but the raw metric has the indicator beside it.
+
+    Appends nothing, so the positional ``engineered_feature_names`` contract is untouched.
+    """
+    for col_info in numeric_cols:
+        metric = col_info.name
+        # Both derived columns exist for every metric whenever their basis is set: each block above
+        # appends one per metric unconditionally, a constant where it learned nothing. Named without a
+        # guard so that a future early-exit there fails here loudly rather than skipping an imputation.
+        names = [metric]
+        if baseline_by:
+            names.append(f"{metric}{BASELINE_RELATIVE_SUFFIX}")
+        if baseline_over_time:
+            names.append(f"{metric}{TEMPORAL_RELATIVE_SUFFIX}")
+        for name in names:
+            transformed_df = transformed_df.withColumn(name, coalesce(col(name), lit(0.0)))
 
     return transformed_df
 
@@ -1290,6 +1329,9 @@ def apply_feature_engineering(
         temporal,
         engineered_features,
     )
+
+    # Strictly after both bases above, which are fitted from the un-imputed metric on purpose.
+    transformed_df = _impute_numeric_features(transformed_df, numeric_cols, baseline_by, baseline_over_time)
 
     return _project_and_describe(
         transformed_df,

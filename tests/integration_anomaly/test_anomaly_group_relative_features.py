@@ -310,3 +310,88 @@ def test_unscored_row_keeps_its_info_when_merged_back(spark: SparkSession):
     info_by_id = {row["row_id"]: row["info"] for row in merged.collect()}
     assert info_by_id[1] == "unseen-group"  # kept despite a null score
     assert info_by_id[2] == "scored"
+
+
+# ============================================================================
+# A missing observation must not move the baseline it is measured against
+# ============================================================================
+
+
+def test_a_null_metric_does_not_contribute_to_its_group_baseline(spark: SparkSession):
+    """The baseline must be the median of the values that exist, not of values plus fabricated zeros.
+
+    Numeric imputation used to run *before* the medians were collected, replacing every null with 0.0
+    in place. A group of three 100s and four nulls therefore had a median of 0 rather than 100, and
+    every real row in it was then reported as a large positive deviation from a baseline no row held.
+
+    The counts here are chosen so the two answers cannot be confused: over ``[100, 100, 100]`` the
+    median is 100 and the relative feature is 0, while over ``[100, 100, 100, 0, 0, 0, 0]`` it is 0 and
+    the feature is ``log1p(100)``, about 4.6.
+    """
+    rows = [("DE", 100.0)] * 3 + [("DE", None)] * 4
+    df = spark.createDataFrame(rows, "country string, amount double")
+
+    result, _ = apply_feature_engineering(
+        df,
+        [ColumnTypeInfo(name="amount", spark_type=T.DoubleType(), category="numeric", null_count=4)],
+        baseline_by=["country"],
+    )
+
+    present = _first(result.filter(F.col("amount") == 100.0))
+    assert present["amount_rel_baseline"] == pytest.approx(0.0, abs=1e-9), (
+        "a row sitting exactly on its group's median must show no deviation; "
+        f"got {present['amount_rel_baseline']}, and log1p(100) = {math.log1p(100):.3f} would mean the "
+        "baseline was computed over imputed zeros"
+    )
+
+
+def test_a_null_metric_gets_a_neutral_deviation_and_keeps_its_indicator(spark: SparkSession):
+    """Missingness is the null indicator's job, and only the indicator's.
+
+    The derived feature is zero -- "no deviation" -- rather than a deviation measured from a value the
+    row never had. Both facts are asserted together because the neutral zero is only honest while the
+    indicator is there to distinguish it from a row genuinely at its baseline.
+    """
+    rows = [("DE", 100.0)] * 3 + [("DE", None)] * 4
+    df = spark.createDataFrame(rows, "country string, amount double")
+
+    result, metadata = apply_feature_engineering(
+        df,
+        [ColumnTypeInfo(name="amount", spark_type=T.DoubleType(), category="numeric", null_count=4)],
+        baseline_by=["country"],
+    )
+
+    missing = _first(result.filter(F.col("amount_is_null") == 1.0))
+    assert missing["amount"] == 0.0  # imputed, so the estimator sees a dense matrix
+    assert missing["amount_rel_baseline"] == pytest.approx(0.0, abs=1e-9)
+    assert "amount_is_null" in metadata.engineered_feature_names
+
+
+def test_imputation_appends_no_feature(spark: SparkSession):
+    """Moving imputation to the end must not disturb the positional feature list.
+
+    Compares against a frame with no nulls at all: same columns, same order, whatever the imputation
+    step had to do.
+    """
+    with_nulls = spark.createDataFrame(
+        [("DE", 100.0), ("DE", None), ("IT", 20.0), ("IT", 22.0)], "country string, amount double"
+    )
+    without_nulls = spark.createDataFrame(
+        [("DE", 100.0), ("DE", 105.0), ("IT", 20.0), ("IT", 22.0)], "country string, amount double"
+    )
+
+    _, nulls_metadata = apply_feature_engineering(
+        with_nulls,
+        [ColumnTypeInfo(name="amount", spark_type=T.DoubleType(), category="numeric", null_count=1)],
+        baseline_by=["country"],
+    )
+    _, clean_metadata = apply_feature_engineering(
+        without_nulls,
+        [ColumnTypeInfo(name="amount", spark_type=T.DoubleType(), category="numeric", null_count=0)],
+        baseline_by=["country"],
+    )
+
+    # The indicator is the one legitimate difference; everything else must match position for position.
+    assert [n for n in nulls_metadata.engineered_feature_names if n != "amount_is_null"] == (
+        clean_metadata.engineered_feature_names
+    )

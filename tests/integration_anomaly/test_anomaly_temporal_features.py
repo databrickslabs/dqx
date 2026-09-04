@@ -543,3 +543,42 @@ def test_a_null_timestamp_in_training_does_not_fail_the_fit(spark: SparkSession)
     # The basis was fitted from the rows that do carry a timestamp.
     assert metadata.temporal_coefficients
     assert engineered.count() == len(rows)
+
+
+def test_a_null_metric_does_not_drag_its_expected_level_toward_zero(spark: SparkSession):
+    """The temporal half of the same imputation defect the group baselines had.
+
+    Numeric imputation used to replace every null with 0.0 *before* the buckets were aggregated, so a
+    bucket that happened to hold a null had its median pulled toward zero and the fitted expectation
+    followed it down. The fit now sees the null and skips it, exactly as ``percentile_approx`` does for
+    every other aggregate.
+
+    Measured as the residual on the rows that *do* have a value: if the expectation had been dragged
+    down by a third of the series being fabricated zeros, those rows would all sit far above it and the
+    residual would carry a large positive offset rather than centring on zero.
+    """
+    rng = np.random.default_rng(23)
+    rows = []
+    for i in range(24 * 30):
+        value = None if i % 3 == 0 else float(100.0 + 0.05 * i + rng.normal(0, 2.0))
+        rows.append((START + datetime.timedelta(hours=i), value))
+    df = spark.createDataFrame(rows, "event_ts timestamp, revenue double")
+
+    engineered, _ = apply_feature_engineering(
+        df,
+        [ColumnTypeInfo(name="revenue", spark_type=T.DoubleType(), category="numeric", null_count=24 * 10)],
+        baseline_over_time="event_ts",
+    )
+
+    present = engineered.filter(F.col("revenue") != 0.0)
+    stats = present.selectExpr(
+        f"avg(`revenue{TEMPORAL_RELATIVE_SUFFIX}`) as mean_residual",
+        f"stddev(`revenue{TEMPORAL_RELATIVE_SUFFIX}`) as residual_sd",
+    ).first()
+    assert stats is not None
+    # The trend reaches 0.05 * 720 = 36 units, so an expectation fitted through fabricated zeros would
+    # leave a mean residual of that order. Centred means the nulls were skipped, not counted as zero.
+    assert abs(stats["mean_residual"]) < 3.0 * stats["residual_sd"], (
+        f"residual should centre on zero for rows that have a value; got mean "
+        f"{stats['mean_residual']:.2f} against sd {stats['residual_sd']:.2f}"
+    )
