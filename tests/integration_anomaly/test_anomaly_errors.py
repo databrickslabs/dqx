@@ -280,6 +280,40 @@ def test_internal_score_column_collision(ws, spark: SparkSession, make_random, a
     assert "ambiguous" in str(exc.value).lower()
 
 
+def test_training_refuses_a_frame_where_a_derived_feature_would_overwrite_a_real_column(
+    spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix
+):
+    """The wiring the unit tests cannot show: that ``train`` actually reaches the collision check.
+
+    Before this refused, the run succeeded and lost data silently. ``amount_rel_baseline`` is a real
+    column here, so the group-relative transform overwrote it, appended its name to the positional
+    feature list a second time, and fitted the model on two copies of the derived value with the user's
+    own column gone. Nothing downstream could detect that, and attribution then named the wrong source.
+
+    The unit suite pins the predicate; only this pins that the predicate is consulted.
+    """
+    model_name = f"{anomaly_registry_prefix}.test_feature_collision_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
+
+    df = spark.createDataFrame(
+        [(100.0 + i, 0.5, "eu") for i in range(60)],
+        "amount double, amount_rel_baseline double, region string",
+    )
+
+    with pytest.raises(InvalidParameterError) as exc:
+        anomaly_engine.train(
+            df=df,
+            columns=["amount", "amount_rel_baseline"],
+            model_name=model_name,
+            registry_table=registry_table,
+            baseline_by=["region"],
+        )
+
+    message = str(exc.value)
+    assert "amount_rel_baseline" in message
+    assert "overwritten" in message
+
+
 def test_has_no_row_anomalies_requires_fully_qualified_model_name():
     """Ensure model name must be fully qualified."""
     with pytest.raises(InvalidParameterError):

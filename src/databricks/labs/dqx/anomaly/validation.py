@@ -13,7 +13,16 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.model_config import AnomalyModelRecord
-from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier
+from databricks.labs.dqx.anomaly.transformers import (
+    BASELINE_RELATIVE_SUFFIX,
+    BOOLEAN_FEATURE_SUFFIX,
+    CALENDAR_FEATURE_SUFFIXES,
+    FREQUENCY_FEATURE_SUFFIX,
+    NULL_INDICATOR_SUFFIX,
+    TEMPORAL_RELATIVE_SUFFIX,
+    ColumnTypeClassifier,
+    feature_category_for_type,
+)
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -152,6 +161,119 @@ def validate_baseline_over_time(
             f"baseline_over_time column '{baseline_over_time}' has type "
             f"{schema_fields[baseline_over_time].simpleString()}, which is not a time type. It must be a "
             "timestamp or a date, because the expected level is fitted against elapsed seconds."
+        )
+
+
+def generated_feature_names(
+    schema_fields: dict[str, T.DataType],
+    columns: collections.abc.Iterable[str],
+    baseline_by: list[str] | None,
+    baseline_over_time: str | None,
+) -> list[tuple[str, str, str]]:
+    """Every ``(generated name, source column, transform)`` feature engineering will create.
+
+    A list rather than a name-keyed mapping so that two sources generating the *same* name stay visible;
+    a dict would silently keep one, which is the shape of the bug this feeds.
+
+    Deliberately independent of null counts and cardinality, both of which need a Spark action. Being
+    conservative in those two places is the point rather than a compromise:
+
+    - a null indicator is only built for a column that has nulls *in the training frame*, but a schema
+      whose generated indicator name collides is a bug waiting for the first null to arrive, so the name
+      is claimed unconditionally
+    - a categorical column is frequency-encoded only above the cardinality threshold, and its one-hot
+      names depend on the values themselves, which no schema can predict. The frequency name is claimed
+      unconditionally; the one-hot names are checked where they are built.
+    """
+    generated: list[tuple[str, str, str]] = []
+
+    for name in columns:
+        col_type = schema_fields.get(name)
+        if col_type is None:
+            continue  # A missing feature column is validate_columns' complaint, not this one's.
+
+        generated.append((f"{name}{NULL_INDICATOR_SUFFIX}", name, "the null indicator"))
+        derived = _derived_names_for_category(
+            name, feature_category_for_type(col_type), baseline_by, baseline_over_time
+        )
+        generated.extend((derived_name, name, transform) for derived_name, transform in derived)
+
+    return generated
+
+
+def _derived_names_for_category(
+    name: str,
+    category: str,
+    baseline_by: list[str] | None,
+    baseline_over_time: str | None,
+) -> list[tuple[str, str]]:
+    """``(generated name, transform)`` for one column, from its category alone.
+
+    Split out from the caller so each category's answer is one flat branch. An 'unsupported' column
+    generates nothing because feature engineering skips it entirely.
+    """
+    if category == 'numeric':
+        derived = []
+        if baseline_by:
+            derived.append((f"{name}{BASELINE_RELATIVE_SUFFIX}", "the baseline_by comparison"))
+        if baseline_over_time:
+            derived.append((f"{name}{TEMPORAL_RELATIVE_SUFFIX}", "the baseline_over_time comparison"))
+        return derived
+    if category == 'boolean':
+        return [(f"{name}{BOOLEAN_FEATURE_SUFFIX}", "the boolean encoding")]
+    if category == 'datetime':
+        return [(f"{name}{suffix}", "the calendar encoding") for suffix in CALENDAR_FEATURE_SUFFIXES]
+    if category == 'categorical':
+        return [(f"{name}{FREQUENCY_FEATURE_SUFFIX}", "the frequency encoding")]
+    return []
+
+
+def validate_generated_feature_names(
+    df: DataFrame,
+    columns: collections.abc.Iterable[str],
+    baseline_by: list[str] | None,
+    baseline_over_time: str | None,
+) -> None:
+    """Refuse a schema where a generated feature would land on the name of a real column.
+
+    Feature engineering builds derived columns by appending a suffix and writing the result with
+    ``withColumn``, which *replaces* a column of that name. A table carrying both ``amount`` and
+    ``amount_rel_baseline`` therefore loses the second one: the derived value overwrites it, the name is
+    appended to the feature list a second time, and the model is fitted on two copies of the derived
+    value with the user's real metric gone. Nothing downstream can detect that, and per-feature
+    attribution then names the wrong source column.
+
+    Raising is the only honest option. Renaming the derived feature would leave the persisted feature
+    list disagreeing with the suffix that redaction and attribution both key on, and dropping either
+    column silently discards data the caller asked to be checked.
+    """
+    generated = generated_feature_names(
+        {field.name: field.dataType for field in df.schema.fields}, columns, baseline_by, baseline_over_time
+    )
+
+    existing = set(df.columns)
+    overwrites = sorted(entry for entry in generated if entry[0] in existing)
+    if overwrites:
+        details = "; ".join(
+            f"'{name}' already exists and would be overwritten by {transform} of '{source}'"
+            for name, source, transform in overwrites
+        )
+        raise InvalidParameterError(
+            f"Feature engineering would overwrite existing columns: {details}. Rename the existing "
+            "column, or exclude it and its source from the checked columns. DQX refuses rather than "
+            "picking one, because either choice silently drops data you asked it to check."
+        )
+
+    by_name = collections.defaultdict(list)
+    for name, source, _ in generated:
+        by_name[name].append(source)
+    clashes = sorted((name, sources) for name, sources in by_name.items() if len(sources) > 1)
+    if clashes:
+        details = "; ".join(f"'{name}' from {sorted(sources)}" for name, sources in clashes)
+        raise InvalidParameterError(
+            f"Two checked columns would generate the same feature name: {details}. The feature list is "
+            "positional, so a duplicated name makes one column's feature indistinguishable from the "
+            "other's. Rename one of the source columns."
         )
 
 

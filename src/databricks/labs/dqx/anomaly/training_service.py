@@ -50,6 +50,7 @@ from databricks.labs.dqx.anomaly.validation import (
     validate_columns,
     validate_fully_qualified_name,
     validate_baseline_columns,
+    validate_generated_feature_names,
     validate_spark_version,
     validate_training_params,
 )
@@ -366,6 +367,8 @@ class AnomalyTrainingService:
 
         resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
         validate_baseline_over_time(df, resolved_over_time, columns)
+        # After both bases are resolved, because which derived features exist depends on them.
+        validate_generated_feature_names(df, columns, baseline_by, resolved_over_time)
         self._advise_calendar_features(df, columns, resolved_over_time)
         if resolved_over_time:
             self._advise_trend_strength(df_filtered, columns, resolved_over_time)

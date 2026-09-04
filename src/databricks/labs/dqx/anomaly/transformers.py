@@ -153,6 +153,25 @@ def _spark_type_for_category(category: str) -> T.DataType:
     }.get(category, T.StringType())
 
 
+def feature_category_for_type(col_type: T.DataType) -> str:
+    """Which family of transforms a column's Spark type puts it in.
+
+    Depends on the type alone. Cardinality decides *how* a categorical column is encoded, and a null
+    count decides whether it gets an indicator, but neither changes the category — which is what makes
+    this answerable from a schema with no Spark action, and therefore usable by validation before any
+    profiling has run.
+    """
+    if isinstance(col_type, T.NumericType):
+        return 'numeric'
+    if isinstance(col_type, T.BooleanType):
+        return 'boolean'
+    if isinstance(col_type, (T.DateType, T.TimestampType, T.TimestampNTZType)):
+        return 'datetime'
+    if isinstance(col_type, T.StringType):
+        return 'categorical'
+    return 'unsupported'
+
+
 def reconstruct_column_infos(feature_metadata: SparkFeatureMetadata) -> list[ColumnTypeInfo]:
     """
     Reconstruct ColumnTypeInfo objects from SparkFeatureMetadata.
@@ -285,15 +304,14 @@ class ColumnTypeClassifier:
         self, col_name: str, col_type: T.DataType, *, null_count: int, distinct_count: int | None = None
     ) -> ColumnTypeInfo:
         """Classify a single column."""
+        category = feature_category_for_type(col_type)
 
-        # Numeric types
-        if isinstance(col_type, T.NumericType):
+        if category == 'numeric':
             return ColumnTypeInfo(
                 name=col_name, spark_type=col_type, category='numeric', null_count=null_count, encoding_strategy='none'
             )
 
-        # Boolean
-        if isinstance(col_type, T.BooleanType):
+        if category == 'boolean':
             return ColumnTypeInfo(
                 name=col_name,
                 spark_type=col_type,
@@ -302,8 +320,7 @@ class ColumnTypeClassifier:
                 encoding_strategy='binary',
             )
 
-        # Datetime types
-        if isinstance(col_type, (T.DateType, T.TimestampType, T.TimestampNTZType)):
+        if category == 'datetime':
             return ColumnTypeInfo(
                 name=col_name,
                 spark_type=col_type,
@@ -312,28 +329,23 @@ class ColumnTypeClassifier:
                 encoding_strategy='cyclical',
             )
 
-        # Handle string columns as categorical features (distinct_count is always set in analyze_columns for string columns)
-        if isinstance(col_type, T.StringType):
+        # distinct_count is always set in analyze_columns for string columns.
+        if category == 'categorical':
             if distinct_count is None:
                 raise InvalidParameterError(f"distinct_count is required for string column {col_name}")
-            cardinality = distinct_count
 
             # Determine encoding strategy based on cardinality
-            if cardinality <= self.categorical_cardinality_threshold:
-                strategy = 'onehot'
-            else:
-                strategy = 'frequency'
+            strategy = 'onehot' if distinct_count <= self.categorical_cardinality_threshold else 'frequency'
 
             return ColumnTypeInfo(
                 name=col_name,
                 spark_type=col_type,
                 category='categorical',
-                cardinality=cardinality,
+                cardinality=distinct_count,
                 null_count=null_count,
                 encoding_strategy=strategy,
             )
 
-        # Unsupported types
         return ColumnTypeInfo(name=col_name, spark_type=col_type, category='unsupported', null_count=null_count)
 
     def _estimate_feature_count(self, column_infos: list[ColumnTypeInfo]) -> int:
@@ -572,7 +584,7 @@ def _add_null_indicator(
     """Add null indicator column if column has nulls."""
     has_nulls = (null_count or 0) > 0
     if has_nulls:
-        null_indicator_col = f"{col_name}_is_null"
+        null_indicator_col = f"{col_name}{NULL_INDICATOR_SUFFIX}"
         transformed_df = transformed_df.withColumn(null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0))
         engineered_features.append(null_indicator_col)
     return transformed_df
@@ -601,8 +613,20 @@ def _apply_onehot_encoding(
                 "Model may be from an older version without OneHot category storage."
             )
 
+    # The one collision that no schema can predict, so it is caught here rather than in validation:
+    # a one-hot name is built from a *value*, and a table can carry both a "region" column with an
+    # "east" value and a separate "region_east" column. Writing the indicator would overwrite the real
+    # one and leave the model fitted on two copies of the indicator. See
+    # ``validation.validate_generated_feature_names`` for the same refusal over the predictable names.
+    existing_columns = set(transformed_df.columns)
     for value in distinct_values:
         feature_name = f"{col_name}_{value}"
+        if feature_name in existing_columns:
+            raise InvalidParameterError(
+                f"One-hot encoding column '{col_name}' would create '{feature_name}' for value {value!r}, "
+                f"but a column of that name already exists and would be overwritten. Rename it, or exclude "
+                f"'{col_name}' from the checked columns."
+            )
         transformed_df = transformed_df.withColumn(feature_name, when(col(col_name) == value, 1.0).otherwise(0.0))
         engineered_features.append(feature_name)
 
@@ -617,7 +641,7 @@ def _apply_frequency_encoding(
     engineered_features: list[str],
 ) -> DataFrame:
     """Apply Frequency encoding to a categorical column."""
-    feature_name = f"{col_name}_freq"
+    feature_name = f"{col_name}{FREQUENCY_FEATURE_SUFFIX}"
     lookup_key_col = f"__dqx_{col_name}_category"
     lookup_val_col = f"__dqx_{col_name}_frequency"
 
@@ -708,32 +732,24 @@ def _process_datetime_columns(
             col_name, coalesce(col(col_name).cast(TimestampType()), to_timestamp(lit("1970-01-01 00:00:00")))
         )
 
-        # Extract cyclical features
-        transformed_df = transformed_df.withColumn(f"{col_name}_hour_sin", sin(hour(col(col_name)) * 2 * pi() / 24))
-        transformed_df = transformed_df.withColumn(f"{col_name}_hour_cos", cos(hour(col(col_name)) * 2 * pi() / 24))
-        engineered_features.extend([f"{col_name}_hour_sin", f"{col_name}_hour_cos"])
-
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_dow_sin", sin((dayofweek(col(col_name)) - 1) * 2 * pi() / 7)
+        # Extract cyclical features. Paired with their suffixes rather than written out one
+        # ``withColumn`` at a time, so the emitted order is the order of CALENDAR_FEATURE_SUFFIXES by
+        # construction: that tuple is what collision validation checks against, and
+        # engineered_feature_names is positional, so the two must not be able to drift apart.
+        timestamp = col(col_name)
+        calendar_expressions = (
+            sin(hour(timestamp) * 2 * pi() / 24),
+            cos(hour(timestamp) * 2 * pi() / 24),
+            sin((dayofweek(timestamp) - 1) * 2 * pi() / 7),
+            cos((dayofweek(timestamp) - 1) * 2 * pi() / 7),
+            sin((month(timestamp) - 1) * 2 * pi() / 12),
+            cos((month(timestamp) - 1) * 2 * pi() / 12),
+            when((dayofweek(timestamp) == 1) | (dayofweek(timestamp) == 7), 1.0).otherwise(0.0),
         )
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_dow_cos", cos((dayofweek(col(col_name)) - 1) * 2 * pi() / 7)
-        )
-        engineered_features.extend([f"{col_name}_dow_sin", f"{col_name}_dow_cos"])
-
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_month_sin", sin((month(col(col_name)) - 1) * 2 * pi() / 12)
-        )
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_month_cos", cos((month(col(col_name)) - 1) * 2 * pi() / 12)
-        )
-        engineered_features.extend([f"{col_name}_month_sin", f"{col_name}_month_cos"])
-
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_is_weekend",
-            when((dayofweek(col(col_name)) == 1) | (dayofweek(col(col_name)) == 7), 1.0).otherwise(0.0),
-        )
-        engineered_features.append(f"{col_name}_is_weekend")
+        for suffix, expression in zip(CALENDAR_FEATURE_SUFFIXES, calendar_expressions, strict=True):
+            feature_name = f"{col_name}{suffix}"
+            transformed_df = transformed_df.withColumn(feature_name, expression)
+            engineered_features.append(feature_name)
 
         # Drop the original datetime column after feature extraction
         # This ensures the TimestampType column doesn't reach sklearn (which expects float)
@@ -755,10 +771,11 @@ def _process_boolean_columns(
         transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
 
         # Map to 0/1 (nulls -> 0)
+        feature_name = f"{col_name}{BOOLEAN_FEATURE_SUFFIX}"
         transformed_df = transformed_df.withColumn(
-            f"{col_name}_bool", when(col(col_name).isNull(), 0.0).when(col(col_name), 1.0).otherwise(0.0)
+            feature_name, when(col(col_name).isNull(), 0.0).when(col(col_name), 1.0).otherwise(0.0)
         )
-        engineered_features.append(f"{col_name}_bool")
+        engineered_features.append(feature_name)
 
     return transformed_df
 
@@ -797,6 +814,22 @@ def _signed_log1p(column: Column) -> Column:
 # means the LLM must not see "amount_rel_baseline" either.
 BASELINE_RELATIVE_SUFFIX = "_rel_baseline"
 TEMPORAL_RELATIVE_SUFFIX = "_rel_time"
+# Every other suffix a transform below appends to a source column's name. Constants rather than
+# inline f-strings because ``validation.validate_generated_feature_names`` builds the same names to
+# refuse a collision with a real input column, and a suffix that drifted between the two places
+# would reopen exactly the silent overwrite that check exists to prevent.
+NULL_INDICATOR_SUFFIX = "_is_null"
+BOOLEAN_FEATURE_SUFFIX = "_bool"
+FREQUENCY_FEATURE_SUFFIX = "_freq"
+CALENDAR_FEATURE_SUFFIXES = (
+    "_hour_sin",
+    "_hour_cos",
+    "_dow_sin",
+    "_dow_cos",
+    "_month_sin",
+    "_month_cos",
+    "_is_weekend",
+)
 # Rows collected to the driver to fit the temporal basis. The fit runs on a bucketed aggregate rather
 # than raw rows, so this bounds driver memory regardless of table size, exactly as the per-group median
 # aggregation does. Each bucket contributes its median, which is robust before Huber even sees it.
