@@ -583,7 +583,7 @@ yq = [{ name = "yq", specifier = "~=3.4.3" }]
 
 [[package]]
 name = "databricks-labs-dqx-app"
-version = "0.15.0"
+version = "0.16.1"
 source = { editable = "." }
 dependencies = [
     { name = "databricks-labs-dqx", extra = ["datacontract", "llm"] },

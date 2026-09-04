@@ -92,7 +92,7 @@ _RUN_SET_TRIGGERS: frozenset[str] = frozenset(get_args(RunSetTrigger))
 class RunSetService:
     """Mints and reads run sets (``dq_run_sets`` / ``dq_run_set_members``).
 
-    ``oltp_sql`` is the OLTP executor (Lakebase or Delta-OLTP-fallback)
+    ``oltp_sql`` is the Lakebase OLTP executor
     that owns the two run-set tables; ``validation_sql`` is the Delta
     executor for ``dq_validation_runs`` (always Delta, regardless of
     whether Lakebase is enabled — see ``app/AGENTS.md``).
@@ -210,7 +210,7 @@ class RunSetService:
 
         Lives here — not baked into the ``v_dq_check_results`` UC view —
         because ``dq_run_set_members`` is an OLTP table (Lakebase Postgres,
-        or the Delta OLTP fallback) while the results views are Delta/UC,
+        in Lakebase) while the results views are Delta/UC,
         so a cross-backend SQL JOIN into the view is not possible.
         """
         if not run_ids:

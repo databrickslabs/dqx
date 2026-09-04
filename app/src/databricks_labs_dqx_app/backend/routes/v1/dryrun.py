@@ -114,7 +114,7 @@ async def list_validation_runs(
 ) -> list[ValidationRunSummaryOut]:
     """Return validation (dry-run) history filtered to user-accessible catalogs."""
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+        table = sql.fqn(_DRYRUN_TABLE)
         rows = job_svc.list_dryrun_rows(table)
 
         # Reconcile stale RUNNING placeholders whose task died before writing a
@@ -139,7 +139,7 @@ async def list_validation_runs(
             candidates.append(row)
 
         # Bulk-fetch review statuses for every visible run in one query.
-        # Lakebase/Delta-OLTP and dq_validation_runs may live on different
+        # Lakebase OLTP and dq_validation_runs live on different
         # backends, so we can't JOIN at the SQL layer — merging in Python
         # is what keeps this dialect-portable.
         candidate_run_ids = [row.get("run_id") or "" for row in candidates if row.get("run_id")]
@@ -250,7 +250,7 @@ def list_recent_validation_failures(
     ``GET /dryrun/runs`` for the Runs History page.
     """
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+        table = sql.fqn(_DRYRUN_TABLE)
         rows = job_svc.list_dryrun_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
 
         # Reconcile stale RUNNING placeholders so the failure list stays
@@ -299,7 +299,7 @@ def batch_run_from_catalog(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     rules_svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> BatchRunFromCatalogOut:
     """Read approved checks from the rules catalog for the given tables and submit dry-run jobs."""
     submitted: list[DryRunSubmitOut] = []
@@ -307,7 +307,7 @@ def batch_run_from_catalog(
 
     user = obo_ws.current_user.me()
     requesting_user = user.user_name or "unknown"
-    runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+    runs_table = sql.fqn(_DRYRUN_TABLE)
 
     # Custom metrics apply globally — fetch once for the whole batch.
     custom_metrics = settings_svc.get_custom_metrics()
@@ -404,7 +404,7 @@ def submit_dry_run(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
     settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> DryRunSubmitOut:
     """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
     try:
@@ -474,7 +474,7 @@ def submit_dry_run(
             )
 
             if not body.skip_history:
-                runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+                runs_table = sql.fqn(_DRYRUN_TABLE)
                 job_svc.record_dryrun_started(
                     table=runs_table,
                     run_id=run_id,
@@ -723,13 +723,13 @@ def cancel_dry_run(
 def get_dry_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DryRunResultsOut:
     """Read dry-run results from the Delta table."""
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+        table = sql.fqn(_DRYRUN_TABLE)
         row = job_svc.get_run_result_row(table, run_id)
 
         if row is None:

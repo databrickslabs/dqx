@@ -6,6 +6,7 @@ title: DQX Studio
 import Admonition from '@theme/Admonition';
 import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { AvailableSinceVersion, FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
 
 # DQX Studio
 
@@ -45,6 +46,40 @@ DQX Studio is the no-code experience. If you'd rather define and run checks from
 Python in your pipelines and notebooks, see [DQX Core](/docs/guide/) — the same
 data-quality engine, exposed as a Python package.
 </Admonition>
+
+## Install DQX Studio
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion version="0.16.1" heading={false} />
+</FeatureTags>
+
+Your Databricks administrator can install DQX Studio from Databricks
+Marketplace or deploy it with Declarative Automation Bundles (DABs). DAB
+deployment remains a one-command route and, just like Marketplace, starts
+with the Studio readiness workflow.
+
+Marketplace installation needs three bound resources: a SQL warehouse, a
+Lakebase Postgres endpoint, and a Unity Catalog volume. The bound volume
+chooses Studio's main catalog and schema. An administrator must also belong to
+the workspace group configured as `DQX_ADMIN_GROUP` before opening the app.
+The setup wizard checks the bindings, creates required sibling schemas, runs
+migrations, publishes the task-runner wheels, and explains any grants that are
+still needed. It links to the Jobs UI for assigning the task-runner's external
+`run_as` service principal.
+
+Lakebase is required for Studio's application state. The former Delta-backed
+application state was removed and has no migration path. You can replace a
+bound warehouse today; changing the Lakebase endpoint or volume, and automatic
+task-runner smoke validation, are planned improvements. Marketplace releases
+use published DQX Core pins. Main excludes the compiled Marketplace frontend;
+maintainers generate the complete self-contained artifact on a signed release
+branch from an annotated signed version tag. The local release command signs
+and verifies the branch commit and never pushes it automatically. DAB releases
+continue to use their separate `.build/` output.
+
+For administrator-oriented detail, see the Studio
+[deployment guide](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md).
 
 ## Key concepts
 

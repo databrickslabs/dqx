@@ -2,7 +2,7 @@
 
 Covers enum values, the SQL ``IN``-list helper, request-model validation, the
 service's derived ``VALID_STATUSES``, and the ``source`` / ``status`` CHECK
-constraints that both migration backends derive from the enums (regression
+constraints that the Postgres migration derives from the enums (regression
 guard for the malformed-DDL bug where a closing paren / terminator was dropped).
 """
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 from databricks_labs_dqx_app.backend.models import (
     BatchSaveRulesIn,
@@ -79,9 +78,9 @@ def test_service_valid_statuses_derive_from_enum():
 
 
 def _rules_table_ddl() -> list:
-    """The rules-table DDL fragments from both migration backends."""
+    """The rules-table DDL from the Postgres migration."""
     pg = next(m.sql for m in PG_MIGRATIONS if "CREATE TABLE" in m.sql and "dq_quality_rules" in m.sql)
-    return [pytest.param(_V2_OLTP_FALLBACK, id="delta"), pytest.param(pg, id="postgres")]
+    return [pytest.param(pg, id="postgres")]
 
 
 @pytest.mark.parametrize("ddl", _rules_table_ddl())

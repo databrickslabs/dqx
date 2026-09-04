@@ -2929,5 +2929,55 @@
     "contribute": "Contribuer sur GitHub",
     "added": "Ajoutée",
     "alreadyImported": "Cette règle est déjà importée"
+  },
+  "setup": {
+    "title": "Configurer DQX Studio",
+    "description": "Effectuez les étapes requises ci-dessous pour rendre DQX Studio disponible.",
+    "checkingTitle": "Vérification de l’état de préparation de Studio",
+    "checkingDescription": "DQX Studio vérifie les capacités nécessaires pour démarrer en toute sécurité.",
+    "waitingTitle": "La configuration de Studio nécessite un administrateur",
+    "waitingDescription": "Contactez un membre de {{adminGroup}} pour terminer les étapes de configuration restantes.",
+    "statusUnavailableTitle": "L’état de la configuration est indisponible",
+    "statusUnavailableDescription": "Actualisez la page pour vérifier à nouveau l’état de préparation de Studio.",
+    "reconcileFailed": "La configuration n’a pas pu être terminée. Examinez les étapes indiquées et réessayez.",
+    "whyNeeded": "Pourquoi cette étape est nécessaire",
+    "purposes": {
+      "identity": "Un principal de service utilisé par DQX Studio pour gérer les ressources de l’application et effectuer les opérations de configuration.",
+      "volume": "Stocke la bibliothèque DQX Core et l’application d’exécution des tâches utilisées par les jobs de profilage et de qualité des données.",
+      "unity_catalog": "Permet à Studio de créer et d’interroger ses schémas, tables, vues temporaires et résultats d’exécution.",
+      "schemas": "Sépare l’état de l’application, les vues temporaires et les objets destinés à Genie dans Unity Catalog.",
+      "lakebase": "Stocke l’état transactionnel de Studio, notamment les règles, rôles, paramètres et planifications.",
+      "warehouse": "Exécute les requêtes SQL de Studio pour la configuration, les métadonnées, les résultats et les contrôles interactifs.",
+      "task_runner": "Exécute les charges de profilage et de qualité des données basées sur Spark en dehors de l’application web.",
+      "wheels": "Maintient le lanceur de tâches sur les mêmes versions de DQX et de Studio que l’application.",
+      "migrations": "Crée et met à niveau les tables Delta et Lakebase requises par cette version de Studio.",
+      "activation": "Démarre les API et services d’arrière-plan de Studio uniquement lorsque toutes les dépendances sont prêtes."
+    },
+    "steps": {
+      "identity": "Identité de l’application",
+      "volume": "Volume des wheels",
+      "unity_catalog": "Accès à Unity Catalog",
+      "schemas": "Schémas de l’application",
+      "lakebase": "Base de données Lakebase",
+      "warehouse": "Entrepôt SQL",
+      "task_runner": "Tâche d’exécution des jobs",
+      "wheels": "Wheels de l’application",
+      "migrations": "Migrations de base de données",
+      "activation": "Activer Studio"
+    },
+    "states": {
+      "pending": "En attente",
+      "running": "En cours",
+      "passed": "Prêt",
+      "action_required": "Action requise",
+      "failed": "Attention requise"
+    },
+    "actions": {
+      "reconcile": "Lancer la configuration",
+      "verify_again": "Vérifier à nouveau",
+      "openJobs": "Ouvrir les jobs"
+    },
+    "instructions": "Comment résoudre ce problème",
+    "diagnosticCode": "Code : {{code}}"
   }
 }

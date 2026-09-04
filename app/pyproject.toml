@@ -1,6 +1,6 @@
 [project]
 name = "databricks-labs-dqx-app"
-version = "0.15.0"
+version = "0.16.1"
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -144,12 +144,10 @@ target-version = "py312"
 # which uses the proper ``--group test`` env, so excluding them from the
 # static check here removes the false positives without losing real
 # coverage.
-# ``.build`` is a generated source copy produced by ``make app-build``
-# (which CI runs before ``app-check``). Without excluding it, basedpyright
-# analyzes both ``src/...`` and ``.build/src/...`` and sees every class
-# twice under distinct import paths, yielding spurious "X is not assignable
-# to X" errors.
-exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__", ".build"]
+# ``.build`` and ``marketplace`` are generated source copies. Without
+# excluding them, basedpyright analyzes the same application under distinct
+# import paths and yields spurious "X is not assignable to X" errors.
+exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__", ".build", "marketplace"]
 
 # basedpyright defaults to ``recommended`` mode, which enables ~10
 # strict-only rules (reportAny, reportExplicitAny,

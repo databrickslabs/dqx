@@ -31,7 +31,7 @@ def update_run_status(
 
     Works for any run table (dq_validation_runs, dq_profiling_results).
     """
-    table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
+    table = sql.fqn(table_name)
     er = escape_sql_string(run_id)
     es = escape_sql_string(status)
     em = escape_sql_string(error_message or "")
@@ -108,7 +108,7 @@ def has_terminal_result(
     non-RUNNING row exists, or ``None`` when only a RUNNING placeholder (or
     no row at all) is present.
     """
-    table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
+    table = sql.fqn(table_name)
     er = escape_sql_string(run_id)
     stmt = f"SELECT status FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
     try:
@@ -157,7 +157,7 @@ def _get_run_fields(
     has a non-null job_run_id so that the status endpoint can always look up
     the Databricks job run.
     """
-    table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
+    table = sql.fqn(table_name)
     er = escape_sql_string(run_id)
     stmt = (  # noqa: S608
         f"SELECT {columns} FROM {table} "
@@ -249,7 +249,7 @@ def _get_running_job_run_ids(
     """
     if not run_ids:
         return {}
-    table = f"{app_conf.catalog}.{app_conf.schema_name}.{table_name}"
+    table = sql.fqn(table_name)
     in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_ids)
     stmt = (  # noqa: S608
         f"SELECT run_id, CAST(job_run_id AS STRING) FROM {table} "
