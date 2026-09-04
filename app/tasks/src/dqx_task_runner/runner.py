@@ -589,7 +589,7 @@ def _run_dryrun_sql_check(
                     "check_name": str(check_name),
                     "error_count": invalid_rows,
                     "warning_count": 0,
-                    "status": "error" if invalid_rows > 0 else "passed",
+                    "status": "error" if invalid_rows > 0 else "pass",
                 }
             ]
         )

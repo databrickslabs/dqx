@@ -48,7 +48,8 @@ The `check_metrics` value is a JSON-serialized array of structs, with one entry 
 [
   {"check_name": "id_is_not_null", "error_count": 5, "warning_count": 0, "status": "error"},
   {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3, "status": "warn"},
-  {"check_name": "passenger_incorrect_count", "error_count": 0, "warning_count": 0, "status": "passed"}
+  {"check_name": "trip_distance_is_positive", "error_count": 2, "warning_count": 7, "status": "error"},
+  {"check_name": "passenger_incorrect_count", "error_count": 0, "warning_count": 0, "status": "pass"}
 ]
 ```
 
@@ -56,14 +57,7 @@ Each entry contains:
 - `check_name` — the name of the check (either explicitly set via `name` in the rule definition, or auto-derived from the check function and arguments)
 - `error_count` — number of rows where this check triggered an error (`0` if no rows failed the check)
 - `warning_count` — number of rows where this check triggered a warning (`0` if no rows failed the check)
-- `status` — outcome of the check for this run: `error` if `error_count > 0`, `warn` if only `warning_count > 0`, otherwise `passed`
-
-<Admonition type="tip" title="Why status and not just counts">
-For dashboarding you usually care whether a check passed, not how many rows violated it. `status` is
-particularly useful for dataset-level checks: when an ungrouped dataset-level check fails, the result is
-attached to every input row, so `error_count` equals `input_row_count` and reads as though every row is
-individually bad. `status` gives you the single pass/fail signal instead.
-</Admonition>
+- `status` — outcome of the check for this run, see [Check Status](#check-status) below
 
 When persisted to the metrics table, `check_metrics` is stored as a single row with `metric_name = 'check_metrics'` and `metric_value` containing the JSON string. You can parse it with Spark's `from_json` or `json_tuple` functions for analysis:
 
@@ -80,6 +74,23 @@ LATERAL VIEW explode(
 ) AS check
 WHERE metric_name = 'check_metrics'
 ```
+
+#### Check Status
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
+
+`status` condenses the two counts into a single outcome per check:
+
+| `status` | Condition                                          |
+|----------|----------------------------------------------------|
+| `error`  | `error_count > 0`, whatever `warning_count` is     |
+| `warn`   | `error_count` is `0` and `warning_count > 0`       |
+| `pass`   | both counts are `0`                                |
+
+Errors take precedence over warnings, so a check that triggered both — such as
+`trip_distance_is_positive` in the example above — reports `error`.
 
 ### Custom Metrics
 

@@ -124,7 +124,7 @@ def test_check_metrics_expr_emits_status_derived_from_counts():
         '\',"status":"\','
         f"case when {error_count} > 0 then 'error' "
         f"when {warning_count} > 0 then 'warn' "
-        "else 'passed' end,"
+        "else 'pass' end,"
         "'\"}')"
         "), ']') as check_metrics"
     )

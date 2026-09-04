@@ -160,11 +160,13 @@ class DQMetricsObserver:
             # *status* is derived from the same two aggregates rather than emitted as a separate
             # metric: consumers (dashboard, Studio, Genie) need a pass/fail signal per check, and
             # counts alone do not provide one. Errors take precedence over warnings.
-            status = (
-                f"case when {error_count} > 0 then 'error' "
-                f"when {warning_count} > 0 then 'warn' "
-                f"else 'passed' end"
-            )
+            #
+            # Each aggregate therefore appears twice in the emitted SQL - once cast to string for the
+            # count field, once inside this CASE - because observe() takes a single expression and
+            # cannot alias a derived column for reuse. Spark's common-subexpression elimination
+            # collapses the identical aggregates during execution, so the repetition costs nothing at
+            # runtime; it only makes the generated expression string longer.
+            status = f"case when {error_count} > 0 then 'error' when {warning_count} > 0 then 'warn' else 'pass' end"
             fragments.append(
                 f"concat("
                 f"'{{\"check_name\":{json_check_name_sql_esc},\"error_count\":',"

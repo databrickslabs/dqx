@@ -3006,9 +3006,9 @@ def test_observer_check_metrics(ws, spark, apply_checks_method):
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
 def test_observer_check_metrics_status(ws, spark, apply_checks_method):
-    """Test that check_metrics reports a per-check status covering error, warn and passed outcomes.
+    """Test that check_metrics reports a per-check status covering error, warn and pass outcomes.
 
-    The status of a check that never triggers must be *passed*: an entry with zero counts is
+    The status of a check that never triggers must be *pass*: an entry with zero counts is
     indistinguishable from a failing one without it, which is what makes the counts alone
     insufficient for dashboarding.
     """
@@ -3024,7 +3024,7 @@ def test_observer_check_metrics_status(ws, spark, apply_checks_method):
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
         },
         {
-            "name": "age_passed",
+            "name": "age_pass",
             "criticality": "error",
             "check": {"function": "is_in_range", "arguments": {"column": "age", "min_limit": 0, "max_limit": 150}},
         },
@@ -3055,7 +3055,7 @@ def test_observer_check_metrics_status(ws, spark, apply_checks_method):
     assert check_metrics == [
         {"check_name": "id_error", "error_count": 1, "warning_count": 0, "status": "error"},
         {"check_name": "name_warn", "error_count": 0, "warning_count": 1, "status": "warn"},
-        {"check_name": "age_passed", "error_count": 0, "warning_count": 0, "status": "passed"},
+        {"check_name": "age_pass", "error_count": 0, "warning_count": 0, "status": "pass"},
     ]
 
 
