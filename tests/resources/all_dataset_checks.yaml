@@ -278,13 +278,13 @@
       column: col10
       distribution:
         2: 1.0
-      distance: 1.0
+      distance: 0.0
+
 # Second entry exercises non-trivial TVD math with a residual bucket (sum<1) and a listed key
-# not present in the actual data (impute defaults to True → counted as 0). For col10 all 2s in
-# the integration fixture: actual 2=1.0, residual=0, expected 2=0.5, 3=0.3, residual=0.2 →
-# TVD = 0.5*(0.5 + 0.3 + 0.2) = 0.5. distance=1.0 keeps this safely passing on both fixtures,
-# but any regression that inverts the comparison (tvd <= distance) would flag every row and
-# fail the test — the {2: 1.0}/distance=1.0 entry above cannot catch that.
+# not present in the actual data (counted as 0). For col10 all 2s in the integration fixture:
+# actual 2=1.0, residual=0, expected 2=0.5, 3=0.3, residual=0.2 → TVD = 0.5*(0.5+0.3+0.2) = 0.5.
+# distance=0.1 exceeds that TVD, so every row is flagged — this verifies the YAML/metadata path
+# catches a real distribution mismatch end-to-end, not just that the check runs.
 - criticality: error
   check:
     function: is_in_distribution
@@ -293,4 +293,4 @@
       distribution:
         2: 0.5
         3: 0.3
-      distance: 1.0
+      distance: 0.1

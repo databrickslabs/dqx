@@ -6408,6 +6408,18 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks, ref_dfs=ref_dfs)
 
+    # Second is_in_distribution fixture entry ({2: 0.5, 3: 0.3}, distance=0.1) flags every row:
+    # col10 is all 2s, so actual={2: 1.0, residual: 0} vs expected={2: 0.5, 3: 0.3, residual: 0.2}
+    # gives TVD = 0.5 · (0.5 + 0.3 + 0.2) = 0.5, which exceeds the allowed distance=0.1.
+    col10_distribution_violation = build_quality_violation(
+        name="col10_is_not_in_distribution",
+        message=(
+            "Column 'col10' actual distribution deviates from expected by TVD=0.500000, "
+            "which exceeds the allowed distance=0.1."
+        ),
+        columns=["col10"],
+        function="is_in_distribution",
+    )
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
@@ -6433,7 +6445,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "USD",
                 "US-CA",
                 "en",
-                None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -6458,7 +6470,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "EUR",
                 "GB-ENG",
                 "en",
-                None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -6483,7 +6495,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "GBP",
                 "DE-BY",
                 "de",
-                None,
+                [col10_distribution_violation],
                 None,
             ],
         ],
@@ -7250,23 +7262,23 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"aggr_type": "count", "ref_df_name": "ref_df_key"},
         ),
         # is_in_distribution check — TVD-based categorical distribution check on col10
-        # (constant "2" here, so {2: 1.0} matches exactly with TVD=0).
+        # (constant "2" here, so {2: 1.0} matches exactly with TVD=0 at the tightest possible distance).
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_in_distribution,
             column="col10",
-            check_func_kwargs={"distribution": {2: 1.0}, "distance": 1.0},
+            check_func_kwargs={"distribution": {2: 1.0}, "distance": 0.0},
         ),
         # Second is_in_distribution rule exercises non-trivial TVD math with a residual bucket
-        # (sum<1) and a listed key not present in the data (imputed as 0). distance=1.0 keeps
-        # it safely passing on both fixtures, but a regression that inverts the comparison
-        # (tvd <= distance) would flag every row and fail the test — the trivial {2: 1.0} rule
-        # above cannot catch that.
+        # (sum<1) and a listed key not present in the data (counted as 0). For col10 all 2s:
+        # actual 2=1.0, residual=0; expected 2=0.5, 3=0.3, residual=0.2 → TVD = 0.5*(0.5+0.3+0.2) = 0.5.
+        # distance=0.1 exceeds that TVD, so every row is flagged — this verifies the classes/programmatic
+        # path catches a real distribution mismatch end-to-end, not just that the check runs.
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_in_distribution,
             column="col10",
-            check_func_kwargs={"distribution": {2: 0.5, 3: 0.3}, "distance": 1.0},
+            check_func_kwargs={"distribution": {2: 0.5, 3: 0.3}, "distance": 0.1},
         ),
         # is_valid_json check
         DQRowRule(
@@ -7410,6 +7422,18 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
 
+    # Second is_in_distribution rule ({2: 0.5, 3: 0.3}, distance=0.1) flags every row:
+    # col10 is all 2s, so actual={2: 1.0, residual: 0} vs expected={2: 0.5, 3: 0.3, residual: 0.2}
+    # gives TVD = 0.5 · (0.5 + 0.3 + 0.2) = 0.5, which exceeds the allowed distance=0.1.
+    col10_distribution_violation = build_quality_violation(
+        name="col10_is_not_in_distribution",
+        message=(
+            "Column 'col10' actual distribution deviates from expected by TVD=0.500000, "
+            "which exceeds the allowed distance=0.1."
+        ),
+        columns=["col10"],
+        function="is_in_distribution",
+    )
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
@@ -7433,7 +7457,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "USD",
                 "US-CA",
                 "en",
-                None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -7456,7 +7480,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "EUR",
                 "GB-ENG",
                 "en",
-                None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -7479,7 +7503,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "GBP",
                 "DE-BY",
                 "de",
-                None,
+                [col10_distribution_violation],
                 None,
             ],
         ],
@@ -10859,44 +10883,6 @@ def test_apply_checks_by_metadata_is_in_distribution_case_insensitive_normalisat
 
     expected = spark.createDataFrame(
         [[i + 1, v, None, None] for i, v in enumerate(["a", "A", "A", "B", "b"])],
-        schema + REPORTING_COLUMNS,
-    )
-    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
-
-
-def test_apply_checks_by_metadata_is_in_distribution_impute_false_missing_keys(ws, spark):
-    """YAML/metadata path: impute=false flags every row with a message enumerating missing keys."""
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    schema = "id: int, value: string"
-    test_df = spark.createDataFrame(
-        [[i + 1, v] for i, v in enumerate(["A", "A", "A", "B"])],
-        schema,
-    )
-    checks = [
-        {
-            "criticality": "error",
-            "check": {
-                "function": "is_in_distribution",
-                "arguments": {
-                    "column": "value",
-                    "distribution": {"A": 0.5, "B": 0.4, "C": 0.1},
-                    "distance": 0.5,
-                    "impute": False,
-                },
-            },
-        },
-    ]
-
-    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
-
-    violation = build_quality_violation(
-        name="value_is_not_in_distribution",
-        message="""Column 'value' distribution is missing expected keys ['C'] and impute=False.""",
-        columns=["value"],
-        function="is_in_distribution",
-    )
-    expected = spark.createDataFrame(
-        [[i + 1, v, [violation], None] for i, v in enumerate(["A", "A", "A", "B"])],
         schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)

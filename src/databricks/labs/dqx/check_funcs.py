@@ -11,12 +11,11 @@ from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
-from pyspark.sql.types import DataType
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
@@ -35,6 +34,9 @@ from databricks.labs.dqx.errors import (
     InvalidParameterError,
     UnsafeSqlQueryError,
 )
+
+_FLOAT_NOISE_THRESHOLD = 1e-9
+_VALUES_DISTRIBUTION = dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -527,10 +529,9 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 @register_rule("dataset")
 def is_in_distribution(
     column: str | Column,
-    distribution: dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float],
+    distribution: _VALUES_DISTRIBUTION,
     distance: float,
     case_sensitive: bool = True,
-    impute: bool = True,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -574,13 +575,8 @@ def is_in_distribution(
     *A* and *B*. When the sum equals 1, the expected *residual* mass is 0 and any actual values not listed in the
     given distribution will contribute to the distance.
 
-    Handling of keys present in the given distribution but missing from the actual distribution depends on the
-    *impute* boolean parameter.
-    If it is *True*, such keys are imputed with a value of 0 in the actual distribution, so that the distance can be
-    calculated across the union of keys.
-    If it is *False*, the check fails with an error specifying which keys from the given distribution are missing in
-    the actual distribution. Dataset-level checks apply to the whole dataset (not per-row), so the failure applies to
-    all rows.
+    Keys present in the given distribution but missing from the actual distribution are treated as having a count of
+    0, so the distance is computed across the union of keys.
     *NOTE*: values present in the actual distribution but not listed as explicit keys in the given distribution are
     aggregated into the *residual* bucket rather than compared individually. Consider using *is_in_list* at the row
     level for checking individual values.
@@ -601,8 +597,6 @@ def is_in_distribution(
             and sum to 1 or less.
         distance: max distance between the actual and given values distribution; must be between 0 and 1 (inclusive).
         case_sensitive: whether to perform a case-sensitive comparison (default: True).
-        impute: whether to substitute keys missing from the actual distribution with 0 (True) or fail the check
-            (False).
         row_filter: Optional SQL expression for filtering rows before the distribution is computed. Auto-injected
             from the check filter.
 
@@ -637,10 +631,12 @@ def is_in_distribution(
 
         is_string_column = isinstance(column_type, (types.StringType, types.CharType))
         group_expr = col_expr
-        normalized_distribution: dict[Any, float] = distribution
+        normalized_distribution: _VALUES_DISTRIBUTION = distribution.copy()
         if is_string_column and not case_sensitive:
             group_expr = F.lower(col_expr)
-            normalized_distribution = {k.lower() if isinstance(k, str) else k: v for k, v in distribution.items()}
+            normalized_distribution = cast(
+                _VALUES_DISTRIBUTION, {k.lower() if isinstance(k, str) else k: v for k, v in distribution.items()}
+            )
 
         expected_keys_ordered = list(normalized_distribution.keys())
         per_key_aliases = [f"__cnt_{i}" for i in range(len(expected_keys_ordered))]
@@ -683,7 +679,7 @@ def is_in_distribution(
         # given distance" already promises the boundary passes, so equality-within-precision must
         # not fire the check.
         distance_lit = F.lit(distance)
-        is_close_col = F.abs(tvd_col - distance_lit) <= F.lit(1e-9) * F.greatest(F.abs(tvd_col), F.abs(distance_lit))
+        is_close_col = F.abs(tvd_col - distance_lit) <= F.lit(_FLOAT_NOISE_THRESHOLD)
         tvd_violation_col = (tvd_col > distance_lit) & ~is_close_col
 
         tvd_message_col = F.concat(
@@ -692,18 +688,9 @@ def is_in_distribution(
             F.lit(f", which exceeds the allowed distance={distance}."),
         )
 
-        stats_df = _is_in_distribution_get_stats_df(
-            agg_df,
-            impute,
-            total_col,
-            tvd_violation_col,
-            tvd_message_col,
-            expected_keys_ordered,
-            per_key_aliases,
-            col_expr_str,
-            condition_col,
-            message_col,
-        )
+        is_violation_column = F.when(total_col == 0, F.lit(False)).otherwise(tvd_violation_col)
+        message_expression = F.when(total_col == 0, F.lit("")).otherwise(tvd_message_col)
+        stats_df = agg_df.select(is_violation_column.alias(condition_col), message_expression.alias(message_col))
 
         return df.crossJoin(stats_df)
 
@@ -716,7 +703,7 @@ def is_in_distribution(
     return condition, apply
 
 
-def _is_in_distribution_get_data_type(df: DataFrame, column: Column, column_expression: str) -> DataType:
+def _is_in_distribution_get_data_type(df: DataFrame, column: Column, column_expression: str) -> types.DataType:
     column_type = df.select(column).schema[0].dataType
     if not isinstance(column_type, _IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES):
         raise InvalidParameterError(
@@ -728,7 +715,7 @@ def _is_in_distribution_get_data_type(df: DataFrame, column: Column, column_expr
 
 
 def _is_in_distribution_get_deviation_terms(
-    distribution: dict[Any, float],
+    distribution: _VALUES_DISTRIBUTION,
     per_key_aliases: list[str],
     total_column: Column,
 ) -> list[Column]:
@@ -746,50 +733,6 @@ def _is_in_distribution_get_deviation_terms(
     ]
     deviation_terms.append(F.abs(F.lit(expected_residual) - actual_residual_column))
     return deviation_terms
-
-
-def _is_in_distribution_get_stats_df(
-    aggregate_df: DataFrame,
-    impute: bool,
-    total_column: Column,
-    tvd_violation_column: Column,
-    tvd_message_column: Column,
-    expected_keys: list[Any],
-    per_key_aliases: list[str],
-    column_expression: str,
-    condition_column_name: str,
-    message_column_name: str,
-) -> DataFrame:
-    if impute:
-        is_violation_column = F.when(total_column == 0, F.lit(False)).otherwise(tvd_violation_column)
-        message_expression = F.when(total_column == 0, F.lit("")).otherwise(tvd_message_column)
-    else:
-        # Missing keys are those whose per-key count is zero; sort for stable output.
-        missing_key_names = [
-            F.when(F.col(alias) == 0, F.lit(repr(key))) for key, alias in zip(expected_keys, per_key_aliases)
-        ]
-        missing_array = F.array_sort(F.filter(F.array(*missing_key_names), lambda value: value.isNotNull()))
-        has_missing_column = F.size(missing_array) > 0
-        missing_message_column = F.concat(
-            F.lit(f"Column '{column_expression}' distribution is missing expected keys ["),
-            F.array_join(missing_array, ", "),
-            F.lit("] and impute=False."),
-        )
-        is_violation_column = (
-            F.when(total_column == 0, F.lit(False))
-            .when(has_missing_column, F.lit(True))
-            .otherwise(tvd_violation_column)
-        )
-        message_expression = (
-            F.when(total_column == 0, F.lit(""))
-            .when(has_missing_column, missing_message_column)
-            .otherwise(tvd_message_column)
-        )
-
-    return aggregate_df.select(
-        is_violation_column.alias(condition_column_name),
-        message_expression.alias(message_column_name),
-    )
 
 
 def _is_in_distribution_validate_distribution(

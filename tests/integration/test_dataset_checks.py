@@ -4645,22 +4645,13 @@ def test_is_in_distribution_unsupported_column_types(
     )
 
 
-def test_is_in_distribution_impute_false_flags_missing_expected_keys(spark: SparkSession):
-    """impute=False fails the check when a key from the expected distribution is absent from the column."""
-    df = spark.createDataFrame([("A",), ("A",), ("A",), ("B",)], "value: string")
-    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.5, impute=False)
-    violations = _apply_and_collect_violations(condition, apply_method, df)
-    expected_message = "Column 'value' distribution is missing expected keys ['C'] and impute=False."
-    assert violations == [expected_message] * len(violations)
-
-
-def test_is_in_distribution_impute_true_treats_missing_expected_key_as_zero(spark: SparkSession):
-    """impute=True (default) treats a missing expected key as a zero-probability observation and
-    still computes a TVD (rather than short-circuiting to a violation)."""
+def test_is_in_distribution_treats_missing_expected_key_as_zero(spark: SparkSession):
+    """A key present in the expected distribution but absent from the actual data is treated as a
+    zero-probability observation and folded into the TVD calculation."""
     values = ["A", "A", "A", "B"]
     df = spark.createDataFrame([(v,) for v in values], "value: string")
-    # actual A=0.75, B=0.25, C=0 (imputed) → TVD = 0.5*(|0.5-0.75|+|0.4-0.25|+|0.1-0|) = 0.25
-    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.3, impute=True)
+    # actual A=0.75, B=0.25, C=0 → TVD = 0.5*(|0.5-0.75|+|0.4-0.25|+|0.1-0|) = 0.25
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.3)
     actual = apply_method(df).select("value", condition)
     expected = spark.createDataFrame(
         [(v, None) for v in values],
