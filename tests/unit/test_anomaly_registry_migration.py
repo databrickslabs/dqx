@@ -15,7 +15,7 @@ import pytest
 
 from databricks.labs.dqx.anomaly.model_registry import (
     LEGACY_GROUPING_COLUMN,
-    _is_permission_error,
+    is_permission_error,
     normalise_grouping,
 )
 
@@ -90,7 +90,7 @@ def test_a_row_with_neither_column_yields_an_empty_grouping_rather_than_raising(
 )
 def test_a_missing_grant_is_recognised(message: str):
     """Recognised so the caller gets the grant to ask for, not a raw write failure."""
-    assert _is_permission_error(Exception(message))
+    assert is_permission_error(Exception(message))
 
 
 @pytest.mark.parametrize(
@@ -108,4 +108,4 @@ def test_a_genuine_failure_is_not_mistaken_for_a_missing_grant(message: str):
     Reporting a real bug as "ask an owner for MODIFY" sends someone to their platform team over a defect in
     DQX, and they have no way to discover that from the message.
     """
-    assert not _is_permission_error(Exception(message))
+    assert not is_permission_error(Exception(message))

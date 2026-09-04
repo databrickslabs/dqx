@@ -50,8 +50,14 @@ LEGACY_GROUPING_COLUMN = "segmentation"
 _PERMISSION_DENIED_MARKERS = ("PERMISSION_DENIED", "INSUFFICIENT_PERMISSIONS", "does not have permission")
 
 
-def _is_permission_error(exc: Exception) -> bool:
-    """Whether *exc* reports a missing grant rather than a genuine failure."""
+def is_permission_error(exc: Exception) -> bool:
+    """Whether *exc* reports a missing grant rather than a genuine failure.
+
+    Public because it encodes a judgement worth testing directly, in both directions: mistaking a real
+    failure for a missing grant sends a user to their platform team over a defect in DQX, with nothing in
+    the message to suggest otherwise. Reaching into a private name from a test would be the alternative,
+    which AGENTS.md rules out.
+    """
     message = str(exc).upper()
     return any(marker.upper() in message for marker in _PERMISSION_DENIED_MARKERS)
 
@@ -217,7 +223,7 @@ class AnomalyModelRegistry:
                 OutputConfig(location=table, mode="overwrite", options={"overwriteSchema": "true"}),
             )
         except Exception as exc:
-            if not _is_permission_error(exc):
+            if not is_permission_error(exc):
                 raise
             raise InvalidParameterError(
                 f"Cannot migrate registry table '{table}' from the pre-release schema: this needs MODIFY "
