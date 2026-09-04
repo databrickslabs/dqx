@@ -652,9 +652,16 @@ def _apply_onehot_encoding(
         # dummy-variable trap, but here it made an unexpected value invisible: the omitted reference
         # category and any value never seen in training both encode as all-zeros, so a brand-new value
         # in a binary column produced no signal at all. With both retained, a known value sets exactly
-        # one indicator and anything unseen sets none, which the detectors can tell apart. The
-        # collinearity that argues for dropping one is absorbed by the detector's ridge, and it is only
-        # exact collinearity when the column has no nulls.
+        # one indicator and anything unseen sets none, which the detectors can tell apart.
+        #
+        # This makes binary consistent with every other cardinality rather than introducing a new
+        # behaviour: three or more categories were always retained in full, so an unseen value has
+        # always encoded as all-zeros and scored as a large deviation. Retained categories sum to 1 on
+        # every trained row, so the correlation-aware detector sees a zero-variance direction, and a row
+        # violating that sum lies off the surface all its training data lay on. Measured: rows that do
+        # satisfy it score identically to the one-dummy encoding, so the redundant column is free, while
+        # an unseen category scores far above a known one. Both halves are pinned in
+        # tests/unit/test_anomaly_mahalanobis_detector.py.
         distinct_values = sorted(row[0] for row in df.select(col_name).distinct().collect() if row[0] is not None)
         onehot_categories[col_name] = distinct_values
     else:

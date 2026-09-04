@@ -317,13 +317,14 @@ def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
     # full table for the fit to see the minimum it promises. At 200 rows this fixture gave `category` 40 rows
     # per group, which is 9.6 by the time anything is fitted, so it is correctly no longer a grouping
     # candidate. 1,000 rows gives it 200, and ~48 after sampling.
+    row_count = 1000
     data = []
-    for i in range(1000):
+    for i in range(row_count):
         data.append(
             (
                 f"cat_{i % 5}",  # Low cardinality (5 distinct), 200 rows/group
                 f"user_{i % 50}",  # Medium cardinality (50 distinct)
-                f"tx_{i}",  # High cardinality (1000 distinct) - avoid "id" pattern
+                f"tx_{i}",  # One per row, so cardinality == row_count - avoid the "id" name pattern
                 100.0 + i,
             )
         )
@@ -345,11 +346,14 @@ def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
     assert "user_code" in profile.recommended_columns
     assert profile.column_types["user_code"] == "categorical"
 
-    # transaction_ref has 1000 distinct values (>100) - should be excluded with warning (lines 144-148)
+    # transaction_ref is unique per row, so its cardinality is above the threshold and it is excluded
+    # with a warning naming the count. Derived from row_count rather than written as a literal: the
+    # fixture was rescaled from 200 rows to 1,000 to clear the effective rows-per-group floor, and this
+    # assertion kept expecting "200 distinct values" -- a hardcoded number the fixture no longer had.
     assert "transaction_ref" not in profile.recommended_columns
     warnings_text = " ".join(profile.warnings)
     assert "transaction_ref" in warnings_text
-    assert "200 distinct values" in warnings_text
+    assert f"{row_count} distinct values" in warnings_text
     assert "too high cardinality" in warnings_text
 
     # amount should be selected as numeric

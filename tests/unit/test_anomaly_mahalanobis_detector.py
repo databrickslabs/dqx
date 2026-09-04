@@ -210,3 +210,44 @@ def test_isolation_forest_scores_are_also_independent_of_contamination():
     liberal = IsolationForest(contamination=0.20, random_state=0, n_estimators=50).fit(data)
 
     np.testing.assert_allclose(timid.score_samples(data), liberal.score_samples(data))
+
+
+# ── retaining every one-hot category, and what that means for a singular direction ───────────────────
+
+
+def test_a_redundant_dummy_costs_nothing_and_an_unseen_category_scores_high():
+    """Retaining every one-hot category induces an exactly collinear pair. Both halves are checked.
+
+    A binary column encoded as both indicators satisfies ``d_a + d_b == 1`` on every trained row, so the
+    covariance is singular along that direction. Two things follow, and only one of them is obvious:
+
+    - for rows that *do* satisfy the constraint, the redundant dummy changes nothing: the score is
+      identical to the same data encoded with one dummy, because the ridged pseudo-inverse gives the
+      zero-variance direction no weight
+    - a row that violates it -- an unseen category, encoded all-zeros -- sits off the surface every
+      training row lay on, and scores enormously
+
+    The second is deliberate rather than accidental, and it is not new: columns with three or more
+    categories always retained all of them, so an unseen value has always scored this way. Truncating
+    the binary case was the inconsistency, and it is what made an unexpected value in a binary column
+    invisible instead.
+    """
+    rng = np.random.default_rng(3)
+    metric = rng.normal(10.0, 1.0, 400)
+    indicator = (rng.random(400) < 0.5).astype(float)
+
+    both = MahalanobisDetector().fit(np.column_stack([metric, indicator, 1.0 - indicator]))
+    one = MahalanobisDetector().fit(np.column_stack([metric, indicator]))
+
+    on_surface = np.array([[40.0, 1.0, 0.0], [10.0, 1.0, 0.0]])
+    scores_both = -both.score_samples(on_surface)
+    scores_one = -one.score_samples(np.array([[40.0, 1.0], [10.0, 1.0]]))
+
+    assert np.all(np.isfinite(scores_both))
+    np.testing.assert_allclose(scores_both, scores_one, rtol=1e-6)
+    assert scores_both[0] > scores_both[1]  # the extreme metric still ranks above the ordinary one
+
+    unseen = -both.score_samples(np.array([[10.0, 0.0, 0.0]]))[0]
+    known = -both.score_samples(np.array([[10.0, 1.0, 0.0]]))[0]
+    assert np.isfinite(unseen)
+    assert unseen > known
