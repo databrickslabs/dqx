@@ -356,7 +356,13 @@ class AnomalyTrainingService:
         if not columns:
             raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
 
-        validation_warnings = validate_columns(df, columns, params)
+        # Resolved before validate_columns so the feature-width warning can count the derived features
+        # each basis adds. Both are validated in their own right further down.
+        resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
+
+        validation_warnings = validate_columns(
+            df, columns, params, baseline_by=baseline_by, baseline_over_time=resolved_over_time
+        )
         for warning in validation_warnings:
             logger.warning(warning)
 
@@ -365,7 +371,6 @@ class AnomalyTrainingService:
             self._reject_unbounded_grouping(df_filtered, baseline_by)
             logger.info(f"Judging each metric against its own group's baseline, grouped by {baseline_by}")
 
-        resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
         validate_baseline_over_time(df, resolved_over_time, columns)
         # After both bases are resolved, because which derived features exist depends on them.
         validate_generated_feature_names(df, columns, baseline_by, resolved_over_time)

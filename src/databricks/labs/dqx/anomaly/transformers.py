@@ -153,6 +153,11 @@ def _spark_type_for_category(category: str) -> T.DataType:
     }.get(category, T.StringType())
 
 
+def features_per_numeric_column(baseline_by: list[str] | None, baseline_over_time: str | None) -> int:
+    """How many features one numeric column becomes: the metric itself plus one per comparison basis."""
+    return 1 + (1 if baseline_by else 0) + (1 if baseline_over_time else 0)
+
+
 def feature_category_for_type(col_type: T.DataType) -> str:
     """Which family of transforms a column's Spark type puts it in.
 
@@ -219,9 +224,24 @@ class ColumnTypeClassifier:
         self.max_input_columns = max_input_columns
         self.max_engineered_features = max_engineered_features
 
-    def analyze_columns(self, df: DataFrame, columns: list[str]) -> tuple[list[ColumnTypeInfo], list[str]]:
+    def analyze_columns(
+        self,
+        df: DataFrame,
+        columns: list[str],
+        *,
+        baseline_by: list[str] | None = None,
+        baseline_over_time: str | None = None,
+    ) -> tuple[list[ColumnTypeInfo], list[str]]:
         """
         Analyze columns and return type information and warnings.
+
+        Args:
+            df: Frame the columns live on.
+            columns: Feature columns to analyse.
+            baseline_by: Resolved group columns, if any. Needed only so the feature-width estimate can
+                account for the derived features they produce; the widths are what the estimate exists
+                to warn about, and it silently ignored them before.
+            baseline_over_time: Resolved time column, if any. Same reason.
 
         Returns:
             Tuple of (column_type_infos, warnings)
@@ -290,9 +310,13 @@ class ColumnTypeClassifier:
         warnings_list.extend(id_warnings)
 
         # Warn if estimated feature count is high (soft limit)
-        estimated_features = self._estimate_feature_count(column_infos)
+        estimated_features = self._estimate_feature_count(
+            column_infos, baseline_by=baseline_by, baseline_over_time=baseline_over_time
+        )
         if estimated_features > self.max_engineered_features:
-            breakdown = self._get_feature_breakdown(column_infos)
+            breakdown = self._get_feature_breakdown(
+                column_infos, baseline_by=baseline_by, baseline_over_time=baseline_over_time
+            )
             warnings_list.append(
                 f"Feature engineering will create {estimated_features} features (recommended max: {self.max_engineered_features}). "
                 f"This may increase training/scoring time. Feature breakdown:\n{breakdown}"
@@ -348,21 +372,35 @@ class ColumnTypeClassifier:
 
         return ColumnTypeInfo(name=col_name, spark_type=col_type, category='unsupported', null_count=null_count)
 
-    def _estimate_feature_count(self, column_infos: list[ColumnTypeInfo]) -> int:
-        """Estimate total engineered features."""
+    def _estimate_feature_count(
+        self,
+        column_infos: list[ColumnTypeInfo],
+        *,
+        baseline_by: list[str] | None = None,
+        baseline_over_time: str | None = None,
+    ) -> int:
+        """Estimate total engineered features.
+
+        Counts the derived comparison features, which it did not before: with both bases set, twenty
+        numeric columns build sixty features while the estimate said twenty and stayed silent under the
+        default recommended maximum of fifty. The warning existed to catch exactly that width.
+        """
         total = 0
         null_indicators = 0
 
+        features_per_numeric = features_per_numeric_column(baseline_by, baseline_over_time)
+
         for info in column_infos:
-            if info.category in {"numeric", "boolean"}:
+            if info.category == 'numeric':
+                total += features_per_numeric
+            elif info.category == 'boolean':
                 total += 1
             elif info.category == 'datetime':
-                total += 7  # hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos, is_weekend
+                total += len(CALENDAR_FEATURE_SUFFIXES)
             elif info.category == 'categorical':
-                if info.encoding_strategy == 'onehot':
-                    total += (info.cardinality or 0) + 1  # +1 for MISSING category
-                else:  # frequency
-                    total += 1
+                # One indicator per distinct non-null value, or one frequency column. Approximate for
+                # one-hot: cardinality comes from approx_count_distinct.
+                total += (info.cardinality or 0) if info.encoding_strategy == 'onehot' else 1
 
             # Add null indicator
             if info.null_count and info.null_count > 0:
@@ -370,7 +408,13 @@ class ColumnTypeClassifier:
 
         return total + null_indicators
 
-    def _get_feature_breakdown(self, column_infos: list[ColumnTypeInfo]) -> str:
+    def _get_feature_breakdown(
+        self,
+        column_infos: list[ColumnTypeInfo],
+        *,
+        baseline_by: list[str] | None = None,
+        baseline_over_time: str | None = None,
+    ) -> str:
         """Generate feature count breakdown for error message."""
         counts = {'datetime': 0, 'categorical': 0, 'numeric': 0, 'boolean': 0, 'nulls': 0}
         cat_features = 0
@@ -380,28 +424,28 @@ class ColumnTypeClassifier:
             counts[info.category] = counts.get(info.category, 0) + 1
 
             if info.category == 'categorical':
-                if info.encoding_strategy == 'onehot':
-                    cat_features += (info.cardinality or 0) + 1
-                else:
-                    cat_features += 1
+                cat_features += (info.cardinality or 0) if info.encoding_strategy == 'onehot' else 1
 
             if info.null_count and info.null_count > 0:
                 counts['nulls'] += 1
 
-        # Build breakdown lines
-        breakdown = []
-        if counts['datetime'] > 0:
-            breakdown.append(f"  - {counts['datetime']} datetime → {counts['datetime'] * 7} features")
-        if counts['categorical'] > 0:
-            breakdown.append(f"  - {counts['categorical']} categorical → {cat_features} features")
-        if counts['numeric'] > 0:
-            breakdown.append(f"  - {counts['numeric']} numeric → {counts['numeric']} features")
-        if counts['boolean'] > 0:
-            breakdown.append(f"  - {counts['boolean']} boolean → {counts['boolean']} features")
-        if counts['nulls'] > 0:
-            breakdown.append(f"  - {counts['nulls']} null indicators → {counts['nulls']} features")
+        # One row per contributing group, as (how many sources, what they are, how many features). The
+        # comparison bases are named separately from the numeric line rather than folded into it, because
+        # dropping a basis is a different decision from dropping a metric.
+        numeric = counts['numeric']
+        groups = [
+            (counts['datetime'], "datetime", counts['datetime'] * len(CALENDAR_FEATURE_SUFFIXES)),
+            (counts['categorical'], "categorical", cat_features),
+            (numeric, "numeric", numeric),
+            (numeric if baseline_by else 0, "baseline_by comparisons", numeric),
+            (numeric if baseline_over_time else 0, "baseline_over_time comparisons", numeric),
+            (counts['boolean'], "boolean", counts['boolean']),
+            (counts['nulls'], "null indicators", counts['nulls']),
+        ]
 
-        return "\n".join(breakdown)
+        return "\n".join(
+            f"  - {sources} {label} → {features} features" for sources, label, features in groups if sources > 0
+        )
 
     def _capture_dataframe_explain(self, df: DataFrame) -> str:
         """Capture DataFrame.explain() output as a string. Thread-safe via module lock."""
@@ -600,10 +644,18 @@ def _apply_onehot_encoding(
 ) -> DataFrame:
     """Apply OneHot encoding to a categorical column."""
     if is_training:
-        distinct_values = [row[0] for row in df.select(col_name).distinct().collect()]
-        distinct_values = [v for v in distinct_values if v is not None]
-        if len(distinct_values) == 2:
-            distinct_values = distinct_values[:1]
+        # Sorted, because ``distinct().collect()`` has no ordering: the same table trained twice
+        # otherwise produced different feature *names* in different positions, and
+        # engineered_feature_names is positional.
+        #
+        # Every category is retained. Dropping one of a binary pair is the textbook way to avoid the
+        # dummy-variable trap, but here it made an unexpected value invisible: the omitted reference
+        # category and any value never seen in training both encode as all-zeros, so a brand-new value
+        # in a binary column produced no signal at all. With both retained, a known value sets exactly
+        # one indicator and anything unseen sets none, which the detectors can tell apart. The
+        # collinearity that argues for dropping one is absorbed by the detector's ridge, and it is only
+        # exact collinearity when the column has no nulls.
+        distinct_values = sorted(row[0] for row in df.select(col_name).distinct().collect() if row[0] is not None)
         onehot_categories[col_name] = distinct_values
     else:
         distinct_values = onehot_categories.get(col_name, [])

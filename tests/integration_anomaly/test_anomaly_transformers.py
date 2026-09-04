@@ -12,6 +12,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
     SparkFeatureMetadata,
     apply_feature_engineering,
+    apply_feature_engineering_from_metadata,
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -528,3 +529,99 @@ def test_mixed_column_types_in_single_dataframe(spark):
 
     # Extra columns preserved
     assert "id" in engineered_cols
+
+
+# ============================================================================
+# One-hot encoding: an unseen value must be distinguishable, and names must be stable
+# ============================================================================
+
+
+def test_a_binary_column_keeps_both_categories(spark):
+    """Dropping one of a binary pair made an unexpected value invisible.
+
+    The textbook reason to drop one is the dummy-variable trap, but the cost here was a blind spot: the
+    omitted reference category and any value never seen in training both encode as all-zeros, so a brand
+    new value in a binary column produced no signal whatsoever. With both retained, every known value
+    sets exactly one indicator.
+    """
+    df = spark.createDataFrame([("open",), ("open",), ("closed",), ("closed",)], "status string")
+
+    _, metadata = apply_feature_engineering(
+        df, [ColumnTypeInfo(name="status", spark_type=T.StringType(), category="categorical", cardinality=2)]
+    )
+
+    assert metadata.onehot_categories["status"] == ["closed", "open"]
+
+
+def test_an_unseen_value_encodes_differently_from_every_trained_category(spark):
+    """The property retaining the category buys, asserted on scoring rather than on the category list.
+
+    The source column is dropped by projection, so an id column rides along to identify the rows: it is
+    neither a feature nor a comparison basis, so it survives as an extra column.
+    """
+    train_df = spark.createDataFrame([("open",), ("open",), ("closed",), ("closed",)], "status string")
+    infos = [ColumnTypeInfo(name="status", spark_type=T.StringType(), category="categorical", cardinality=2)]
+
+    _, metadata = apply_feature_engineering(train_df, infos)
+
+    score_df = spark.createDataFrame(
+        [(1, "open"), (2, "closed"), (3, "escalated")],
+        "rid int, status string",
+    )
+    scored, _ = apply_feature_engineering_from_metadata(score_df, metadata)
+
+    indicators = [name for name in metadata.engineered_feature_names if name.startswith("status_")]
+    encodings = {
+        row["rid"]: tuple(row[name] for name in indicators) for row in scored.select("rid", *indicators).collect()
+    }
+
+    assert all(value == 0.0 for value in encodings[3]), f"an unseen value must set no indicator: {encodings[3]}"
+    assert sum(encodings[1]) == 1.0, f"a trained value must set exactly one: {encodings[1]}"
+    assert sum(encodings[2]) == 1.0, f"a trained value must set exactly one: {encodings[2]}"
+    assert encodings[1] != encodings[2], "the two trained values must be told apart"
+
+
+def test_the_same_table_trained_twice_produces_the_same_feature_names(spark):
+    """``distinct().collect()`` has no ordering, and engineered_feature_names is positional.
+
+    Without sorting, two training runs over identical data produced the same features in different
+    positions, and for a binary column a different category could survive each time. Harmless inside one
+    model, since the list is persisted with it, but it made a model irreproducible from its own inputs.
+    """
+    df = spark.createDataFrame(
+        [(value,) for value in ("delta", "alpha", "charlie", "bravo", "alpha", "delta")],
+        "grade string",
+    )
+    infos = [ColumnTypeInfo(name="grade", spark_type=T.StringType(), category="categorical", cardinality=4)]
+
+    _, first = apply_feature_engineering(df, infos)
+    _, second = apply_feature_engineering(df, infos)
+
+    assert first.engineered_feature_names == second.engineered_feature_names
+    assert first.onehot_categories["grade"] == ["alpha", "bravo", "charlie", "delta"]
+
+
+def test_the_width_warning_counts_the_derived_comparison_features(spark):
+    """Twenty numeric columns with both bases build sixty features, not twenty.
+
+    The estimate counted one per numeric column and was never told about the comparison bases, so it
+    reported twenty and stayed silent under the default recommended maximum of fifty -- on exactly the
+    configuration it exists to flag.
+    """
+    metrics = [f"m{i}" for i in range(20)]
+    schema = ", ".join([*(f"{m} double" for m in metrics), "region string", "event_ts timestamp"])
+    df = spark.createDataFrame([tuple([1.0] * 20 + ["eu", datetime(2025, 1, 6)])], schema)
+
+    classifier = ColumnTypeClassifier()
+    _, warned = classifier.analyze_columns(df, metrics, baseline_by=["region"], baseline_over_time="event_ts")
+    _, quiet = classifier.analyze_columns(df, metrics)
+
+    # Matched on the width warning's own opening words. "recommended max" alone also appears in the
+    # max_input_columns warning, which twenty columns trips either way.
+    def width_warnings(warnings_list: list[str]) -> list[str]:
+        return [w for w in warnings_list if w.startswith("Feature engineering will create")]
+
+    assert width_warnings(warned), f"expected a feature-width warning, got {warned}"
+    assert "60 features" in width_warnings(warned)[0], width_warnings(warned)[0]
+    assert "20 baseline_by comparisons" in width_warnings(warned)[0], "the breakdown must name the bases"
+    assert not width_warnings(quiet), "twenty metrics without a basis stay under the limit of fifty"

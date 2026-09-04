@@ -49,9 +49,19 @@ def validate_fully_qualified_name(value: str, *, label: str) -> None:
 
 
 def validate_columns(
-    df: DataFrame, columns: collections.abc.Iterable[str], params: AnomalyParams | None = None
+    df: DataFrame,
+    columns: collections.abc.Iterable[str],
+    params: AnomalyParams | None = None,
+    *,
+    baseline_by: list[str] | None = None,
+    baseline_over_time: str | None = None,
 ) -> list[str]:
-    """Validate columns for row anomaly detection with multi-type support."""
+    """Validate columns for row anomaly detection with multi-type support.
+
+    *baseline_by* and *baseline_over_time* are passed for the feature-width warning alone: each adds one
+    derived feature per numeric column, so omitting them understated the width by up to a factor of three
+    and the warning stayed silent on exactly the configurations it exists to flag.
+    """
     params = params or AnomalyParams()
     fe_config = params.feature_engineering
 
@@ -61,7 +71,9 @@ def validate_columns(
         max_engineered_features=fe_config.max_engineered_features,
     )
 
-    _column_infos, warnings_list = classifier.analyze_columns(df, list(columns))
+    _column_infos, warnings_list = classifier.analyze_columns(
+        df, list(columns), baseline_by=baseline_by, baseline_over_time=baseline_over_time
+    )
     return warnings_list
 
 
