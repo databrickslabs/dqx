@@ -3507,7 +3507,7 @@ Required arguments: `df`, `model_name`, `registry_table`. Optional parameters:
 | `baseline_over_time` | str | None | A timestamp or date column each metric is judged *along*, so a value is compared with what its own history says to expect at that point in time. Composes with `baseline_by`: with both set the expectation is fitted on the group-relative value, so one model still covers every group. Independent of `profile`. Never auto-discovered, and DQX warns rather than acting when the training window shows little structure over time. Not a forecaster, and it never reads the previous row. The named column must not also appear in `columns`. See [Comparing against time](/docs/guide/row_anomaly_detection#comparing-against-time). |
 | `profile` | str | `"tabular"` | Which detector to train. `"tabular"` is Isolation Forest — the behaviour that predates this option. `"timeseries"` selects a correlation-aware detector for multivariate metrics whose anomalies are broken *correlations* rather than extreme single values; it needs no timestamp column and trains a single model rather than an ensemble. There is no automatic option: DQX never changes the algorithm on your behalf, because the choice cannot be verified without labels. See [Choosing a profile](/docs/guide/row_anomaly_detection#choosing-a-profile). |
 | `exclude_columns` | list[str] | None | Columns to exclude from training (e.g., IDs, labels, ground truth) |
-| `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
+| `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Supplies the estimator's `contamination`, which places scikit-learn's own `predict`/`offset_` boundary. **It does not change which rows DQX flags**, because scoring ranks `score_samples` against the training score quantiles and the rows you see are decided by the check's `threshold`. It also does not mitigate anomalies present in the training sample. Relevant if you load the registered model and call `predict` yourself. |
 | `params` | AnomalyParams | None | Optional. Advanced tuning parameters. See sections below for details. |
 
 **Validation**: Training parameters are validated before model fitting. Invalid values (for example `sample_fraction <= 0`, `train_ratio > 1`, or `expected_anomaly_rate > 0.5`) fail fast with `InvalidParameterError`.
@@ -3530,7 +3530,7 @@ Pass an `IsolationForestConfig` object to `params.algorithm_config` to tune the 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `contamination` | float | auto | Expected outlier proportion. Auto-set from `expected_anomaly_rate` if not specified. |
+| `contamination` | float | auto | Expected outlier proportion, auto-set from `expected_anomaly_rate`. Affects only the estimator's own `predict`/`offset_` boundary, which DQX's scoring path does not use — tune `threshold` on the check instead. |
 | `num_trees` | int | 200 | Number of trees in the forest. More trees = better accuracy but slower training. |
 | `max_depth` | int | None | Maximum tree depth. Auto-calculated as log2(sample_size) if None. |
 | `subsampling_rate` | float | None | Per-tree subsampling rate. None uses sklearn defaults. |
@@ -3577,7 +3577,7 @@ model_name = anomaly_engine.train(
   df=spark.table("catalog.schema.orders"),
   model_name="catalog.schema.orders_monitor",
   registry_table="catalog.schema.dqx_anomaly_models",
-  expected_anomaly_rate=0.05,  # Expect 5% anomalies
+  expected_anomaly_rate=0.05,  # Expect 5% anomalies (sets contamination; tune `threshold` to change what is flagged)
   params=params,
 )
 ```

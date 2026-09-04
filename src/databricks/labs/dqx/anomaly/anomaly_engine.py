@@ -128,11 +128,14 @@ class AnomalyEngine(DQEngineBase):
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
             expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
-                                   Used as the default contamination parameter for the Isolation Forest
-                                   algorithm, which controls the proportion of training data that the model
-                                   treats as outliers when learning the decision boundary. A higher value
-                                   makes the model flag more rows as anomalous.
-                                   Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
+                                   Supplies the default *contamination* for the estimator, which places
+                                   scikit-learn's own ``predict`` / ``offset_`` boundary.
+                                   **It does not change which rows DQX flags.** Scoring reads
+                                   ``score_samples`` and ranks it against the training score quantiles,
+                                   so the rows you see are decided by the *threshold* on the check, not
+                                   by this. Nor does it mitigate anomalies present in the training
+                                   sample: nothing downweights them. Set it if you load the registered
+                                   model yourself and call ``predict``; otherwise tune *threshold*.
                                    Overridden if params.algorithm_config.contamination is set explicitly.
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.

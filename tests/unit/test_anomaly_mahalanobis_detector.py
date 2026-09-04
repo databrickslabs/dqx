@@ -8,6 +8,7 @@ narrative, so the rejected alternative is asserted explicitly rather than descri
 import numpy as np
 import pytest
 from sklearn.base import clone
+from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
@@ -173,3 +174,39 @@ def test_small_samples_fall_back_to_shrinkage(caplog):
 
     assert "Ledoit-Wolf" in caplog.text
     assert np.isfinite(detector.score_samples(rng.normal(size=(5, 8)))).all()
+
+
+# ── contamination reaches predict, and nothing DQX scores with ──────────────────────────────────────
+
+
+def test_contamination_moves_the_predict_boundary_but_not_the_scores():
+    """Pinned because the docstrings now promise exactly this, and a plausible "fix" would break it.
+
+    ``expected_anomaly_rate`` flows into ``contamination``, which for both shipping detectors places
+    ``offset_`` and therefore only ``predict`` / ``decision_function``. Every DQX scoring path reads
+    ``-score_samples`` and ranks it against the training score quantiles, so the parameter cannot change
+    which rows are flagged -- the check's ``threshold`` does that.
+
+    Asserting both halves matters. Dropping the parameter would break someone who loads the registered
+    model and calls ``predict``; treating it as a detection knob is what the documentation used to imply.
+    """
+    rng = np.random.default_rng(7)
+    data = np.vstack([rng.normal(0, 1, (200, 3)), rng.normal(6, 1, (10, 3))])
+
+    timid = MahalanobisDetector(contamination=0.01).fit(data)
+    liberal = MahalanobisDetector(contamination=0.20).fit(data)
+
+    np.testing.assert_allclose(timid.score_samples(data), liberal.score_samples(data))
+    assert timid.offset_ != liberal.offset_
+    assert (liberal.predict(data) == -1).sum() > (timid.predict(data) == -1).sum()
+
+
+def test_isolation_forest_scores_are_also_independent_of_contamination():
+    """The default profile, for the same reason. sklearn documents it; DQX's docs now rely on it."""
+    rng = np.random.default_rng(8)
+    data = np.vstack([rng.normal(0, 1, (200, 3)), rng.normal(6, 1, (10, 3))])
+
+    timid = IsolationForest(contamination=0.01, random_state=0, n_estimators=50).fit(data)
+    liberal = IsolationForest(contamination=0.20, random_state=0, n_estimators=50).fit(data)
+
+    np.testing.assert_allclose(timid.score_samples(data), liberal.score_samples(data))

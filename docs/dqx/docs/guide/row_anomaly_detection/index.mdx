@@ -377,6 +377,12 @@ rows rather than 2%, and `threshold=99.9` flagged nothing at all. That range is 
 probability, which is what a percentile is. Severity at 90, 95 and 99 is unchanged, so the default
 configuration behaves exactly as before; 96 to 98 become slightly less strict, toward the budget you asked
 for, and 99.5 and above now fire on roughly what you asked for instead of on nothing.
+
+**Above roughly 99 the interpolation is directional rather than calibrated.** It assumes the score
+distribution's tail decays exponentially, which held on four synthetic distributions and on real telemetry,
+but a heavier tail overshoots: on a lognormal score distribution `threshold=99.9` flagged 0.21% of rows
+against the 0.10% requested, a factor of 2.1. Treat 99.5 and above as "much stricter than 99" rather than as
+a number you can budget against.
 :::
 
 ## Group-aware anomaly detection

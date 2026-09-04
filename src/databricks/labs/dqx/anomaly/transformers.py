@@ -942,10 +942,20 @@ def _process_baseline_relative_features(
 ) -> DataFrame:
     """Append each numeric metric's deviation from its own group's baseline.
 
-    ``rel = signed_log(value) - signed_log(group_median(value))``. The log-ratio form is stable
-    when a baseline is near zero and symmetric for halving versus doubling; the raw metric is
-    kept alongside, so globally absurd values stay detectable even where they are ordinary for
-    their group.
+    ``rel = signed_log1p(value) - signed_log1p(group_median(value))``, and the raw metric is kept
+    alongside, so globally absurd values stay detectable even where they are ordinary for their group.
+
+    What the ``log1p`` difference buys is behaviour at and below zero: it is finite and monotone for a
+    baseline of zero or a negative metric, where a true log ratio is undefined, and it compresses the
+    long right tail that a raw difference leaves. What it is **not** is scale-invariant or symmetric, and
+    an earlier version of this docstring claimed both. Value 2 against baseline 1 gives
+    ``log 3 - log 2 = 0.405``; the same ratio at 100x scale gives ``0.688``; halving gives ``-0.288``
+    rather than ``-0.405``. So a group's deviations are comparable within that group but not across
+    groups of very different magnitude, and the feature is not dimensionless.
+
+    A median/MAD-standardised deviation would be genuinely dimensionless. It is not done here because it
+    needs a per-group MAD persisted alongside every median, roughly doubling the baseline metadata a
+    model carries, a rule for a zero MAD, and its own measurement against this form. Tracked separately.
 
     Follows ``_apply_frequency_encoding``'s shape exactly: compute and persist while training,
     broadcast-join and coalesce the miss while scoring. A row whose group was never trained on
