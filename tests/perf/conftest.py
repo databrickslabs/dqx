@@ -322,6 +322,31 @@ def generated_email_df(spark):
 
 
 @pytest.fixture
+def generated_url_df(spark):
+    url_schema_str = (
+        "col1_url_standard: string, "
+        "col2_url_with_path_and_query: string, "
+        "col3_url_with_userinfo_and_port: string, "
+        "col4_url_with_pct_encoding: string"
+    )
+    schema = _parse_datatype_string(url_schema_str)
+
+    url_templates = {
+        "col1_url_standard": r"https://kkkkkkkk.org",
+        "col2_url_with_path_and_query": r"https://kkkkkkkk.org/kkkk/kkkk\?kkkk=kkkk",
+        "col3_url_with_userinfo_and_port": r"https://kkkk:kkkk@kkkkkkkk.org:\n\n\n\n/kkkk",
+        "col4_url_with_pct_encoding": r"https://kkkkkkkk.org/kkkk%20kkkk%2Fkkkk",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(url_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in url_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
+
+
+@pytest.fixture
 def generated_national_id_df(spark):
     ssn_schema_str = (
         "col1_ssn_dashed: string, " "col2_ssn_plain: string, " "col3_ssn_valid_area: string, " "col4_ssn_spaced: string"

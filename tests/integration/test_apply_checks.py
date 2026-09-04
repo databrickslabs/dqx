@@ -6002,7 +6002,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
         "col_email: string, col_uuid: string, col_ssn: string, col_country: string, col_currency: string, "
-        "col_subdivision: string, col_language: string"
+        "col_subdivision: string, col_language: string, col_url: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6028,6 +6028,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "USD",
                 "US-CA",
                 "en",
+                "https://example.com/a",
             ],
             [
                 "val2",
@@ -6051,6 +6052,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "EUR",
                 "GB-ENG",
                 "en",
+                "https://sub.example.org/p?q=1",
             ],
             [
                 "val3",
@@ -6074,6 +6076,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "GBP",
                 "DE-BY",
                 "de",
+                "ftp://files.example.org/f.txt",
             ],
         ],
         schema,
@@ -6121,6 +6124,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "USD",
                 "US-CA",
                 "en",
+                "https://example.com/a",
                 None,
                 None,
             ],
@@ -6146,6 +6150,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "EUR",
                 "GB-ENG",
                 "en",
+                "https://sub.example.org/p?q=1",
                 None,
                 None,
             ],
@@ -6171,6 +6176,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "GBP",
                 "DE-BY",
                 "de",
+                "ftp://files.example.org/f.txt",
                 None,
                 None,
             ],
@@ -6326,7 +6332,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
         "col_email: string, col_uuid: string, col_ssn: string, col_country: string, col_currency: string, "
-        "col_subdivision: string, col_language: string"
+        "col_subdivision: string, col_language: string, col_url: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6352,6 +6358,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "USD",
                 "US-CA",
                 "en",
+                "https://example.com/a",
             ],
             [
                 "val2",
@@ -6375,6 +6382,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "EUR",
                 "GB-ENG",
                 "en",
+                "https://sub.example.org/p?q=1",
             ],
             [
                 "val3",
@@ -6398,6 +6406,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "GBP",
                 "DE-BY",
                 "de",
+                "ftp://files.example.org/f.txt",
             ],
         ],
         schema,
@@ -6445,6 +6454,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "USD",
                 "US-CA",
                 "en",
+                "https://example.com/a",
+                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -6470,6 +6481,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "EUR",
                 "GB-ENG",
                 "en",
+                "https://sub.example.org/p?q=1",
+                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -6495,6 +6508,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "GBP",
                 "DE-BY",
                 "de",
+                "ftp://files.example.org/f.txt",
+                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -7305,6 +7320,12 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col_json_str2",
             check_func_kwargs={"schema": "STRUCT<a: STRING, b: STRING>"},
         ),
+        # is_valid_url check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_url,
+            column="col_url",
+        ),
         # is_valid_national_id check
         DQRowRule(
             criticality="error",
@@ -7346,7 +7367,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string, "
-        "col_country: string, col_currency: string, col_subdivision: string, col_language: string"
+        "col_country: string, col_currency: string, col_subdivision: string, col_language: string, "
+        "col_url: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -7370,6 +7392,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "USD",
                 "US-CA",
                 "en",
+                "https://example.com/a",
             ],
             [
                 "val2",
@@ -7391,6 +7414,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "EUR",
                 "GB-ENG",
                 "en",
+                "https://sub.example.org/p?q=1",
             ],
             [
                 "val3",
@@ -7412,6 +7436,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "GBP",
                 "DE-BY",
                 "de",
+                "ftp://files.example.org/f.txt",
             ],
         ],
         schema,
@@ -7457,6 +7482,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "USD",
                 "US-CA",
                 "en",
+                "https://example.com/a",
+                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -7480,6 +7507,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "EUR",
                 "GB-ENG",
                 "en",
+                "https://sub.example.org/p?q=1",
+                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -7503,6 +7532,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "GBP",
                 "DE-BY",
                 "de",
+                "ftp://files.example.org/f.txt",
+                None,
                 [col10_distribution_violation],
                 None,
             ],
