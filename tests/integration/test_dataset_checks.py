@@ -2915,6 +2915,54 @@ def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSe
     }
 
 
+@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True])
+def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(
+    spark: SparkSession, raise_on_duplicate_keys: bool
+):
+    df = spark.createDataFrame(
+        [(1, "A", False), (1, "B", True), (1, "C", None)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        raise_on_duplicate_keys=raise_on_duplicate_keys,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    actual = {row["value"]: row["violation"] for row in rows}
+
+    assert len(rows) == 3
+    assert actual == {"A": None, "B": None, "C": None}
+
+
+def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A", False)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    actual = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    excluded_row = next(row for row in actual if row["in_scope"] is False)
+    missing_row = next(row for row in actual if row["in_scope"] is None)
+
+    assert len(actual) == 2
+    assert excluded_row["violation"] is None
+    assert json.loads(missing_row["violation"]) == {
+        "row_missing": True,
+        "row_extra": False,
+        "changed": {"value": {"ref": "B"}},
+    }
+
+
 @pytest.mark.parametrize("duplicate_key", [1, None])
 @pytest.mark.parametrize("compare_values", [False, True])
 def test_compare_datasets_pairs_duplicate_keys_without_cartesian_fanout(
