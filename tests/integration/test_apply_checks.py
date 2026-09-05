@@ -7742,6 +7742,29 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
             column=F.col("polygon_geom"),
             check_func_kwargs={"value": 2},
         ),
+        # is_geo_within_distance check (geo, geodesic distance in meters, requires runtime 17.1+)
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geo_within_distance,
+            column="point_geom",
+            check_func_kwargs={
+                "reference_geometry": "POINT(1 1)",
+                "distance": 1000,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geo_within_distance,
+            column=F.col("point_geom"),
+            check_func_kwargs={
+                "reference_geometry": "POINT(1 1)",
+                "distance": 1000,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        ),
     ]
 
     dq_engine = DQEngine(ws)

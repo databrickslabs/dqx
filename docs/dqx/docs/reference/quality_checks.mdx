@@ -100,6 +100,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_num_points_not_greater_than`   | Checks whether the values in the input column are geometries with number of coordinate pairs greater than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                              | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
 | `is_num_points_equal_to`           | Checks whether the values in the input column are geometries with number of coordinate pairs equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
 | `is_num_points_not_equal_to`       | Checks whether the values in the input column are geometries with number of coordinate pairs not equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
+| `is_geo_within_distance`           | Checks whether the values in the input column are within a geodesic distance, in meters, of a reference geography using `st_distance`. Distances are measured along the WGS 84 ellipsoid, so the check is meaningful for global data where planar `GEOMETRY` distances are not. A row is reported when the shortest distance to the reference is strictly greater than `distance`. When a convert flag is set to `True`, `try_to_geography` is applied to parse the input. Null values, and rows where `distance` evaluates to null, are skipped. Requires Databricks runtime 17.1 or above. | `column`: column to check (can be a string column name or a column expression); `reference_geometry`: reference geography as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a `Column` expression (e.g. `F.col('col_name')`) — a plain string is always treated as a literal, not a column name; `distance`: maximum allowed distance in meters as a non-negative number, a `Column` expression, or a string SQL expression; `convert_column`: when `True`, applies `try_to_geography` to convert the column values to GEOGRAPHY (default `False`); `convert_reference_geometry`: when `True`, applies `try_to_geography` to convert the reference geography to GEOGRAPHY (default `False`) |
 </details>
 
 <Admonition type="warning" title="Applicability">
@@ -914,6 +915,18 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 1
+
+# is_geo_within_distance check (geo, geodesic distance in meters, requires runtime 17.1+)
+# location point must lie within 1 km of the reference point
+- criticality: error
+  check:
+    function: is_geo_within_distance
+    arguments:
+      column: location
+      reference_geometry: "POINT(4.90 52.37)"
+      distance: 1000
+      convert_column: true
+      convert_reference_geometry: true
 ```
 
 <Admonition type="info" title="Decimal Values in Metadata Format">
@@ -1647,6 +1660,20 @@ checks = [
       check_func=geo_check_funcs.is_num_points_not_equal_to,
       column="polygon_geom",
       check_func_kwargs={"value": 1}
+    ),
+
+    # is_geo_within_distance check (geo, geodesic distance in meters, requires runtime 17.1+)
+    # location point must lie within 1 km of the reference point
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_geo_within_distance,
+      column="location", # or as expr: F.col("location")
+      check_func_kwargs={
+        "reference_geometry": "POINT(4.90 52.37)",
+        "distance": 1000,
+        "convert_column": True,
+        "convert_reference_geometry": True,
+      }
     ),
 
     # sql_expression check
