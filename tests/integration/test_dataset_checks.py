@@ -22,9 +22,11 @@ from databricks.labs.dqx.check_funcs import (
     is_data_fresh_per_time_window,
     has_no_gaps_per_time_window,
     has_valid_schema,
+    is_in_distribution,
     sql_query,
     aggr_matches_dataset,
 )
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError, UnsafeSqlQueryError
 
@@ -4589,3 +4591,285 @@ def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession
         "a string, b int, c double, d string, has_invalid_schema string",
     )
     assertDataFrameEqual(actual_condition_df, expected_condition_df)
+
+
+# ---------------------------------------------------------------------------
+# is_in_distribution — Total Variation Distance dataset check
+# ---------------------------------------------------------------------------
+
+
+def _apply_and_collect_violations(condition: Column, apply_method: Callable, df: DataFrame) -> list[Any]:
+    """Run the dataset-level check and return the violation message per row."""
+    return [row["violation"] for row in apply_method(df).select(condition.alias("violation")).collect()]
+
+
+def test_is_in_distribution_matches_within_distance(spark: SparkSession):
+    """Case 1: A:7 B:2 C:1 (10 rows) vs expected {A:0.75, B:0.15, C:0.10}, distance 0.05 → pass.
+
+    Actual proportions A=0.7, B=0.2, C=0.1 differ from expected by TVD=0.05 which is not greater
+    than the allowed 0.05, so no rows are flagged."""
+    df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05)
+    assert all(v is None for v in _apply_and_collect_violations(condition, apply_method, df))
+
+
+def test_is_in_distribution_expected_omits_key_falls_into_residual_bucket(spark: SparkSession):
+    """Case 2: same 10 rows, expected {A:0.75, B:0.15} — implicit residual mass 0.10 absorbs C."""
+    values = ["A"] * 7 + ["B"] * 2 + ["C"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15}, distance=0.05)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_fails_when_distance_too_small(spark: SparkSession):
+    """Case 3: same 10 rows and exact expected, but distance=0 → TVD=0.05 flags every row."""
+    df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.0)
+    violations = _apply_and_collect_violations(condition, apply_method, df)
+    expected_message = (
+        "Column 'value' actual distribution deviates from expected by TVD=0.050000, "
+        "which exceeds the allowed distance=0.0."
+    )
+    assert violations == [expected_message] * len(violations)
+
+
+def test_is_in_distribution_fails_for_residual_bucket_when_distance_too_small(spark: SparkSession):
+    """Case 4: same 10 rows, expected {A:0.75, B:0.15} (residual 0.10 vs actual 0.10) but distance=0.001
+    → violation is driven by A/B deviations (0.05 each), not the residual."""
+    df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15}, distance=0.001)
+    violations = _apply_and_collect_violations(condition, apply_method, df)
+    expected_message = (
+        "Column 'value' actual distribution deviates from expected by TVD=0.050000, "
+        "which exceeds the allowed distance=0.001."
+    )
+    assert violations == [expected_message] * len(violations)
+
+
+def test_is_in_distribution_exact_match_passes_at_distance_zero(spark: SparkSession):
+    """Exact match: actual distribution equals expected → TVD=0, passes even at distance=0."""
+    values = ["A", "A", "B", "B"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.0)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_extra_value_aggregated_into_residual(spark: SparkSession):
+    """Case 5: A:6 B:2 C:1 D:1 (10 rows) with expected {A:0.7, B:0.2, C:0.1} (sum=1, residual=0).
+    Actual: A=0.6, B=0.2, C=0.1, residual=0.1 → TVD = 0.5*(0.1+0+0+0.1) = 0.1 → passes at distance=0.15."""
+    values = ["A"] * 6 + ["B"] * 2 + ["C"] + ["D"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.7, "B": 0.2, "C": 0.1}, distance=0.15)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_skips_null_values(spark: SparkSession):
+    """Case 6: null values in the target column are excluded from the actual distribution."""
+    values = ["A", "A", "A", "B", None, None]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.25}, distance=0.001)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_case_insensitive_normalisation(spark: SparkSession):
+    """Case 7: case_sensitive=False lowercases both the column and expected keys before comparing."""
+    values = ["a", "A", "A", "B", "b"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.6, "B": 0.4}, distance=0.001, case_sensitive=False)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "spark_type, arrow_type, values, distribution",
+    [
+        ("boolean", "boolean", [True, True, True, False], {True: 0.75, False: 0.25}),
+        ("string", "string", ["x", "x", "x", "y"], {"x": 0.75, "y": 0.25}),
+        ("char(3)", "string", ["abc", "abc", "abc", "xyz"], {"abc": 0.75, "xyz": 0.25}),
+        ("byte", "byte", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("short", "short", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("int", "int", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("long", "long", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        (
+            "date",
+            "date",
+            [date(2024, 1, 1)] * 3 + [date(2024, 2, 1)],
+            {date(2024, 1, 1): 0.75, date(2024, 2, 1): 0.25},
+        ),
+    ],
+)
+def test_is_in_distribution_supported_column_types(
+    spark: SparkSession,
+    spark_type: str,
+    arrow_type: str,
+    values: list,
+    distribution: dict,
+):
+    """Case 8: every supported Spark type must be accepted and evaluated correctly."""
+    df = spark.createDataFrame([(v,) for v in values], f"value: {arrow_type}")
+    df = df.withColumn("value", F.col("value").cast(spark_type))
+    condition, apply_method = is_in_distribution("value", distribution, distance=0.001)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        f"value: {arrow_type}, value_is_not_in_distribution: string",
+    ).withColumn("value", F.col("value").cast(spark_type))
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "spark_type, values, spark_type_display",
+    [
+        ("float", [1.0, 1.0, 2.0, 2.0], "float"),
+        ("double", [1.0, 1.0, 2.0, 2.0], "double"),
+        ("array<int>", [[1], [2]], "array<int>"),
+        ("binary", [bytes([1]), bytes([2])], "binary"),
+        (
+            "timestamp",
+            [datetime(2024, 1, 1), datetime(2024, 2, 1)],
+            "timestamp",
+        ),
+        ("decimal(10,2)", [Decimal("1.00"), Decimal("2.00")], "decimal(10,2)"),
+    ],
+)
+def test_is_in_distribution_unsupported_column_types(
+    spark: SparkSession,
+    spark_type: str,
+    values: list,
+    spark_type_display: str,
+):
+    """Case 9: unsupported column types must be rejected at apply time with a clear error."""
+    df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
+    _, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.5)
+    with pytest.raises(InvalidParameterError) as exc_info:
+        apply_method(df)
+    assert str(exc_info.value) == (
+        f"Column 'value' has unsupported type '{spark_type_display}' for 'is_in_distribution'; "
+        "expected one of: boolean, string, char, byte, short, integer, long, date."
+    )
+
+
+def test_is_in_distribution_treats_missing_expected_key_as_zero(spark: SparkSession):
+    """A key present in the expected distribution but absent from the actual data is treated as a
+    zero-probability observation and folded into the TVD calculation."""
+    values = ["A", "A", "A", "B"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    # actual A=0.75, B=0.25, C=0 → TVD = 0.5*(|0.5-0.75|+|0.4-0.25|+|0.1-0|) = 0.25
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.3)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_row_filter_applied_before_distribution(spark: SparkSession):
+    """row_filter narrows the dataset before the actual distribution is computed."""
+    rows = [("A", 1), ("A", 1), ("A", 1), ("B", 1), ("X", 2), ("Y", 2)]
+    df = spark.createDataFrame(rows, "value: string, keep: int")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.25}, distance=0.001, row_filter="keep = 1")
+    actual = apply_method(df).select("value", "keep", condition)
+    expected = spark.createDataFrame(
+        [(v, k, None) for v, k in rows],
+        "value: string, keep: int, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_empty_dataframe(spark: SparkSession):
+    """An empty dataset (no rows at all) produces no violations."""
+    df = spark.createDataFrame([], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.01)
+    assert _apply_and_collect_violations(condition, apply_method, df) == []
+
+
+def test_is_in_distribution_all_nulls_dataframe(spark: SparkSession):
+    """A dataset where every row is NULL yields no actual distribution and therefore no violation."""
+    df = spark.createDataFrame([(None,), (None,), (None,)], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.01)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(None, None), (None, None), (None, None)],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_accepts_column_expression(spark: SparkSession):
+    """The check accepts a Spark Column expression in addition to a plain column name."""
+    values = ["A"] * 7 + ["B"] * 2 + ["C"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution(F.col("value"), {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_accepts_wrapped_column_expression(spark: SparkSession):
+    """A wrapped Column expression like F.upper(F.col('v')) is supported — the check must resolve
+    the type off the expression itself, not by looking up the rendered expression string in the
+    input schema (which would KeyError since 'upper(v)' is not a field name).
+    """
+    values = ["a", "A", "a", "b"]
+    df = spark.createDataFrame([(v,) for v in values], "v: string")
+    # After UPPER, 'a' → 'A' (3 rows) and 'b' → 'B' (1 row) → matches {A: 0.75, B: 0.25} exactly.
+    condition, apply_method = is_in_distribution(F.upper(F.col("v")), {"A": 0.75, "B": 0.25}, distance=0.0)
+    actual = apply_method(df).select("v", condition.alias("violation"))
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "v: string, violation: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_flags_via_metadata_api(ws, spark):
+    """End-to-end dict/metadata → apply_checks_by_metadata path must catch a real distribution
+    mismatch, not just verify the check runs (the shared 'apply every check' YAML fixture uses
+    distance=1.0 which cannot fail).
+    """
+    df = spark.createDataFrame([("A",), ("A",), ("A",), ("A",), ("B",)], "value: string")
+    # actual A=0.8, B=0.2 vs expected A=0.5, B=0.5 → TVD = 0.5*(0.3+0.3) = 0.3 > distance=0.1.
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_in_distribution",
+                "arguments": {
+                    "column": "value",
+                    "distribution": {"A": 0.5, "B": 0.5},
+                    "distance": 0.1,
+                },
+            },
+        }
+    ]
+    checked = DQEngine(ws).apply_checks_by_metadata(df, checks)
+    errors = checked.select(F.col("_errors")).collect()
+    assert all(row["_errors"] is not None for row in errors)
