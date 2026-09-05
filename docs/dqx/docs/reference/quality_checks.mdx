@@ -2708,7 +2708,7 @@ When checks are loaded, the `__decimal__` format is automatically converted back
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks defined programmatically using DQX classes**</summary>
 ```python
-from databricks.labs.dqx.rule import DQDatasetRule, DQForEachColRule
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
@@ -3159,7 +3159,7 @@ checks = [
 
     # is_geo_contains check (geo, precise only, requires runtime 17.1+)
     # reference polygon must contain each location point (uses st_contains)
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_contains,
       column="location", # or as expr: F.col("location")
@@ -3172,7 +3172,7 @@ checks = [
 
     # is_geo_covers check — approximate mode,
     # H3 resolution 7 (~5 km² cells); default when precise=False
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_covers,
       column="location", # or as expr: F.col("location")
@@ -3184,7 +3184,7 @@ checks = [
 
     # is_geo_covers check — precise mode (geo, requires runtime 17.1+)
     # uses st_covers; includes boundary points unlike st_contains
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_covers,
       column="location", # or as expr: F.col("location")
@@ -3198,7 +3198,7 @@ checks = [
 
     # is_geo_intersects check — approximate mode (geo, requires runtime 17.1+)
     # at least one shared H3 cell between location and the reference polygon
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_intersects,
       column="location", # or as expr: F.col("location")
@@ -3210,7 +3210,7 @@ checks = [
 
     # is_geo_intersects check — precise mode (geo, requires runtime 17.1+)
     # uses st_intersects for exact computation
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_intersects,
       column="location", # or as expr: F.col("location")
@@ -3224,7 +3224,7 @@ checks = [
 
     # is_geo_touches check (geo, precise only, requires runtime 17.1+)
     # location point must touch (share a boundary point with) the reference polygon
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_touches,
       column="location", # or as expr: F.col("location")
@@ -3237,7 +3237,7 @@ checks = [
 
     # is_geo_within check (geo, precise only, requires runtime 17.1+)
     # reference geometry must be within the column geometry (converse of is_geo_contains)
-    DQDatasetRule(
+    DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.is_geo_within,
       column="region", # or as expr: F.col("region")
