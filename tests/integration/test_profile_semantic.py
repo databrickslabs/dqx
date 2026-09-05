@@ -205,13 +205,11 @@ def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
     @register_profile_builder("_spy_after_min_max", kind="context")
     def _spy(ctx):
         seen_metrics.append(dict(ctx.metrics))
-        return None
 
-    try:
+    def _profile_and_assert():
         schema = T.StructType([T.StructField("value", T.LongType())])
         rows = [(i,) for i in range(100)]
         df = spark.createDataFrame(rows, schema=schema)
-
         profiler = DQProfiler(ws)
         _stats, profiles = profiler.profile(
             df,
@@ -221,12 +219,10 @@ def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
                 "remove_outliers": False,
             },
         )
-
         min_max_profiles = [p for p in profiles if p.column == "value" and p.name == "min_max"]
         assert len(min_max_profiles) == 1, f"expected one min_max profile on 'value', got: {min_max_profiles}"
         expected_min = min_max_profiles[0].parameters["min"]
         expected_max = min_max_profiles[0].parameters["max"]
-
         assert seen_metrics, "spy contextual builder was not invoked"
         spy_seen = seen_metrics[-1]
         assert (
@@ -235,6 +231,9 @@ def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
         assert (
             spy_seen.get("max") == expected_max
         ), f"expected spy to observe max={expected_max} in ctx.metrics, got: {spy_seen.get('max')}"
+
+    try:
+        _profile_and_assert()
     finally:
         PROFILE_BUILDER_REGISTRY.pop("_spy_after_min_max", None)
 

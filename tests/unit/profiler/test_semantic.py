@@ -56,8 +56,9 @@ def test_dq_semantic_type_rejects_unsupported_property_value():
 
 def test_dq_profile_context_with_metrics_returns_new_instance_with_snapshot():
     original_metrics = {"count": 10, "count_non_null": 8}
+    df_mock = create_autospec(DataFrame)
     ctx = DQProfileContext(
-        df=create_autospec(DataFrame),
+        df=df_mock,
         column_name="c",
         column_type=T.IntegerType(),
         metrics=original_metrics,
@@ -81,8 +82,9 @@ def test_dq_profile_context_with_metrics_returns_new_instance_with_snapshot():
 def test_dq_profile_context_with_metrics_snapshots_supplied_mapping():
     """Later mutations to the source dict must not be reflected in the returned context."""
     source: dict = {"count": 10}
+    df_mock = create_autospec(DataFrame)
     ctx = DQProfileContext(
-        df=create_autospec(DataFrame),
+        df=df_mock,
         column_name="c",
         column_type=T.IntegerType(),
     )
@@ -92,8 +94,9 @@ def test_dq_profile_context_with_metrics_snapshots_supplied_mapping():
 
 
 def test_dq_profile_context_frozen_blocks_field_reassignment():
+    df_mock = create_autospec(DataFrame)
     ctx = DQProfileContext(
-        df=create_autospec(DataFrame),
+        df=df_mock,
         column_name="c",
         column_type=T.IntegerType(),
     )
@@ -137,10 +140,10 @@ def test_semantic_registry_prepend_returns_new_instance():
 
 
 def test_semantic_registry_of_returns_new_instance_with_ordered_chain():
-    d1 = DQSemanticTypeDetector(name="a", detect=lambda _ctx: None)
-    d2 = DQSemanticTypeDetector(name="b", detect=lambda _ctx: None)
-    d3 = DQSemanticTypeDetector(name="c", detect=lambda _ctx: None)
-    registry = SemanticRegistry.of(d1, d2, d3)
+    detector_a = DQSemanticTypeDetector(name="a", detect=lambda _ctx: None)
+    detector_b = DQSemanticTypeDetector(name="b", detect=lambda _ctx: None)
+    detector_c = DQSemanticTypeDetector(name="c", detect=lambda _ctx: None)
+    registry = SemanticRegistry.of(detector_a, detector_b, detector_c)
     assert [d.name for d in registry.detectors] == ["a", "b", "c"]
 
 
@@ -171,7 +174,7 @@ def test_semantic_registry_direct_constructor_duplicate_names_raises():
 
 
 # ---------------------------------------------------------------------------
-# SemanticRegistry: append / insert / replace / remove
+# SemanticRegistry mutation helpers (append, insert, replace, remove)
 # ---------------------------------------------------------------------------
 
 
