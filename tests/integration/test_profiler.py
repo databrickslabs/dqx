@@ -4,13 +4,28 @@ from decimal import Decimal
 
 import pytest
 import pyspark.sql.types as T
+from pyspark.sql import functions as F
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
+from databricks.labs.dqx.profiler.profiler_column_metrics import (
+    PROFILE_COLUMN_METRIC_REGISTRY,
+    register_profile_column_metric,
+)
 
 from tests.constants import TEST_CATALOG
+
+
+@pytest.fixture
+def snapshot_profile_column_metric_registry():
+    original_registry = dict(PROFILE_COLUMN_METRIC_REGISTRY)
+    try:
+        yield
+    finally:
+        PROFILE_COLUMN_METRIC_REGISTRY.clear()
+        PROFILE_COLUMN_METRIC_REGISTRY.update(original_registry)
 
 
 def test_profiler(spark, ws):
@@ -188,6 +203,85 @@ def test_profiler_timestamp_precision_and_rounding(
     min_max_profiles = [p for p in profiles if p.name == "min_max" and p.column == "created_at"]
     assert len(min_max_profiles) == 1
     assert min_max_profiles[0].parameters == expected_parameters
+
+
+def test_profiler_column_metrics_flow_into_generated_profiles(spark, ws):
+    # Exercises the _build_column_metrics → _build_profiles_for_column flow through the public profile() API.
+    # The generated is_not_null + min_max profiles depend on count_non_null, count_null, min and max being
+    # correctly aggregated and merged for the column.
+    schema = T.StructType([T.StructField("amount", T.IntegerType())])
+    input_df = spark.createDataFrame([[10], [20], [30], [40], [50]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    _, profiles = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+    )
+
+    assert DQProfile(name="is_not_null", column="amount", description=None, parameters=None) in profiles
+    min_max = next(p for p in profiles if p.name == "min_max" and p.column == "amount")
+    assert min_max.parameters == {"min": 10, "max": 50}
+
+
+def test_profiler_high_null_ratio_column_skips_is_not_null(spark, ws):
+    # Exercises the count_null derivation in _build_column_metrics (total_count - count_non_null): with
+    # null_ratio above max_null_ratio the null_or_empty builder must skip is_not_null generation for the column.
+    schema = T.StructType([T.StructField("sparse", T.IntegerType())])
+    input_df = spark.createDataFrame([[None], [None], [None], [None], [1]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    _, profiles = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "max_null_ratio": 0.1},
+    )
+
+    assert not [p for p in profiles if p.name == "is_not_null" and p.column == "sparse"]
+
+
+def test_profiler_uses_registered_custom_column_metric(spark, ws, snapshot_profile_column_metric_registry):
+    # Verifies the register_profile_column_metric extension point end-to-end:
+    # a user-registered metric is executed against each column during profiling and its
+    # aggregated value is exposed under the registered key in the returned summary_stats.
+    metric_key = "p50"
+
+    @register_profile_column_metric(metric_key)
+    def _p50(_field, column_label):
+        return F.percentile_approx(F.col(column_label), 0.5)
+
+    schema = T.StructType([T.StructField("amount", T.IntegerType())])
+    input_df = spark.createDataFrame([[10], [20], [30], [40], [50]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    summary_stats, _ = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+    )
+
+    assert summary_stats["amount"][metric_key] == 30
+
+
+def test_profiler_drops_registered_custom_column_metric_that_evaluates_to_null(
+    spark, ws, snapshot_profile_column_metric_registry
+):
+    # A user-registered metric whose aggregation evaluates to SQL NULL must not surface in
+    # summary_stats — otherwise downstream consumers (profile builders, count_null derivation)
+    # would need to defensively handle None for every metric key.
+    metric_key = "always_null"
+
+    @register_profile_column_metric(metric_key)
+    def _always_null(_field, _column_label):
+        return F.max(F.lit(None).cast(T.LongType()))
+
+    schema = T.StructType([T.StructField("amount", T.IntegerType())])
+    input_df = spark.createDataFrame([[10], [20], [30], [40], [50]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    summary_stats, _ = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+    )
+
+    assert metric_key not in summary_stats["amount"]
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):
@@ -2354,6 +2448,25 @@ def test_profiler_count_distinct_computed(spark, ws):
 
     assert stats["color"]["count_distinct"] == 2
     assert stats["value"]["count_distinct"] == 3
+
+
+def test_profiler_empty_count_computed(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("label", T.StringType()),
+            T.StructField("value", T.IntegerType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [["a", 1], ["", 2], ["", 3], ["b", 4]],
+        schema=schema,
+    )
+
+    profiler = DQProfiler(ws)
+    stats, _ = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+
+    assert stats["label"]["empty_count"] == 2
+    assert stats["value"]["empty_count"] == 0
 
 
 def test_profiler_generates_has_no_outliers_for_clean_numeric_data(spark, ws):
