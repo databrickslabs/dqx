@@ -2,7 +2,7 @@
 
 The OLTP subset of the schema (rules catalog, app settings, RBAC,
 comments, schedule configs, scheduler bookkeeping) lives in Lakebase
-Postgres when ``conf.lakebase_enabled`` is true.  Append-mostly
+Postgres. Append-mostly
 analytical tables (``dq_validation_runs``, ``dq_profiling_results``,
 ``dq_metrics``, ``dq_quarantine_records``) stay in Delta because they
 are written by the Spark task runner.
@@ -46,6 +46,7 @@ so re-running such a migration is safe out of the box.
 """
 
 import logging
+import re
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -724,6 +725,22 @@ PG_MIGRATIONS: list[PgMigration] = [
         ),
     ),
 ]
+
+
+_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+
+
+def _created_table_names() -> tuple[str, ...]:
+    """Return OLTP table names derived from the authoritative Postgres DDL."""
+    names: list[str] = []
+    for migration in PG_MIGRATIONS:
+        for name in _CREATE_TABLE_RE.findall(migration.sql):
+            if name not in names:
+                names.append(name)
+    return tuple(names)
+
+
+OLTP_TABLE_NAMES: tuple[str, ...] = _created_table_names()
 
 
 _META_TABLE = f"{_S}.dq_migrations"

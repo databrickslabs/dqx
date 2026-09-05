@@ -3,7 +3,7 @@ from importlib import resources
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .._metadata import app_name, app_slug
@@ -54,11 +54,19 @@ class AppConfig(BaseSettings):
         gt=0,
         description="Maximum output tokens per ChatDatabricks call (LLM budget cap).",
     )
-    admin_group: str | None = Field(
-        default=None,
+    admin_group: str = Field(
+        default="admins",
         validation_alias="DQX_ADMIN_GROUP",
         description="Databricks workspace group name for bootstrap Admin access",
     )
+
+    @field_validator("admin_group")
+    @classmethod
+    def validate_admin_group(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("DQX_ADMIN_GROUP must name a Databricks workspace group.")
+        return value
+
     # Registered Databricks App slug — the unique per-workspace name the app is
     # registered under (e.g. "dqx-studio"). Distinct from ``app_name`` which is
     # the human-readable display title ("DQX Studio"). Used by the
@@ -66,9 +74,7 @@ class AppConfig(BaseSettings):
     # Resolution order: DQX_APP_NAME env var → DATABRICKS_APP_NAME (injected by
     # the Apps runtime) → "dqx-studio" (default matching the bundle var default).
     app_slug_name: str = Field(
-        default_factory=lambda: (
-            os.environ.get("DQX_APP_NAME") or os.environ.get("DATABRICKS_APP_NAME") or "dqx-studio"
-        ),
+        default_factory=lambda: os.environ.get("DQX_APP_NAME") or os.environ.get("DATABRICKS_APP_NAME") or "dqx-studio",
         validation_alias="DQX_APP_NAME",
         description="Registered Databricks App slug used for app-permissions lookups.",
     )
@@ -80,16 +86,12 @@ class AppConfig(BaseSettings):
     # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
     # ------------------------------------------------------------------
-    # When ``lakebase_endpoint`` is set the OLTP-style tables
-    # (rules catalog, app settings, RBAC, comments, schedule configs,
-    # scheduler bookkeeping) are routed to a Lakebase Postgres instance
-    # instead of Delta. Bulk/append-only tables (validation runs,
+    # OLTP-style tables (rules catalog, app settings, RBAC, comments,
+    # schedule configs, scheduler bookkeeping) are stored in Lakebase
+    # Postgres. Bulk/append-only tables (validation runs,
     # profiling results, metrics, quarantine records) always stay in
     # Delta because they are written by the Spark task runner.
     #
-    # Leaving these empty keeps the legacy "everything on Delta"
-    # behaviour, so existing deployments continue to work without
-    # changes.  See ``app/databricks.yml`` for the deploy-time toggle.
     lakebase_endpoint: str = Field(
         default="",
         validation_alias="DQX_LAKEBASE_ENDPOINT",
@@ -98,12 +100,7 @@ class AppConfig(BaseSettings):
             "e.g. ``projects/dqx-studio-db/branches/dev/endpoints/primary``. "
             "The single connection input: it drives both host resolution "
             "(``postgres.get_endpoint``) and OAuth credential issuance "
-            "(``postgres.generate_database_credential``). Empty — or any of "
-            "the sentinel values ``-`` / ``disabled`` / ``off`` / ``none`` "
-            "(case-insensitive) — disables Lakebase routing and falls back "
-            "to Delta. The sentinel form exists because Databricks Apps "
-            "rejects env vars with an empty ``value`` string, so deployments "
-            "that want to disable Lakebase must pass a non-empty placeholder."
+            "(``postgres.generate_database_credential``)."
         ),
     )
     # Default must match the ``lakebase_database_name`` bundle var in
@@ -152,9 +149,7 @@ class AppConfig(BaseSettings):
     lakebase_token_refresh_retry_seconds: int = Field(
         default=10,
         validation_alias="DQX_LAKEBASE_TOKEN_REFRESH_RETRY_SECONDS",
-        description=(
-            "Base back-off between failed token-refresh attempts. " "Jittered by ±retry_jitter on each retry."
-        ),
+        description=("Base back-off between failed token-refresh attempts. Jittered by ±retry_jitter on each retry."),
     )
     lakebase_token_refresh_retry_jitter: float = Field(
         default=0.3,
@@ -180,23 +175,6 @@ class AppConfig(BaseSettings):
     @property
     def static_assets_path(self) -> Path:
         return Path(str(resources.files(app_slug))).joinpath("__dist__")
-
-    # Sentinel values that explicitly disable Lakebase routing even
-    # though the env var has to be non-empty (Databricks Apps rejects
-    # ``value: ""``). Comparison is case-insensitive after stripping.
-    _LAKEBASE_DISABLED_SENTINELS = frozenset({"", "-", "disabled", "off", "none"})
-
-    @property
-    def lakebase_enabled(self) -> bool:
-        """``True`` when the deployment was provisioned with Lakebase.
-
-        Falls back to ``False`` (legacy UC-only mode) when the
-        endpoint path is empty or set to a recognised "disabled"
-        sentinel so existing tests, dev setups, and Lakebase-less
-        Databricks Apps deployments keep working with no Postgres
-        dependency.
-        """
-        return self.lakebase_endpoint.strip().lower() not in self._LAKEBASE_DISABLED_SENTINELS
 
 
 conf = AppConfig()

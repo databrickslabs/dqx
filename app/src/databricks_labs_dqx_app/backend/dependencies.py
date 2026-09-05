@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
@@ -10,7 +11,8 @@ if TYPE_CHECKING:
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
-from fastapi import Depends, Header, HTTPException, status
+from databricks.sdk.service.iam import User
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
@@ -21,6 +23,9 @@ from .demo.status import DemoStatusStore
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
+from .sanitization import replace_control_characters
+from .setup.runtime import setup_runtime
+from .setup.orchestrator import SetupOrchestrator
 from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
@@ -94,6 +99,7 @@ def get_oltp_executor() -> OltpExecutorProtocol | None:
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
 _CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
+_SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interval
 
 
 # ---------------------------------------------------------------------------
@@ -173,11 +179,12 @@ async def get_sp_sql_executor(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> SqlExecutor:
     """SqlExecutor using the app's service-principal credentials (main schema)."""
+    resources = rt.require_resources()
     return SqlExecutor(
         ws=sp_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.schema_name,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.volume.schema,
     )
 
 
@@ -185,24 +192,21 @@ async def get_obo_sql_executor(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> SqlExecutor:
     """SqlExecutor using the caller's OBO credentials (tmp schema)."""
+    resources = rt.require_resources()
     return SqlExecutor(
         ws=obo_ws,
-        warehouse_id=_get_warehouse_id(),
-        catalog=conf.catalog,
-        schema=conf.tmp_schema_name,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
     )
 
 
-async def get_sp_oltp_executor(
-    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-) -> OltpExecutorProtocol:
+async def get_sp_oltp_executor() -> OltpExecutorProtocol:
     """Return the executor that owns the OLTP tables.
 
-    When Lakebase is configured the lifespan handler registers a
-    :class:`backend.pg_executor.PgExecutor` via :func:`set_oltp_executor`
-    and we hand it back to every OLTP service.  Otherwise we fall back
-    to the legacy Delta executor (``get_sp_sql_executor``) so existing
-    deployments keep working with no code changes on their side.
+    The lifespan handler registers a :class:`backend.pg_executor.PgExecutor`
+    via :func:`set_oltp_executor`. Until setup has done so, fail closed so
+    OLTP traffic cannot be silently redirected to Delta.
 
     The return type is :class:`OltpExecutorProtocol` so every
     downstream service annotation type-checks against the structural
@@ -214,7 +218,7 @@ async def get_sp_oltp_executor(
     """
     pg = get_oltp_executor()
     if pg is None:
-        return sp_sql
+        raise HTTPException(status_code=503, detail="DQX Studio setup is not ready.")
     return pg
 
 
@@ -286,7 +290,8 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     and never raises out of its own body; the callable is invoked best-effort by
     the reset service, which records (never re-raises) any failure.
     """
-    warehouse_id = _get_warehouse_id()
+    resources = rt.require_resources()
+    warehouse_id = resources.warehouse_id
     if not warehouse_id:
         return None
 
@@ -304,8 +309,8 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             ws=sp_ws,
             warehouse_id=warehouse_id,
             parent_path=parent_path,
-            catalog=conf.catalog,
-            schema=conf.schema_name,
+            catalog=resources.volume.catalog,
+            schema=resources.genie_schema,
         )
 
     return _reprovision
@@ -393,7 +398,7 @@ async def get_monitored_table_service(
     """Create a MonitoredTableService.
 
     The OLTP tables (``dq_monitored_tables``/``dq_applied_rules``) are routed
-    at the OLTP executor (Lakebase or Delta fallback); the profiling READ
+    at the Lakebase OLTP executor; the profiling READ
     path always targets the Delta ``dq_profiling_results`` table via the SP
     SQL executor, since that table is written by the profiler job
     regardless of whether Lakebase is enabled.
@@ -696,11 +701,12 @@ async def get_preview_sql_executor(
     fall back to the bundle-bound ``DATABRICKS_WAREHOUSE_ID`` env var (today's
     behaviour). Runs as the caller so Unity Catalog permissions are enforced.
     """
+    resources = rt.require_resources()
     return SqlExecutor(
         ws=obo_ws,
         warehouse_id=resolve_warehouse_id(app_settings),
-        catalog=conf.catalog,
-        schema=conf.tmp_schema_name,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
     )
 
 
@@ -771,11 +777,22 @@ async def get_job_service(
     """
     return JobService(
         ws=sp_ws,
-        job_id=conf.job_id,
+        job_id=str(_require_resolved_job_id()),
         sql=sql,
         warehouse_id=resolve_warehouse_id(app_settings),
-        wheels_volume=conf.wheels_volume,
+        wheels_volume=rt.require_resources().volume.path,
     )
+
+
+def _require_resolved_job_id() -> int:
+    """Return the setup-resolved task-runner job ID or fail while setup is incomplete."""
+    try:
+        return setup_runtime.require_job_id()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="DQX Studio setup is not ready.",
+        ) from None
 
 
 async def get_run_set_service(
@@ -845,7 +862,11 @@ async def get_score_cache_service(
     viewer-independent; catalog filtering happens at read time on the
     list endpoints.
     """
-    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql, genie_schema=conf.genie_schema_name)
+    return ScoreCacheService(
+        oltp=oltp,
+        warehouse_sql=warehouse_sql,
+        genie_schema=rt.require_resources().genie_schema,
+    )
 
 
 async def get_entitlement_service(
@@ -857,7 +878,7 @@ async def get_entitlement_service(
     view are SP-owned UC objects. The caller's OBO executor (for the
     self-verification probes) is passed per call, never stored.
     """
-    return EntitlementService(sql=sp_sql, genie_schema=conf.genie_schema_name)
+    return EntitlementService(sql=sp_sql, genie_schema=rt.require_resources().genie_schema)
 
 
 async def get_data_product_service(
@@ -955,19 +976,20 @@ async def get_demo_seed_service(
     """
     from .demo.seed_service import DemoSeedService
 
-    warehouse_id = _get_warehouse_id()
+    resources = rt.require_resources()
+    warehouse_id = resources.warehouse_id
     demo_sql = SqlExecutor(
         ws=sp_ws,
         warehouse_id=warehouse_id,
-        catalog=conf.catalog,
+        catalog=resources.volume.catalog,
         schema=DEMO_SOURCE_SCHEMA,
     )
     sp_view = ViewService(
         sql=SqlExecutor(
             ws=sp_ws,
             warehouse_id=warehouse_id,
-            catalog=conf.catalog,
-            schema=conf.tmp_schema_name,
+            catalog=resources.volume.catalog,
+            schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
     )
@@ -978,8 +1000,8 @@ async def get_demo_seed_service(
         sql=SqlExecutor(
             ws=sp_ws,
             warehouse_id=warehouse_id,
-            catalog=conf.catalog,
-            schema=conf.tmp_schema_name,
+            catalog=resources.volume.catalog,
+            schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
     )
@@ -1012,7 +1034,7 @@ async def get_demo_seed_service(
         embeddings=embeddings,
         job_service=job_service,
         profiler_view=profiler_view,
-        catalog=conf.catalog,
+        catalog=resources.volume.catalog,
     )
 
 
@@ -1100,6 +1122,93 @@ def require_role(*roles: UserRole):
 
 
 CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
+
+
+@dataclass(frozen=True)
+class SetupAccess:
+    """Authenticated setup-management access derived without application storage."""
+
+    user_name: str
+    can_manage: bool
+
+
+def setup_access(user: User, admin_group: str) -> SetupAccess:
+    """Derive bootstrap setup access from a trusted SCIM user record.
+
+    Args:
+        user: User returned by the caller's OBO-authenticated SCIM request.
+        admin_group: Configured Databricks group permitted to manage setup.
+
+    Returns:
+        Sanitized user identity and whether they are a member of the configured group.
+    """
+    configured_group = sanitize_setup_display(admin_group)
+    groups = {
+        display for group in (user.groups or []) if (display := sanitize_setup_display(group.display)) is not None
+    }
+    return SetupAccess(
+        user_name=sanitize_setup_display(user.user_name) or "unknown",
+        can_manage=configured_group is not None and configured_group in groups,
+    )
+
+
+async def get_setup_access(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    config: Annotated[AppConfig, Depends(get_conf)],
+    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
+) -> SetupAccess:
+    """Resolve setup access, briefly caching platform callers by token hash."""
+    cache_key: str | None = None
+    if token:
+        cache_hash = hashlib.sha256(f"{token}\0{config.admin_group}".encode()).hexdigest()
+        cache_key = f"auth:setup-access:{cache_hash}"
+        cached = await app_cache.get(cache_key)
+        if isinstance(cached, SetupAccess):
+            return cached
+
+    access = await get_live_setup_access(obo_ws, config)
+    if cache_key is not None:
+        await app_cache.set(cache_key, access, ttl=_SETUP_ACCESS_TTL)
+    return access
+
+
+async def get_live_setup_access(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    config: Annotated[AppConfig, Depends(get_conf)],
+) -> SetupAccess:
+    """Resolve setup access from a fresh caller OBO SCIM lookup."""
+    user = await asyncio.to_thread(obo_ws.current_user.me)
+    return setup_access(user, config.admin_group)
+
+
+def require_setup_admin() -> object:
+    """Require bootstrap membership without querying Lakebase role mappings."""
+
+    async def _check(access: Annotated[SetupAccess, Depends(get_live_setup_access)]) -> SetupAccess:
+        if not access.can_manage:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Setup reconciliation requires membership in the configured administrator group.",
+            )
+        return access
+
+    return Depends(_check)
+
+
+def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
+    """Return the live setup orchestrator when setup collaborators are available."""
+    orchestrator = getattr(request.app.state, "setup_orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
+    return orchestrator
+
+
+def sanitize_setup_display(value: str | None) -> str | None:
+    """Strip control characters from setup-related user and group display values."""
+    if value is None:
+        return None
+    sanitized = replace_control_characters(value)
+    return sanitized.strip() or None
 
 
 async def get_current_principal_ids(

@@ -2418,7 +2418,7 @@ class SchedulerService:
         own clock (no Python-side time skew).
 
         Tables are split between the analytical Delta executor and
-        the OLTP executor (Lakebase or Delta-fallback) because the
+        the Lakebase OLTP executor because the
         ``INTERVAL`` syntax differs between dialects: Delta uses
         ``INTERVAL N DAY`` (no quotes); Postgres uses
         ``INTERVAL '<N> days'``.
