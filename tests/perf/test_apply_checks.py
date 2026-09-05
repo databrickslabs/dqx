@@ -2177,6 +2177,31 @@ def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_is_geo_within_distance(benchmark, ws, generated_df):
+    """Benchmark `is_geo_within_distance`.
+
+    Uses col_geo_point against a reference point with a 1 km radius to benchmark the geodesic
+    `st_distance` path on GEOGRAPHY values.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=geo_check_funcs.is_geo_within_distance,
+            column="col_geo_point",
+            check_func_kwargs={
+                "reference_geometry": "POINT(4.90 52.37)",
+                "distance": 1000,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_is_geo_covers_approximate(benchmark, ws, generated_df):
     """Benchmark `is_geo_covers`  approximate version.
 

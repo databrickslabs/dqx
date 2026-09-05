@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import math
 import operator as py_operator
 import uuid
 from typing import Literal
@@ -1339,4 +1340,104 @@ def is_geo_within(
     """
     return _has_topological_relationship_precise(
         column, reference_geometry, convert_column, convert_reference_geometry, "WITHIN"
+    )
+
+
+@requires_dbr_version("17.1")
+@register_rule("row")
+def is_geo_within_distance(
+    column: str | Column,
+    reference_geometry: str | bytes | Column,
+    distance: int | float | str | Column,
+    convert_column: bool = False,
+    convert_reference_geometry: bool = False,
+) -> Column:
+    """Checks if the column geography is within a geodesic distance of the reference geography using `st_distance`.
+
+    The distance is measured in meters along the WGS 84 ellipsoid, so the check is meaningful for
+    global data where planar `GEOMETRY` distances are not. A value is reported when the shortest
+    distance between it and the reference geography is strictly greater than *distance*.
+
+    Both the target column and the reference geometry are always handled as `GEOGRAPHY`.
+    When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
+    *try_to_geography* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB).
+    See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geography for details.
+    When conversion is not requested, the input is assumed to already hold a native `GEOGRAPHY` value.
+
+    Args:
+        column: Column to check. Null values are skipped for validation.
+        reference_geometry: Reference geography as a literal WKT/WKB/EWKT/EWKB string or bytes value,
+            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
+            string is always treated as a literal, not a column name.
+        distance: Maximum allowed distance in meters. Accepts a non-negative number, a Column
+            expression (e.g. *F.col('radius_m')*), or a string SQL expression evaluated against the
+            input DataFrame. Rows where the distance expression evaluates to null are skipped.
+        convert_column: When True, *try_to_geography* is applied to convert column values to GEOGRAPHY.
+            When False (default), the column is assumed to already hold a native GEOGRAPHY value.
+        convert_reference_geometry: When True, *try_to_geography* is applied to convert the reference
+            geometry to GEOGRAPHY. When False (default), the reference geometry is assumed to already
+            hold a native GEOGRAPHY value.
+
+    Returns:
+        Column object indicating whether values in the input column are farther than *distance* meters
+        from the reference geography.
+
+    Raises:
+        InvalidParameterError: If *distance* is a boolean, or a numeric literal that is negative,
+            NaN or infinite.
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    # `bool` is a subclass of `int`, so it would otherwise slip through as a 0/1 metre radius.
+    if isinstance(distance, bool) or (
+        isinstance(distance, (int, float)) and not (math.isfinite(distance) and distance >= 0)
+    ):
+        raise InvalidParameterError(f"'distance' must be a finite, non-negative number of meters, got {distance!r}.")
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+
+    ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
+    col_geog = F.call_function("try_to_geography", col_expr) if convert_column else col_expr
+    ref_geog = F.call_function("try_to_geography", ref_col) if convert_reference_geometry else ref_col
+    distance_expr = get_limit_expr(distance)
+
+    # `try_to_geography` yields NULL for values that fail to parse. The column and the reference are
+    # reported separately so the error message points at the value the user has to fix. Null input
+    # values are skipped before these are evaluated, so a NULL here always means "unparseable".
+    col_invalid = col_geog.isNull()
+    ref_invalid = ref_geog.isNull()
+    is_too_far = F.call_function("st_distance", col_geog, ref_geog) > distance_expr
+
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(col_invalid | ref_invalid | is_too_far)
+
+    # How the offending value is rendered depends on the input contract. When the column is converted,
+    # it holds a WKT/WKB-style value that casts to string losslessly, and the raw text is what the user
+    # needs to see - `st_astext` would be NULL on exactly the unparseable values the message is about.
+    # When conversion is off the column is already a native GEOGRAPHY, which has no string cast, so the
+    # value has to be rendered with `st_astext`; a NULL there is already excluded by the null guard.
+    text_value_col = col_expr.cast("string") if convert_column else F.call_function("st_astext", col_geog)
+
+    invalid_column_message = F.concat_ws(
+        "",
+        F.lit("value `"),
+        text_value_col,
+        F.lit(f"` in column `{col_expr_str}` is not a valid geography"),
+    )
+    invalid_reference_message = F.lit(f"reference geometry for column `{col_expr_str}` is not a valid geography")
+    too_far_message = F.concat_ws(
+        "",
+        F.lit("value `"),
+        text_value_col,
+        F.lit(f"` in column `{col_expr_str}` is farther than "),
+        distance_expr.cast("string"),
+        F.lit(" meters from the reference geometry"),
+    )
+
+    return make_condition(
+        condition,
+        F.when(col_invalid, invalid_column_message)
+        .when(ref_invalid, invalid_reference_message)
+        .otherwise(too_far_message),
+        alias=f"{col_str_norm}_is_not_within_distance_from_reference_geometry",
     )

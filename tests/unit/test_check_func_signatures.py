@@ -187,6 +187,13 @@ EXPECTED_PARAMETER_ORDER = {
     ),
     "is_geo_touches": ("column", "reference_geometry", "convert_column", "convert_reference_geometry"),
     "is_geo_within": ("column", "reference_geometry", "convert_column", "convert_reference_geometry"),
+    "is_geo_within_distance": (
+        "column",
+        "reference_geometry",
+        "distance",
+        "convert_column",
+        "convert_reference_geometry",
+    ),
     "does_not_contain_pii": ("column", "language", "threshold", "entities", "nlp_engine_config"),
 }
 
