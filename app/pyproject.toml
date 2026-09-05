@@ -1,6 +1,6 @@
 [project]
 name = "databricks-labs-dqx-app"
-version = "0.16.1"
+version = "0.1.0"
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

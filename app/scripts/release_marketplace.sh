@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: app/scripts/release_marketplace.sh vX.Y.Z" >&2
+  echo "Usage: app/scripts/release_marketplace.sh studio-vX.Y.Z" >&2
   exit 2
 fi
 

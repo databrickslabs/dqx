@@ -143,8 +143,8 @@ app-check-marketplace: ## Validate Marketplace generation and signed-release too
 	test -z "$$tracked" || test "$$tracked" = "$$deleted" || \
 	  (echo "Generated Marketplace artifacts must not be tracked on main."; exit 1)
 
-app-release-marketplace: ## Create and verify a local signed Marketplace release branch (TAG=vX.Y.Z)
-	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=vX.Y.Z"; exit 1)
+app-release-marketplace: ## Create and verify a local signed Marketplace release branch (TAG=studio-vX.Y.Z)
+	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=studio-vX.Y.Z"; exit 1)
 	app/scripts/release_marketplace.sh $(TAG)
 
 app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
