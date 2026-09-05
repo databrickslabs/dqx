@@ -37,17 +37,37 @@ class SubprocessCommandRunner:
         return CommandResult(returncode=completed.returncode, stdout=completed.stdout)
 
 
-def release_branch_name(tag: str) -> str:
-    """Return the release branch name for a valid Marketplace version tag."""
+@dataclass(frozen=True)
+class _StudioRelease:
+    """Version and branch derived from a Studio release tag."""
+
+    version: str
+    branch: str
+
+
+def _studio_release(tag: str) -> _StudioRelease:
+    """Parse a Studio release tag into its version and branch name."""
     match = re.fullmatch(r"studio-v([0-9]+\.[0-9]+\.[0-9]+)", tag)
     if match is None:
         raise ValueError("TAG must use studio-vX.Y.Z release syntax")
-    return f"dqx-studio/marketplace/v{match.group(1)}"
+    version = match.group(1)
+    return _StudioRelease(version=version, branch=f"dqx-studio/marketplace/v{version}")
+
+
+def release_branch_name(tag: str) -> str:
+    """Return the release branch name for a valid Marketplace version tag."""
+    return _studio_release(tag).branch
+
+
+def release_push_commands(tag: str, branch: str) -> tuple[str, str]:
+    """Return the manual commands that publish a Studio release."""
+    return f"git push origin {branch}", f"git push origin {tag}"
 
 
 def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> str:
     """Create and verify a local signed Marketplace release branch without pushing."""
-    branch = release_branch_name(tag)
+    release = _studio_release(tag)
+    branch = release.branch
     root_result = commands.run(("git", "rev-parse", "--show-toplevel"), cwd=repo_root, check=False)
     if root_result.returncode != 0:
         raise RuntimeError("repo_root must be a Git worktree")
@@ -68,7 +88,7 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
         project_version = tomllib.loads(tagged_pyproject.stdout)["project"]["version"]
     except (KeyError, TypeError, tomllib.TOMLDecodeError) as error:
         raise RuntimeError("Tagged application version is missing") from error
-    if project_version != tag.removeprefix("studio-v"):
+    if project_version != release.version:
         raise RuntimeError("TAG version does not match the tagged application version")
 
     existing = commands.run(
@@ -128,7 +148,9 @@ def main() -> int:
     except (OSError, RuntimeError, ValueError) as error:
         raise SystemExit(f"error: {error}") from None
     print(f"Created and verified local branch {branch}.")
-    print(f"Inspect it, then push manually: git push origin {branch}")
+    print("Inspect it, then push manually:")
+    for command in release_push_commands(args.tag, branch):
+        print(f"  {command}")
     return 0
 
 

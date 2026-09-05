@@ -1,5 +1,6 @@
 import React, { CSSProperties, ReactNode } from 'react';
 import Link from '@docusaurus/Link';
+import { availableSinceLabel } from './FeatureTagLabels';
 
 /**
  * Inline documentation tags for feature lifecycle stage and version information.
@@ -89,7 +90,7 @@ export function FeatureLifecycleStage({
 }
 
 /**
- * Renders an "Available since vX.Y.Z" tag linked to that release's notes.
+ * Renders an "Available since PRODUCT vX.Y.Z" tag linked to that release's notes.
  *
  * Uses a neutral badge color (distinct from every lifecycle-stage color) so version
  * tags read as metadata rather than a status.
@@ -97,7 +98,7 @@ export function FeatureLifecycleStage({
  * @param version  the release the feature first shipped in, e.g. "0.15.0".
  * @param releaseTag  the Git tag containing the release notes. Defaults to the
  *                    DQX Core tag for *version*.
- * @param productName  the product name used in the accessible link title.
+ * @param productName  the product name shown in the badge and accessible link title.
  * @param heading  when true (default), uses heading-friendly sizing so the tag can sit
  *                 inline next to a page or section title; set false for body text.
  */
@@ -122,7 +123,7 @@ export function AvailableSinceVersion({
         className='dqx-badge dqx-badge--version'
         style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
       >
-        Available since v{version}
+        {availableSinceLabel(productName, version)}
       </span>
     </Link>
   );

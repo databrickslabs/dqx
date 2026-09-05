@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from scripts import release_marketplace as release_marketplace_module
 from scripts.release_marketplace import CommandResult, release_branch_name, release_marketplace
 
 
@@ -61,6 +62,14 @@ class RecordingCommandRunner:
 
 def test_release_branch_name_is_derived_from_version_tag() -> None:
     assert release_branch_name("studio-v0.1.0") == "dqx-studio/marketplace/v0.1.0"
+
+
+def test_release_push_commands_include_signed_tag_and_release_branch() -> None:
+    assert hasattr(release_marketplace_module, "release_push_commands")
+    assert release_marketplace_module.release_push_commands("studio-v0.1.0", "dqx-studio/marketplace/v0.1.0") == (
+        "git push origin dqx-studio/marketplace/v0.1.0",
+        "git push origin studio-v0.1.0",
+    )
 
 
 @pytest.mark.parametrize(
