@@ -55,7 +55,7 @@ The profiler supports extensive configuration options to customize behavior:
 | --------------------------- | ------------- |--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `round`                     | `True`        | Round min/max values for cleaner rules                                                                                                                                                                                                                                                                                               |
 | `max_in_count`              | `10`          | Generate `is_in` rule if distinct values < this count                                                                                                                                                                                                                                                                                |
-| `distinct_ratio`            | `0.05`        | Generate `is_in` rule if distinct values < 5% of total                                                                                                                                                                                                                                                                               |
+| `distinct_ratio`            | `0.05`        | Generate `is_in` rule if distinct values < 5% of non-null values                                                                                                                                                                                                                                                                     |
 | `max_null_ratio`            | `0.01`        | Generate `is_not_null` rule if null values < 1% of total                                                                                                                                                                                                                                                                             |
 | `remove_outliers`           | `True`        | Enable outlier detection for min/max rules                                                                                                                                                                                                                                                                                           |
 | `outlier_columns`           | `[]`          | Specific columns for outlier detection (empty = all numeric)                                                                                                                                                                                                                                                                         |
@@ -144,7 +144,7 @@ checks. For example, a *vehicle_type* column classified as an *enum* now receive
 *is_in* candidate only — not both *is_in* and *min_max* — while a continuous
 *cargo_weight* column is classified as a *measurement* and receives *min_max* only.
 
-The feature is fully opt-in: it runs iff a `semantic_registry` is supplied to the
+The feature is fully opt-in: it runs if a `semantic_registry` is supplied to the
 `DQProfiler` constructor. When no registry is supplied, the profiler output is
 byte-identical to the pre-feature behaviour and every `DQProfile.semantic_type`
 field is `None`.
@@ -152,7 +152,16 @@ field is `None`.
 ### Composing a registry
 
 `SemanticRegistry` is an immutable, ordered, name-unique collection of detectors.
-Its four composition patterns:
+The composition methods (all return a new registry, leaving the original untouched):
+
+```text
+prepend(detector)          → puts one detector at the front (highest priority)
+append(detector)           → adds one detector at the back (lowest priority)
+insert(name, detector)     → inserts one detector after the named entry
+replace(name, detector)    → swaps the entry named `name`
+remove(name)               → drops the entry named `name`
+SemanticRegistry.of(...)   → build a registry with an explicit chain from scratch
+```
 
 ```python
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -174,25 +183,41 @@ def _detect_uuid(ctx):
 uuid_detector = DQSemanticTypeDetector(name="uuid", detect=_detect_uuid)
 prepended = SemanticRegistry.default().prepend(uuid_detector)
 
-# 3. Replace the chain entirely
-custom = SemanticRegistry.default().replace([uuid_detector, *default_semantic_detectors()])
+# 3. Append as a lowest-priority fallback
+appended = SemanticRegistry.default().append(uuid_detector)
 
-# 4. Empty registry — semantic types are always None
+# 4. Insert immediately after the built-in `enum` detector
+inserted = SemanticRegistry.default().insert("enum", uuid_detector)
+
+# 5. Swap a single entry by name (position preserved)
+custom_enum_detector = DQSemanticTypeDetector(name="enum", detect=_detect_uuid)
+swapped = SemanticRegistry.default().replace("enum", custom_enum_detector)
+
+# 6. Drop a built-in detector
+without_text = SemanticRegistry.default().remove("text")
+
+# 7. Build an arbitrary chain from scratch
+custom = SemanticRegistry.of(uuid_detector, *default_semantic_detectors())
+
+# 8. Empty registry — semantic types are always None
 empty = SemanticRegistry()
 
 profiler = DQProfiler(ws, semantic_registry=default_registry)
 ```
 
-Both `prepend(...)` and `replace(...)` return a **new** `SemanticRegistry` and
-route through the constructor so name-uniqueness is enforced on the derived
-instance. Attempting to prepend a detector whose name clashes with an existing
-one raises `pydantic.ValidationError`.
+Every composition method returns a **new** `SemanticRegistry` and routes through
+the constructor so name-uniqueness is enforced on the derived instance. Adding
+a detector whose name clashes with an existing entry raises
+`pydantic.ValidationError`; `insert`, `replace`, and `remove` raise `ValueError`
+when the referenced `name` is not present. To construct an arbitrary chain from
+scratch, use `SemanticRegistry.of(...)` (varargs) or the
+`SemanticRegistry(detectors=(...))` constructor directly.
 
 ### Built-in detectors
 
 | Detector      | Applicability                                                                                                                                                                                        | Produced `properties`                                          |
 |---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| `enum`        | String or integer columns where `cardinality < max_in_count` AND `cardinality / count_non_null ≤ ENUM_MAX_CARDINALITY_RATIO` (default 0.95). Collects distinct values once and hands them downstream. | `values`: tuple of distinct values                             |
+| `enum`        | String or integer columns (including `ShortType`) where `cardinality < max_in_count` AND `cardinality / count_non_null < distinct_ratio` (default 0.05, taken from the `distinct_ratio` profiler option so semantic profiling and the legacy `is_in` builder agree). Collects distinct values once and hands them downstream. | `values`: tuple of distinct values                             |
 | `key`         | Any column with `distinctness ≥ 0.99` AND a type-specific second signal — numeric density ≥ `KEY_MIN_DENSITY_RATIO` (default 0.99) or string length_stability ≥ `KEY_MIN_LENGTH_STABILITY_RATIO` (default 0.95). | `signal`: `"density"` or `"length_stability"`                  |
 | `measurement` | Any numeric column not consumed by an earlier detector.                                                                                                                                             | `distribution`: best-effort guess (`normal` / `uniform` / …)   |
 | `text`        | Any string column not consumed by an earlier detector.                                                                                                                                              | (none)                                                         |
@@ -240,23 +265,6 @@ def _detect_uuid(ctx):
 uuid_detector = DQSemanticTypeDetector(name="uuid", detect=_detect_uuid)
 ```
 
-### Table metadata
-
-When `profile_table(...)` is used, DQX best-effort fetches table and per-column
-metadata from Unity Catalog and exposes it to detectors via `ctx.metadata`.
-The following fields are populated when available:
-
-* *table_name*
-* *table_comment*
-* *column_comment*
-
-Tags are not surfaced in this release — they will follow in a subsequent
-release. Metadata fetches are best-effort and degrade gracefully: any SDK
-failure (missing table, permission denied, non-UC location) is logged as a
-warning and treated as an empty mapping, so metadata errors never block
-profiling. On the raw-DataFrame path (`.profile(df, ...)`) there is no table
-origin, so `ctx.metadata` is always `{}`.
-
 ### Traceability via `DQProfile.semantic_type`
 
 When a detector fires, the resulting `DQProfile` records the semantic type name
@@ -268,16 +276,16 @@ on every profile.
 
 Existing user-authored builders registered via `@register_profile_builder(...)`
 continue to work unchanged. The decorator now also accepts an optional
-`type="context"` argument to opt into the preferred contextual callback shape,
+`kind="context"` argument to opt into the preferred contextual callback shape,
 which receives a `DQProfileContext` (giving access to *ctx.semantic_type*,
-*ctx.metadata*, *ctx.metrics*, and *ctx.options*):
+*ctx.metrics*, and *ctx.options*):
 
 ```python
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import register_profile_builder
 from databricks.labs.dqx.profiler.semantic import DQProfileContext
 
-@register_profile_builder("my_custom", type="context")
+@register_profile_builder("my_custom", kind="context")
 def _my_custom_builder(ctx: DQProfileContext) -> DQProfile | None:
     if ctx.semantic_type and ctx.semantic_type.name != "measurement":
         return None

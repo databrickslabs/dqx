@@ -2,7 +2,10 @@ import uuid
 
 import pyspark.sql.types as T
 
-from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.profiler.profile_builder import (
+    PROFILE_BUILDER_REGISTRY,
+    register_profile_builder,
+)
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.semantic import (
     DEFAULT_ENUM_DETECTOR,
@@ -11,8 +14,6 @@ from databricks.labs.dqx.profiler.semantic import (
     SemanticRegistry,
     default_semantic_detectors,
 )
-
-from tests.constants import TEST_CATALOG
 
 
 DEMO_ROW_COUNT = 60
@@ -73,7 +74,11 @@ def test_profile_without_semantic_registry_matches_pre_feature_output(spark, ws)
 def test_default_semantic_registry_classifies_grounded_columns(spark, ws):
     df = _make_demo_df(spark)
     profiler = DQProfiler(ws, semantic_registry=SemanticRegistry.default())
-    _stats, profiles = profiler.profile(df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    # vehicle_type has 3 distinct values over 60 rows (ratio 0.05); pass a loose `distinct_ratio`
+    # so the tightened enum gate still classifies it as enum.
+    _stats, profiles = profiler.profile(
+        df, options={"sample_fraction": None, "llm_primary_key_detection": False, "distinct_ratio": 0.1}
+    )
 
     by_column = _profile_by_column(profiles)
 
@@ -161,46 +166,77 @@ def test_prepend_custom_detector_takes_precedence(spark, ws):
     ), f"unexpected 'min_max' profile on vehicle_type when forced_text prepended, got: {vehicle_names}"
 
 
-def test_profile_table_populates_metadata_from_unity_catalog(spark, ws, make_schema, make_random):
-    """profile_table fetches UC metadata and threads it into ctx.metadata."""
-    catalog_name = TEST_CATALOG
-    schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+def test_short_type_low_cardinality_classified_as_enum_and_emits_is_in(spark, ws):
+    """A low-cardinality ShortType column is classified as `enum` and receives an `is_in` profile.
 
-    schema = T.StructType(
-        [
-            T.StructField("vehicle_type", T.StringType(), metadata={"comment": "kind of vehicle"}),
-            T.StructField("cargo_weight", T.DoubleType()),
-        ]
+    Regression guard for the earlier gap where `_detect_enum` accepted ShortType but the `is_in`
+    builder's `_supports_distinct` rejected it — leaving the column with neither `is_in` nor
+    `min_max`.
+    """
+    schema = T.StructType([T.StructField("status_code", T.ShortType())])
+    rows = [(i % 3 + 1,) for i in range(60)]
+    df = spark.createDataFrame(rows, schema=schema)
+
+    profiler = DQProfiler(ws, semantic_registry=SemanticRegistry.default())
+    _stats, profiles = profiler.profile(
+        df, options={"sample_fraction": None, "llm_primary_key_detection": False, "distinct_ratio": 0.1}
     )
-    data = [("car", 1.0), ("truck", 2.0), ("van", 3.0)] * 20
-    spark.createDataFrame(data, schema).write.format("delta").saveAsTable(table_name)
-    spark.sql(f"COMMENT ON TABLE {table_name} IS 'demo table with vehicle types'")
-    spark.sql(f"ALTER TABLE {table_name} ALTER COLUMN vehicle_type COMMENT 'kind of vehicle'")
+    by_column = _profile_by_column(profiles)
 
-    captured: list[dict] = []
+    names = {p.name for p in by_column.get("status_code", [])}
+    assert "is_in" in names, f"expected 'is_in' profile on ShortType status_code column, got: {names}"
+    is_in_semantic_types = [p.semantic_type for p in by_column.get("status_code", []) if p.name == "is_in"]
+    assert all(
+        st == "enum" for st in is_in_semantic_types
+    ), f"expected ShortType is_in profile tagged semantic_type='enum', got: {is_in_semantic_types}"
 
-    def _spy_detect(ctx):
-        captured.append(dict(ctx.metadata))
 
-    spy = DQSemanticTypeDetector(name="spy", detect=_spy_detect)
-    registry = SemanticRegistry(detectors=(spy, *default_semantic_detectors()))
-    profiler = DQProfiler(ws, semantic_registry=registry)
-    profiler.profile_table(
-        input_config=InputConfig(location=table_name),
-        options={"sample_fraction": None, "llm_primary_key_detection": False},
-    )
+def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
+    """A contextual builder ordered after `min_max` observes resolved `min`/`max` via `ctx.metrics`.
 
-    vehicle_metadata = next((m for m in captured if m.get("column_comment") == "kind of vehicle"), None)
-    assert (
-        vehicle_metadata is not None
-    ), f"expected captured metadata for vehicle_type with column_comment='kind of vehicle', got: {captured}"
-    assert (
-        vehicle_metadata.get("table_name") == table_name
-    ), f"expected table_name={table_name!r}, got: {vehicle_metadata.get('table_name')!r}"
-    assert (
-        vehicle_metadata.get("table_comment") == "demo table with vehicle types"
-    ), f"expected table_comment='demo table with vehicle types', got: {vehicle_metadata.get('table_comment')!r}"
+    Regression guard: `DQProfiler._build_profiles_for_column` calls
+    `builder_ctx.with_metrics(metrics)` before each contextual builder so the frozen context
+    reflects write-backs performed by earlier builders. Removing or misplacing that refresh
+    would silently return stale metrics to downstream builders — a latent contract break for
+    custom builders that depend on `min_max`'s write-back.
+    """
+    seen_metrics: list[dict] = []
+
+    @register_profile_builder("_spy_after_min_max", kind="context")
+    def _spy(ctx):
+        seen_metrics.append(dict(ctx.metrics))
+        return None
+
+    try:
+        schema = T.StructType([T.StructField("value", T.LongType())])
+        rows = [(i,) for i in range(100)]
+        df = spark.createDataFrame(rows, schema=schema)
+
+        profiler = DQProfiler(ws)
+        _stats, profiles = profiler.profile(
+            df,
+            options={
+                "sample_fraction": None,
+                "llm_primary_key_detection": False,
+                "remove_outliers": False,
+            },
+        )
+
+        min_max_profiles = [p for p in profiles if p.column == "value" and p.name == "min_max"]
+        assert len(min_max_profiles) == 1, f"expected one min_max profile on 'value', got: {min_max_profiles}"
+        expected_min = min_max_profiles[0].parameters["min"]
+        expected_max = min_max_profiles[0].parameters["max"]
+
+        assert seen_metrics, "spy contextual builder was not invoked"
+        spy_seen = seen_metrics[-1]
+        assert (
+            spy_seen.get("min") == expected_min
+        ), f"expected spy to observe min={expected_min} in ctx.metrics, got: {spy_seen.get('min')}"
+        assert (
+            spy_seen.get("max") == expected_max
+        ), f"expected spy to observe max={expected_max} in ctx.metrics, got: {spy_seen.get('max')}"
+    finally:
+        PROFILE_BUILDER_REGISTRY.pop("_spy_after_min_max", None)
 
 
 def test_enum_detector_values_reused_by_is_in_builder(spark, ws):
@@ -216,9 +252,11 @@ def test_enum_detector_values_reused_by_is_in_builder(spark, ws):
         return original(ctx)
 
     tracing = DQSemanticTypeDetector(name="enum", detect=_tracing_detect)
-    registry = SemanticRegistry.default().replace([tracing, *default_semantic_detectors()[1:]])
+    registry = SemanticRegistry.of(tracing, *default_semantic_detectors()[1:])
     profiler = DQProfiler(ws, semantic_registry=registry)
-    _stats, profiles = profiler.profile(df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    _stats, profiles = profiler.profile(
+        df, options={"sample_fraction": None, "llm_primary_key_detection": False, "distinct_ratio": 0.1}
+    )
 
     assert invocations == [
         "vehicle_type"

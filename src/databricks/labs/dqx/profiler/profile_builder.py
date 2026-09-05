@@ -111,8 +111,8 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
     if not _supports_distinct(ctx.column_type):
         return None
 
-    total_count = ctx.metrics.get("count", 0)
-    if total_count == 0:
+    count_non_null = ctx.metrics.get("count_non_null", 0)
+    if count_non_null == 0:
         return None
 
     semantic_type = ctx.semantic_type
@@ -144,7 +144,10 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
         # the column is entirely null — no valid values to build an allowlist from.
         return None
 
-    distinct_ratio = (1.0 * distinct_count) / total_count
+    # Denominator is *count_non_null* so this ratio matches *_detect_enum* in semantic.py.
+    # A mismatch would let semantic-enum classification and legacy is_in emission disagree on
+    # low-repetition columns with heavy nulls.
+    distinct_ratio = (1.0 * distinct_count) / count_non_null
 
     if distinct_count < max_in_count and distinct_ratio < max_distinct_ratio:
         return DQProfile(
@@ -316,13 +319,17 @@ def _supports_distinct(column_type: T.DataType) -> bool:
     """
     Validates that the input column type supports distinct operations.
 
+    The accepted set (text plus *IntegerType*/*LongType*/*ShortType*) must stay in sync with the
+    semantic enum detector in *semantic._detect_enum* — a mismatch would let semantic-enum
+    classification suppress *min_max* without producing an *is_in* in return.
+
     Args:
         column_type: Input column type
 
     Returns:
         True if the column supports distinct operations, otherwise False
     """
-    return isinstance(column_type, (T.IntegerType, T.LongType) + TEXT_TYPES)
+    return isinstance(column_type, (T.IntegerType, T.LongType, T.ShortType) + TEXT_TYPES)
 
 
 def _supports_min_max(column_type: T.DataType) -> bool:

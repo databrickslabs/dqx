@@ -312,28 +312,37 @@ def _make_mock_df(columns: list, distinct_values: list) -> DataFrame:
 
 @pytest.mark.parametrize("column_type", [T.DoubleType(), T.FloatType(), T.BooleanType(), T.DateType()])
 def test_is_in_unsupported_type_returns_none(mock_df, column_type):
-    assert make_is_in_profile(_ctx(mock_df, "col", column_type, {"count": 10}, {})) is None
+    assert make_is_in_profile(_ctx(mock_df, "col", column_type, {"count": 10, "count_non_null": 10}, {})) is None
 
 
-@pytest.mark.parametrize("column_type", [T.CharType(10), T.VarcharType(50)])
-def test_is_in_char_varchar_type_returns_profile(column_type):
-    df = _make_mock_df(["col"], ["a", "b", "c"])
+@pytest.mark.parametrize("column_type", [T.CharType(10), T.VarcharType(50), T.ShortType()])
+def test_is_in_supported_types_returns_profile(column_type):
+    df = _make_mock_df(["col"], [1, 2, 3] if isinstance(column_type, T.ShortType) else ["a", "b", "c"])
     profile = make_is_in_profile(
-        _ctx(df, "col", column_type, {"count": 10}, {"max_in_count": 10, "distinct_ratio": 1.0})
+        _ctx(df, "col", column_type, {"count": 10, "count_non_null": 10}, {"max_in_count": 10, "distinct_ratio": 1.0})
     )
     assert profile is not None
     assert profile.name == "is_in"
-    assert set(profile.parameters["in"]) == {"a", "b", "c"}
+    expected = {1, 2, 3} if isinstance(column_type, T.ShortType) else {"a", "b", "c"}
+    assert set(profile.parameters["in"]) == expected
 
 
-def test_is_in_total_count_zero_returns_none(mock_df):
-    assert make_is_in_profile(_ctx(mock_df, "col", T.IntegerType(), {"count": 0}, {})) is None
+def test_is_in_count_non_null_zero_returns_none(mock_df):
+    assert make_is_in_profile(_ctx(mock_df, "col", T.IntegerType(), {"count": 0, "count_non_null": 0}, {})) is None
 
 
 def test_is_in_no_distinct_values_returns_none():
     df = _make_mock_df(["col"], [])
     assert (
-        make_is_in_profile(_ctx(df, "col", T.StringType(), {"count": 3}, {"max_in_count": 10, "distinct_ratio": 1.0}))
+        make_is_in_profile(
+            _ctx(
+                df,
+                "col",
+                T.StringType(),
+                {"count": 3, "count_non_null": 3},
+                {"max_in_count": 10, "distinct_ratio": 1.0},
+            )
+        )
         is None
     )
 
@@ -341,7 +350,13 @@ def test_is_in_no_distinct_values_returns_none():
 def test_is_in_conditions_met_returns_profile():
     df = _make_mock_df(["col"], [1, 2, 3])
     profile = make_is_in_profile(
-        _ctx(df, "status", T.IntegerType(), {"count": 5}, {"max_in_count": 10, "distinct_ratio": 1.0})
+        _ctx(
+            df,
+            "status",
+            T.IntegerType(),
+            {"count": 5, "count_non_null": 5},
+            {"max_in_count": 10, "distinct_ratio": 1.0},
+        )
     )
     assert profile is not None
     assert profile.name == "is_in"
@@ -353,16 +368,28 @@ def test_is_in_distinct_count_exceeds_max_in_count_returns_none():
     # 11 distinct values, max_in_count=10 → distinct_count > max_in_count → None
     df = _make_mock_df(["col"], list(range(11)))
     profile = make_is_in_profile(
-        _ctx(df, "col", T.IntegerType(), {"count": 100}, {"max_in_count": 10, "distinct_ratio": 1.0})
+        _ctx(
+            df,
+            "col",
+            T.IntegerType(),
+            {"count": 100, "count_non_null": 100},
+            {"max_in_count": 10, "distinct_ratio": 1.0},
+        )
     )
     assert profile is None
 
 
 def test_is_in_distinct_ratio_exceeds_threshold_returns_none():
-    # 10 distinct values in 10 total → ratio=1.0, threshold=0.5
+    # 10 distinct values over 10 non-null → ratio=1.0, threshold=0.5
     df = _make_mock_df(["col"], list(range(10)))
     profile = make_is_in_profile(
-        _ctx(df, "col", T.StringType(), {"count": 10}, {"max_in_count": 20, "distinct_ratio": 0.5})
+        _ctx(
+            df,
+            "col",
+            T.StringType(),
+            {"count": 10, "count_non_null": 10},
+            {"max_in_count": 20, "distinct_ratio": 0.5},
+        )
     )
     assert profile is None
 
@@ -370,7 +397,13 @@ def test_is_in_distinct_ratio_exceeds_threshold_returns_none():
 def test_is_in_filter_propagated():
     df = _make_mock_df(["col"], ["a", "b"])
     profile = make_is_in_profile(
-        _ctx(df, "col", T.StringType(), {"count": 5}, {"max_in_count": 10, "distinct_ratio": 1.0, "filter": "x > 0"})
+        _ctx(
+            df,
+            "col",
+            T.StringType(),
+            {"count": 5, "count_non_null": 5},
+            {"max_in_count": 10, "distinct_ratio": 1.0, "filter": "x > 0"},
+        )
     )
     assert profile is not None
     assert profile.filter == "x > 0"
@@ -403,7 +436,7 @@ def test_is_in_skipped_for_non_enum_semantic_type(mock_df, other_type):
             mock_df,
             "col",
             T.StringType(),
-            {"count": 100},
+            {"count": 100, "count_non_null": 100},
             {"max_in_count": 10, "distinct_ratio": 0.1},
             semantic_type=DQSemanticType(name=other_type),
         )

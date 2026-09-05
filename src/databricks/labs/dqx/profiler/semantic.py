@@ -15,6 +15,10 @@ Public surface:
     * models: *DQSemanticType*, *DQProfileContext*, *DQSemanticTypeDetector*
     * properties: *DQSemanticTypeProperties*, *EnumProperties*, *MeasurementProperties*
     * registry: *SemanticRegistry*
+      — construction: *SemanticRegistry.default()*, *SemanticRegistry.of(...)*,
+      constructor *SemanticRegistry(detectors=(...))*
+      — composition: *prepend*, *append*, *insert(name, detector)*,
+      *replace(name, detector)*, *remove(name)*
     * detectors: *DEFAULT_ENUM_DETECTOR*, *DEFAULT_KEY_DETECTOR*,
       *DEFAULT_MEASUREMENT_DETECTOR*, *DEFAULT_TEXT_DETECTOR*,
       *default_semantic_detectors()*
@@ -23,7 +27,7 @@ Public surface:
 """
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -33,7 +37,7 @@ from pyspark.sql import types as T
 from pyspark.sql.types import DataType
 
 from databricks.labs.dqx.profiler.common import TEXT_TYPES
-from databricks.labs.dqx.profiler.profile_options import PROFILE_OPTION_MAX_IN_COUNT
+from databricks.labs.dqx.profiler.profile_options import PROFILE_OPTION_DISTINCT_RATIO, PROFILE_OPTION_MAX_IN_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -123,11 +127,6 @@ class DQProfileContext(BaseModel):
             count_non_null, ...). Same shape as *summary_stats[column_name]*.
         options: Profiler options for this run (max_null_ratio, max_empty_ratio,
             max_in_count, trim_strings, filter, ...).
-        metadata: Table/column metadata sourced from Unity Catalog when the
-            profile is derived from a Delta table. Keys surfaced:
-            *table_name*, *table_comment*, *column_comment*. Tags are
-            intentionally excluded. The mapping is empty when profiling a
-            raw DataFrame with no table origin.
         semantic_type: Detected semantic type for this column, or *None* if
             no detector matched. Populated only for profile builders — always
             *None* for semantic detectors.
@@ -140,8 +139,26 @@ class DQProfileContext(BaseModel):
     column_type: DataType
     metrics: Mapping[str, Any] = Field(default_factory=dict)
     options: Mapping[str, Any] = Field(default_factory=dict)
-    metadata: Mapping[str, Any] = Field(default_factory=dict)
     semantic_type: DQSemanticType | None = None
+
+    def with_metrics(self, metrics: Mapping[str, Any]) -> "DQProfileContext":
+        """Return a new context whose *metrics* is a fresh snapshot of the supplied mapping.
+
+        The model is frozen and Pydantic materializes *metrics* as a copy on construction, so
+        contextual profile builders further down the chain would otherwise not observe write-backs
+        made to the outer mutable metrics dict between builder invocations (e.g. the min/max
+        write-back performed by *DQProfiler._build_profiles_for_column* after the *min_max*
+        builder resolves outlier-adjusted bounds). Callers pass the current mutable dict here to
+        obtain a new frozen context that wraps its snapshot; all other fields are preserved.
+
+        Args:
+            metrics: Column-level metrics to snapshot into the returned context.
+
+        Returns:
+            A new *DQProfileContext* instance with *metrics* replaced by a fresh dict copy of
+            the supplied mapping.
+        """
+        return self.model_copy(update={"metrics": dict(metrics)})
 
 
 class DQSemanticTypeDetector(BaseModel):
@@ -160,12 +177,13 @@ class DQSemanticTypeDetector(BaseModel):
     detect: Callable[[DQProfileContext], DQSemanticType | None]
 
 
-# Enum: cardinality / count_non_null must be at or below this ratio for a
-# column to be classified as *enum* (in addition to
-# cardinality < max_in_count). A higher ratio ceiling is more permissive
-# — it lets slightly less-repeated columns still register as enum-like
-# while still rejecting near-unique identifier columns.
-ENUM_MAX_CARDINALITY_RATIO = 0.95
+# Enum: fallback ceiling for cardinality / count_non_null used only when
+# *PROFILE_OPTION_DISTINCT_RATIO* is absent from *ctx.options*. Kept aligned
+# with the *is_in* builder's default *distinct_ratio* so semantic profiling
+# and legacy profiling agree on which columns qualify as enum-like. The
+# effective gate is strict *>=* (mirrors *is_in*'s *distinct_ratio <
+# max_distinct_ratio* emission condition).
+ENUM_MAX_CARDINALITY_RATIO = 0.05
 
 # Key (numeric): count_distinct / (max - min + 1) must be at or above this
 # ratio for a numeric column to be classified as *key*. Tolerates small
@@ -210,7 +228,8 @@ def _detect_enum(ctx: DQProfileContext) -> DQSemanticType | None:
     if cardinality >= max_in_count:
         return None
 
-    if (cardinality / count_non_null) > ENUM_MAX_CARDINALITY_RATIO:
+    distinct_ratio_threshold = ctx.options.get(PROFILE_OPTION_DISTINCT_RATIO, ENUM_MAX_CARDINALITY_RATIO)
+    if (cardinality / count_non_null) >= distinct_ratio_threshold:
         return None
 
     col = ctx.df.columns[0]
@@ -361,13 +380,15 @@ class SemanticRegistry(BaseModel):
     The registry is immutable — the model is frozen (Pydantic rejects field
     assignment) and the *detectors* field is a tuple, so external callers
     cannot mutate the chain by aliasing. All construction paths (direct
-    instantiation, *default()*, *prepend()*, *replace()*) route through the
-    model validator, which enforces detector-name uniqueness.
+    instantiation, *of()*, *default()*, *prepend()*, *append()*, *insert()*,
+    *replace()*, *remove()*) route through the model validator, which enforces
+    detector-name uniqueness.
 
     Attributes:
         detectors: Ordered tuple of detectors in first-match-wins order.
             Defaults to an empty tuple; use *SemanticRegistry.default()* to
-            obtain the built-in chain.
+            obtain the built-in chain or *SemanticRegistry.of(...)* to build
+            an arbitrary chain from scratch.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -388,8 +409,25 @@ class SemanticRegistry(BaseModel):
         """Return a registry populated with *default_semantic_detectors()*."""
         return cls(detectors=default_semantic_detectors())
 
+    @classmethod
+    def of(cls, *detectors: DQSemanticTypeDetector) -> "SemanticRegistry":
+        """Return a registry whose chain is exactly *detectors*, in argument order.
+
+        Ergonomic alternative to the ``SemanticRegistry(detectors=(...))`` constructor for
+        whole-chain construction from scratch. Reads well when composing with the built-in
+        defaults, e.g. ``SemanticRegistry.of(uuid_detector, *default_semantic_detectors())``.
+
+        Args:
+            *detectors: Detectors in first-match-wins order.
+
+        Returns:
+            A new *SemanticRegistry*. Detector-name uniqueness is enforced by the model
+            validator, so duplicate names raise *pydantic.ValidationError*.
+        """
+        return cls(detectors=tuple(detectors))
+
     def prepend(self, detector: DQSemanticTypeDetector) -> "SemanticRegistry":
-        """Return a new registry with *detector* at position 0.
+        """Return a new registry with *detector* at position 0 (highest priority).
 
         The current instance is left unchanged. Re-invokes the constructor
         so the *_validate_unique_names* model-validator runs on the derived
@@ -398,10 +436,78 @@ class SemanticRegistry(BaseModel):
         """
         return type(self)(detectors=(detector, *self.detectors))
 
-    def replace(self, detectors: Sequence[DQSemanticTypeDetector]) -> "SemanticRegistry":
-        """Return a new registry whose chain is *detectors*.
+    def append(self, detector: DQSemanticTypeDetector) -> "SemanticRegistry":
+        """Return a new registry with *detector* appended at the end (lowest-priority fallback).
 
-        The current instance is left unchanged. Re-invokes the constructor
-        so the uniqueness validator runs on the derived instance.
+        The current instance is left unchanged. Re-invokes the constructor so the uniqueness
+        validator runs on the derived instance.
         """
-        return type(self)(detectors=tuple(detectors))
+        return type(self)(detectors=(*self.detectors, detector))
+
+    def insert(self, name: str, detector: DQSemanticTypeDetector) -> "SemanticRegistry":
+        """Return a new registry with *detector* inserted immediately after the entry named *name*.
+
+        Semantic: "insert *detector* after the detector identified by *name*". Position of the
+        target detector is preserved; every subsequent detector shifts down by one.
+
+        Args:
+            name: Name of an existing detector; *detector* is placed at the position
+                immediately after it.
+            detector: Detector to insert.
+
+        Returns:
+            A new *SemanticRegistry* with the additional entry.
+
+        Raises:
+            ValueError: If *name* does not match any detector in the current chain.
+            pydantic.ValidationError: If *detector*'s name collides with a non-target entry.
+        """
+        index = self._index_of(name)
+        new_detectors = (*self.detectors[: index + 1], detector, *self.detectors[index + 1 :])
+        return type(self)(detectors=new_detectors)
+
+    def replace(self, name: str, detector: DQSemanticTypeDetector) -> "SemanticRegistry":
+        """Return a new registry with the entry named *name* swapped for *detector*.
+
+        Position is preserved; the rest of the chain is unchanged. To construct a whole
+        new chain, use ``SemanticRegistry.of(...)`` or the ``SemanticRegistry(detectors=(...))``
+        constructor instead.
+
+        Args:
+            name: Name of the detector to swap out.
+            detector: Replacement detector. May reuse *name* (position-preserving update) or
+                take a different name.
+
+        Returns:
+            A new *SemanticRegistry* with the entry replaced.
+
+        Raises:
+            ValueError: If *name* does not match any detector in the current chain.
+            pydantic.ValidationError: If the replacement's name collides with a non-target
+                entry in the chain.
+        """
+        index = self._index_of(name)
+        new_detectors = (*self.detectors[:index], detector, *self.detectors[index + 1 :])
+        return type(self)(detectors=new_detectors)
+
+    def remove(self, name: str) -> "SemanticRegistry":
+        """Return a new registry with the entry named *name* filtered out.
+
+        Args:
+            name: Name of the detector to drop.
+
+        Returns:
+            A new *SemanticRegistry* without the entry.
+
+        Raises:
+            ValueError: If *name* does not match any detector in the current chain.
+        """
+        index = self._index_of(name)
+        new_detectors = (*self.detectors[:index], *self.detectors[index + 1 :])
+        return type(self)(detectors=new_detectors)
+
+    def _index_of(self, name: str) -> int:
+        for i, detector in enumerate(self.detectors):
+            if detector.name == name:
+                return i
+        raise ValueError(f"Detector {name!r} is not registered")

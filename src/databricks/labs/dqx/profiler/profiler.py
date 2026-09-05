@@ -2,7 +2,6 @@ import dataclasses
 import uuid
 import logging
 import os
-from collections.abc import Mapping
 from concurrent import futures
 from decimal import Decimal, Context
 from difflib import SequenceMatcher
@@ -14,7 +13,6 @@ import pyspark.sql.types as T
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
@@ -110,24 +108,15 @@ class DQProfiler(DQEngineBase):
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
 
-        return self._profile_dataframe(df, columns, options, table_metadata=None)
+        return self._profile_dataframe(df, columns, options)
 
     def _profile_dataframe(
         self,
         df: DataFrame,
         columns: list[str] | None,
         options: dict[str, Any] | None,
-        *,
-        table_metadata: Mapping[str, Any] | None = None,
     ) -> tuple[dict[str, Any], list[DQProfile]]:
-        """Shared private entry point for *.profile()* and *.profile_table()*.
-
-        Accepts an optional *table_metadata* dict fetched from Unity Catalog (see
-        *_fetch_table_metadata*) that is threaded down to *_profile* so per-column
-        *DQProfileContext* instances get the corresponding *metadata* mapping. The
-        public *.profile()* signature stays unchanged; only the internal path carries
-        table metadata.
-        """
+        """Shared private entry point for *.profile()* and *.profile_table()*."""
         columns = columns or df.columns
         df_columns = [f for f in df.schema.fields if f.name in columns]
         df = df.select(*[f.name for f in df_columns])
@@ -145,7 +134,7 @@ class DQProfiler(DQEngineBase):
         if total_count == 0:
             return summary_stats, dq_rules
 
-        self._profile(df, df_columns, dq_rules, options, summary_stats, total_count, table_metadata=table_metadata)
+        self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
 
         return summary_stats, dq_rules
 
@@ -172,8 +161,7 @@ class DQProfiler(DQEngineBase):
 
         logger.info(f"Profiling {input_config.location} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=input_config)
-        table_metadata = self._fetch_table_metadata(input_config.location)
-        return self._profile_dataframe(df=df, columns=columns, options=options, table_metadata=table_metadata)
+        return self._profile_dataframe(df=df, columns=columns, options=options)
 
     @telemetry_logger("profiler", "profile_tables_for_patterns")
     def profile_tables_for_patterns(
@@ -446,41 +434,6 @@ class DQProfiler(DQEngineBase):
         logger.info(f"Stratified sampling on column '{sample_by_column}'")
         return df.sampleBy(sample_by_column, fractions=sample_fractions, seed=sample_seed)
 
-    def _fetch_table_metadata(self, location: str) -> dict[str, Any]:
-        """Best-effort fetch of Unity Catalog table + column metadata.
-
-        Returns a mapping with keys *table_name*, *table_comment*, *columns*
-        (a dict keyed by column name, each carrying *column_comment*). Tags
-        are intentionally excluded — the SDK exposes them via separate
-        calls and current use cases only need the comment fields. Any SDK
-        failure (missing table, permission denied, non-UC location) is
-        logged as a warning and returns an empty dict, so metadata errors
-        never block profiling.
-        """
-        try:
-            table = self.ws.tables.get(location)
-        except DatabricksError as exc:
-            safe_location = str(location).replace("\n", " ").replace("\r", " ")
-            logger.warning(f"Could not fetch table metadata for {safe_location}: {exc}")
-            return {}
-
-        columns: dict[str, dict[str, Any]] = {}
-        for col in table.columns or []:
-            if col.name is None:
-                continue
-            col_entry: dict[str, Any] = {}
-            if col.comment is not None:
-                col_entry["column_comment"] = col.comment
-            if col_entry:
-                columns[col.name] = col_entry
-
-        metadata: dict[str, Any] = {"table_name": table.full_name or location}
-        if table.comment is not None:
-            metadata["table_comment"] = table.comment
-        if columns:
-            metadata["columns"] = columns
-        return metadata
-
     def _profile(
         self,
         df: DataFrame,
@@ -489,8 +442,6 @@ class DQProfiler(DQEngineBase):
         opts: dict[str, Any],
         summary_stats: dict[str, Any],
         total_count: int,
-        *,
-        table_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """
         Builds a list of DQProfiles by iterating through DQProfileBuilder builders.
@@ -506,8 +457,6 @@ class DQProfiler(DQEngineBase):
             opts: Dictionary of options for profiling.
             summary_stats: Summary statistics dictionary to update with profiler results.
             total_count: Total number of rows in the input DataFrame.
-            table_metadata: Table metadata fetched from Unity Catalog when available;
-                surfaced through *ctx.metadata* on each per-column *DQProfileContext*.
         """
         trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
 
@@ -538,8 +487,6 @@ class DQProfiler(DQEngineBase):
             else:
                 metrics["empty_count"] = 0
 
-            column_metadata = self._build_column_metadata(field_name, table_metadata)
-
             self._build_profiles_for_column(
                 column_df,
                 field_name,
@@ -547,35 +494,9 @@ class DQProfiler(DQEngineBase):
                 metrics,
                 opts,
                 dq_rules,
-                column_metadata=column_metadata,
             )
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
-
-    @staticmethod
-    def _build_column_metadata(field_name: str, table_metadata: Mapping[str, Any] | None) -> dict[str, Any]:
-        """Compose the per-column *metadata* mapping from table-level metadata.
-
-        Fields whose source value is *None* are omitted so detectors can
-        *metadata.get(...)* cleanly. Returns an empty dict when no table
-        metadata was supplied.
-        """
-        if not table_metadata:
-            return {}
-        metadata: dict[str, Any] = {}
-        table_name = table_metadata.get("table_name")
-        if table_name is not None:
-            metadata["table_name"] = table_name
-        table_comment = table_metadata.get("table_comment")
-        if table_comment is not None:
-            metadata["table_comment"] = table_comment
-        columns = table_metadata.get("columns") or {}
-        column_entry = columns.get(field_name) if isinstance(columns, Mapping) else None
-        if column_entry:
-            column_comment = column_entry.get("column_comment")
-            if column_comment is not None:
-                metadata["column_comment"] = column_comment
-        return metadata
 
     def _build_profiles_for_column(
         self,
@@ -585,8 +506,6 @@ class DQProfiler(DQEngineBase):
         metrics: dict[str, Any],
         opts: dict[str, Any],
         dq_rules: list[DQProfile],
-        *,
-        column_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Run registered profile builders for a column and append profiles.
 
@@ -600,8 +519,7 @@ class DQProfiler(DQEngineBase):
         *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
         without triggering a second Spark action.
         """
-        metadata_map = dict(column_metadata) if column_metadata else {}
-        semantic_type = self._detect_semantic_type(column_df, field_name, field_type, metrics, opts, metadata_map)
+        semantic_type = self._detect_semantic_type(column_df, field_name, field_type, metrics, opts)
 
         builder_ctx = DQProfileContext(
             df=column_df,
@@ -609,12 +527,15 @@ class DQProfiler(DQEngineBase):
             column_type=field_type,
             metrics=metrics,
             options=opts,
-            metadata=metadata_map,
             semantic_type=semantic_type,
         )
 
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
             if profile_type.contextual_builder is not None:
+                # Refresh the frozen context with the current *metrics* snapshot so contextual
+                # builders registered after *min_max* observe the resolved min/max values written
+                # back below (see the write-back block after this loop).
+                builder_ctx = builder_ctx.with_metrics(metrics)
                 profile = profile_type.contextual_builder(builder_ctx)
             elif profile_type.builder is not None:
                 profile = profile_type.builder(column_df, field_name, field_type, dict(metrics), dict(opts))
@@ -641,7 +562,6 @@ class DQProfiler(DQEngineBase):
         field_type: T.DataType,
         metrics: dict[str, Any],
         opts: dict[str, Any],
-        metadata_map: dict[str, Any],
     ) -> DQSemanticType | None:
         if self._semantic_registry is None:
             return None
@@ -651,7 +571,6 @@ class DQProfiler(DQEngineBase):
             column_type=field_type,
             metrics=metrics,
             options=opts,
-            metadata=metadata_map,
             semantic_type=None,
         )
         for detector in self._semantic_registry.detectors:

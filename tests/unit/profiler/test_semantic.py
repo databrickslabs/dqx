@@ -50,6 +50,58 @@ def test_dq_semantic_type_rejects_unsupported_property_value():
 
 
 # ---------------------------------------------------------------------------
+# DQProfileContext.with_metrics
+# ---------------------------------------------------------------------------
+
+
+def test_dq_profile_context_with_metrics_returns_new_instance_with_snapshot():
+    original_metrics = {"count": 10, "count_non_null": 8}
+    ctx = DQProfileContext(
+        df=create_autospec(DataFrame),
+        column_name="c",
+        column_type=T.IntegerType(),
+        metrics=original_metrics,
+        options={"max_in_count": 10},
+        semantic_type=DQSemanticType(name="measurement"),
+    )
+
+    new_metrics = {"count": 10, "count_non_null": 8, "min": 1, "max": 100}
+    refreshed = ctx.with_metrics(new_metrics)
+
+    assert refreshed is not ctx
+    assert dict(refreshed.metrics) == new_metrics
+    assert dict(ctx.metrics) == original_metrics  # original untouched
+    assert refreshed.column_name == ctx.column_name
+    assert refreshed.column_type == ctx.column_type
+    assert refreshed.options == ctx.options
+    assert refreshed.semantic_type == ctx.semantic_type
+    assert refreshed.df is ctx.df
+
+
+def test_dq_profile_context_with_metrics_snapshots_supplied_mapping():
+    """Later mutations to the source dict must not be reflected in the returned context."""
+    source: dict = {"count": 10}
+    ctx = DQProfileContext(
+        df=create_autospec(DataFrame),
+        column_name="c",
+        column_type=T.IntegerType(),
+    )
+    refreshed = ctx.with_metrics(source)
+    source["count"] = 999
+    assert refreshed.metrics["count"] == 10
+
+
+def test_dq_profile_context_frozen_blocks_field_reassignment():
+    ctx = DQProfileContext(
+        df=create_autospec(DataFrame),
+        column_name="c",
+        column_type=T.IntegerType(),
+    )
+    with pytest.raises(ValidationError):
+        setattr(ctx, "column_name", "x")
+
+
+# ---------------------------------------------------------------------------
 # default_semantic_detectors chain shape
 # ---------------------------------------------------------------------------
 
@@ -84,13 +136,19 @@ def test_semantic_registry_prepend_returns_new_instance():
     assert original.detectors == snapshot  # original unchanged
 
 
-def test_semantic_registry_replace_returns_new_instance():
-    original = SemanticRegistry.default()
-    replacement = (DQSemanticTypeDetector(name="only", detect=lambda _ctx: None),)
-    new = original.replace(replacement)
-    assert new is not original
-    assert new.detectors == replacement
-    assert original.detectors == default_semantic_detectors()
+def test_semantic_registry_of_returns_new_instance_with_ordered_chain():
+    d1 = DQSemanticTypeDetector(name="a", detect=lambda _ctx: None)
+    d2 = DQSemanticTypeDetector(name="b", detect=lambda _ctx: None)
+    d3 = DQSemanticTypeDetector(name="c", detect=lambda _ctx: None)
+    registry = SemanticRegistry.of(d1, d2, d3)
+    assert [d.name for d in registry.detectors] == ["a", "b", "c"]
+
+
+def test_semantic_registry_of_duplicate_names_raises():
+    dup1 = DQSemanticTypeDetector(name="foo", detect=lambda _ctx: None)
+    dup2 = DQSemanticTypeDetector(name="foo", detect=lambda _ctx: None)
+    with pytest.raises(ValidationError):
+        SemanticRegistry.of(dup1, dup2)
 
 
 def test_semantic_registry_assignment_raises():
@@ -105,18 +163,95 @@ def test_semantic_registry_prepend_duplicate_name_raises():
         SemanticRegistry.default().prepend(dup)
 
 
-def test_semantic_registry_replace_duplicate_names_raises():
-    dup1 = DQSemanticTypeDetector(name="foo", detect=lambda _ctx: None)
-    dup2 = DQSemanticTypeDetector(name="foo", detect=lambda _ctx: None)
-    with pytest.raises(ValidationError):
-        SemanticRegistry().replace([dup1, dup2])
-
-
 def test_semantic_registry_direct_constructor_duplicate_names_raises():
     dup1 = DQSemanticTypeDetector(name="foo", detect=lambda _ctx: None)
     dup2 = DQSemanticTypeDetector(name="foo", detect=lambda _ctx: None)
     with pytest.raises(ValidationError):
         SemanticRegistry(detectors=(dup1, dup2))
+
+
+# ---------------------------------------------------------------------------
+# SemanticRegistry: append / insert / replace / remove
+# ---------------------------------------------------------------------------
+
+
+def test_semantic_registry_append_lands_last_and_leaves_original_unchanged():
+    original = SemanticRegistry.default()
+    snapshot = original.detectors
+    extra = DQSemanticTypeDetector(name="custom", detect=lambda _ctx: None)
+    new = original.append(extra)
+    assert new is not original
+    assert new.detectors[-1] is extra
+    assert new.detectors[:-1] == snapshot
+    assert original.detectors == snapshot
+
+
+def test_semantic_registry_append_duplicate_name_raises():
+    dup = DQSemanticTypeDetector(name="enum", detect=lambda _ctx: None)
+    with pytest.raises(ValidationError):
+        SemanticRegistry.default().append(dup)
+
+
+def test_semantic_registry_insert_places_detector_after_named_entry():
+    original = SemanticRegistry.default()
+    extra = DQSemanticTypeDetector(name="custom", detect=lambda _ctx: None)
+    new = original.insert("enum", extra)
+    names = [d.name for d in new.detectors]
+    assert names == ["enum", "custom", "key", "measurement", "text"]
+    assert original.detectors == default_semantic_detectors()
+
+
+def test_semantic_registry_insert_unknown_name_raises_value_error():
+    extra = DQSemanticTypeDetector(name="custom", detect=lambda _ctx: None)
+    with pytest.raises(ValueError, match="'missing'"):
+        SemanticRegistry.default().insert("missing", extra)
+
+
+def test_semantic_registry_insert_duplicate_name_raises():
+    dup = DQSemanticTypeDetector(name="key", detect=lambda _ctx: None)
+    with pytest.raises(ValidationError):
+        SemanticRegistry.default().insert("enum", dup)
+
+
+def test_semantic_registry_replace_swaps_named_entry_preserving_position():
+    original = SemanticRegistry.default()
+    replacement = DQSemanticTypeDetector(name="enum", detect=lambda _ctx: None)
+    new = original.replace("enum", replacement)
+    assert new.detectors[0] is replacement
+    assert [d.name for d in new.detectors] == ["enum", "key", "measurement", "text"]
+    assert original.detectors == default_semantic_detectors()
+
+
+def test_semantic_registry_replace_allows_renaming_the_target_entry():
+    original = SemanticRegistry.default()
+    replacement = DQSemanticTypeDetector(name="renamed_enum", detect=lambda _ctx: None)
+    new = original.replace("enum", replacement)
+    assert [d.name for d in new.detectors] == ["renamed_enum", "key", "measurement", "text"]
+
+
+def test_semantic_registry_replace_unknown_name_raises_value_error():
+    replacement = DQSemanticTypeDetector(name="x", detect=lambda _ctx: None)
+    with pytest.raises(ValueError, match="'missing'"):
+        SemanticRegistry.default().replace("missing", replacement)
+
+
+def test_semantic_registry_replace_name_clash_with_other_entry_raises():
+    # Renaming `enum` → `key` would collide with the existing `key` entry.
+    replacement = DQSemanticTypeDetector(name="key", detect=lambda _ctx: None)
+    with pytest.raises(ValidationError):
+        SemanticRegistry.default().replace("enum", replacement)
+
+
+def test_semantic_registry_remove_drops_named_entry():
+    original = SemanticRegistry.default()
+    new = original.remove("text")
+    assert [d.name for d in new.detectors] == ["enum", "key", "measurement"]
+    assert original.detectors == default_semantic_detectors()
+
+
+def test_semantic_registry_remove_unknown_name_raises_value_error():
+    with pytest.raises(ValueError, match="'missing'"):
+        SemanticRegistry.default().remove("missing")
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +416,22 @@ def test_enum_detector_positive_low_cardinality():
     typed = result.get_typed_properties(EnumProperties)
     assert typed is not None
     assert typed.values == {"car", "truck", "van"}
+
+
+def test_enum_detector_respects_distinct_ratio_option():
+    """When `distinct_ratio` option is set below the observed ratio, semantic-enum is suppressed.
+
+    Mirrors reviewer's 12-rows / 9-distinct example: legacy `is_in` deliberately suppresses
+    at low repetition, so semantic profiling must too.
+    """
+    ctx = DQProfileContext(
+        df=_mock_df_with_distinct("c", list("abcdefghi")),
+        column_name="c",
+        column_type=T.StringType(),
+        metrics={"count_non_null": 12, "count_distinct": 9},
+        options={"max_in_count": 10, "distinct_ratio": 0.05},
+    )
+    assert DEFAULT_ENUM_DETECTOR.detect(ctx) is None
 
 
 # ---------------------------------------------------------------------------
