@@ -16,8 +16,8 @@ from tests.integration.conftest import (
 
 _WORKFLOW_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(WORKFLOW_CHECKS)
 _WORKFLOW_CHECK_METRICS_VALUE = (
-    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
-    '{"check_name":"name_is_not_null_and_not_empty","error_count":2,"warning_count":0}]'
+    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0,"status":"error"},'
+    '{"check_name":"name_is_not_null_and_not_empty","error_count":2,"warning_count":0,"status":"error"}]'
 )
 
 
