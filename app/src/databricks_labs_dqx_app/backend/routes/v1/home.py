@@ -3,7 +3,7 @@
 One endpoint backs the homepage "At a Glance" stat cards (the port of
 dqlake's ``/home/stats``). The three counts are cheap app-DB COUNT(*)
 queries (registry rules, monitored tables, table spaces — the same
-Lakebase/Delta-OLTP round-trips the list pages already make), and the
+Lakebase OLTP round-trips the list pages already make), and the
 overall DQ score card reads the ``dq_score_cache`` 'global' row that the
 run-completion refresh maintains (P3.4). Nothing here ever touches the
 warehouse, so the landing page stays milliseconds-fast. dqlake's extra

@@ -39,8 +39,10 @@ Designed to be cwd-independent — paths resolve relative to this file.
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -62,20 +64,30 @@ METADATA_PY = PKG_DIR / "_metadata.py"
 VERSION_PY = PKG_DIR / "_version.py"
 API_TS = PKG_DIR / "ui" / "lib" / "api.ts"
 DIST_DIR = PKG_DIR / "__dist__"
+TASKS_DIR = APP_DIR / "tasks"
+REPRODUCIBLE_BUILD_EPOCH = "315532800"
 
 
 def _step(msg: str) -> None:
     print(f"\n▶ {msg}", flush=True)
 
 
-def _run(cmd: list[str]) -> None:
+def _run(
+    cmd: list[str],
+    *,
+    cwd: Path = APP_DIR,
+    env: dict[str, str] | None = None,
+    quiet: bool = False,
+) -> None:
     """Run a subprocess from ``APP_DIR`` with stdio passed through.
 
     Failures abort the build via ``check=True`` — every stage must
     succeed for the deploy tree to be considered usable.
     """
-    print(f"  $ {' '.join(cmd)}", flush=True)
-    subprocess.run(cmd, cwd=APP_DIR, check=True)  # noqa: S603
+    if not quiet:
+        print(f"  $ {' '.join(cmd)}", flush=True)
+    output = subprocess.DEVNULL if quiet else None
+    subprocess.run(cmd, cwd=cwd, check=True, env=env, stdout=output, stderr=output)  # noqa: S603
 
 
 def _node_bin(name: str) -> str:
@@ -159,13 +171,24 @@ def _dump_openapi() -> None:
     exactly the same environment the app uses — same pydantic / fastapi
     versions, same plugin set.
     """
-    target = BUILD_DIR / "openapi.json"
+    _run(openapi_dump_command(BUILD_DIR / "openapi.json"))
+
+
+def openapi_dump_command(target: Path) -> list[str]:
+    """Return the frozen command used to generate an OpenAPI document.
+
+    Args:
+        target: Destination path for the generated JSON document.
+
+    Returns:
+        The uv command and Python snippet used by the application build.
+    """
     code = (
         "import json, sys;"
         "from databricks_labs_dqx_app.backend.app import app;"
         f"open({str(target)!r}, 'w').write(json.dumps(app.openapi(), indent=2))"
     )
-    _run(["uv", "run", "--exact", "--all-extras", "python", "-c", code])
+    return ["uv", "run", "--frozen", "--exact", "--all-extras", "python", "-c", code]
 
 
 def _run_orval() -> None:
@@ -267,6 +290,67 @@ def _retarget_dqx_source(local_path: str) -> None:
         if needle not in text:
             raise SystemExit(f"error: expected {needle!r} in {target} — cannot retarget the local dqx source")
         target.write_text(text.replace(needle, f'{key} = "{DQX_VENDOR_REL}"'), encoding="utf-8")
+
+
+def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
+    """Build a reproducible task-runner wheel pinned to the released DQX version.
+
+    The regular bundle build keeps resolving the runner's DQX dependency through
+    the bundle environment. Marketplace has no sibling checkout or bundle
+    variable, so its wheel metadata must carry the same exact release pin as the
+    application. The tracked task-runner project is never modified.
+
+    Args:
+        output_dir: Directory that will contain the single built wheel.
+        dqx_version: Published DQX version required by the wheel.
+
+    Returns:
+        Path to the built task-runner wheel.
+    """
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[A-Za-z0-9.-]*)", dqx_version) is None:
+        raise ValueError("dqx_version must be a release version")
+
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix=".marketplace-task-", dir=output_dir.parent) as temp_dir:
+        task_source = Path(temp_dir) / "tasks"
+        shutil.copytree(
+            TASKS_DIR,
+            task_source,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "uv.lock"),
+        )
+        task_pyproject = task_source / "pyproject.toml"
+        task_text = task_pyproject.read_text(encoding="utf-8")
+        task_text, replacements = re.subn(
+            r'(?m)^(\s*)"databricks-labs-dqx",$',
+            rf'\1"databricks-labs-dqx=={dqx_version}",',
+            task_text,
+        )
+        if replacements != 1:
+            raise RuntimeError("Task-runner DQX dependency declaration changed")
+        task_pyproject.write_text(task_text.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+
+        build_env = os.environ.copy()
+        build_env["SOURCE_DATE_EPOCH"] = REPRODUCIBLE_BUILD_EPOCH
+        build_env["PYTHONHASHSEED"] = "0"
+        build_env["UV_BUILD_CONSTRAINT"] = str(DQX_DIR / ".build-constraints.txt")
+        for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+            build_env.pop(name, None)
+        try:
+            _run(
+                ["uv", "build", ".", "--wheel", "--out-dir", str(output_dir)],
+                cwd=task_source,
+                env=build_env,
+                quiet=True,
+            )
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError("Task-runner wheel build failed") from error
+
+    wheels = sorted(output_dir.glob("databricks_labs_dqx_task_runner-*.whl"))
+    if len(wheels) != 1:
+        raise RuntimeError("Task-runner build did not produce exactly one wheel")
+    (output_dir / ".gitignore").unlink(missing_ok=True)
+    return wheels[0]
 
 
 def main() -> int:

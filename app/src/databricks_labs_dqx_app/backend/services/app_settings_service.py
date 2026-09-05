@@ -1,15 +1,20 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
+_SETUP_JOB_ID_KEY = "setup_task_runner_job_id"
+_SETUP_COMPLETED_AT_KEY = "setup_completed_at"
+_SETUP_COMPLETED_BY_KEY = "setup_completed_by"
 
 # Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
 # row cap applied to DRAFT monitored-table runs when the admin has not
@@ -48,8 +53,7 @@ class AppSettingsService:
     user's OBO token.
 
     The ``dq_app_settings`` table is one of the OLTP tables that lives
-    in Lakebase Postgres when ``conf.lakebase_enabled`` is true and in
-    Delta otherwise. The injected executor decides which.
+    in Lakebase Postgres.
     """
 
     def __init__(self, sql: OltpExecutorProtocol) -> None:
@@ -132,6 +136,34 @@ class AppSettingsService:
             },
         )
         logger.info("Saved setting: %s (by=%s)", key, user_email or "system")
+
+    def record_setup_completion(
+        self,
+        job_id: int,
+        completed_at: datetime,
+        user_name: str | None,
+    ) -> None:
+        """Persist setup runtime state and a sanitized completion audit.
+
+        This method is called only after Postgres migrations have made the
+        application-settings table available. It stores no credentials or
+        platform error details.
+
+        Args:
+            job_id: Setup-resolved task-runner job identifier.
+            completed_at: Setup completion timestamp.
+            user_name: Optional setup administrator identity.
+        """
+        if job_id <= 0:
+            raise ValueError("The setup task-runner job ID must be positive.")
+        timestamp = completed_at.astimezone(timezone.utc).isoformat()
+        actor = _sanitize_audit_identity(user_name)
+        for key, value in (
+            (_SETUP_JOB_ID_KEY, str(job_id)),
+            (_SETUP_COMPLETED_AT_KEY, timestamp),
+            (_SETUP_COMPLETED_BY_KEY, actor or "system"),
+        ):
+            self.save_setting(key, value, user_email=actor)
 
     # ------------------------------------------------------------------
     # Custom metrics — global SQL-expression list passed to DQMetricsObserver.
@@ -1047,3 +1079,10 @@ class AppSettingsService:
             "color": color.strip(),
             "is_default": bool(item.get("is_default")),
         }
+
+
+def _sanitize_audit_identity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    sanitized = replace_control_characters(value)
+    return sanitized.strip() or None

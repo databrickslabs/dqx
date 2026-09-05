@@ -20,7 +20,7 @@ Storage layout
   even though it may have been virtual.
 
 Both tables live in the OLTP executor — Lakebase Postgres when enabled,
-Delta fallback otherwise — and share the same service surface as
+Lakebase — and share the same service surface as
 ``CommentsService`` / ``AppSettingsService``. The validation-run rows
 themselves stay in Delta because they're append-only Spark output;
 listing routes bulk-fetch effective statuses from this service and merge

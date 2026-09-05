@@ -166,7 +166,7 @@ class ApplyRulesService:
         ``severity_override``, ``tags``) on the existing row rather than a
         duplicate — enforced by the ``UNIQUE(binding_id, rule_id,
         mapping_hash)`` constraint on the table, mirrored here so the
-        behaviour is identical on the Delta OLTP-fallback baseline (which
+        behaviour is defined by the Lakebase OLTP baseline (which
         can't declare that constraint natively).
 
         Args:

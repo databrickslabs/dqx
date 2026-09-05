@@ -181,10 +181,7 @@ class TestBaselineOnlyCatalogue:
         created = _created_tables(_baseline())
         assert len(created) == len(set(created))
 
-    def test_oltp_table_set_matches_the_delta_fallback_baseline(self):
-        # Lakebase and Delta-fallback deploys must serve the same tables: the
-        # app picks a backend at startup and the services are backend-agnostic,
-        # so a table present in only one baseline breaks that deploy shape.
+    def test_oltp_table_set_is_derived_from_postgres_baseline(self):
         assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
 
 
