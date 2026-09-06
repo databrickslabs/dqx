@@ -50,6 +50,7 @@ _INTERSECTS_APPROXIMATE_SCHEMA = "geom: string, geom_does_not_intersect_referenc
 _TOUCHES_SCHEMA = "geom: string, geom_does_not_touch_reference_geometry: string"
 _WITHIN_SCHEMA = "geom: string, geom_does_not_contain_reference_geometry: string"
 _WITHIN_DISTANCE_SCHEMA = "geom: string, geom_is_not_within_distance_from_reference_geometry: string"
+_WITHIN_DISTANCE_CONDITION_SCHEMA = "geom_is_not_within_distance_from_reference_geometry: string"
 
 
 def _contains_violation(value: str) -> str:
@@ -1246,6 +1247,29 @@ def test_is_geo_within_distance_invalid_column_violation(skip_if_runtime_not_geo
         ],
         _WITHIN_DISTANCE_SCHEMA,
     )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_native_geography_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """With convert_column=False both inputs are already native GEOGRAPHY values."""
+    test_df = spark.createDataFrame([["POINT(4.901 52.37)"], [None]], _GEO_SCHEMA).select(
+        F.call_function("try_to_geography", F.col("geom")).alias("geom")
+    )
+    condition = is_geo_within_distance("geom", F.call_function("try_to_geography", F.lit(_POINT_INSIDE)), 1000)
+    actual = test_df.select(condition)
+    expected = spark.createDataFrame([[None], [None]], _WITHIN_DISTANCE_CONDITION_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_native_geography_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A native GEOGRAPHY value outside the radius is flagged, with the value rendered via st_astext."""
+    point = "POINT(5.05 52.37)"
+    test_df = spark.createDataFrame([[point]], _GEO_SCHEMA).select(
+        F.call_function("try_to_geography", F.col("geom")).alias("geom")
+    )
+    condition = is_geo_within_distance("geom", F.call_function("try_to_geography", F.lit(_POINT_INSIDE)), 1000)
+    actual = test_df.select(condition)
+    expected = spark.createDataFrame([[_within_distance_violation(point, 1000)]], _WITHIN_DISTANCE_CONDITION_SCHEMA)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 

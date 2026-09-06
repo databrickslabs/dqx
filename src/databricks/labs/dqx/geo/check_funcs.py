@@ -1360,15 +1360,16 @@ def is_geo_within_distance(
 
     Both the target column and the reference geometry are always handled as `GEOGRAPHY`.
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
-    *try_to_geography* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB).
+    *try_to_geography* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB,
+    GeoJSON).
     See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geography for details.
     When conversion is not requested, the input is assumed to already hold a native `GEOGRAPHY` value.
 
     Args:
         column: Column to check. Null values are skipped for validation.
-        reference_geometry: Reference geography as a literal WKT/WKB/EWKT/EWKB string or bytes value,
-            or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain
-            string is always treated as a literal, not a column name.
+        reference_geometry: Reference geography as a literal WKT/EWKT/GeoJSON string or WKB/EWKB bytes
+            value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A
+            plain string is always treated as a literal, not a column name.
         distance: Maximum allowed distance in meters. Accepts a non-negative number, a Column
             expression (e.g. *F.col('radius_m')*), or a string SQL expression evaluated against the
             input DataFrame. Rows where the distance expression evaluates to null are skipped.
