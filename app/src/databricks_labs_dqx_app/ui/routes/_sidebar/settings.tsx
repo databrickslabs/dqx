@@ -2454,6 +2454,9 @@ function DangerZoneCard() {
   // longer strand the spinner forever.
   const { data: statusResp } = useResetStatus({
     query: {
+      // reset-status is an ADMIN-only endpoint — don't poll it for non-admins
+      // (that would fire a 403 on every mount).
+      enabled: isAdmin,
       refetchInterval: (query) => (query.state.data?.data?.state === "running" ? 2000 : false),
     },
   });

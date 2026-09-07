@@ -49,6 +49,7 @@ def _sanitize(text: str) -> str:
     """Strip newlines/carriage returns to prevent log/status injection (CWE-117)."""
     return text.replace("\n", " ").replace("\r", " ").strip()
 
+
 # Router-level ADMIN gate: every route below requires the ADMIN role,
 # enforced server-side regardless of any UI gating.
 router = APIRouter(dependencies=[require_role(UserRole.ADMIN)])

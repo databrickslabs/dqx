@@ -72,11 +72,36 @@ class ResetStatusStore:
         self._app_settings = app_settings
 
     def get(self) -> ResetStatus:
-        """Return the current reset status, defaulting to *idle* when unset or unparseable.
+        """Return the current reset status, healing a stale ``running`` to terminal.
 
-        Never raises — a corrupt or missing blob degrades gracefully to the idle default
-        so a wedged store cannot block the admin UI.
+        Never raises — a corrupt or missing blob degrades gracefully to the idle
+        default so a wedged store cannot block the admin UI.
+
+        A ``running`` status whose ``updated_at`` is older than
+        :data:`_STALE_RUNNING_AFTER_SECONDS` (or unparseable) is downgraded to a
+        terminal ``failed`` here, on the read path — not only inside
+        :meth:`is_running`. The reset thread writes a terminal status when it
+        ends, but if the app process is restarted mid-reset that thread dies
+        WITHOUT writing one, leaving the persisted status wedged at ``running``
+        forever. Since the status endpoint returns whatever :meth:`get` yields,
+        without this heal the Danger Zone spinner would wedge indefinitely for
+        any admin who opens Settings after such a restart.
         """
+        status = self._load()
+        if self._running_is_stale(status):
+            return ResetStatus(
+                state="failed",
+                message=(
+                    "The previous reset did not report an outcome — the app was likely restarted "
+                    "while it was running. Its result is unknown; re-run the reset if needed."
+                ),
+                started_at=status.started_at,
+                updated_at=status.updated_at,
+            )
+        return status
+
+    def _load(self) -> ResetStatus:
+        """Load the raw persisted status, defaulting to *idle* when unset or unparseable."""
         raw = self._app_settings.get_setting(RESET_STATUS_KEY)
         if raw is None:
             return _idle_default()
@@ -86,6 +111,25 @@ class ResetStatusStore:
         except (ValueError, TypeError, KeyError):
             logger.warning("reset status blob is unparseable; returning idle default")
             return _idle_default()
+
+    def _running_is_stale(self, status: ResetStatus) -> bool:
+        """Whether *status* is a ``running`` status too old to still be live.
+
+        A non-``running`` status is never stale. A ``running`` status is stale
+        when its ``updated_at`` is older than :data:`_STALE_RUNNING_AFTER_SECONDS`
+        or cannot be parsed (an interrupted run that never wrote a terminal
+        status) — so a wedged status cannot block new resets or the UI forever.
+        """
+        if status.state != "running":
+            return False
+        try:
+            updated = datetime.fromisoformat(status.updated_at)
+        except (ValueError, TypeError):
+            return True
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - updated).total_seconds()
+        return age_seconds >= _STALE_RUNNING_AFTER_SECONDS
 
     def set(self, status: ResetStatus, *, user_email: str | None = None) -> None:
         """Persist the given status to the settings store.
@@ -101,22 +145,10 @@ class ResetStatusStore:
     def is_running(self) -> bool:
         """Return *True* when a reset job is genuinely still running.
 
-        A status is only "running" if its state is ``running`` AND its
-        ``updated_at`` is recent (within :data:`_STALE_RUNNING_AFTER_SECONDS`).
-        A ``running`` status that has not advanced within that window is treated
-        as STALE — the reset thread was almost certainly killed by an app restart
-        without writing a terminal status — so a wedged status cannot block new
-        resets forever. An unparseable / missing ``updated_at`` is treated as
-        stale (not running) rather than wedging the gate.
+        A status is only "running" if its state is ``running`` AND recent. Because
+        :meth:`get` already downgrades a stale ``running`` (an interrupted run
+        that never wrote a terminal status) to ``failed``, this reduces to reading
+        the healed state — so the 409 gate and the status endpoint agree, and a
+        wedged status can never block new resets forever.
         """
-        status = self.get()
-        if status.state != "running":
-            return False
-        try:
-            updated = datetime.fromisoformat(status.updated_at)
-        except (ValueError, TypeError):
-            return False
-        if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=timezone.utc)
-        age_seconds = (datetime.now(timezone.utc) - updated).total_seconds()
-        return age_seconds < _STALE_RUNNING_AFTER_SECONDS
+        return self.get().state == "running"

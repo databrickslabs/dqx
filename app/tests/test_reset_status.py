@@ -86,6 +86,32 @@ def test_is_running_false_when_running_status_is_stale():
     assert store.is_running() is False
 
 
+def test_get_downgrades_stale_running_to_terminal():
+    # The status endpoint returns whatever get() yields, so the stale-running
+    # heal must live on the read path — not only inside is_running. A running
+    # status left behind by an app restart is reported as a terminal 'failed' so
+    # the Danger Zone spinner clears instead of wedging forever.
+    settings = create_autospec(AppSettingsService, instance=True)
+    stored: dict[str, str] = {}
+    settings.save_setting.side_effect = lambda k, v, **kw: stored.__setitem__(k, v)
+    settings.get_setting.side_effect = lambda k: stored.get(k)
+    store = ResetStatusStore(settings)
+    store.set(ResetStatus("running", "clearing", _ago_iso(60 * 60), _ago_iso(60 * 60)))
+    got = store.get()
+    assert got.state == "failed"
+    assert got.message  # a human-readable explanation, not empty
+
+
+def test_get_returns_running_unchanged_when_recent():
+    settings = create_autospec(AppSettingsService, instance=True)
+    stored: dict[str, str] = {}
+    settings.save_setting.side_effect = lambda k, v, **kw: stored.__setitem__(k, v)
+    settings.get_setting.side_effect = lambda k: stored.get(k)
+    store = ResetStatusStore(settings)
+    store.set(ResetStatus("running", "clearing", _now_iso(), _ago_iso(3)))
+    assert store.get().state == "running"
+
+
 def test_is_running_false_when_updated_at_unparseable():
     settings = create_autospec(AppSettingsService, instance=True)
     stored: dict[str, str] = {}
