@@ -109,11 +109,15 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
     with tempfile.TemporaryDirectory(prefix="dqx-marketplace-release-") as temp_dir:
         worktree = Path(temp_dir) / "worktree"
         created = False
+        branch_created = False
+        tag_created = False
         release_complete = False
         release_error: BaseException | None = None
         try:
+            commands.run(("git", "branch", branch, source_commit), cwd=resolved_root)
+            branch_created = True
             commands.run(
-                ("git", "worktree", "add", "-b", branch, str(worktree), source_commit),
+                ("git", "worktree", "add", str(worktree), branch),
                 cwd=resolved_root,
             )
             created = True
@@ -147,6 +151,7 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
                 ("git", "tag", "-s", "-a", tag, "-m", f"DQX Studio {release.version}", "HEAD"),
                 cwd=worktree,
             )
+            tag_created = True
             commands.run(("git", "verify-tag", tag), cwd=worktree)
             for artifact in (
                 "app/marketplace/manifest.yaml",
@@ -169,23 +174,14 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
             if result.returncode != 0:
                 cleanup_failures.append(command[1])
 
-        if created:
+        if created or worktree.exists():
             cleanup(("git", "worktree", "remove", "--force", str(worktree)))
+        if branch_created:
             cleanup(("git", "worktree", "prune"))
         if not release_complete:
-            tag_exists = commands.run(
-                ("git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"),
-                cwd=resolved_root,
-                check=False,
-            )
-            if tag_exists.returncode == 0:
+            if tag_created:
                 cleanup(("git", "tag", "--delete", tag))
-            branch_exists = commands.run(
-                ("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"),
-                cwd=resolved_root,
-                check=False,
-            )
-            if branch_exists.returncode == 0:
+            if branch_created:
                 cleanup(("git", "branch", "-D", branch))
 
         if cleanup_failures:

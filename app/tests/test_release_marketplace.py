@@ -31,6 +31,10 @@ class RecordingCommandRunner:
     def run(self, command: tuple[str, ...], *, cwd: Path, check: bool = True) -> CommandResult:
         self.commands.append(command)
         if self.fail_on is not None and command[: len(self.fail_on)] == self.fail_on:
+            if command[:2] == ("git", "branch"):
+                self.existing_branch = True
+            if command[:2] == ("git", "tag"):
+                self.existing_tag = True
             if check:
                 raise RuntimeError("command failed")
             return CommandResult(returncode=1)
@@ -50,7 +54,6 @@ class RecordingCommandRunner:
         if command[:3] == ("git", "worktree", "add"):
             self.created_worktree = Path(command[-2])
             self.created_worktree.mkdir(parents=True)
-            self.existing_branch = True
             return CommandResult(returncode=0)
         if command[:3] == ("git", "worktree", "remove"):
             self.created_worktree = self.created_worktree or Path(command[-1])
@@ -58,6 +61,9 @@ class RecordingCommandRunner:
             return CommandResult(returncode=0)
         if command[:3] == ("git", "branch", "-D"):
             self.existing_branch = False
+            return CommandResult(returncode=0)
+        if command[:2] == ("git", "branch"):
+            self.existing_branch = True
             return CommandResult(returncode=0)
         if command[:2] == ("git", "tag") and "--delete" not in command:
             self.existing_tag = True
@@ -109,7 +115,8 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     branch = release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert branch == "dqx-studio/marketplace/v0.1.0"
     assert commands.contains(("git", "show", "abc123:app/pyproject.toml"))
-    assert commands.contains(("git", "worktree", "add", "-b", branch, str(commands.created_worktree), "abc123"))
+    assert commands.contains(("git", "branch", branch, "abc123"))
+    assert commands.contains(("git", "worktree", "add", str(commands.created_worktree), branch))
     assert commands.contains(("make", "app-install"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
@@ -179,8 +186,27 @@ def test_release_failure_removes_partial_refs_and_worktree(tmp_path: Path, faile
 
     assert commands.existing_branch is False
     assert commands.existing_tag is False
-    assert commands.created_worktree is not None
-    assert not commands.created_worktree.exists()
+    assert commands.created_worktree is None or not commands.created_worktree.exists()
+
+
+def test_release_does_not_delete_concurrently_created_branch(tmp_path: Path) -> None:
+    commands = RecordingCommandRunner(fail_on=("git", "branch", "dqx-studio/marketplace/v0.1.0"))
+
+    with pytest.raises(RuntimeError, match="command failed"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
+
+    assert commands.existing_branch is True
+    assert commands.existing_tag is False
+
+
+def test_release_does_not_delete_concurrently_created_tag(tmp_path: Path) -> None:
+    commands = RecordingCommandRunner(fail_on=("git", "tag", "-s"))
+
+    with pytest.raises(RuntimeError, match="command failed"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
+
+    assert commands.existing_branch is False
+    assert commands.existing_tag is True
 
 
 def test_release_refuses_existing_local_branch(tmp_path: Path) -> None:
