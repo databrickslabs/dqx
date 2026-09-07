@@ -1,0 +1,1 @@
+import{G as s,j as e,a$ as r}from"./index-CkQcByrl.js";function o(){const{canCreateRules:t}=s();return t?e.jsx(r,{to:"/registry-rules/import",search:{tab:"tables"},replace:!0}):e.jsx(r,{to:"/registry-rules",replace:!0})}export{o as component};

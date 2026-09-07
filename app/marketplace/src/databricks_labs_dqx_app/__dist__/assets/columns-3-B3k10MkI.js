@@ -1,0 +1,1 @@
+import{W as t}from"./index-CkQcByrl.js";const e=[["rect",{width:"18",height:"18",x:"3",y:"3",rx:"2",key:"afitv7"}],["path",{d:"M9 3v18",key:"fh3hqa"}],["path",{d:"M15 3v18",key:"14nvp0"}]],c=t("columns-3",e);export{c as C};
