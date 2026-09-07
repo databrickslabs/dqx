@@ -289,7 +289,9 @@ def select_basis(seconds: np.ndarray, metrics: dict[str, np.ndarray]) -> tuple[T
     choice has to be a property of the table rather than of any one metric. It reads every metric to that
     end. An earlier version scored changepoints on whichever metric happened to be first in the schema
     and took its time axis for the period search too, which made every fitted residual depend on column
-    order: a linear metric first chose one changepoint where a bent metric chose six.
+    order. Reproduced on the straight-and-bent pair that
+    ``tests/unit/test_anomaly_temporal_fit.py::test_the_basis_does_not_depend_on_metric_order`` uses: the
+    straight metric first chose **no** changepoints where the bent metric chose **three**.
 
     Candidates are compared on the **mean across metrics of the ratio** between a candidate's holdout
     residual scale and the same metric's scale under the simplest basis, each metric first standardised
