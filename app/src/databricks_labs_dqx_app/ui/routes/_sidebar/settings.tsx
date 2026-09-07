@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -62,6 +62,9 @@ import {
   useGetRequireDraftRunSettings,
   useSaveRequireDraftRunSettings,
   getGetRequireDraftRunSettingsQueryKey,
+  useGetDraftRunSampleLimit,
+  useSaveDraftRunSampleLimit,
+  getGetDraftRunSampleLimitQueryKey,
   useGetShareTablesWithWorkspaceUsers,
   useSaveShareTablesWithWorkspaceUsers,
   getGetShareTablesWithWorkspaceUsersQueryKey,
@@ -115,6 +118,7 @@ import {
 import { ChevronDown, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 
 export const Route = createFileRoute("/_sidebar/settings")({
   component: () => <ConfigPage />,
@@ -2149,6 +2153,108 @@ function RequireDraftRunSettingsCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Draft-run sample limit — admin knob capping the rows a DRAFT monitored-table
+// run reads (0 = whole table). Approved/published ("Run now") runs never sample;
+// they always scan the full table, so there is deliberately no knob for them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Convert a stored draft_run_sample_limit (rows; 0 = whole table) → SampleSelector {kind, value}. */
+function limitToSample(limit: number): { kind: SampleKind; value: number } {
+  if (limit === 0) return { kind: "full", value: 1000 };
+  return { kind: "records", value: limit };
+}
+
+/** Convert SampleSelector {kind, value} → a draft_run_sample_limit row count.
+ *  Percent is disabled in this context (disablePercent), but guard here as
+ *  belt-and-suspenders: any non-full kind stores the numeric value as rows. */
+function sampleToLimit(kind: SampleKind, value: number): number {
+  if (kind === "full") return 0;
+  return value;
+}
+
+function DraftRunSampleLimitSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetDraftRunSampleLimit();
+  const settings = resp?.data;
+  const saveMutation = useSaveDraftRunSampleLimit();
+  const { isAdmin } = usePermissions();
+
+  const [sampleKind, setSampleKind] = useState<SampleKind>("records");
+  const [sampleValue, setSampleValue] = useState(1000);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      const { kind, value } = limitToSample(settings.draft_run_sample_limit);
+      setSampleKind(kind);
+      setSampleValue(value);
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const handleSave = useCallback(
+    (kind: SampleKind, value: number) => {
+      const limit = sampleToLimit(kind, value);
+      saveMutation.mutate(
+        { data: { draft_run_sample_limit: limit } },
+        {
+          onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
+            toast.success(t("config.draftSampleSaved"));
+          },
+          onError: (err: unknown) => {
+            const axErr = err as AxiosError<{ detail?: string }>;
+            toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDraftSample"));
+          },
+        },
+      );
+    },
+    [saveMutation, queryClient, t],
+  );
+
+  const handleKindChange = (k: SampleKind) => {
+    setSampleKind(k);
+    handleSave(k, sampleValue);
+  };
+
+  const handleValueChange = (n: number) => {
+    setSampleValue(n);
+    handleSave(sampleKind, n);
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-5 w-5" />
+          {t("config.draftSampleTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label className="text-sm">{t("config.draftSampleLabel")}</Label>
+          </div>
+          <SampleSelector
+            kind={sampleKind}
+            value={sampleValue}
+            onKind={handleKindChange}
+            onValue={handleValueChange}
+            disablePercent
+          />
+        </div>
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.draftSampleAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Share new tables / collections with the workspace users group. When on,
 // newly created monitored tables and collections get the default users-group
 // grant. When off (default), only the owner is granted. Registry rules always
@@ -2657,6 +2763,7 @@ function ConfigPage() {
       { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
+      { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],

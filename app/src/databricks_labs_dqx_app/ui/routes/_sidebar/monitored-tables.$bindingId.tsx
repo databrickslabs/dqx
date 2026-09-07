@@ -86,6 +86,7 @@ import {
   useGetTableTags,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
+  useGetDraftRunSampleLimit,
   useSuggestRulesForTable,
   usePreviewTableData,
   useQueryTableData,
@@ -1055,9 +1056,10 @@ function VersionBadge({ table }: { table: MonitoredTableOut }) {
 }
 
 /** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
- *  checked by the caller). Every entry point here first opens the run-scope
- *  dialog (full table or an N-row sample) and submits on confirm — a manual
- *  run always gets to say how much of the table it reads. Primary click runs
+ *  checked by the caller). "Run now" (approved) scans the whole table
+ *  (sample_size 0); "Run draft" scans the admin-configured draft sample
+ *  (default 1000 rows; 0 = whole table) fetched from `useGetDraftRunSampleLimit`
+ *  so exploratory runs on large tables stay cheap. Primary click runs
  *  the latest approved snapshot ("Run now (vN)"), disabled with a tooltip at
  *  v0. The attached dropdown
  *  offers "Run draft" at the TOP (item 15) followed by each approved version.
@@ -1104,6 +1106,12 @@ function RunTableAction({
   const versionsQuery = useListMonitoredTableVersions(bindingId);
   const versions = versionsQuery.data?.data ?? [];
   const runMutation = useRunMonitoredTable();
+  // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
+  // table) so exploratory runs on large tables stay cheap. "Run now" (approved)
+  // always scans the full table (sample_size 0). The backend re-resolves this
+  // from the same admin setting if the UI ever omits it.
+  const draftSampleQuery = useGetDraftRunSampleLimit();
+  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit ?? 0;
   const hasApproved = (table.version ?? 0) > 0;
   // Run draft is available only when there is a draft to run: either the
   // binding itself is in draft, or there are unsaved applied-rule edits that
@@ -1222,7 +1230,7 @@ function RunTableAction({
       <TooltipTrigger asChild>
         <span className={cn(draftDisabled && "cursor-not-allowed")}>
           <Button
-            onClick={() => void handleRunDraft(0)}
+            onClick={() => void handleRunDraft(draftSampleSize)}
             disabled={draftDisabled}
             className="gap-2 rounded-r-none"
           >
@@ -1262,7 +1270,7 @@ function RunTableAction({
             disabled={draftDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              void handleRunDraft(0);
+              void handleRunDraft(draftSampleSize);
             }}
           >
             {t("monitoredTables.runDraftAction")}

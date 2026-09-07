@@ -398,7 +398,7 @@
     "computeWarehouseClassicGroup": "Classic",
     "computeWarehouseHint": "Used for data previews and ad-hoc queries.",
     "computeJobsHint": "I job di profilo e controllo vengono eseguiti su compute serverless.",
-    "draftSampleAdminOnlyHint": "Only admins can change this setting.",
+    "draftSampleAdminOnlyHint": "Solo gli amministratori possono modificare questa impostazione.",
     "reviewStatusUnnamed": "unnamed",
     "reviewStatusRemoveAria": "Remove {{value}}",
     "reviewStatusFallback": "status",

@@ -398,7 +398,7 @@
     "computeWarehouseClassicGroup": "Classic",
     "computeWarehouseHint": "Used for data previews and ad-hoc queries.",
     "computeJobsHint": "Los trabajos de perfil y comprobación se ejecutan en cómputo sin servidor.",
-    "draftSampleAdminOnlyHint": "Only admins can change this setting.",
+    "draftSampleAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
     "reviewStatusUnnamed": "unnamed",
     "reviewStatusRemoveAria": "Remove {{value}}",
     "reviewStatusFallback": "status",

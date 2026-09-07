@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import {
   useDeleteDataProduct,
   useRunDataProduct,
+  useGetDraftRunSampleLimit,
   useRevertDataProduct,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
@@ -309,6 +310,11 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const canApprove = perms.canApproveRules;
 
   const runMut = useRunDataProduct({ mutation: { onError: () => {} } });
+  // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
+  // table). "Run now" (approved) always scans the full table (sample_size 0).
+  // The backend re-resolves this from the same admin setting if omitted.
+  const draftSampleQuery = useGetDraftRunSampleLimit();
+  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit ?? 0;
   const deleteMut = useDeleteDataProduct({ mutation: { onError: () => {} } });
   const approveMut = useApproveDataProductWithRationale({ mutation: { onError: () => {} } });
   const rejectMut = useRejectDataProductWithRationale({ mutation: { onError: () => {} } });
@@ -544,7 +550,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           {canRun &&
             (draftIsPrimary ? (
               <Button
-                onClick={() => void handleRunDraft(0)}
+                onClick={() => void handleRunDraft(draftSampleSize)}
                 disabled={runPending}
                 size="sm"
                 className="gap-2"
@@ -627,7 +633,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              void handleRunDraft(0);
+                              void handleRunDraft(draftSampleSize);
                             }}
                             disabled={runPending || !canRunDraft}
                             className="gap-2"
