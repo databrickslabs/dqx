@@ -1104,8 +1104,13 @@ def _fit_temporal_from_buckets(
 
     The fit needs the data on the driver, and a table can be arbitrarily large, so the frame is first
     reduced to at most :data:`TEMPORAL_FIT_BUCKETS` time buckets carrying each metric's median. That
-    bounds driver memory the same way ``_compute_baseline_medians`` does, and the per-bucket median is
-    itself robust, so gross outliers are attenuated before the Huber fit ever sees them.
+    bounds driver memory the same way ``_compute_baseline_medians`` does.
+
+    Bucketing is for driver memory, **not** for robustness: training sees about 24% of the table, so
+    buckets hold too few rows for their median to attenuate much, and the Huber loss is what actually
+    carries robustness. The measurements are on :data:`TEMPORAL_FIT_BUCKETS`; this docstring used to claim
+    the opposite here while the constant said otherwise, which is worth knowing about only because two
+    places in one file disagreeing is how a later reader ends up optimising away the part that mattered.
 
     The basis is then selected against the *bucket centres* rather than the raw timestamps, which matters:
     the resolution guard in :func:`~databricks.labs.dqx.anomaly.temporal.candidate_periods` then measures
