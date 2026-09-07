@@ -87,7 +87,10 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
     if existing_tag.returncode == 0:
         raise RuntimeError(f"Local tag {tag} already exists")
 
-    source_pyproject = commands.run(("git", "show", "HEAD:app/pyproject.toml"), cwd=resolved_root)
+    source_commit = commands.run(("git", "rev-parse", "HEAD^{commit}"), cwd=resolved_root).stdout.strip()
+    if not source_commit:
+        raise RuntimeError("Could not resolve the release source commit")
+    source_pyproject = commands.run(("git", "show", f"{source_commit}:app/pyproject.toml"), cwd=resolved_root)
     try:
         project_version = tomllib.loads(source_pyproject.stdout)["project"]["version"]
     except (KeyError, TypeError, tomllib.TOMLDecodeError) as error:
@@ -106,10 +109,13 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
     with tempfile.TemporaryDirectory(prefix="dqx-marketplace-release-") as temp_dir:
         worktree = Path(temp_dir) / "worktree"
         created = False
-        tag_created = False
         release_complete = False
+        release_error: BaseException | None = None
         try:
-            commands.run(("git", "worktree", "add", "-b", branch, str(worktree), "HEAD"), cwd=resolved_root)
+            commands.run(
+                ("git", "worktree", "add", "-b", branch, str(worktree), source_commit),
+                cwd=resolved_root,
+            )
             created = True
             commands.run(("make", "app-install"), cwd=worktree)
             commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"), cwd=worktree)
@@ -141,7 +147,6 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
                 ("git", "tag", "-s", "-a", tag, "-m", f"DQX Studio {release.version}", "HEAD"),
                 cwd=worktree,
             )
-            tag_created = True
             commands.run(("git", "verify-tag", tag), cwd=worktree)
             for artifact in (
                 "app/marketplace/manifest.yaml",
@@ -150,12 +155,48 @@ def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> s
             ):
                 commands.run(("git", "cat-file", "-e", f"{tag}:{artifact}"), cwd=worktree)
             release_complete = True
-        finally:
-            if tag_created and not release_complete:
-                commands.run(("git", "tag", "--delete", tag), cwd=resolved_root, check=False)
-            if created:
-                commands.run(("git", "worktree", "remove", "--force", str(worktree)), cwd=resolved_root)
-                commands.run(("git", "worktree", "prune"), cwd=resolved_root)
+        except BaseException as error:
+            release_error = error
+
+        cleanup_failures: list[str] = []
+
+        def cleanup(command: tuple[str, ...]) -> None:
+            try:
+                result = commands.run(command, cwd=resolved_root, check=False)
+            except (OSError, RuntimeError) as error:
+                cleanup_failures.append(f"{command[1]} ({type(error).__name__})")
+                return
+            if result.returncode != 0:
+                cleanup_failures.append(command[1])
+
+        if created:
+            cleanup(("git", "worktree", "remove", "--force", str(worktree)))
+            cleanup(("git", "worktree", "prune"))
+        if not release_complete:
+            tag_exists = commands.run(
+                ("git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"),
+                cwd=resolved_root,
+                check=False,
+            )
+            if tag_exists.returncode == 0:
+                cleanup(("git", "tag", "--delete", tag))
+            branch_exists = commands.run(
+                ("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"),
+                cwd=resolved_root,
+                check=False,
+            )
+            if branch_exists.returncode == 0:
+                cleanup(("git", "branch", "-D", branch))
+
+        if cleanup_failures:
+            cleanup_summary = ", ".join(cleanup_failures)
+            if release_error is not None:
+                raise RuntimeError(
+                    f"Marketplace release failed; cleanup also failed: {cleanup_summary}"
+                ) from release_error
+            raise RuntimeError(f"Marketplace release cleanup failed: {cleanup_summary}")
+        if release_error is not None:
+            raise release_error.with_traceback(release_error.__traceback__)
     return branch
 
 

@@ -19,17 +19,25 @@ class RecordingCommandRunner:
         project_version: str = "0.1.0",
         existing_branch: bool = False,
         existing_tag: bool = False,
+        fail_on: tuple[str, ...] | None = None,
     ) -> None:
         self.project_version = project_version
         self.existing_branch = existing_branch
         self.existing_tag = existing_tag
+        self.fail_on = fail_on
         self.commands: list[tuple[str, ...]] = []
         self.created_worktree: Path | None = None
 
     def run(self, command: tuple[str, ...], *, cwd: Path, check: bool = True) -> CommandResult:
         self.commands.append(command)
+        if self.fail_on is not None and command[: len(self.fail_on)] == self.fail_on:
+            if check:
+                raise RuntimeError("command failed")
+            return CommandResult(returncode=1)
         if command == ("git", "rev-parse", "--show-toplevel"):
             return CommandResult(returncode=0, stdout=f"{cwd}\n")
+        if command == ("git", "rev-parse", "HEAD^{commit}"):
+            return CommandResult(returncode=0, stdout="abc123\n")
         if command[:2] == ("git", "show"):
             return CommandResult(
                 returncode=0,
@@ -42,10 +50,20 @@ class RecordingCommandRunner:
         if command[:3] == ("git", "worktree", "add"):
             self.created_worktree = Path(command[-2])
             self.created_worktree.mkdir(parents=True)
+            self.existing_branch = True
             return CommandResult(returncode=0)
         if command[:3] == ("git", "worktree", "remove"):
             self.created_worktree = self.created_worktree or Path(command[-1])
             self.created_worktree.rmdir()
+            return CommandResult(returncode=0)
+        if command[:3] == ("git", "branch", "-D"):
+            self.existing_branch = False
+            return CommandResult(returncode=0)
+        if command[:2] == ("git", "tag") and "--delete" not in command:
+            self.existing_tag = True
+            return CommandResult(returncode=0)
+        if command[:3] == ("git", "tag", "--delete"):
+            self.existing_tag = False
             return CommandResult(returncode=0)
         if command == ("git", "diff", "--cached", "--quiet"):
             return CommandResult(returncode=1)
@@ -90,7 +108,8 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     commands = RecordingCommandRunner(project_version="0.1.0")
     branch = release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert branch == "dqx-studio/marketplace/v0.1.0"
-    assert commands.contains(("git", "show", "HEAD:app/pyproject.toml"))
+    assert commands.contains(("git", "show", "abc123:app/pyproject.toml"))
+    assert commands.contains(("git", "worktree", "add", "-b", branch, str(commands.created_worktree), "abc123"))
     assert commands.contains(("make", "app-install"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
@@ -139,6 +158,27 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
         )
     )
     assert not commands.contains_prefix(("git", "push"))
+    assert commands.created_worktree is not None
+    assert not commands.created_worktree.exists()
+
+
+@pytest.mark.parametrize(
+    "failed_command",
+    [
+        ("make", "app-install"),
+        ("git", "commit", "-S"),
+        ("git", "verify-tag"),
+        ("git", "cat-file", "-e"),
+    ],
+)
+def test_release_failure_removes_partial_refs_and_worktree(tmp_path: Path, failed_command: tuple[str, ...]) -> None:
+    commands = RecordingCommandRunner(fail_on=failed_command)
+
+    with pytest.raises(RuntimeError, match="command failed"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
+
+    assert commands.existing_branch is False
+    assert commands.existing_tag is False
     assert commands.created_worktree is not None
     assert not commands.created_worktree.exists()
 
