@@ -17,12 +17,12 @@ class RecordingCommandRunner:
         self,
         *,
         project_version: str = "0.1.0",
-        fail_on: tuple[str, ...] | None = None,
         existing_branch: bool = False,
+        existing_tag: bool = False,
     ) -> None:
         self.project_version = project_version
-        self.fail_on = fail_on
         self.existing_branch = existing_branch
+        self.existing_tag = existing_tag
         self.commands: list[tuple[str, ...]] = []
         self.created_worktree: Path | None = None
 
@@ -30,17 +30,15 @@ class RecordingCommandRunner:
         self.commands.append(command)
         if command == ("git", "rev-parse", "--show-toplevel"):
             return CommandResult(returncode=0, stdout=f"{cwd}\n")
-        if command[:2] == ("git", "verify-tag") and self.fail_on == command[:2]:
-            if check:
-                raise RuntimeError("command failed")
-            return CommandResult(returncode=1)
         if command[:2] == ("git", "show"):
             return CommandResult(
                 returncode=0,
                 stdout=f'[project]\nname = "databricks-labs-dqx-app"\nversion = "{self.project_version}"\n',
             )
         if command[:4] == ("git", "show-ref", "--verify", "--quiet"):
-            return CommandResult(returncode=0 if self.existing_branch else 1)
+            reference = command[-1]
+            exists = self.existing_tag if reference.startswith("refs/tags/") else self.existing_branch
+            return CommandResult(returncode=0 if exists else 1)
         if command[:3] == ("git", "worktree", "add"):
             self.created_worktree = Path(command[-2])
             self.created_worktree.mkdir(parents=True)
@@ -81,9 +79,9 @@ def test_release_rejects_invalid_tag_names(tag: str) -> None:
         release_branch_name(tag)
 
 
-def test_release_verifies_tag_before_creating_branch(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(fail_on=("git", "verify-tag"))
-    with pytest.raises(RuntimeError, match="signed tag"):
+def test_release_refuses_existing_local_tag(tmp_path: Path) -> None:
+    commands = RecordingCommandRunner(existing_tag=True)
+    with pytest.raises(RuntimeError, match="tag.*already exists"):
         release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert not commands.contains_prefix(("git", "worktree", "add"))
 
@@ -92,7 +90,7 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     commands = RecordingCommandRunner(project_version="0.1.0")
     branch = release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert branch == "dqx-studio/marketplace/v0.1.0"
-    assert commands.contains(("git", "show", "studio-v0.1.0:app/pyproject.toml"))
+    assert commands.contains(("git", "show", "HEAD:app/pyproject.toml"))
     assert commands.contains(("make", "app-install"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
@@ -115,6 +113,31 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     assert commands.contains(("git", "add", "-f", "-A", "app/marketplace"))
     assert commands.contains_prefix(("git", "commit", "-S"))
     assert commands.contains(("git", "verify-commit", "HEAD"))
+    tag_command = (
+        "git",
+        "tag",
+        "-s",
+        "-a",
+        "studio-v0.1.0",
+        "-m",
+        "DQX Studio 0.1.0",
+        "HEAD",
+    )
+    assert commands.contains(tag_command)
+    assert commands.commands.index(("git", "verify-commit", "HEAD")) < commands.commands.index(tag_command)
+    assert commands.contains(("git", "verify-tag", "studio-v0.1.0"))
+    assert commands.contains(("git", "cat-file", "-e", "studio-v0.1.0:app/marketplace/manifest.yaml"))
+    assert commands.contains(
+        ("git", "cat-file", "-e", "studio-v0.1.0:app/marketplace/src/databricks_labs_dqx_app/backend/app.py")
+    )
+    assert commands.contains(
+        (
+            "git",
+            "cat-file",
+            "-e",
+            "studio-v0.1.0:app/marketplace/src/databricks_labs_dqx_app/__dist__/index.html",
+        )
+    )
     assert not commands.contains_prefix(("git", "push"))
     assert commands.created_worktree is not None
     assert not commands.created_worktree.exists()
