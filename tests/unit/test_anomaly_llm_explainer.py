@@ -188,6 +188,10 @@ def test_human_labels_map_omits_identity_and_labels_derived_features():
         categorical_frequency_maps={"country": {"US": 0.7}},
         onehot_categories={"country": ["US"]},
         engineered_feature_names=["amount", "amount_rel_baseline", "country_US", "country_freq"],
+        # Recorded because suffix resolution is gated on it: without a basis, ``amount_rel_baseline``
+        # would be a column in its own right rather than a derived feature, and would correctly label
+        # as itself. A grouping column is not a feature, so it is absent from column_infos.
+        baseline_by=["region"],
     )
     labels = llm_explainer._human_labels(metadata)
 

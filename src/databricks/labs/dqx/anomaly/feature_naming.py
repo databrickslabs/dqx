@@ -14,12 +14,25 @@ null indicator ``{{col}}_is_null``, boolean ``{{col}}_bool``, the datetime cycli
 
 Pure functions over *SparkFeatureMetadata*: no Spark, no I/O, deterministic.
 
-Resolution order is deliberate and must not be reordered. One-hot names are matched first, against
-the recorded ``onehot_categories``, because a category *value* may itself end in a fixed suffix
-(a column *status* with a value *freq* produces ``status_freq``, which a suffix-first scan would
-misread as frequency encoding of *status*). Fixed suffixes are tried next, and only accepted when
-the remainder is a known source column, so a numeric column literally named ``revenue_freq`` is not
-mistaken for the frequency encoding of a non-existent *revenue*. Numeric identity is matched last.
+Resolution order is deliberate. One-hot names are matched first, against the recorded
+``onehot_categories``, because a category *value* may itself end in a fixed suffix (a column *status*
+with a value *freq* produces ``status_freq``, which a suffix-first scan would misread as frequency
+encoding of *status*).
+
+**An exact source-column match comes next, before suffix decomposition.** Both can match the same name
+at once: a caller may pass their own ``amount_rel_baseline`` column alongside ``amount``, which feature
+engineering permits when no grouping is configured. Decomposing that name attributed one user column's
+contribution to a different one and labelled it "amount vs its group baseline" in a model with no group
+baseline. Identity cannot be wrong here -- a name in ``column_infos`` is a column that was analysed --
+and it cannot mask a genuine derived feature, because ``validation.validate_generated_feature_names``
+refuses a schema where a generated name collides with a real column.
+
+An earlier version of this note said the order must not be reordered, justified by a numeric column
+named ``revenue_freq`` where *revenue* does not exist. That case resolves correctly under either order,
+so it never argued for suffix-first.
+
+Fixed suffixes are tried last, accepted only when the remainder is a known source column **and** the
+transform that appends the suffix actually ran for this model -- see ``_basis_ran``.
 """
 
 from databricks.labs.dqx.anomaly.transformers import (
@@ -71,11 +84,28 @@ def _match_onehot(engineered_name: str, metadata: SparkFeatureMetadata) -> tuple
     return None
 
 
-def _match_suffix(engineered_name: str, source_names: frozenset[str]) -> tuple[str, str] | None:
-    """Return (source_column, label_template) if *engineered_name* ends in a known fixed suffix
-    and the remainder is a real source column."""
+def _basis_ran(suffix: str, metadata: SparkFeatureMetadata) -> bool:
+    """Whether the transform that appends *suffix* actually ran for this model.
+
+    A comparison suffix only means a derived feature when its basis is recorded: without ``baseline_by``
+    nothing appends ``_rel_baseline``, and without ``baseline_over_time`` nothing appends ``_rel_time``.
+    Checking this is what stops a user's own column named ``amount_rel_baseline`` being reported as
+    "amount vs its group baseline" in a model that has no group baseline at all.
+    """
+    if suffix == BASELINE_RELATIVE_SUFFIX:
+        return bool(metadata.baseline_by)
+    if suffix == TEMPORAL_RELATIVE_SUFFIX:
+        return bool(metadata.baseline_over_time)
+    return True
+
+
+def _match_suffix(
+    engineered_name: str, source_names: frozenset[str], metadata: SparkFeatureMetadata
+) -> tuple[str, str] | None:
+    """Return (source_column, label_template) if *engineered_name* ends in a known fixed suffix,
+    the remainder is a real source column, and the transform that appends that suffix ran."""
     for suffix, template in _SUFFIX_LABELS:
-        if engineered_name.endswith(suffix):
+        if engineered_name.endswith(suffix) and _basis_ran(suffix, metadata):
             col = engineered_name[: -len(suffix)]
             if col in source_names:
                 return col, template
@@ -98,12 +128,16 @@ def source_column(engineered_name: str, metadata: SparkFeatureMetadata) -> str |
         return onehot[0]
 
     source_names = _source_column_names(metadata)
-    suffix = _match_suffix(engineered_name, source_names)
+    if engineered_name in source_names:
+        # A feature that *is* an analysed column is that column, whatever it is spelled like. Checked
+        # before suffix decomposition because both can match at once: a caller may pass their own
+        # ``amount_rel_baseline`` column alongside ``amount``, and decomposing it would attribute one
+        # user column's contribution to a different one.
+        return engineered_name
+
+    suffix = _match_suffix(engineered_name, source_names, metadata)
     if suffix is not None:
         return suffix[0]
-
-    if engineered_name in source_names:
-        return engineered_name
     return None
 
 
@@ -123,7 +157,10 @@ def human_label(engineered_name: str, metadata: SparkFeatureMetadata) -> str:
         return f"{col} = {value}"
 
     source_names = _source_column_names(metadata)
-    suffix = _match_suffix(engineered_name, source_names)
+    if engineered_name in source_names:
+        return engineered_name
+
+    suffix = _match_suffix(engineered_name, source_names, metadata)
     if suffix is not None:
         col, template = suffix
         return template.format(col=col)
@@ -146,3 +183,32 @@ def engineered_from(source: str, metadata: SparkFeatureMetadata) -> frozenset[st
         metadata: The persisted feature metadata for the model.
     """
     return frozenset(name for name in metadata.engineered_feature_names if source_column(name, metadata) == source)
+
+
+def source_blocks(metadata: SparkFeatureMetadata) -> dict[str, list[str]]:
+    """Each source column mapped to the engineered features derived from it, in feature order.
+
+    The forward view of :func:`source_column`, and the grouping attribution needs: explaining one
+    engineered feature at a time is unsound when several of them carry the same source. Dropping one view
+    of a metric leaves another copy behind, so the measured loss is small for every view, and normalising
+    those small numbers hands almost all of the apparent blame to an unrelated metric. Measured on a
+    correlated pair, adding one affine duplicate of *x* moved the reported cause from 99.8% *x* to 99.9%
+    *y* while the score did not move.
+
+    A feature that resolves to no source becomes its own single-member block, so every engineered feature
+    belongs to exactly one block and nothing is silently dropped from an explanation.
+
+    Order is preserved twice over: blocks appear in first-appearance order, and features within a block
+    keep their positional order, because ``engineered_feature_names`` is positional and callers index
+    into the feature matrix with it.
+
+    Args:
+        metadata: The persisted feature metadata for the model.
+
+    Returns:
+        source column -> its engineered feature names.
+    """
+    blocks: dict[str, list[str]] = {}
+    for name in metadata.engineered_feature_names:
+        blocks.setdefault(source_column(name, metadata) or name, []).append(name)
+    return blocks

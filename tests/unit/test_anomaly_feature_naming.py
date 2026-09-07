@@ -2,7 +2,12 @@
 
 import pytest
 
-from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_label, source_column
+from databricks.labs.dqx.anomaly.feature_naming import (
+    engineered_from,
+    human_label,
+    source_blocks,
+    source_column,
+)
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 
 
@@ -140,3 +145,87 @@ def test_unknown_feature_resolves_to_none_and_labels_unchanged(metadata: SparkFe
     """A feature from a convention this version does not know never crashes and is never hidden."""
     assert source_column("mystery_feature", metadata) is None
     assert human_label("mystery_feature", metadata) == "mystery_feature"
+
+
+# ── provenance is read from the recorded transform, not from spelling ────────────────────────────────
+
+
+def _ungrouped_with_a_literal_suffix_column() -> SparkFeatureMetadata:
+    """A schema feature engineering permits: the caller's own ``amount_rel_baseline`` column, no grouping.
+
+    Legal because ``validate_generated_feature_names`` only refuses a collision when the transform would
+    actually generate that name, and with no ``baseline_by`` nothing does.
+    """
+    return SparkFeatureMetadata(
+        column_infos=[
+            {"name": "amount", "category": "numeric"},
+            {"name": "amount_rel_baseline", "category": "numeric"},
+            {"name": "latency_rel_time", "category": "numeric"},
+        ],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["amount", "amount_rel_baseline", "latency_rel_time"],
+        baseline_by=[],
+        baseline_over_time="",
+    )
+
+
+def test_a_literal_column_ending_in_a_suffix_resolves_to_itself():
+    """The reported defect: the reverse map decomposed a real column and credited a different one.
+
+    ``amount_rel_baseline`` is the caller's own metric here. Resolving it to ``amount`` attributes one
+    column's contribution to another, and it makes redaction of ``amount`` sweep up an unrelated column.
+    """
+    ungrouped = _ungrouped_with_a_literal_suffix_column()
+
+    assert source_column("amount_rel_baseline", ungrouped) == "amount_rel_baseline"
+    assert source_column("latency_rel_time", ungrouped) == "latency_rel_time"
+
+
+def test_a_literal_column_ending_in_a_suffix_is_labelled_as_itself():
+    """It was labelled "amount vs its group baseline" in a model with no group baseline at all."""
+    ungrouped = _ungrouped_with_a_literal_suffix_column()
+
+    assert human_label("amount_rel_baseline", ungrouped) == "amount_rel_baseline"
+    assert human_label("latency_rel_time", ungrouped) == "latency_rel_time"
+
+
+def test_redacting_one_column_does_not_sweep_up_a_similarly_named_one():
+    """The same defect seen from the redaction side, which is the one with a privacy consequence."""
+    ungrouped = _ungrouped_with_a_literal_suffix_column()
+
+    assert engineered_from("amount", ungrouped) == frozenset({"amount"})
+
+
+def test_a_genuine_derived_feature_still_resolves_when_its_basis_ran(metadata: SparkFeatureMetadata):
+    """The other direction, so the gate cannot be satisfied by refusing everything.
+
+    The shared fixture records both bases, so both suffixes must still decompose.
+    """
+    assert source_column("amount_rel_baseline", metadata) == "amount"
+    assert source_column("amount_rel_time", metadata) == "amount"
+    assert human_label("amount_rel_baseline", metadata) == "amount vs its group baseline"
+
+
+def test_source_blocks_group_every_feature_under_exactly_one_source(metadata: SparkFeatureMetadata):
+    """What block attribution indexes with: every engineered feature in exactly one block, order kept."""
+    blocks = source_blocks(metadata)
+
+    assert blocks["amount"] == ["amount", "amount_rel_baseline", "amount_rel_time"]
+    assert blocks["country"] == ["country_US", "country_DE", "country_is_null"]
+    flattened = [name for names in blocks.values() for name in names]
+    assert sorted(flattened) == sorted(metadata.engineered_feature_names)
+    assert len(flattened) == len(set(flattened))
+
+
+def test_source_blocks_keep_an_unresolvable_feature_as_its_own_block():
+    """A model trained by a newer DQX may carry a convention this version cannot parse. It must still be
+    explainable rather than silently dropped from the map."""
+    future = SparkFeatureMetadata(
+        column_infos=[{"name": "amount", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["amount", "amount_some_future_transform"],
+    )
+
+    assert source_blocks(future)["amount_some_future_transform"] == ["amount_some_future_transform"]

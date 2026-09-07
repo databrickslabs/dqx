@@ -43,7 +43,15 @@ def test_similar_prefixes_are_not_swept_up():
 
 def _metadata() -> SparkFeatureMetadata:
     """Feature metadata with a categorical column expanded to one-hot + frequency + null-indicator,
-    alongside a numeric column with a baseline-relative feature."""
+    alongside a numeric column with a baseline-relative feature.
+
+    ``baseline_by`` names a column that is deliberately absent from *column_infos*: a grouping column is
+    the basis a metric is compared against, never a feature, so it is projected out. Recording it is not
+    decoration -- suffix resolution is gated on the basis having actually run, because otherwise a user's
+    own column named ``amount_rel_baseline`` would be reported as "amount vs its group baseline" in a
+    model with no group baseline. An earlier version of this fixture omitted it while still listing
+    ``amount_rel_baseline``, describing a model that cannot exist.
+    """
     return SparkFeatureMetadata(
         column_infos=[
             {"name": "amount", "category": "numeric"},
@@ -59,6 +67,7 @@ def _metadata() -> SparkFeatureMetadata:
             "country_is_null",
             "amount_rel_baseline",
         ],
+        baseline_by=["region"],
     )
 
 
