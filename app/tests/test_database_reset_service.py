@@ -12,10 +12,12 @@ These pin the destructive-scope guarantees that make the feature safe:
 """
 
 import re
+from datetime import datetime, timezone
 from unittest.mock import create_autospec
 
 import pytest
 
+from databricks_labs_dqx_app.backend.demo.status import DEMO_STATUS_KEY
 from databricks_labs_dqx_app.backend.migrations import (
     ALL_APP_TABLE_NAMES,
     ANALYTICAL_TABLE_NAMES,
@@ -23,6 +25,11 @@ from databricks_labs_dqx_app.backend.migrations import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.database_reset_service import DatabaseResetService
+from databricks_labs_dqx_app.backend.services.reset_status import (
+    RESET_STATUS_KEY,
+    ResetStatus,
+    ResetStatusStore,
+)
 
 _DELETE_RE = re.compile(r"^DELETE FROM cat\.sch\.([a-z_][a-z0-9_]*)")
 
@@ -138,9 +145,112 @@ class TestAdminPreservation:
         DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=oltp).reset_all_data(performed_by="a@x")
 
         for sql, table in zip(oltp.executed, _targeted_tables(oltp.executed)):
-            if table == "dq_role_mappings":
+            # dq_role_mappings (admin rows) and dq_app_settings (job-status
+            # rows) are the only two OLTP tables cleared with a preserving
+            # WHERE clause; every other clear must be unconditional.
+            if table in ("dq_role_mappings", "dq_app_settings"):
                 continue
-            assert "WHERE" not in sql.upper(), f"non-role-mapping clear should be unconditional: {sql!r}"
+            assert "WHERE" not in sql.upper(), f"non-preserving clear should be unconditional: {sql!r}"
+
+
+class TestAppSettingsStatusPreservation:
+    """C1: the reset writes its ``running`` status into dq_app_settings and then
+    wipes that table — so the wipe must SPARE the two in-flight job-status keys
+    (reset + demo) or it destroys the very row the 409 guard, the UI poll, and
+    the terminal succeeded/failed write all depend on."""
+
+    def test_app_settings_delete_preserves_the_two_job_status_keys(self):
+        delta = _FakeExecutor()
+        oltp = _FakeExecutor()
+        DatabaseResetService(delta_sql=delta, oltp_sql=oltp).reset_all_data(performed_by="a@x")
+
+        settings_stmts = [
+            s for s, t in zip(oltp.executed, _targeted_tables(oltp.executed)) if t == "dq_app_settings"
+        ]
+        assert len(settings_stmts) == 1
+        stmt = settings_stmts[0]
+        # Scoped to keep exactly the two in-flight job-status keys and clear the
+        # rest — mirroring the admin-preserving dq_role_mappings clear.
+        assert stmt == (
+            "DELETE FROM cat.sch.dq_app_settings "
+            "WHERE setting_key NOT IN ('reset_database_status', 'demo_content_status')"
+        )
+        # The keys come from their owning modules, not hardcoded literals.
+        assert RESET_STATUS_KEY in stmt
+        assert DEMO_STATUS_KEY in stmt
+
+    def test_app_settings_is_still_reported_as_cleared(self):
+        # A preserving clear still counts as "cleared" (fresh-install defaults
+        # are re-seeded afterwards), so the result set is unchanged.
+        oltp = _FakeExecutor()
+        result = DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=oltp).reset_all_data(performed_by="a@x")
+        assert "dq_app_settings" in result.cleared_tables
+        assert set(result.cleared_tables) == set(ALL_APP_TABLE_NAMES)
+
+
+class _StatefulSettingsExecutor:
+    """In-memory ``dq_app_settings`` KV store; a no-op for every other table.
+
+    Implements the ``OltpExecutorProtocol`` slice the reset and
+    :class:`AppSettingsService` use — ``fqn``, ``execute`` (honouring the
+    preserving ``DELETE ... WHERE setting_key NOT IN (...)``), ``query`` (the
+    ``SELECT setting_value ... WHERE setting_key = '...'`` reads), and
+    ``upsert`` — so a real ``ResetStatusStore`` can be driven end-to-end
+    through a simulated wipe. DELETEs against any other table are accepted and
+    ignored (they don't touch the settings store).
+    """
+
+    _SELECT_RE = re.compile(r"WHERE setting_key = '([^']*)'")
+    _NOT_IN_RE = re.compile(r"dq_app_settings WHERE setting_key NOT IN \(([^)]*)\)")
+
+    def __init__(self) -> None:
+        self.settings: dict[str, str] = {}
+
+    def fqn(self, table: str) -> str:
+        return f"cat.sch.{table}"
+
+    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
+        m = self._NOT_IN_RE.search(sql)
+        if m:
+            keep = {v.strip().strip("'") for v in m.group(1).split(",")}
+            self.settings = {k: v for k, v in self.settings.items() if k in keep}
+
+    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+        m = self._SELECT_RE.search(sql)
+        if not m:
+            return []
+        key = m.group(1)
+        return [[self.settings[key]]] if key in self.settings else []
+
+    def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:
+        self.settings[str(key_cols["setting_key"])] = str(value_cols.get("setting_value"))
+
+
+class TestRunningStatusSurvivesTheWipe:
+    """End-to-end: a real ``ResetStatusStore`` must keep reporting ``running``
+    across ``reset_all_data`` — the wipe of dq_app_settings spares the status
+    keys, so is_running()/get() survive their own reset."""
+
+    def test_is_running_and_get_survive_the_settings_wipe(self):
+        oltp = _StatefulSettingsExecutor()
+        app_settings = AppSettingsService(sql=oltp)
+        store = ResetStatusStore(app_settings)
+
+        # The route persists a fresh 'running' status just before launching the
+        # reset; a couple of unrelated settings that MUST be wiped sit alongside.
+        now = datetime.now(timezone.utc).isoformat()
+        store.set(ResetStatus("running", "clearing", now, now))
+        app_settings.save_setting("ai_endpoint_name", "some-endpoint")
+        assert store.is_running() is True
+
+        DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=oltp).reset_all_data(performed_by="a@x")
+
+        # The in-flight status survived the wipe — the 409 guard / UI poll /
+        # terminal write can all still see it.
+        assert store.is_running() is True
+        assert store.get().state == "running"
+        # ...but an unrelated setting was cleared by the same reset.
+        assert app_settings.get_setting("ai_endpoint_name") is None
 
 
 class TestLakebaseDisabledSharedExecutor:
