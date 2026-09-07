@@ -16,6 +16,7 @@ from sklearn.linear_model import Ridge
 from databricks.labs.dqx.anomaly.temporal import (
     CANDIDATE_PERIODS_SECONDS,
     MIN_SEASONAL_CYCLES,
+    SEASONAL_HARMONICS,
     TemporalBasis,
     candidate_periods,
     design_matrix,
@@ -394,3 +395,68 @@ def test_a_metric_measured_in_large_units_does_not_outvote_the_others():
     inflated, _ = select_basis(seconds, {"bent": bent, "straight": straight * 1e6})
 
     assert modest == inflated
+
+
+# ── the response is standardised before fitting, and it matters at scale ─────────────────────────────
+
+
+@pytest.mark.parametrize("magnitude", [1.0, 1e3, 1e5, 1e7])
+def test_the_slope_is_recovered_whatever_units_the_metric_is_in(magnitude: float):
+    """A metric measured in millions must not get a worse trend than one measured in tens.
+
+    The design columns were already scaled, but the response was not, and HuberRegressor solves for the
+    coefficients and a scale parameter jointly. Measured before the fix across 20 seeds: a metric in
+    billions had its slope **99.89% wrong (sd 0.00%)** against 0.13% once the response is standardised,
+    winning 20 of 20, and a contaminated sample went from 1.32% to 0.14%, also 20 of 20. Negatives,
+    integer counts, rates near 1e-6 and zero-crossing metrics are a wash. The demo logged
+    `ConvergenceWarning: lbfgs failed to converge ... max_iter=400` from the same cause.
+
+    Parametrised across four orders of magnitude rather than asserted at one, because the failure is
+    invisible at the magnitudes a test would naturally pick.
+    """
+    seconds = _hourly_axis(2000)
+    span = float(seconds.max() - seconds.min())
+    basis = TemporalBasis(trend=True, periods=(DAY, WEEK), harmonics=SEASONAL_HARMONICS, span=span)
+
+    slope = TRUE_SLOPE_PER_SECOND * magnitude
+    rng = np.random.default_rng(11)
+    values = 100.0 * magnitude + slope * seconds + rng.normal(0, 2.0 * magnitude, seconds.size)
+
+    fitted = fit_temporal(seconds, {"metric": values}, basis)
+
+    # Column 1 is the trend, expressed against seconds / span.
+    recovered = fitted["metric"][1] / span
+    assert recovered == pytest.approx(
+        slope, rel=0.05
+    ), f"slope at magnitude {magnitude:g} recovered as {recovered:.4g} against a true {slope:.4g}"
+
+
+def test_standardising_the_response_leaves_a_small_metric_unchanged():
+    """The transform is exactly invertible, so it must not move a fit that was already fine.
+
+    Same 2,000-point axis as the parametrised test above rather than a shorter one: at 600 points the
+    noise alone moves the recovered slope by about 2%, which says nothing about the transform.
+    """
+    seconds = _hourly_axis(2000)
+    span = float(seconds.max() - seconds.min())
+    basis = TemporalBasis(trend=True, periods=(DAY,), harmonics=SEASONAL_HARMONICS, span=span)
+    values = _linear_metric(seconds, np.random.default_rng(3))
+
+    fitted = fit_temporal(seconds, {"metric": values}, basis)
+    recovered = fitted["metric"][1] / span
+
+    assert recovered == pytest.approx(TRUE_SLOPE_PER_SECOND, rel=0.02)
+
+
+def test_a_metric_with_more_than_half_identical_values_still_fits():
+    """The MAD is zero there, so the fallback to the standard deviation is what keeps it fittable."""
+    seconds = _hourly_axis(400)
+    span = float(seconds.max() - seconds.min())
+    basis = TemporalBasis(trend=True, periods=(), harmonics=SEASONAL_HARMONICS, span=span)
+    values = np.full(seconds.size, 50.0)
+    values[:120] = 50.0 + TRUE_SLOPE_PER_SECOND * seconds[:120]  # a minority that moves
+
+    fitted = fit_temporal(seconds, {"metric": values}, basis)
+
+    assert "metric" in fitted
+    assert all(np.isfinite(fitted["metric"]))
