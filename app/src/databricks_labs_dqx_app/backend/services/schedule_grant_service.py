@@ -144,22 +144,25 @@ class ScheduleGrantService:
     # Caller identity + ownership
     # ------------------------------------------------------------------
 
-    def _caller_principals(self) -> set[str]:
-        """Return the OBO caller's identity set (lowercased).
+    def _caller_identity(self) -> tuple[str, set[str]]:
+        """Return the OBO caller's ``(user_name, principal_set)`` (lowercased).
 
-        Includes the user name, any registered emails, and every group the user
-        belongs to — by both display name and SCIM id — so an owner or grant
-        that names any of those identities matches. Group membership is what
-        lets group-inherited ``MANAGE`` / ownership count.
+        The principal set includes the user name, any registered emails, and
+        every group the user belongs to — by both display name and SCIM id — so
+        an owner or grant that names any of those identities matches. Group
+        membership is what lets group-inherited ``MANAGE`` / ownership count.
+        ``user_name`` is returned separately so the effective-privileges lookup
+        can filter to the caller specifically. Both are empty on failure.
         """
         principals: set[str] = set()
         try:
             me = self._obo.current_user.me()
         except Exception:
             logger.warning("Could not resolve OBO caller identity for manage check", exc_info=True)
-            return principals
-        if me.user_name:
-            principals.add(me.user_name.strip().lower())
+            return "", principals
+        user_name = (me.user_name or "").strip().lower()
+        if user_name:
+            principals.add(user_name)
         for email in me.emails or []:
             if email.value:
                 principals.add(email.value.strip().lower())
@@ -168,7 +171,7 @@ class ScheduleGrantService:
                 principals.add(group.display.strip().lower())
             if group.value:
                 principals.add(group.value.strip().lower())
-        return principals
+        return user_name, principals
 
     def _owners(self, fqn: str) -> list[str]:
         """Return the owners of the table and its parent schema/catalog (lowercased).
@@ -246,23 +249,28 @@ class ScheduleGrantService:
         if not _is_real_three_part_fqn(fqn):
             return False
 
-        principals = self._caller_principals()
+        user_name, principals = self._caller_identity()
+        if not principals:
+            # Identity unresolved — cannot verify grantability; block (safe default).
+            return False
 
         # Ownership (table, then parent schema/catalog).
-        if principals and any(owner in principals for owner in self._owners(fqn)):
+        if any(owner in principals for owner in self._owners(fqn)):
             return True
 
-        # MANAGE effective for the caller specifically (folds in inheritance).
-        for assignment in self._manage_assignments(fqn, principal=next(iter(principals), None) or None):
-            if self._assignment_has_manage(assignment):
-                return True
+        # MANAGE effective for the caller specifically (folds in parent + group
+        # inheritance). Filtered to the caller's user name so another principal's
+        # MANAGE never counts as the caller's.
+        if user_name:
+            for assignment in self._manage_assignments(fqn, principal=user_name):
+                if self._assignment_has_manage(assignment):
+                    return True
 
         # MANAGE held by any of the caller's groups (enumerate all principals).
-        if principals:
-            for assignment in self._manage_assignments(fqn, principal=None):
-                who = (getattr(assignment, "principal", None) or "").strip().lower()
-                if who in principals and self._assignment_has_manage(assignment):
-                    return True
+        for assignment in self._manage_assignments(fqn, principal=None):
+            who = (getattr(assignment, "principal", None) or "").strip().lower()
+            if who in principals and self._assignment_has_manage(assignment):
+                return True
 
         return False
 
