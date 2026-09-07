@@ -12,6 +12,11 @@ dependencies = [
     "databricks-sdk>=0.60.0",
 ]
 
+# The entry point a coverage-enabled runner job runs instead of `dqx-mcp-runner`, so the flush
+# happens deterministically from ordinary code. Selected by the dev-coverage bundle target only.
+[project.scripts]
+dqx-mcp-runner-coverage = "dqx_mcp_coverage_bootstrap.runner_entry:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

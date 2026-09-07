@@ -7,6 +7,7 @@ suite runs offline in <1s.
 """
 
 import os
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, create_autospec
 
@@ -25,6 +26,45 @@ os.environ.setdefault("DQX_TMP_SCHEMA", "dqx_app_test_tmp")
 os.environ.setdefault("DQX_ADMIN_GROUP", "test-admins")
 os.environ.setdefault("DQX_JOB_ID", "")
 os.environ.setdefault("DATABRICKS_WAREHOUSE_ID", "test-warehouse")
+
+
+@pytest.fixture(autouse=True)
+def _activate_test_runtime_resources() -> Iterator[None]:
+    """Supply activated installation resources to unit tests that bypass lifespan."""
+    from databricks_labs_dqx_app.backend.config import conf
+    from databricks_labs_dqx_app.backend.runtime import rt
+    from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
+
+    previous_resources = rt.resources
+    resources = ActiveResources(
+        volume=VolumeLocation(
+            conf.catalog,
+            conf.schema_name,
+            "wheels",
+            f"/Volumes/{conf.catalog}/{conf.schema_name}/wheels",
+        ),
+        lakebase=LakebaseConnection(
+            endpoint="projects/test/branches/test/endpoints/primary",
+            host=None,
+            port=5432,
+            database="databricks_postgres",
+            username=None,
+            password=None,
+            schema=conf.lakebase_schema_name,
+        ),
+        warehouse_id="test-warehouse",
+        job_id="1",
+        tmp_schema=conf.tmp_schema_name,
+        genie_schema=conf.genie_schema_name,
+    )
+    rt.activate(resources)
+    try:
+        yield
+    finally:
+        if previous_resources is None:
+            rt.deactivate()
+        else:
+            rt.activate(previous_resources)
 
 
 # ---------------------------------------------------------------------------

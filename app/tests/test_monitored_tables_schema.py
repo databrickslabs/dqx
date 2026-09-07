@@ -4,23 +4,15 @@ Layer 2 of the Rules Registry design plus the Data Products grouping on top
 of it — see docs/superpowers/specs/2026-07-02-rules-registry-design.md
 §3.1/§7 and docs/superpowers/specs/2026-07-07-data-products-design.md §3.
 
-Every table below ships on both baselines: the Postgres v1 baseline and the
-Delta OLTP fallback. The services that read these tables are backend-agnostic,
-so each table's column set is asserted exactly *and* compared across the two
-backends — a column added to one baseline only would break whichever deploy
-shape didn't get it.
+Every table below ships in the Postgres v1 baseline, the sole OLTP schema.
 """
 
 import pytest
 
-from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 _PG = PG_MIGRATIONS[0].sql
-_DELTA = _V2_OLTP_FALLBACK
-
-# Both baselines, for assertions that must hold on either backend.
-_BOTH = [pytest.param(_PG, id="postgres"), pytest.param(_DELTA, id="delta")]
+_BASELINES = [pytest.param(_PG, id="postgres")]
 
 _NON_COLUMN_KEYWORDS = {"CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN"}
 
@@ -36,8 +28,7 @@ def _create_stmt(sql: str, table: str) -> str:
 def _paren_body(ddl: str) -> str:
     """The text inside a CREATE TABLE's outermost parentheses.
 
-    Scanning for the *matching* close paren rather than the last one matters
-    on Delta, where the statement continues past it with ``CLUSTER BY (...)``.
+    Scanning for the matching close parenthesis keeps nested constraints safe.
     """
     start = ddl.index("(")
     depth = 0
@@ -54,9 +45,8 @@ def _paren_body(ddl: str) -> str:
 def _columns(sql: str, table: str) -> set[str]:
     """Column names ``table`` declares, ignoring table-level constraints.
 
-    Quoting is stripped so a column that has to be escaped in one dialect
-    (``"check"`` on Postgres, ```check``` on Delta) compares equal across
-    backends.
+    Quoting is stripped so escaped Postgres columns such as ``"check"`` are
+    compared by their logical names.
     """
     names: set[str] = set()
     depth = 0
@@ -105,23 +95,18 @@ class TestDqMonitoredTables:
         "updated_at",
     }
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         assert _columns(baseline, "dq_monitored_tables") == self.EXPECTED
 
     def test_table_fqn_unique_on_postgres(self) -> None:
-        # Delta has no UNIQUE support — the service enforces one binding per
-        # table_fqn there. Postgres gets the real constraint.
         ddl = _create_stmt(_PG, "dq_monitored_tables")
         assert "uq_dq_monitored_tables_table_fqn" in ddl
         assert "UNIQUE (table_fqn)" in ddl
 
     def test_status_check_is_the_four_state_review_set(self) -> None:
         four_state = "CHECK (status IN ('draft','pending_approval','approved','rejected'))"
-        # Inline on Postgres; a following ALTER on Delta (only PK/FK go inline).
         assert four_state in _create_stmt(_PG, "dq_monitored_tables")
-        assert "chk_dq_monitored_tables_status" in _DELTA
-        assert four_state in " ".join(_DELTA.split())
 
 
 class TestDqAppliedRules:
@@ -142,7 +127,7 @@ class TestDqAppliedRules:
         "created_at",
     }
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         assert _columns(baseline, "dq_applied_rules") == self.EXPECTED
 
@@ -153,7 +138,7 @@ class TestDqAppliedRules:
 
 
 class TestDqQualityRulesProvenance:
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_provenance_columns_present(self, baseline: str) -> None:
         cols = _columns(baseline, "dq_quality_rules")
         assert {"registry_rule_id", "registry_version", "applied_rule_id"} <= cols
@@ -172,7 +157,7 @@ class TestDqMonitoredTableVersions:
         "refrozen_at",
     }
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         cols = _columns(baseline, "dq_monitored_table_versions")
         assert cols == self.EXPECTED
@@ -206,7 +191,7 @@ class TestDqDataProducts:
         "updated_at",
     }
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         assert _columns(baseline, "dq_data_products") == self.EXPECTED
 
@@ -216,14 +201,12 @@ class TestDqDataProducts:
     def test_status_check_is_the_four_state_review_set(self) -> None:
         four_state = "CHECK (status IN ('draft','pending_approval','approved','rejected'))"
         assert four_state in _create_stmt(_PG, "dq_data_products")
-        assert "chk_dq_data_products_status" in _DELTA
-        assert four_state in " ".join(_DELTA.split())
 
 
 class TestDqDataProductMembers:
     EXPECTED = {"id", "product_id", "binding_id", "pinned_version"}
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         assert _columns(baseline, "dq_data_product_members") == self.EXPECTED
 
@@ -244,13 +227,13 @@ class TestDqRunSets:
         "created_at",
     }
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         # ``trigger`` is a reserved word on Postgres and needs quoting there;
         # _columns strips the quoting so both backends compare equal.
         assert _columns(baseline, "dq_run_sets") == self.EXPECTED
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_source_and_trigger_checks(self, baseline: str) -> None:
         sql = " ".join(baseline.split())
         assert "CHECK (source IN ('approved','draft'))" in sql
@@ -261,6 +244,6 @@ class TestDqRunSets:
 class TestDqRunSetMembers:
     EXPECTED = {"id", "run_set_id", "run_id", "binding_id", "binding_version"}
 
-    @pytest.mark.parametrize("baseline", _BOTH)
+    @pytest.mark.parametrize("baseline", _BASELINES)
     def test_columns(self, baseline: str) -> None:
         assert _columns(baseline, "dq_run_set_members") == self.EXPECTED

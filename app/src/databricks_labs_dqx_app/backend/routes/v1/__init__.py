@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from .me import router as me_router
+from .setup import router as setup_router
 from .check_functions import router as check_functions_router
 from .config import router as config_router
 from .contract import router as contract_router
@@ -38,6 +39,7 @@ from .schedule_grants import router as schedule_grants_router
 
 v1_router = APIRouter()
 v1_router.include_router(me_router, tags=["meta"])
+v1_router.include_router(setup_router, prefix="/setup", tags=["setup"])
 v1_router.include_router(config_router, prefix="/config", tags=["config"])
 v1_router.include_router(schedules_router, prefix="/schedules", tags=["schedules"])
 v1_router.include_router(roles_router, prefix="/roles", tags=["roles"])
