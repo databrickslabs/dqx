@@ -277,11 +277,13 @@ class ExplanationContext:
 def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadata | None = None) -> frozenset[str]:
     """Columns to redact, plus every engineered feature derived from them.
 
-    Redaction matches contribution keys exactly, and contribution keys are *engineered* feature
-    names. So redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of
-    the same column -- and redacting ``country`` must stop ``country_US``, ``country_DE``,
-    ``country_freq`` and ``country_is_null``. A caller naming a column sensitive means every feature
-    derived from it is sensitive too.
+    Redaction matches contribution keys exactly, and which vocabulary those keys use depends on the
+    detector: source columns where attribution is blocked by source, engineered feature names on the
+    tree path. Covering both is why the source column *and* its descendants go into the set. So
+    redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of the same
+    column -- and redacting ``country`` must stop ``country_US``, ``country_DE``, ``country_freq`` and
+    ``country_is_null``. A caller naming a column sensitive means every feature derived from it is
+    sensitive too.
 
     With *metadata*, the derived features are enumerated exactly via *engineered_from*, which closes
     the one-hot and frequency gap that the source column alone could not. Without it (a caller who
@@ -343,6 +345,10 @@ def _human_labels(metadata: SparkFeatureMetadata | None) -> dict[str, str]:
     ``amount vs its group baseline``). Only entries whose label differs from the raw name are
     included, so the SQL lookup stays small; anything not in the map falls back to its raw name.
     Empty when no metadata was threaded through, in which case raw engineered names are shown.
+
+    A map keyed by *source column* needs no entries at all: every key is already a column the reader
+    named, and identity labels are excluded here, so each falls through to itself. That is the intended
+    outcome rather than a gap -- there is nothing to translate.
     """
     if metadata is None:
         return {}

@@ -23,6 +23,7 @@ from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.scoring_utils import create_udf_schema
 from databricks.labs.dqx.anomaly.explainability import compute_gated_shap_contributions
+from databricks.labs.dqx.anomaly.feature_naming import source_block_indices
 
 
 def create_scoring_udf(
@@ -49,6 +50,7 @@ def create_scoring_udf_with_contributions(
     schema: StructType,
     quantile_points: list[tuple[float, float]] | None = None,
     threshold: float | None = None,
+    blocks: dict[str, list[int]] | None = None,
 ):
     """Create pandas UDF for distributed scoring with SHAP contributions.
 
@@ -71,6 +73,7 @@ def create_scoring_udf_with_contributions(
             scores,
             quantile_points,
             threshold,
+            blocks,
         )
 
         return pd.DataFrame({"anomaly_score": scores, "anomaly_contributions": contributions_list})
@@ -107,8 +110,15 @@ def score_with_sklearn_model(
 
     schema = create_udf_schema(enable_contributions)
     if enable_contributions:
+        # Blocks are a pure function of the persisted metadata, so they are built once here and closed
+        # over rather than rebuilt per partition.
         predict_udf = create_scoring_udf_with_contributions(
-            model_bytes, engineered_feature_cols, schema, quantile_points, threshold
+            model_bytes,
+            engineered_feature_cols,
+            schema,
+            quantile_points,
+            threshold,
+            source_block_indices(feature_metadata),
         )
     else:
         predict_udf = create_scoring_udf(model_bytes, engineered_feature_cols, schema)
@@ -158,6 +168,7 @@ def score_with_sklearn_model_local(
             scores,
             quantile_points,
             threshold,
+            source_block_indices(feature_metadata),
         )
 
     result_pdf = pd.DataFrame(result)

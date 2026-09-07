@@ -292,3 +292,98 @@ def test_the_detector_round_trips_through_mlflow_in_the_format_dqx_declares():
     # Attribution is the reason this detector exists in DQX rather than raw scipy, so it has to survive
     # the round trip too.
     np.testing.assert_allclose(reloaded.feature_contributions(probe), detector.feature_contributions(probe))
+
+
+# ── source-block attribution: several views of one metric must not dilute each other ─────────────────
+
+
+def test_a_single_feature_block_reduces_to_the_per_feature_formula():
+    """The block form generalises the leave-one-out identity; it must not redefine it.
+
+    Asserted rather than argued, because if these two disagreed then every model without derived features
+    would silently change its explanations.
+    """
+    detector = MahalanobisDetector(ridge=0.0).fit(_sample_from(_CORRELATED, n_samples=20000, seed=3))
+    probe = np.array([[1.0, 0.5], [3.0, -2.0]])
+
+    per_feature = detector.feature_contributions(probe)
+    singletons = detector.block_contributions(probe, [[0], [1]])
+
+    np.testing.assert_allclose(singletons, per_feature, rtol=1e-12)
+
+
+def test_an_affine_duplicate_of_a_metric_does_not_make_another_metric_the_cause():
+    """The defect this exists for, as the review's own probe.
+
+    Feature engineering gives one metric several views -- itself, its deviation from its group's baseline,
+    its deviation from its expected level. A constant temporal expectation makes ``driver_rel_time`` an
+    affine duplicate of *driver*. Explaining views one at a time then measures almost nothing for either
+    copy, because dropping one leaves the other, and normalising those small numbers hands the blame to an
+    innocent metric: measured, 99.8% *driver* became 99.9% *bystander* while the score did not move.
+
+    Blocking by source must reproduce the undisturbed explanation.
+    """
+    rng = np.random.default_rng(0)
+    driver, bystander = rng.normal(0, 1, 4000), rng.normal(0, 1, 4000)
+
+    undisturbed = MahalanobisDetector().fit(np.column_stack([driver, bystander]))
+    base = undisturbed.feature_contributions(np.array([[8.0, 0.5]]))[0]
+    base_share = 100.0 * base / base.sum()
+
+    expanded = MahalanobisDetector().fit(np.column_stack([driver, driver - 3.0, bystander]))
+    probe = np.array([[8.0, 5.0, 0.5]])
+
+    per_feature = expanded.feature_contributions(probe)[0]
+    per_feature_share = 100.0 * per_feature / per_feature.sum()
+    # The bug, pinned so its absence is not mistaken for the test being vacuous.
+    assert per_feature_share[2] > 90.0, "expected the per-feature form to blame the bystander"
+
+    blocked = expanded.block_contributions(probe, [[0, 1], [2]])[0]
+    blocked_share = 100.0 * blocked / blocked.sum()
+
+    assert blocked_share[0] > 90.0, f"the driver's block should dominate, got {blocked_share.round(1)}"
+    np.testing.assert_allclose(blocked_share, base_share, atol=0.5)
+
+
+def test_a_block_of_only_constant_features_scores_zero():
+    """Constant-in-training features are excluded from the distance, so a block of nothing but those has
+    no drop to report -- and must not raise on an empty solve."""
+    varying = _sample_from(_CORRELATED)
+    train = np.hstack([varying, np.full((len(varying), 1), 3.0)])
+    detector = MahalanobisDetector().fit(train)
+
+    drops = detector.block_contributions(np.array([[1.0, 0.5, 3.0]]), [[0, 1], [2]])
+
+    assert drops[0, 1] == 0.0
+    assert drops[0, 0] > 0.0
+
+
+def test_block_drops_are_not_additive_and_the_docstring_says_so():
+    """Overlapping information belongs to no single block, so blocks do not sum to the distance.
+
+    Pinned because a reader who assumes additivity would 'fix' the normalisation into something wrong.
+    """
+    detector = MahalanobisDetector(ridge=0.0).fit(_sample_from(_CORRELATED, n_samples=20000, seed=5))
+    probe = np.array([[1.0, 0.5]])
+
+    total = float(detector.mahalanobis_squared(probe)[0])
+    blocked_sum = float(detector.block_contributions(probe, [[0], [1]]).sum())
+
+    assert not np.isclose(blocked_sum, total)
+    assert "Not additive" in MahalanobisDetector.block_contributions.__doc__
+
+
+def test_one_hot_categories_of_one_column_form_a_single_block():
+    """A categorical column becomes several indicators, and they are one source for explanation purposes.
+
+    Without blocking, an unseen value's evidence is spread across every indicator of that column.
+    """
+    rng = np.random.default_rng(11)
+    metric = rng.normal(0, 1, 600)
+    indicator = (rng.random(600) < 0.5).astype(float)
+    detector = MahalanobisDetector().fit(np.column_stack([metric, indicator, 1.0 - indicator]))
+
+    drops = detector.block_contributions(np.array([[0.2, 0.0, 0.0]]), [[0], [1, 2]])
+
+    # An unseen category violates the one-hot sum, which is a property of the pair, not of either column.
+    assert drops[0, 1] > drops[0, 0]

@@ -59,6 +59,7 @@ action. Recorded in ``robust_gate.py`` and ``robust_gate2.py`` alongside the ben
 
 import logging
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 import cloudpickle
@@ -240,6 +241,63 @@ class MahalanobisDetector(BaseEstimator, OutlierMixin):
         contributions = np.zeros((active_contributions.shape[0], self.n_features_in_), dtype=float)
         contributions[:, self.active_] = active_contributions
         return contributions
+
+    def block_contributions(self, X: np.ndarray, blocks: "Sequence[Sequence[int]]") -> np.ndarray:
+        """Joint-marginalisation drop for each *group* of features, rather than one feature at a time.
+
+        Feature engineering can give one source column several engineered views -- the metric itself, its
+        deviation from its group's baseline, its deviation from its expected level at that time. Explaining
+        those views individually is unsound, because dropping one leaves another copy of the same
+        information behind, so the measured loss is small for *every* view. Normalising those small numbers
+        then hands almost all of the apparent blame to an unrelated metric. Measured on a correlated pair:
+        adding one affine duplicate of *x* moved the reported cause from 99.8% *x* to 99.9% *y*, while the
+        score itself did not move.
+
+        For a block ``G``, the drop from marginalising the whole block out at once is
+        ``(Pd)_G' inv(P_GG) (Pd)_G`` where ``P = Σ⁻¹`` and ``d = x−μ`` standardised. A single-feature block
+        reduces exactly to :meth:`feature_contributions`' ``aᵢ = (Pd)ᵢ²/(Σ⁻¹)ᵢᵢ``, which is asserted in the
+        tests rather than argued here.
+
+        **Not additive**, and deliberately so: block drops do not sum to ``d²``. Overlapping information
+        between blocks belongs to no single block, and the additive alternative goes negative -- see
+        :meth:`feature_contributions` for why negative terms are unusable downstream.
+
+        ``Σ⁻¹`` is never formed. ``L⁻¹`` is recovered once per call from the stored Cholesky factor and
+        each ``P_GG`` is built as ``(L⁻¹)_{:,G}' (L⁻¹)_{:,G}``, so nothing new is persisted and models
+        trained before this existed keep loading.
+
+        Args:
+            X: Rows to explain, shape ``(n_samples, n_features_in_)``.
+            blocks: One sequence of feature indices per block, indexing the *original* feature space.
+                Indices of constant-in-training features are ignored; a block of only those scores 0.0.
+
+        Returns:
+            Array of shape ``(n_samples, len(blocks))``, non-negative.
+        """
+        whitened = self._whitened(X)
+        precision_delta = np.linalg.solve(self.cholesky_.T, whitened.T).T
+        # L⁻¹, from which any principal submatrix of the precision follows. Σ = L L' so Σ⁻¹ = L⁻¹' L⁻¹.
+        inverse_factor = np.linalg.solve(self.cholesky_, np.eye(self.cholesky_.shape[0]))
+
+        # Original feature index -> its position among the active features, or -1 when constant.
+        active_position = np.cumsum(self.active_) - 1
+        drops = np.zeros((precision_delta.shape[0], len(blocks)), dtype=float)
+
+        for block_index, feature_indices in enumerate(blocks):
+            positions = [
+                int(active_position[i]) for i in feature_indices if 0 <= i < self.active_.size and self.active_[i]
+            ]
+            if not positions:
+                continue
+            factor_columns = inverse_factor[:, positions]
+            block_precision = factor_columns.T @ factor_columns
+            block_delta = precision_delta[:, positions]
+            solved = np.linalg.solve(block_precision, block_delta.T)
+            drops[:, block_index] = np.einsum("ij,ji->i", block_delta, solved)
+
+        # Clip at zero: the quantity is a quadratic form in a positive-definite matrix and so is
+        # non-negative in exact arithmetic, but a near-singular block can land microscopically below.
+        return np.maximum(drops, 0.0)
 
 
 # cloudpickle serialises classes **by reference** by default, which would make any pickled payload

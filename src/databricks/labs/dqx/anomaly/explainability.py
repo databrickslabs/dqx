@@ -68,7 +68,8 @@ def compute_row_attributions(
     model_local: Any,
     feature_matrix: pd.DataFrame,
     engineered_feature_cols: list[str],
-) -> tuple[np.ndarray, np.ndarray]:
+    blocks: dict[str, list[int]] | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Per-feature attribution for each row, from whichever estimator the model wraps.
 
     Two sources, one output shape. A tree model goes through ``SHAP.TreeExplainer``, which is
@@ -81,8 +82,22 @@ def compute_row_attributions(
     into all of them and make the dependency direction harder to reason about.
 
     Whatever the source, the values feed the same *format_shap_contributions*, so the emitted map has
-    identical keys, scaling and null handling either way, and everything downstream -- redaction,
-    human labels, the LLM prompt, the ``_dq_info`` schema -- is unaffected by which branch ran.
+    identical scaling and null handling either way.
+
+    *blocks* switches an estimator that supports it to **source-block** attribution, keyed by the source
+    column rather than by engineered feature. That is not cosmetic: explaining engineered features one at a
+    time is unsound when several of them share a source, because dropping one view leaves another copy of
+    the same information behind. Measured, adding one affine duplicate of a metric moved the reported cause
+    from 99.8% that metric to 99.9% an unrelated one, while the score did not move. Blocking restores
+    99.7%/0.3%, matching the undisturbed model.
+
+    Only the exact-attribution branch takes it. TreeSHAP's correct block aggregation is a **signed** sum,
+    and the tree path still discards sign (see *format_shap_contributions*), so blocking there would add
+    magnitudes that should have cancelled. That asymmetry is deliberate and tracked separately.
+
+    Returns:
+        ``(attribution, valid_indices, keys)`` where *keys* names the columns of *attribution* -- source
+        columns when blocked, engineered features otherwise.
     """
     scaler = getattr(model_local, "named_steps", {}).get("scaler")
     estimator = getattr(model_local, "named_steps", {}).get("model", model_local)
@@ -90,17 +105,23 @@ def compute_row_attributions(
     feature_values = scaler.transform(feature_matrix) if scaler else feature_matrix.values
     valid_indices = ~pd.isna(feature_values).any(axis=1)
 
+    blocked = bool(blocks) and hasattr(estimator, "block_contributions") and len(engineered_feature_cols) > 1
+    keys = list(blocks) if blocked and blocks is not None else engineered_feature_cols
+
     attribution = np.array([])
     if valid_indices.any():
+        rows = feature_values[valid_indices]
         if len(engineered_feature_cols) == 1:
-            attribution = np.ones((len(feature_values[valid_indices]), 1))
+            attribution = np.ones((len(rows), 1))
+        elif blocked and blocks is not None:
+            attribution = estimator.block_contributions(rows, [blocks[key] for key in keys])
         elif hasattr(estimator, "feature_contributions"):
-            attribution = estimator.feature_contributions(feature_values[valid_indices])
+            attribution = estimator.feature_contributions(rows)
         else:
             explainer = SHAP.TreeExplainer(estimator)
-            attribution = explainer.shap_values(feature_values[valid_indices])
+            attribution = explainer.shap_values(rows)
 
-    return attribution, valid_indices
+    return attribution, valid_indices, keys
 
 
 # Severity-gating margin for in-UDF SHAP computation. The UDF recomputes severity from raw
@@ -155,6 +176,7 @@ def compute_gated_shap_contributions(
     scores: np.ndarray,
     quantile_points: list[tuple[float, float]] | None,
     threshold: float | None,
+    blocks: dict[str, list[int]] | None = None,
 ) -> list[dict[str, float | None] | None]:
     """Compute SHAP contributions only for rows whose severity reaches the anomaly threshold.
 
@@ -166,18 +188,20 @@ def compute_gated_shap_contributions(
     """
     num_rows = len(feature_matrix)
     if not quantile_points or threshold is None:
-        attribution, valid_indices = compute_row_attributions(model_local, feature_matrix, engineered_feature_cols)
-        return list(format_shap_contributions(attribution, valid_indices, num_rows, engineered_feature_cols))
+        attribution, valid_indices, keys = compute_row_attributions(
+            model_local, feature_matrix, engineered_feature_cols, blocks
+        )
+        return list(format_shap_contributions(attribution, valid_indices, num_rows, keys))
 
     severity = severity_from_scores(np.asarray(scores, dtype=float), quantile_points)
     anomalous_positions = np.flatnonzero(severity >= (float(threshold) - _SEVERITY_GATE_EPSILON))
     contributions: list[dict[str, float | None] | None] = [None] * num_rows
     if anomalous_positions.size:
         subset = feature_matrix.iloc[anomalous_positions]
-        attribution, valid_indices = compute_row_attributions(model_local, subset, engineered_feature_cols)
-        subset_contributions = format_shap_contributions(
-            attribution, valid_indices, len(subset), engineered_feature_cols
+        attribution, valid_indices, keys = compute_row_attributions(
+            model_local, subset, engineered_feature_cols, blocks
         )
+        subset_contributions = format_shap_contributions(attribution, valid_indices, len(subset), keys)
         for position, contribution in zip(anomalous_positions.tolist(), subset_contributions):
             contributions[position] = contribution
     return contributions

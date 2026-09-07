@@ -212,3 +212,16 @@ def source_blocks(metadata: SparkFeatureMetadata) -> dict[str, list[str]]:
     for name in metadata.engineered_feature_names:
         blocks.setdefault(source_column(name, metadata) or name, []).append(name)
     return blocks
+
+
+def source_block_indices(metadata: SparkFeatureMetadata) -> dict[str, list[int]]:
+    """:func:`source_blocks` as positions into the feature matrix, which is what an estimator needs.
+
+    Computed on the driver once per scoring run and closed over by the UDF, rather than per row or per
+    partition: it is a pure function of the persisted metadata.
+    """
+    positions = {name: index for index, name in enumerate(metadata.engineered_feature_names)}
+    return {
+        source: [positions[name] for name in names if name in positions]
+        for source, names in source_blocks(metadata).items()
+    }
