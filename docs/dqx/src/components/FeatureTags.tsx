@@ -1,6 +1,9 @@
 import React, { CSSProperties, ReactNode } from 'react';
 import Link from '@docusaurus/Link';
-import { availableSinceLabel } from './FeatureTagLabels';
+import {
+  availableSinceLabel,
+  deprecatedInLabel,
+} from './FeatureTagLabels';
 
 /**
  * Inline documentation tags for feature lifecycle stage and version information.
@@ -130,29 +133,37 @@ export function AvailableSinceVersion({
 }
 
 /**
- * Renders a "Deprecated in vX.Y.Z" tag linked to that release's notes, optionally
- * naming the recommended replacement.
+ * Renders a "Deprecated in PRODUCT vX.Y.Z" tag linked to that release's notes,
+ * optionally naming the recommended replacement.
  *
  * @param version      the release the feature was deprecated in, e.g. "0.16.0".
+ * @param releaseTag   the Git tag containing the release notes. Defaults to the
+ *                     DQX Core tag for *version*.
+ * @param productName  the product name shown in the badge and accessible link title.
  * @param replacement  optional human-readable replacement to point readers to.
  * @param heading      when true (default), uses heading-friendly sizing so the tag can
  *                     sit inline next to a page or section title; set false for body text.
  */
 export function DeprecatedInVersion({
   version,
+  releaseTag = `v${version}`,
+  productName = 'DQX',
   replacement,
   heading = true,
 }: {
   version: string;
+  releaseTag?: string;
+  productName?: string;
   replacement?: string;
   heading?: boolean;
 }): JSX.Element {
+  const label = deprecatedInLabel(productName, version);
   const title = replacement
-    ? `Deprecated in DQX v${version}; use ${replacement}`
-    : `Deprecated in DQX v${version}`;
+    ? `${label}; use ${replacement}`
+    : label;
   return (
     <Link
-      to={`${RELEASE_NOTES_BASE}v${version}`}
+      to={`${RELEASE_NOTES_BASE}${releaseTag}`}
       title={title}
       style={{ textDecoration: 'none' }}
     >
@@ -160,7 +171,7 @@ export function DeprecatedInVersion({
         className='dqx-badge dqx-badge--version'
         style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
       >
-        Deprecated in v{version}
+        {label}
       </span>
     </Link>
   );

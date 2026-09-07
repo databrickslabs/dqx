@@ -111,6 +111,7 @@ docs-install: ## Install docs site dependencies (yarn --frozen-lockfile)
 
 docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build)
 	$(UV_RUN) --group docs pydoc-markdown
+	yarn --cwd docs/dqx test
 	yarn --cwd docs/dqx build
 
 docs-serve-dev: ## Run docusaurus dev server with hot reload
