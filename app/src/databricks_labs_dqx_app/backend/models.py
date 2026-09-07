@@ -2837,14 +2837,28 @@ class ResetDatabaseIn(BaseModel):
 
 
 class ResetDatabaseOut(BaseModel):
-    """Result of a database reset — what was cleared, kept, and by whom."""
+    """Acknowledgement that a database reset was launched on a background thread.
 
-    status: str
-    performed_by: str
-    performed_at: str
-    cleared_tables: list[str] = Field(default_factory=list)
-    failed_tables: dict[str, str] = Field(default_factory=dict)
-    preserved_note: str = ""
+    The reset clears 32 cross-backend tables and reprovisions the Ask-Genie
+    space, which can outlive the Databricks Apps gateway idle timeout — so this
+    endpoint fires the work on a named daemon thread and returns immediately with
+    the initial ``running`` state. Progress (and the terminal ``succeeded`` /
+    ``failed`` outcome, with counts) is polled via ``GET /admin/reset-status``.
+    """
+
+    state: str
+    started_at: str
+
+
+class ResetStatusOut(BaseModel):
+    """Current state of the long-running database-reset job."""
+
+    state: str
+    message: str
+    started_at: str
+    updated_at: str
+    cleared_count: int = 0
+    failed_count: int = 0
 
 
 class ExportOut(BaseModel):

@@ -27,6 +27,7 @@ from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
 from .services.database_reset_service import DatabaseResetService
 from .services.discovery import DiscoveryService
+from .services.reset_status import ResetStatusStore
 from .services.draft_run_gate_service import DraftRunGateService
 from .services.job_service import JobService
 from .services.role_service import RoleService
@@ -919,6 +920,13 @@ async def get_demo_status_store(
     return DemoStatusStore(app_settings)
 
 
+async def get_reset_status_store(
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ResetStatusStore:
+    """Create the settings-backed store for the long-running database-reset job status."""
+    return ResetStatusStore(app_settings)
+
+
 async def get_demo_seed_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
@@ -1211,6 +1219,7 @@ __all__ = [
     "get_review_status_service",
     "get_schedule_config_service",
     "get_demo_status_store",
+    "get_reset_status_store",
     "get_demo_seed_service",
     "require_role",
     "CurrentUserRole",

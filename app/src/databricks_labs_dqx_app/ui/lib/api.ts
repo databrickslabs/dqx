@@ -3115,18 +3115,30 @@ export interface ResetDatabaseIn {
   confirmation_phrase: string;
 }
 
-export type ResetDatabaseOutFailedTables = {[key: string]: string};
-
 /**
- * Result of a database reset — what was cleared, kept, and by whom.
+ * Acknowledgement that a database reset was launched on a background thread.
+
+The reset clears 32 cross-backend tables and reprovisions the Ask-Genie
+space, which can outlive the Databricks Apps gateway idle timeout — so this
+endpoint fires the work on a named daemon thread and returns immediately with
+the initial ``running`` state. Progress (and the terminal ``succeeded`` /
+``failed`` outcome, with counts) is polled via ``GET /admin/reset-status``.
  */
 export interface ResetDatabaseOut {
-  status: string;
-  performed_by: string;
-  performed_at: string;
-  cleared_tables?: string[];
-  failed_tables?: ResetDatabaseOutFailedTables;
-  preserved_note?: string;
+  state: string;
+  started_at: string;
+}
+
+/**
+ * Current state of the long-running database-reset job.
+ */
+export interface ResetStatusOut {
+  state: string;
+  message: string;
+  started_at: string;
+  updated_at: string;
+  cleared_count?: number;
+  failed_count?: number;
 }
 
 export type RetentionSettingsInRetentionDays = number | null;
@@ -27608,7 +27620,13 @@ export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<ty
 
 
 /**
- * Clear ALL DQX Studio-managed data (Admin only). DESTRUCTIVE.
+ * Clear ALL DQX Studio-managed data on a background thread (Admin only). DESTRUCTIVE.
+
+The reset runs 32 cross-backend DELETEs and a full Ask-Genie space
+reprovision, which can outlive the Databricks Apps gateway idle timeout — so
+this endpoint fires the work on a named daemon thread and returns immediately
+with the initial ``running`` state. Progress and the terminal ``succeeded`` /
+``failed`` outcome (with counts) are polled via ``GET /admin/reset-status``.
 
 Guardrails:
 
@@ -27618,11 +27636,18 @@ Guardrails:
   :data:`RESET_CONFIRMATION_PHRASE`; any mismatch is a 400. This is
   defense-in-depth on top of the role gate — an accidental or replayed
   request without the phrase cannot trigger the wipe.
+- **Mutual exclusion**: a 409 is returned when a reset is already running,
+  or when a demo deployment is in progress — the two share the SP warehouse
+  + Lakebase and must not race.
 
 Scope: only the app's own ``dq_*`` tables are cleared (rows DELETEd, not
 tables dropped). The schema, the ``dq_migrations`` version tracker, and
 admin role mappings are preserved so the app keeps working and admins
 keep access. Customer/monitored data tables are never touched.
+
+The thread owns the terminal status: it writes ``succeeded`` (with counts)
+or ``failed`` (with the error message) to the reset status store, wrapping
+its body so an exception is always recorded rather than lost.
  * @summary Reset Database
  */
 export const resetDatabase = (
@@ -27690,7 +27715,8 @@ export const useResetDatabase = <TError = AxiosError<HTTPValidationError>,
 The seed runs for ~30min, so this endpoint fires it on a named daemon thread
 and returns immediately with the initial ``running`` state. Progress is
 polled via ``GET /demo/status``. A 409 is returned when a seed is already
-in progress so two concurrent deploys can't race.
+in progress, or when a database reset is running — the two share the SP
+warehouse + Lakebase and must not race.
 
 The seed service owns its terminal status: it writes ``succeeded`` or
 ``failed`` to the status store itself. The thread target only logs on an
@@ -27891,6 +27917,153 @@ export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof d
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getDemoContentStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the current state of the long-running database-reset job (Admin only).
+ * @summary Reset Status
+ */
+export const resetStatus = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ResetStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/admin/reset-status`,options
+    );
+  }
+
+
+
+
+export const getResetStatusQueryKey = () => {
+    return [
+    `/api/v1/admin/reset-status`
+    ] as const;
+    }
+
+    
+export const getResetStatusQueryOptions = <TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getResetStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof resetStatus>>> = ({ signal }) => resetStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ResetStatusQueryResult = NonNullable<Awaited<ReturnType<typeof resetStatus>>>
+export type ResetStatusQueryError = AxiosError<HTTPValidationError>
+
+
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof resetStatus>>,
+          TError,
+          Awaited<ReturnType<typeof resetStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof resetStatus>>,
+          TError,
+          Awaited<ReturnType<typeof resetStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Reset Status
+ */
+
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getResetStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getResetStatusSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getResetStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof resetStatus>>> = ({ signal }) => resetStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ResetStatusSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof resetStatus>>>
+export type ResetStatusSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Reset Status
+ */
+
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getResetStatusSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

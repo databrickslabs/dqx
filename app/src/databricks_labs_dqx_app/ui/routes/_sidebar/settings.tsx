@@ -92,7 +92,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useResetDatabase } from "@/lib/api";
+import { useResetDatabase, useResetStatus, getResetStatusQueryKey } from "@/lib/api";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -2447,7 +2447,44 @@ function DangerZoneCard() {
   const [typed, setTyped] = useState("");
   const resetMutation = useResetDatabase();
 
-  const canConfirm = typed.trim() === RESET_DB_PHRASE && !resetMutation.isPending;
+  // The reset now runs on a background thread and returns immediately; the POST
+  // no longer carries the outcome. Poll the reset-status endpoint (like
+  // DeployDemoRow polls demo/status) and drive the spinner + terminal toast off
+  // the polled state, so a request that outlives the gateway idle timeout can no
+  // longer strand the spinner forever.
+  const { data: statusResp } = useResetStatus({
+    query: {
+      refetchInterval: (query) => (query.state.data?.data?.state === "running" ? 2000 : false),
+    },
+  });
+  const status = statusResp?.data;
+  const isRunning = status?.state === "running" || resetMutation.isPending;
+
+  // Fire the success/failure toast when the polled status transitions OUT of
+  // `running` into a terminal state. A ref-tracked previous state means we only
+  // toast on a genuine running→terminal edge, never on mount over a stale
+  // terminal status from an earlier reset.
+  const prevResetStateRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const state = status?.state;
+    const prev = prevResetStateRef.current;
+    prevResetStateRef.current = state;
+    if (prev !== "running") return;
+    if (state === "succeeded") {
+      const failed = status?.failed_count ?? 0;
+      if (failed > 0) {
+        toast.warning(t("config.resetDbPartial", { count: failed }));
+      } else {
+        toast.success(t("config.resetDbSuccess", { count: status?.cleared_count ?? 0 }));
+      }
+      // Everything the app cached is now stale — refetch across the board.
+      queryClient.invalidateQueries();
+    } else if (state === "failed") {
+      toast.error(status?.message || t("config.resetDbFailed"));
+    }
+  }, [status?.state, status?.cleared_count, status?.failed_count, status?.message, queryClient, t]);
+
+  const canConfirm = typed.trim() === RESET_DB_PHRASE && !isRunning;
 
   const closeDialog = () => {
     setOpen(false);
@@ -2459,17 +2496,11 @@ function DangerZoneCard() {
     resetMutation.mutate(
       { data: { confirmation_phrase: RESET_DB_PHRASE } },
       {
-        onSuccess: (resp) => {
-          const cleared = resp.data.cleared_tables?.length ?? 0;
-          const failed = Object.keys(resp.data.failed_tables ?? {}).length;
-          if (failed > 0) {
-            toast.warning(t("config.resetDbPartial", { count: failed }));
-          } else {
-            toast.success(t("config.resetDbSuccess", { count: cleared }));
-          }
+        onSuccess: () => {
           closeDialog();
-          // Everything the app cached is now stale — refetch across the board.
-          queryClient.invalidateQueries();
+          // Kick the poll immediately so the spinner picks up the `running`
+          // state; the terminal toast fires from the polled transition above.
+          queryClient.invalidateQueries({ queryKey: getResetStatusQueryKey() });
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
@@ -2520,7 +2551,7 @@ function DangerZoneCard() {
       <Dialog
         open={open}
         onOpenChange={(o) => {
-          if (resetMutation.isPending) return;
+          if (isRunning) return;
           if (o) setOpen(true);
           else closeDialog();
         }}
@@ -2543,19 +2574,19 @@ function DangerZoneCard() {
               autoComplete="off"
               onChange={(e) => setTyped(e.target.value)}
               placeholder={t("config.resetDbConfirmPlaceholder")}
-              disabled={resetMutation.isPending}
+              disabled={isRunning}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canConfirm) handleConfirm();
               }}
             />
           </div>
           <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={resetMutation.isPending}>
+            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={isRunning}>
               {t("config.resetDbCancel")}
             </Button>
             <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={!canConfirm} className="gap-1.5 dark:bg-red-600 dark:hover:bg-red-500">
-              {resetMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {resetMutation.isPending ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
+              {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {isRunning ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
             </Button>
           </DialogFooter>
         </DialogContent>
