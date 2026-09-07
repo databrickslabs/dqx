@@ -236,9 +236,13 @@ def test_a_redundant_dummy_costs_nothing_and_an_unseen_category_scores_high():
       training row lay on, and scores enormously
 
     The second is deliberate rather than accidental, and it is not new: columns with three or more
-    categories always retained all of them, so an unseen value has always scored this way. Truncating
-    the binary case was the inconsistency, and it is what made an unexpected value in a binary column
-    invisible instead.
+    categories always retained all of them, so an unseen value has always scored this way *for this
+    detector*. Truncating the binary case was the inconsistency, and it is what made an unexpected value
+    in a binary column invisible instead.
+
+    The scoping matters. Retaining the categories puts the distinction in the encoding, but acting on it
+    needs a model that can test a constraint across columns, which IsolationForest cannot -- see
+    :func:`test_isolation_forest_does_not_detect_an_unseen_category_from_the_same_encoding`.
     """
     rng = np.random.default_rng(3)
     metric = rng.normal(10.0, 1.0, 400)
@@ -387,3 +391,87 @@ def test_one_hot_categories_of_one_column_form_a_single_block():
 
     # An unseen category violates the one-hot sum, which is a property of the pair, not of either column.
     assert drops[0, 1] > drops[0, 0]
+
+
+def test_a_row_and_its_mirror_are_indistinguishable_in_score_and_attribution():
+    """Why the prompt may not say a metric was high or low: the evidence does not contain it.
+
+    Attribution is a squared quantity, so a row displaced one way and a row displaced equally the other
+    way produce the identical score and the identical contribution map. Any narrative asserting a
+    direction from that input is right by luck half the time -- which is what the LLM exemplars used to
+    teach. Pinned here, at the source of the numbers, rather than only as a prompt assertion, because
+    this is the fact that makes the prompt rule necessary.
+    """
+    train = _sample_from(_CORRELATED, n_samples=20000, seed=7)
+    detector = MahalanobisDetector().fit(train)
+
+    centre = train.mean(axis=0)
+    displacement = np.array([4.0, 1.5])
+    above = (centre + displacement).reshape(1, -1)
+    below = (centre - displacement).reshape(1, -1)
+
+    np.testing.assert_allclose(detector.mahalanobis_squared(above), detector.mahalanobis_squared(below), rtol=1e-10)
+    np.testing.assert_allclose(detector.feature_contributions(above), detector.feature_contributions(below), rtol=1e-10)
+    np.testing.assert_allclose(
+        detector.block_contributions(above, [[0], [1]]),
+        detector.block_contributions(below, [[0], [1]]),
+        rtol=1e-10,
+    )
+
+
+def test_pruning_the_redundant_dummy_destroys_the_unseen_category_signal():
+    """Why correlated features must not be pruned here: the redundancy *is* the constraint.
+
+    An exactly collinear dummy pair looks like the textbook case for a correlation-threshold filter to
+    drop one of. But the pair's sum-to-one is the only thing making an unseen category detectable, so
+    dropping either one removes the signal entirely while leaving every score on ordinary rows intact --
+    a change that no in-sample metric would notice.
+    """
+    rng = np.random.default_rng(3)
+    metric = rng.normal(10.0, 1.0, 400)
+    indicator = (rng.random(400) < 0.5).astype(float)
+    train = np.column_stack([metric, indicator, 1.0 - indicator])
+
+    unseen, known = np.array([[10.0, 0.0, 0.0]]), np.array([[10.0, 1.0, 0.0]])
+
+    retained = MahalanobisDetector().fit(train)
+    pruned = MahalanobisDetector().fit(train[:, :2])
+
+    retained_ratio = -retained.score_samples(unseen)[0] / -retained.score_samples(known)[0]
+    pruned_ratio = -pruned.score_samples(unseen[:, :2])[0] / -pruned.score_samples(known[:, :2])[0]
+
+    assert retained_ratio > 1000.0, f"retained pair should separate sharply, got {retained_ratio:.1f}x"
+    assert pruned_ratio < 2.0, f"pruning should collapse the separation, got {pruned_ratio:.1f}x"
+
+
+def test_isolation_forest_does_not_detect_an_unseen_category_from_the_same_encoding():
+    """The limitation this encoding does *not* fix, pinned so the comment cannot drift back.
+
+    Retaining every category puts the distinction in the features, but acting on it needs a model that
+    can test a constraint *across* columns. IsolationForest splits one feature at a time, so no tree can
+    represent "these indicators sum to zero", and an all-zeros row sits inside every single indicator's
+    observed range. It therefore scores as ordinary -- here, between the two known encodings rather than
+    above both.
+
+    Asserted as a known limitation rather than a bug: catching an unrecognised category needs a
+    vocabulary check outside the learned ranking, which is tracked separately.
+    """
+    rng = np.random.default_rng(3)
+    metric = rng.normal(10.0, 1.0, 400)
+    indicator = (rng.random(400) < 0.5).astype(float)
+    train = np.column_stack([metric, indicator, 1.0 - indicator])
+
+    forest = IsolationForest(n_estimators=100, random_state=42).fit(train)
+    unseen = -forest.score_samples(np.array([[10.0, 0.0, 0.0]]))[0]
+    known = [
+        -forest.score_samples(np.array([[10.0, 1.0, 0.0]]))[0],
+        -forest.score_samples(np.array([[10.0, 0.0, 1.0]]))[0],
+    ]
+
+    assert unseen < max(known), "IsolationForest is not expected to rank an unseen category highest"
+
+    # The contrast that makes the asymmetry the point rather than an incidental measurement.
+    detector = MahalanobisDetector().fit(train)
+    maha_unseen = -detector.score_samples(np.array([[10.0, 0.0, 0.0]]))[0]
+    maha_known = -detector.score_samples(np.array([[10.0, 1.0, 0.0]]))[0]
+    assert maha_unseen > 1000.0 * maha_known

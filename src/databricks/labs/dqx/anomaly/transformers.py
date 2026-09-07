@@ -651,16 +651,28 @@ def _apply_onehot_encoding(
         # Every category is retained. Dropping one of a binary pair is the textbook way to avoid the
         # dummy-variable trap, but here it made an unexpected value invisible: the omitted reference
         # category and any value never seen in training both encode as all-zeros, so a brand-new value
-        # in a binary column produced no signal at all. With both retained, a known value sets exactly
-        # one indicator and anything unseen sets none, which the detectors can tell apart.
+        # in a binary column produced no signal whatsoever. With both retained, a known value sets
+        # exactly one indicator and anything unseen sets none -- a distinction that is *present* in the
+        # encoding, which is the point. Whether a detector acts on it is a separate question, answered
+        # below, and it makes binary consistent with every other cardinality rather than introducing a
+        # new behaviour: three or more categories were always retained in full.
         #
-        # This makes binary consistent with every other cardinality rather than introducing a new
-        # behaviour: three or more categories were always retained in full, so an unseen value has
-        # always encoded as all-zeros and scored as a large deviation. Retained categories sum to 1 on
-        # every trained row, so the correlation-aware detector sees a zero-variance direction, and a row
-        # violating that sum lies off the surface all its training data lay on. Measured: rows that do
-        # satisfy it score identically to the one-dummy encoding, so the redundant column is free, while
-        # an unseen category scores far above a known one. Both halves are pinned in
+        # Retained categories sum to 1 on every trained row, so the correlation-aware detector sees a
+        # zero-variance direction and a row violating that sum lies off the surface all its training
+        # data lay on. Measured on a binary column: rows that satisfy the constraint score identically
+        # to the one-dummy encoding, so the redundant column is free, while an unseen category scores
+        # 2,000,000 against 0.9 for a known one. Pruning the anticorrelated dummy -- which is what any
+        # correlation-threshold feature filter would do -- collapses that to 1.1 against 0.9. So the
+        # redundancy is not waste being tolerated: it *is* the off-support constraint, and that is the
+        # sharpest argument against pruning correlated features here.
+        #
+        # IsolationForest gets no such benefit, and the comment here used to imply otherwise. Its splits
+        # are axis-parallel, so no tree can test a sum across columns, and an all-zeros row sits inside
+        # every individual indicator's observed range. Measured on the same data: the unseen category
+        # scores 0.458 while the two known encodings score 0.442 and 0.467 -- ordinary, not anomalous.
+        # An unrecognised category is therefore not reliably caught under profile="tabular"; the guide
+        # says so, and catching it needs a vocabulary check outside the learned ranking rather than a
+        # different encoding. All three measurements are pinned in
         # tests/unit/test_anomaly_mahalanobis_detector.py.
         distinct_values = sorted(row[0] for row in df.select(col_name).distinct().collect() if row[0] is not None)
         onehot_categories[col_name] = distinct_values
