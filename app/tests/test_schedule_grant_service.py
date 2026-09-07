@@ -244,3 +244,57 @@ class TestManageBlockDetail:
         detail = manage_block_detail([(FQN, [{"principal": "bob@example.com", "type": "user"}])])
         assert detail["code"] == "cannot_manage_schedule_tables"
         assert detail["tables"] == [{"fqn": FQN, "manage_holders": [{"principal": "bob@example.com", "type": "user"}]}]
+
+
+class TestIdentityMemoization:
+    """Per-request identity round-trips must not scale with the table count."""
+
+    def test_caller_identity_resolved_once_across_many_checks(self, service, obo):
+        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")  # manageable
+        for i in range(25):
+            assert service.user_can_manage(f"cat.sch.t{i}") is True
+        # current_user.me() (the OBO caller identity) fires exactly once, not per table.
+        assert obo.current_user.me.call_count == 1
+
+    def test_prime_caller_identity_is_single_round_trip(self, service, obo):
+        service.prime_caller_identity()
+        service.prime_caller_identity()
+        for i in range(10):
+            service.user_can_manage(f"cat.sch.t{i}")
+        assert obo.current_user.me.call_count == 1
+
+    async def test_task_runner_derivation_memoized_across_grants(self, service, sp):
+        service.prime_scheduler_sp_identities()
+        for i in range(15):
+            await service.grant_select_precleared_async(f"cat.sch.t{i}")
+        # jobs.get (task-runner SP derivation) fires once, not per table.
+        assert sp.jobs.get.call_count == 1
+
+    def test_app_sp_me_fallback_memoized(self, obo, sp, monkeypatch):
+        # No DATABRICKS_CLIENT_ID → app SP id falls back to the SP's own me().
+        monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+        sp.current_user.me.return_value = SimpleNamespace(user_name="app-sp", id="app-sp")
+        svc = ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="")
+        assert svc.app_sp_id() == "app-sp"
+        assert svc.app_sp_id() == "app-sp"
+        assert sp.current_user.me.call_count == 1
+
+
+class TestPreclearedGrant:
+    """The pre-gated grant path trusts the caller's MANAGE decision (checked once)."""
+
+    async def test_precleared_grant_does_not_recheck_manage(self, service, obo):
+        # Deliberately *not* manageable: no owner, no MANAGE. The gate is the
+        # caller's responsibility; the pre-gated grant must not re-verify it, so
+        # it grants without ever reading ownership / effective privileges.
+        granted = await service.grant_select_precleared_async(FQN)
+
+        assert granted == ["app-sp-id", "task-runner-sp"]
+        obo.grants.get_effective.assert_not_called()
+        obo.tables.get.assert_not_called()
+        obo.schemas.get.assert_not_called()
+        obo.catalogs.get.assert_not_called()
+
+    async def test_precleared_grant_synthetic_is_noop(self, service, obo):
+        assert await service.grant_select_precleared_async("__sql_check__/x") == []
+        obo.grants.update.assert_not_called()

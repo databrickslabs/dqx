@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -16,7 +17,10 @@ from databricks_labs_dqx_app.backend.models import (
     ScheduleConfigIn,
     ScheduleConfigOut,
 )
-from databricks_labs_dqx_app.backend.services.schedule_config_service import ScheduleConfigService
+from databricks_labs_dqx_app.backend.services.schedule_config_service import (
+    ScheduleConfigEntry,
+    ScheduleConfigService,
+)
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     ScheduleGrantService,
@@ -26,6 +30,12 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
 router = APIRouter()
 
 _ADMINS = [UserRole.ADMIN]
+
+# Bound fan-out for the per-table grant enforcement. ``scope_mode='all'`` can
+# resolve to hundreds of approved-rule tables; each table costs a handful of
+# blocking SDK round-trips. Running them under a bounded semaphore keeps the
+# save well within the client timeout without flooding the workspace API.
+_GRANT_CONCURRENCY = 8
 
 # Schedule listing/reading is gated on CAN_RUN_ROLES: the schedules tab
 # lives inside the Run Rules page, which only ADMIN and RULE_AUTHOR may
@@ -42,7 +52,7 @@ def _schedule_is_enabled(config: dict) -> bool:
     return bool(config.get("enabled", True)) and not bool(config.get("paused", False))
 
 
-def _enforce_scheduler_grants(
+async def _enforce_scheduler_grants(
     config: dict,
     svc: ScheduleConfigService,
     grant_svc: ScheduleGrantService,
@@ -52,21 +62,55 @@ def _enforce_scheduler_grants(
     Hard-blocks (403) when the caller lacks MANAGE on any resolved table; grants
     (idempotently) to the scheduler SPs otherwise. A no-op for dormant schedules
     or scopes that resolve to no tables.
+
+    Every in-scope table is MANAGE-gated **and** (re-)granted on every save —
+    re-saving is how a revoked or previously-failed grant is re-detected and
+    re-applied, so coverage is never trimmed to a delta. The work is made fast,
+    not smaller: caller/SP identities are resolved once per request (memoized on
+    *grant_svc*) and the per-table gate + grant round-trips run concurrently
+    under a bounded semaphore. MANAGE is checked exactly once per table — the
+    grant path trusts the gate's decision.
     """
     if not _schedule_is_enabled(config):
         return
-    target_fqns = svc.resolve_scope_table_fqns(config)
+    target_fqns = await asyncio.to_thread(svc.resolve_scope_table_fqns, config)
     if not target_fqns:
         return
-    blocked: list[tuple[str, list[dict[str, str]]]] = []
-    for fqn in target_fqns:
-        if not grant_svc.user_can_manage(fqn):
-            blocked.append((fqn, grant_svc.manage_holders(fqn)))
-    if blocked:
+
+    sem = asyncio.Semaphore(_GRANT_CONCURRENCY)
+
+    # Resolve the caller identity once, up front, so the concurrent gate checks
+    # below read it from cache instead of each re-issuing current_user.me().
+    await asyncio.to_thread(grant_svc.prime_caller_identity)
+
+    async def _gate(fqn: str) -> tuple[str, bool]:
+        async with sem:
+            return fqn, await grant_svc.user_can_manage_async(fqn)
+
+    gate_results = await asyncio.gather(*(_gate(fqn) for fqn in target_fqns))
+    manageable = [fqn for fqn, can_manage in gate_results if can_manage]
+    blocked_fqns = [fqn for fqn, can_manage in gate_results if not can_manage]
+
+    if blocked_fqns:
+        # Enumerate MANAGE holders for every blocked table (concurrently) so the
+        # 403 lists all of them, not just the first.
+        async def _holders(fqn: str) -> tuple[str, list[dict[str, str]]]:
+            async with sem:
+                return fqn, await grant_svc.manage_holders_async(fqn)
+
+        blocked = list(await asyncio.gather(*(_holders(fqn) for fqn in blocked_fqns)))
         raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
+
+    # All tables are MANAGE-gated; grant SELECT to the scheduler SPs concurrently,
+    # skipping the (now-redundant) per-table MANAGE re-check.
+    await asyncio.to_thread(grant_svc.prime_scheduler_sp_identities)
+
+    async def _grant(fqn: str) -> None:
+        async with sem:
+            await grant_svc.grant_select_precleared_async(fqn)
+
     try:
-        for fqn in target_fqns:
-            grant_svc.grant_select_to_schedulers(fqn)
+        await asyncio.gather(*(_grant(fqn) for fqn in manageable))
     except CannotManageError as e:
         raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
     except HTTPException:
@@ -77,6 +121,17 @@ def _enforce_scheduler_grants(
             status_code=502,
             detail="Could not grant the scheduler read access to the scheduled tables. Please try again.",
         )
+
+
+def _save_schedule_entry(
+    obo_ws: WorkspaceClient,
+    svc: ScheduleConfigService,
+    body: ScheduleConfigIn,
+) -> ScheduleConfigEntry:
+    """Persist the schedule row (blocking SDK + OLTP calls); run off the event loop."""
+    user = obo_ws.current_user.me()
+    user_email = user.user_name or "unknown"
+    return svc.save(body.schedule_name, body.config, user_email)
 
 
 def _notify_scheduler() -> None:
@@ -148,7 +203,7 @@ def get_schedule(
     operation_id="saveSchedule",
     dependencies=[require_role(*_ADMINS)],
 )
-def save_schedule(
+async def save_schedule(
     body: ScheduleConfigIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
@@ -163,11 +218,9 @@ def save_schedule(
     MANAGE on any, the save is hard-blocked (403) naming the blocked tables and,
     for each, the users/groups that hold MANAGE (Task 12).
     """
-    _enforce_scheduler_grants(body.config, svc, grant_svc)
+    await _enforce_scheduler_grants(body.config, svc, grant_svc)
     try:
-        user = obo_ws.current_user.me()
-        user_email = user.user_name or "unknown"
-        entry = svc.save(body.schedule_name, body.config, user_email)
+        entry = await asyncio.to_thread(_save_schedule_entry, obo_ws, svc, body)
         _notify_scheduler()
         return ScheduleConfigOut(
             schedule_name=entry.schedule_name,
