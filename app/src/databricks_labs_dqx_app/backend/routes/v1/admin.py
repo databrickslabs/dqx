@@ -54,6 +54,19 @@ def _sanitize(text: str) -> str:
 # enforced server-side regardless of any UI gating.
 router = APIRouter(dependencies=[require_role(UserRole.ADMIN)])
 
+# Serializes the reset/demo "acquire running" check-and-set so it is atomic
+# within a process. Both the reset and demo handlers each read is_running() on
+# BOTH stores and then persist a `running` status — a non-atomic sequence where
+# two near-simultaneous requests could both observe "not running" and both
+# launch a destructive job. This ONE lock is shared by both handlers so it also
+# enforces reset⇄demo mutual exclusion (they share the SP warehouse + Lakebase
+# and must not race). It guards ONLY the check-and-set, and is released before
+# the long-running work / daemon-thread launch. NOTE: this is single-process
+# atomicity only; under multiple uvicorn workers a true guard would need a
+# DB-level lock (e.g. a conditional status upsert). Single-instance is the
+# current deployment target, so the in-process lock is the right scope now.
+_job_lock = threading.Lock()
+
 
 def _utc_now_str() -> str:
     """Return the current UTC time as a ``YYYY-MM-DD HH:MM:SS`` string."""
@@ -125,16 +138,6 @@ def reset_database(
             detail="Confirmation phrase does not match. Type the exact phrase to confirm the reset.",
         )
 
-    # Mutual exclusion: reset and demo deploy share the SP warehouse + Lakebase,
-    # so never let them run concurrently.
-    if status_store.is_running():
-        raise HTTPException(status_code=409, detail="A database reset is already in progress.")
-    if demo_status_store.is_running():
-        raise HTTPException(
-            status_code=409,
-            detail="A demo deployment is in progress. Wait for it to finish before resetting.",
-        )
-
     try:
         user = obo_ws.current_user.me()
         performed_by = user.user_name or "unknown"
@@ -145,15 +148,31 @@ def reset_database(
         performed_by = "unknown"
 
     started_at = _utc_now_str()
-    status_store.set(
-        ResetStatus(
-            state="running",
-            message="Database reset queued.",
-            started_at=started_at,
-            updated_at=started_at,
-        ),
-        user_email=performed_by,
-    )
+
+    # Mutual exclusion: reset and demo deploy share the SP warehouse + Lakebase,
+    # so never let them run concurrently. The is_running() checks and the
+    # set(running) below are a check-then-set that must be ATOMIC — otherwise two
+    # near-simultaneous requests could both observe "not running" and both launch
+    # a destructive reset (TOCTOU). ``_job_lock`` (shared with the demo handler)
+    # makes acquiring "running" atomic within the process; it is released before
+    # the long reset runs on the daemon thread below.
+    with _job_lock:
+        if status_store.is_running():
+            raise HTTPException(status_code=409, detail="A database reset is already in progress.")
+        if demo_status_store.is_running():
+            raise HTTPException(
+                status_code=409,
+                detail="A demo deployment is in progress. Wait for it to finish before resetting.",
+            )
+        status_store.set(
+            ResetStatus(
+                state="running",
+                message="Database reset queued.",
+                started_at=started_at,
+                updated_at=started_at,
+            ),
+            user_email=performed_by,
+        )
 
     def _run() -> None:
         try:
@@ -210,14 +229,6 @@ def deploy_demo_content(
     ``failed`` to the status store itself. The thread target only logs on an
     escaped failure — it does not overwrite the status.
     """
-    if status_store.is_running():
-        raise HTTPException(status_code=409, detail="A demo deployment is already in progress.")
-    if reset_status_store.is_running():
-        raise HTTPException(
-            status_code=409,
-            detail="A database reset is in progress. Wait for it to finish before deploying demo content.",
-        )
-
     try:
         performed_by = obo_ws.current_user.me().user_name or "unknown"
     except Exception:
@@ -225,16 +236,31 @@ def deploy_demo_content(
         performed_by = "unknown"
 
     started_at = _utc_now_str()
-    status_store.set(
-        DemoStatus(
-            state="running",
-            phase="starting",
-            message="Demo deployment queued.",
-            started_at=started_at,
-            updated_at=started_at,
-        ),
-        user_email=performed_by,
-    )
+
+    # Mutual exclusion, atomic check-and-set — see the matching block in
+    # ``reset_database``. The is_running() checks (demo + reset) and the
+    # set(running) below must not interleave with a concurrent request, or two
+    # deploys (or a deploy racing a reset) could both launch. ``_job_lock`` is
+    # the SAME lock the reset handler uses, so it enforces demo⇄reset exclusion
+    # too; it is released before the ~30min seed runs on the daemon thread.
+    with _job_lock:
+        if status_store.is_running():
+            raise HTTPException(status_code=409, detail="A demo deployment is already in progress.")
+        if reset_status_store.is_running():
+            raise HTTPException(
+                status_code=409,
+                detail="A database reset is in progress. Wait for it to finish before deploying demo content.",
+            )
+        status_store.set(
+            DemoStatus(
+                state="running",
+                phase="starting",
+                message="Demo deployment queued.",
+                started_at=started_at,
+                updated_at=started_at,
+            ),
+            user_email=performed_by,
+        )
 
     # Governed class.* column tags need ASSIGN on the tag policy — the app SP
     # usually lacks it, but the admin triggering this deploy usually holds it.

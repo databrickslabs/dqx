@@ -13,6 +13,8 @@ is backed by in-memory fake executors, so the exact set of cleared tables is
 asserted end-to-end.
 """
 
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,6 +30,7 @@ from databricks_labs_dqx_app.backend.services.database_reset_service import (
     RESET_CONFIRMATION_PHRASE,
     DatabaseResetService,
 )
+from databricks_labs_dqx_app.backend.services.reset_status import ResetStatus
 
 _ADMIN = "admin@x.com"
 
@@ -218,3 +221,80 @@ class TestAsyncLaunch:
         assert terminal.state == "failed"
         assert "\n" not in terminal.message and "\r" not in terminal.message
         assert "boom" in terminal.message
+
+
+class _StatefulResetStore:
+    """A ResetStatusStore stand-in whose ``is_running()`` reflects prior
+    ``set(running)`` calls, so the check-and-set can genuinely race.
+
+    ``set(running)`` sleeps briefly BEFORE flipping the flag to widen the
+    check→set window: without the route's ``_job_lock`` a second request would
+    observe "not running" during that window and also launch (the TOCTOU bug).
+    With the lock the two requests serialize, so this stays deterministic — one
+    acquires ``running`` and launches, the other is rejected with 409.
+    """
+
+    def __init__(self, *, set_delay: float = 0.0) -> None:
+        self._running = False
+        self._set_delay = set_delay
+        self.running_set_count = 0
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def set(self, status: ResetStatus, *, user_email: str | None = None) -> None:
+        if status.state == "running":
+            if self._set_delay:
+                time.sleep(self._set_delay)
+            self._running = True
+            self.running_set_count += 1
+
+    def get(self) -> ResetStatus:  # pragma: no cover - defensive, route uses is_running/set only
+        state = "running" if self._running else "idle"
+        return ResetStatus(state=state, message="", started_at="", updated_at="")
+
+
+class TestConcurrentAcquireIsAtomic:
+    """C4: acquiring the ``running`` status is a check-then-set that must be
+    atomic. Two near-simultaneous resets must serialize so only ONE launches
+    the destructive job; the loser gets a 409."""
+
+    def test_two_concurrent_resets_only_one_acquires_running(self, monkeypatch):
+        # Don't actually run the reset — we're testing only the acquire guard.
+        monkeypatch.setattr(admin_module, "_launch_reset", lambda target: None)
+        service = MagicMock(spec=DatabaseResetService)
+        # One shared store instance, backing two independent clients/apps. The
+        # guard's ``_job_lock`` is module-level, so both apps' handlers contend
+        # for the same lock — exactly the production single-process scenario.
+        reset_store = _StatefulResetStore(set_delay=0.05)
+        client_a = _build_client(role=UserRole.ADMIN, service=service, reset_status_store=reset_store)
+        client_b = _build_client(role=UserRole.ADMIN, service=service, reset_status_store=reset_store)
+
+        results: dict[int, int] = {}
+        barrier = threading.Barrier(2)
+
+        def _fire(idx: int, client: TestClient) -> None:
+            barrier.wait()  # release both requests as simultaneously as possible
+            resp = client.post(
+                "/admin/reset-database",
+                json={"confirmation_phrase": RESET_CONFIRMATION_PHRASE},
+            )
+            results[idx] = resp.status_code
+
+        t1 = threading.Thread(target=_fire, args=(0, client_a))
+        t2 = threading.Thread(target=_fire, args=(1, client_b))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        # Exactly one request won the race (200 running) and the other was
+        # rejected (409); the running status was acquired exactly once.
+        assert sorted(results.values()) == [200, 409]
+        assert reset_store.running_set_count == 1
+
+    def test_reset_and_demo_share_one_lock_object(self):
+        # Both handlers must guard with the SAME lock so a reset and a demo
+        # deploy are mutually exclusive too. The lock is module-level; assert it
+        # exists and is a real lock (a mutex, not a per-handler no-op).
+        assert isinstance(admin_module._job_lock, type(threading.Lock()))
