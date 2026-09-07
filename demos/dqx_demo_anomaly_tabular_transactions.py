@@ -637,9 +637,10 @@ report_thresholds(volume_result, "Daily volume, judged against its own trend:", 
 # COMMAND ----------
 # DBTITLE 1,Read the contributions, which name the expected level
 
-print("💡 The contributions say '<metric> vs its expected level at that time', not 'unusual <metric>'.")
-print("   That distinction is the whole point: every one of these counts sits inside the range the")
-print("   history covers. Only their position against the trend is wrong.\n")
+print("💡 The contributions name the metric, not the comparison that objected to it. Every one of")
+print("   these counts sits inside the range the history covers, so what is wrong is their position")
+print("   against the trend rather than their value -- but the map says 'this metric mattered', and")
+print("   it is baseline_over_time being set that tells you the comparison it mattered against.\n")
 
 display(
     volume_result.filter(volume_anomaly.getField("is_anomaly"))

@@ -220,11 +220,12 @@ class MahalanobisDetector(BaseEstimator, OutlierMixin):
         The tempting alternative, the exactly-additive ``cᵢ = (x−μ)ᵢ·zᵢ`` with ``Σᵢ cᵢ = d²``, is
         **wrong for this pipeline**: its terms can be negative when features are correlated. With
         ``Σ = [[1, 0.9], [0.9, 1]]`` and ``x−μ = (1.0, 0.5)`` it gives ``(2.895, −1.053)`` — the second
-        feature *reduced* the distance. Every consumer downstream takes ``abs()`` and renormalises
-        (``explainability.format_shap_contributions``, ``_pattern_spark_expr``,
-        ``_format_contributions_sql``), so that term would be presented to an LLM as a 27% *driver* of
-        the anomaly and written into a narrative. Additivity buys nothing here, because nothing
-        downstream consumes it; non-negativity is what correctness requires.
+        feature *reduced* the distance. ``explainability.format_shap_contributions`` drops values at or
+        below zero and renormalises, so that term would not be reported as a 27% driver -- it would be
+        dropped entirely, and the feature that *did* reduce the distance would silently vanish from an
+        explanation whose remaining shares no longer describe the distance they came from. Additivity
+        buys nothing here, because nothing downstream consumes it; non-negativity is what correctness
+        requires, and it has to come from the formula rather than from a clip.
 
         Constant-in-training features are excluded from the distance and reported as ``0.0``, so the
         returned width always matches the trained feature count and therefore

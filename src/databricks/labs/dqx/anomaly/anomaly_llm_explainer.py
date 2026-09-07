@@ -65,8 +65,11 @@ _ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
     ),
     (
         "IsolationForest",
-        "individual feature values. A high contribution means this feature's own value was unusual for the "
-        "rows it was compared against.",
+        "how far each metric's own value sits from the values the model was trained on. A high contribution "
+        "means this metric was unusual for the rows it was compared against. Where a metric is compared "
+        "several ways at once -- against the whole table, against its own group, against its expected level "
+        "at that time -- the share covers all of those together, so it says the metric was involved, not "
+        "which comparison objected.",
     ),
 )
 _DEFAULT_ATTRIBUTION_SEMANTICS = _ATTRIBUTION_SEMANTICS[-1][1]
@@ -328,20 +331,24 @@ def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadat
 def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
     """Pattern key as a pure-Spark-SQL expression (no Python UDFs shipped to executors).
 
-    Drops null and redacted entries, takes the top-2 features by |value| desc,
+    Drops null, zero and redacted entries, takes the top-2 features by value desc,
     sorts their names asc, and joins with '+'. Empty or null maps yield 'unknown'.
-    Ranking uses absolute value so signed SHAP contributions pick the same top-2
-    as `format_contributions_map`. Implemented in SQL so Databricks Connect /
-    serverless workers don't need the dqx package installed.
+    Zero entries are dropped because a feature that earned no share did not contribute,
+    and pairing it into the key would group rows by a feature neither of them was flagged
+    for. Values are non-negative shares, so ordering by value and by |value| agree; the
+    abs() is kept only so the comparator matches `format_contributions_map`'s.
+    Implemented in SQL so Databricks Connect / serverless workers don't need the dqx
+    package installed.
     """
     col = f"`{contributions_col}`"
     if redact_set:
         redact_arr = "array(" + ", ".join(f"'{_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
         entries = (
-            f"filter(map_entries({col}), e -> e.value is not null " f"and not array_contains({redact_arr}, e.key))"
+            f"filter(map_entries({col}), e -> e.value is not null and e.value > 0 "
+            f"and not array_contains({redact_arr}, e.key))"
         )
     else:
-        entries = f"filter(map_entries({col}), e -> e.value is not null)"
+        entries = f"filter(map_entries({col}), e -> e.value is not null and e.value > 0)"
     sql = (
         f"case when {col} is null or size({entries}) = 0 then 'unknown' "
         f"else concat_ws('+', array_sort(transform(slice(array_sort({entries}, "
@@ -456,7 +463,12 @@ def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) 
 
     Mirrors *format_contributions_map* but stays inside Spark so per-group prompts can be
     assembled without a driver-side loop. Null/empty maps yield 'unknown'; entries are sorted by
-    absolute value descending and percentages are normalised against the L1 sum of |value|.
+    value descending and percentages are normalised against their sum.
+
+    Null *and zero* entries are dropped, matching *format_contributions_map*: a feature that earned no
+    share contributed nothing, and listing it as 'quantity (0%)' hands the model a driver to explain that
+    the attribution says nothing about. Values are non-negative shares, so ordering by value and by
+    |value| agree; the abs() is kept only to keep the two implementations' comparators identical.
 
     *labels* maps an engineered feature name to its human label; when supplied, each key is
     rendered as its label ('amount_rel_baseline' -> 'amount vs its group baseline'), falling back
@@ -465,7 +477,7 @@ def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) 
     dropped sensitive keys upstream in *_aggregate_groups_spark*, so labelling never re-exposes a
     redacted feature.
     """
-    entries = "filter(map_entries(`mean_contributions`), e -> e.value is not null)"
+    entries = "filter(map_entries(`mean_contributions`), e -> e.value is not null and e.value > 0)"
     sorted_entries = (
         f"array_sort({entries}, (a, b) -> "
         f"case when abs(b.value) > abs(a.value) then 1 "

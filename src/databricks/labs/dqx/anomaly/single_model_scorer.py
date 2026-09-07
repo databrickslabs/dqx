@@ -67,7 +67,7 @@ def create_scoring_udf_with_contributions(
         scores = -model_local.score_samples(feature_matrix)
 
         contributions_list = compute_gated_shap_contributions(
-            model_local,
+            [model_local],
             feature_matrix,
             engineered_feature_cols,
             scores,
@@ -162,7 +162,7 @@ def score_with_sklearn_model_local(
 
     if enable_contributions:
         result["anomaly_contributions"] = compute_gated_shap_contributions(
-            sklearn_model,
+            [sklearn_model],
             feature_matrix,
             engineered_feature_cols,
             scores,

@@ -297,12 +297,15 @@ def test_attribution_semantics_distinguishes_correlation_from_value_anomalies():
     assert "do not assert either" in correlation
 
     values = llm_explainer.attribution_semantics("IsolationForest")
-    assert "feature's own value" in values
+    assert "metric's own value" in values
     assert correlation != values
 
     value_based = llm_explainer.attribution_semantics("IsolationForest")
-    assert "own value was unusual" in value_based
+    assert "was unusual for the rows it was compared against" in value_based
     assert "relationship" not in value_based
+    # A key covers a column with every comparison made of it, so the reading must not promise which
+    # comparison objected -- a share of 60% on a metric compared three ways says the metric was involved.
+    assert "not which comparison objected" in value_based
 
     assert correlation != value_based
 

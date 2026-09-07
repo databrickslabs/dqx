@@ -119,20 +119,26 @@ def _train_both_profiles(spark, quick_model_factory, columns, train_rows):
     return models
 
 
-def _assert_contribution_contract(contributions_series, engineered_names: set[str]) -> None:
-    """Every map is keyed by the persisted contract, non-negative, and normalised to 100.
+def _assert_contribution_contract(contributions_series, source_columns: set[str]) -> None:
+    """Every map is keyed by the caller's own columns, non-negative, and normalised to 100.
 
-    Non-negativity is the load-bearing one: the leave-one-out attribution is non-negative by
-    construction (the precision matrix is PSD), which is what lets it reuse the SHAP formatter
-    unchanged. A negative value here would mean the formula regressed, not the formatting.
+    Keys are asserted against the **source columns**, not the engineered feature names, because that is
+    the contract: attribution is grouped so one column reports once however many features were derived
+    from it. Asserting engineered names would pass by accident on an all-numeric fixture, where each
+    column's only feature is named after it, and would fail the moment a categorical appeared.
+
+    Non-negativity is the other load-bearing one. Both detectors produce it by construction rather than
+    by clipping -- the leave-one-out attribution because the precision matrix is PSD, and the tree path
+    because the formatter drops the side that argued the row was normal -- so a negative here means a
+    formula regressed.
     """
     for contributions in contributions_series:
         assert contributions is not None, "a flagged row carried no contributions map"
-        unknown = sorted(set(contributions) - engineered_names)
-        assert not unknown, f"contribution keys {unknown} are not in the persisted engineered feature names"
+        unknown = sorted(set(contributions) - source_columns)
+        assert not unknown, f"contribution keys {unknown} are not columns the caller passed"
         values = [v for v in contributions.values() if v is not None]
         assert values, "a flagged row's contributions map held only nulls"
-        assert min(values) >= 0.0, f"leave-one-out contributions must be non-negative, got {min(values)}"
+        assert min(values) >= 0.0, f"contributions must be non-negative, got {min(values)}"
         assert abs(sum(values) - 100.0) < 0.5, f"contributions should be normalised to 100, summed to {sum(values)}"
 
 
@@ -251,10 +257,11 @@ def test_timeseries_profile_end_to_end(
 
     # 3. Contributions honour the persisted feature contract on every flagged row.
     engineered_names = set(_engineered_feature_names(spark, timeseries_registry, timeseries_model))
+    assert engineered_names, "the persisted feature contract should be readable back from the registry"
     flagged = timeseries[timeseries["flagged"] == 1.0]
     assert not flagged.empty, "no row was flagged, so the contributions assertions would pass vacuously"
 
-    _assert_contribution_contract(flagged["contributions"], engineered_names)
+    _assert_contribution_contract(flagged["contributions"], set(columns))
 
     # Gating must actually have happened. Attribution costs an order of magnitude more than scoring,
     # so computing it for every row is a performance regression rather than a cosmetic one. Asserted as

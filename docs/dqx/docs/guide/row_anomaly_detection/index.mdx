@@ -558,9 +558,11 @@ feature engineering is not part of it.
 
 That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data the two are closer than
 this table suggests, so **choose on the shape of the anomaly you expect, not on an expected accuracy gap.**
-Two things independent of accuracy do favour the default: `"tabular"` trains an ensemble, so it can report
-`confidence_std`, and its contributions come from SHAP. Detection quality on DQX's own synthetic fixtures is
-published in [Benchmarks](/docs/reference/benchmarks).
+One thing independent of accuracy favours the default: `"tabular"` trains an ensemble, so it can report
+`confidence_std`. Its contributions come from SHAP rather than an exact decomposition, but both profiles
+report them the same way — one entry per column you passed, and on an ensemble averaged across members, so
+the score, `confidence_std` and the contributions all describe the same aggregate. Detection quality on
+DQX's own synthetic fixtures is published in [Benchmarks](/docs/reference/benchmarks).
 
 One capability difference is worth knowing because no accuracy number shows it. A **category that never
 appeared in training** — a new payment type, an unrecognised status code — is caught by `"timeseries"` but
@@ -621,7 +623,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 1. **Feature engineering** (automatic): DQX detects column types and creates features (numerical standardized, categorical one-hot or frequency-encoded, temporal expanded to hour/day/month/weekend).
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains the detector your `profile` selects — an ensemble of Isolation Forest models by default, or a single correlation-aware model for `profile="timeseries"` — and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; each `train()` call registers one model under its name and archives the previously active version.
-4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Feature contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring. How they are computed depends on the detector — SHAP for Isolation Forest, an exact decomposition for the correlation-aware detector — and so does what the map's keys name: the correlation-aware detector reports one entry per **source column you passed**, while Isolation Forest reports one per engineered feature (so a single column can appear as several entries, for example `signup_hour_sin`). Either way the values are percentages of the same total.
+4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Feature contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring. How they are computed depends on the detector — SHAP for Isolation Forest, an exact decomposition for the correlation-aware detector — but both report **one entry per column you passed**, not per engineered feature, so you read back your own column names. That matters because DQX derives up to three features from one numeric column; scoring each separately splits the column's evidence between them and understates it. Each value is that column's share of the evidence that made the row look unusual. A column that made the row look *more* normal shows `0`, and a flagged row for which nothing pointed towards an anomaly carries an all-null map rather than an invented even split. With an ensemble, the contributions are the mean across members, so the score, `confidence_std` and the contributions all describe the same aggregate.
 5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping (categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group, for example region or product category). A discovered grouping is used as `baseline_by` (see [Group-aware anomaly detection](#group-aware-anomaly-detection)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`. When you *do* pass `columns`, you have decided what to measure, so DQX leaves the comparison pooled rather than adding a grouping you did not ask for. If your data looks grouped it says so in a warning naming the grouping to pass.
 
 ### Which algorithm, and why
@@ -652,7 +654,7 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `is_anomaly` | boolean | `true` if `severity_percentile` ≥ threshold. |
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
-| `contributions` | map&lt;string, double&gt; | Contribution percentages (0–100). Keyed by **source column** for `profile="timeseries"` and by engineered feature for `profile="tabular"` — see step 4 of [How it works](#how-it-works-under-the-hood). On by default (`enable_contributions=True`); populated only for anomalous rows (`null` for non-anomalous rows or if you set it `False`). |
+| `contributions` | map&lt;string, double&gt; | Each column's share (0–100) of the evidence that made the row look unusual, keyed by **the columns you passed** under either profile — see step 4 of [How it works](#how-it-works-under-the-hood). A column that argued the row was normal shows `0`. On by default (`enable_contributions=True`); populated only for anomalous rows (`null` for non-anomalous rows or if you set it `False`), and all-null on a flagged row where nothing pointed towards an anomaly. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
 | `is_new_baseline` | boolean | `true` when the row's group was absent from training, in which case `score` and `severity_percentile` are `null` and the row is **not** flagged. See [Groups that appear after training](#groups-that-appear-after-training). |
 | `new_baseline_key` | string | The unrecognised group key, for rows where `is_new_baseline` is `true`; `null` otherwise. |

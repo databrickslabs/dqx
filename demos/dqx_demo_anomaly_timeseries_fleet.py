@@ -668,8 +668,10 @@ report_quality(wear_result, "is_incident", anomaly.getField("severity_percentile
 # COMMAND ----------
 # DBTITLE 1,Read the contributions, which name the expected level
 
-print("💡 Contributions read 'X vs its expected level at that time', not 'unusual X'.")
-print("   The distinction is real: every one of these readings sits inside the history's own range.")
+print("💡 Contributions name the metric, once, however many ways the model compared it.")
+print("   Read them as 'this metric mattered', not 'this metric's value was extreme': every one of")
+print("   these readings sits inside the history's own range, and it is baseline_over_time being set")
+print("   that tells you the comparison they failed.")
 display(
     spark.table(wear_scored)
     .filter(anomaly.getField("is_anomaly"))
