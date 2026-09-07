@@ -780,7 +780,7 @@ class TestLibraryMetricsIntegration:
 
         # rowCount (mustBeGreaterOrEqualTo: 10, no row_filter) is a dataset-wide aggregate: the
         # contract's 5-row dataset fails count >= 10, so every row is flagged with it.
-        _assert_flagged_only(flagged_by_row, "customers_rowCount", {1, 2, 3, 4, 5})
+        _assert_flagged_only(flagged_by_row, "customers_rowCount_mustBeGreaterOrEqualTo", {1, 2, 3, 4, 5})
 
         # nullValues (mustBe: 0) is row-level: only the row with a null email is flagged.
         _assert_flagged_only(flagged_by_row, "email_nullValues", {2})
@@ -797,4 +797,60 @@ class TestLibraryMetricsIntegration:
         _assert_flagged_only(flagged_by_row, "phone_missingValues", {4, 5})
 
         # Row 1 satisfies every property-level metric; only the dataset-wide rowCount check applies.
-        assert flagged_by_row[1] == {"customers_rowCount"}
+        assert flagged_by_row[1] == {"customers_rowCount_mustBeGreaterOrEqualTo"}
+
+    def test_apply_non_zero_duplicate_values_threshold_does_not_raise(self, ws, spark):
+        """A non-zero duplicateValues threshold must actually apply against a real DataFrame
+        without raising an AnalysisException.
+
+        The duplicate count is computed via a GROUP BY subquery rather than a window function
+        passed as an is_aggr_* `column` argument: SUM(CASE WHEN ... COUNT(*) OVER (PARTITION BY
+        ...) ...) is rejected by Spark at apply time (a window function can't be nested inside an
+        aggregate function). Every non-mustBe:0 duplicateValues threshold hits this path, and it
+        was previously only ever asserted as a generated SQL string in unit tests, never executed.
+        """
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:duplicate_values_non_zero",
+            "name": "Duplicate Values Non-Zero Threshold",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [{"name": "order_id", "physicalType": "STRING"}],
+                    "quality": [
+                        {"type": "library", "metric": "duplicateValues", "mustBeLessOrEqualTo": 1},
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        assert len(rules) == 1
+        assert rules[0]["check"]["function"] == "sql_query"
+
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rule has validation errors: {status.errors}"
+
+        # order_id "A" appears 3 times (2 duplicate rows beyond the first), exceeding the
+        # mustBeLessOrEqualTo: 1 threshold -- every row is flagged since this is a dataset-wide check.
+        test_df = spark.createDataFrame(
+            [["A"], ["A"], ["A"], ["B"]],
+            "order_id: string",
+        )
+        dq_engine = DQEngine(workspace_client=ws)
+        checked = dq_engine.apply_checks_by_metadata(test_df, rules)
+        rows = checked.collect()
+
+        assert len(rows) == 4
+        for row in rows:
+            assert _flagged_names(row) == {"order_id_duplicateValues"}

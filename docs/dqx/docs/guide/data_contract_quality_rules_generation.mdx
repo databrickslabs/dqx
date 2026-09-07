@@ -577,8 +577,9 @@ Every metric shares the same **threshold fields** (one of which must be set) and
 Every library metric is evaluated against one of eight ODCS threshold fields, tried in this order — the first one present on the entry is used: `mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`, `mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`.
 
 - **`mustBe: 0`** is special-cased for `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`: it maps onto a cheap **row-level** check (`is_not_null`, `is_not_in_list`, `is_in_list`/`regex_match`, or `is_unique`) that pinpoints the offending rows, rather than a dataset-level count.
-- **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage.
+- **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage, for `rowCount`, `nullValues`, `missingValues`, and `invalidValues`.
 - **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict/exclusive-bound equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check with `condition_column: "condition"` (`true` means a violation). For `mustBeBetween`/`mustNotBeBetween`, **both bounds are exclusive**, per the ODCS specification — a value exactly equal to either bound does not count as being "between" them.
+- **`duplicateValues` is the one exception**: every non-`mustBe: 0` threshold (not just the four strict/exclusive-bound ones above) falls back to `sql_query`. The duplicate count/percentage is computed via a `GROUP BY` subquery rather than a plain aggregate expression, since Spark rejects a window function (the `PARTITION BY` used to detect duplicates) nested inside an aggregate function (`SUM`/`AVG`).
 
 <Admonition type="note" title="No recognized threshold field">
 An entry with none of the eight fields set is skipped with a warning naming all eight, so a contract author can spot a typo (e.g. `mustbe` instead of `mustBe`) without reading DQX source.
@@ -724,8 +725,7 @@ The single-column, argument-less form is a property-level entry; the composite-k
             unit: percent
             arguments:
               properties: [order_id, line_number]
-            # → is_aggr_not_greater_than over the duplicate-row-percentage indicator,
-            #   partitioned by (order_id, line_number)
+            # → sql_query over the duplicate-row-percentage, grouped by (order_id, line_number)
     ```
   </TabItem>
 </Tabs>

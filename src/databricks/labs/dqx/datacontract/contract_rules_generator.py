@@ -14,9 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import pyspark.sql.functions as F
 import yaml
-from pyspark.sql import Column
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
@@ -1686,7 +1684,9 @@ class DataContractRulesGenerator(DQEngineBase):
         return [
             {
                 "check": check_dict,
-                "name": f"{schema_name}_rowCount",
+                # threshold_field is included since a schema can carry multiple rowCount entries
+                # (e.g. a lower and an upper bound), which would otherwise collide on rule name.
+                "name": f"{schema_name}_rowCount_{threshold_field}",
                 "criticality": default_criticality,
                 "user_metadata": user_metadata,
             }
@@ -1761,9 +1761,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
     # duplicateValues: single-property (argument-less) and composite (arguments.properties) forms
     # share one mapping, since is_unique's `columns` argument already accepts a list. mustBe: 0 maps
-    # directly to is_unique; every other threshold routes through a COUNT(*) OVER (PARTITION BY ...)
-    # duplicate-count indicator, because a window function can't live in row_filter/WHERE, so it is
-    # passed via the `column` argument instead (F.expr evaluates it in aggregate context). See
+    # directly to is_unique; every other threshold routes through the sql_query escape hatch, since
+    # the duplicate count must be computed via a GROUP BY subquery (see
+    # _duplicate_values_count_expr) rather than a window function nested in an is_aggr_* `column`
+    # expression: SUM(CASE WHEN ... COUNT(*) OVER (PARTITION BY ...) ...) is rejected by Spark at
+    # apply time (a window function can't be nested inside an aggregate function). See
     # .scratch/odcs-library-metrics/issues/05-duplicatevalues-mapping.md for the full mapping.
 
     def _build_duplicate_values_rules(
@@ -1846,10 +1848,13 @@ class DataContractRulesGenerator(DQEngineBase):
         """Resolve the first set ODCS threshold field on a duplicateValues entry to (field name, check dict).
 
         mustBe: 0 maps directly to is_unique (unit-independent: 0 rows = 0% either way). Every other
-        threshold requires a resolved unit (rows/percent) to build the duplicate-count indicator;
-        returns None (after logging) when no threshold field is set, or when unit is missing/unrecognized.
+        threshold requires a resolved unit (rows/percent) and routes through the sql_query escape
+        hatch, keyed on the GROUP BY-based duplicate count/percentage from
+        _duplicate_values_count_expr (see the class comment above this metric's section for why a
+        plain is_aggr_* aggregate can't be used here). Returns None (after logging) when no
+        threshold field is set, or when unit is missing/unrecognized.
         """
-        if quality_rule.mustBe == 0:
+        if self._is_zero_threshold(quality_rule.mustBe):
             return "mustBe", {"function": "is_unique", "arguments": {"columns": key_columns}}
 
         if not self._has_any_threshold_field(quality_rule):
@@ -1864,47 +1869,42 @@ class DataContractRulesGenerator(DQEngineBase):
         if unit is None:
             return None
 
-        indicator = self._duplicate_values_indicator_sql(key_columns, unit)
-        aggr_type = "sum" if unit == "rows" else "avg"
-        sql_aggr_fn = "SUM" if unit == "rows" else "AVG"
+        count_expr = self._duplicate_values_count_expr(key_columns, unit)
 
         if quality_rule.mustBe is not None:
-            return "mustBe", self._duplicate_values_aggregate_check(
-                "is_aggr_equal", indicator, aggr_type, quality_rule.mustBe
+            return "mustBe", self._library_sql_query_check(
+                f"SELECT {count_expr} <> {quality_rule.mustBe} AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustNotBe is not None:
-            return "mustNotBe", self._duplicate_values_aggregate_check(
-                "is_aggr_not_equal", indicator, aggr_type, quality_rule.mustNotBe
+            return "mustNotBe", self._library_sql_query_check(
+                f"SELECT {count_expr} = {quality_rule.mustNotBe} AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustBeGreaterOrEqualTo is not None:
-            return "mustBeGreaterOrEqualTo", self._duplicate_values_aggregate_check(
-                "is_aggr_not_less_than", indicator, aggr_type, quality_rule.mustBeGreaterOrEqualTo
+            return "mustBeGreaterOrEqualTo", self._library_sql_query_check(
+                f"SELECT {count_expr} < {quality_rule.mustBeGreaterOrEqualTo} AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustBeLessOrEqualTo is not None:
-            return "mustBeLessOrEqualTo", self._duplicate_values_aggregate_check(
-                "is_aggr_not_greater_than", indicator, aggr_type, quality_rule.mustBeLessOrEqualTo
+            return "mustBeLessOrEqualTo", self._library_sql_query_check(
+                f"SELECT {count_expr} > {quality_rule.mustBeLessOrEqualTo} AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustBeGreaterThan is not None:
             return "mustBeGreaterThan", self._library_sql_query_check(
-                f"SELECT {sql_aggr_fn}({indicator}) <= {quality_rule.mustBeGreaterThan} "
-                "AS condition FROM {{ input_view }}"
+                f"SELECT {count_expr} <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustBeLessThan is not None:
             return "mustBeLessThan", self._library_sql_query_check(
-                f"SELECT {sql_aggr_fn}({indicator}) >= {quality_rule.mustBeLessThan} "
-                "AS condition FROM {{ input_view }}"
+                f"SELECT {count_expr} >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT ({sql_aggr_fn}({indicator}) > {min_val} AND {sql_aggr_fn}({indicator}) < {max_val}) "
+                f"SELECT NOT ({count_expr} > {min_val} AND {count_expr} < {max_val}) "
                 "AS condition FROM {{ input_view }}"
             )
         if quality_rule.mustNotBeBetween is not None:
             min_val, max_val = quality_rule.mustNotBeBetween
             return "mustNotBeBetween", self._library_sql_query_check(
-                f"SELECT ({sql_aggr_fn}({indicator}) > {min_val} AND {sql_aggr_fn}({indicator}) < {max_val}) "
-                "AS condition FROM {{ input_view }}"
+                f"SELECT ({count_expr} > {min_val} AND {count_expr} < {max_val}) AS condition FROM {{{{ input_view }}}}"
             )
 
         # Unreachable: _has_any_threshold_field guarantees one of the eight fields above is set.
@@ -1914,6 +1914,25 @@ class DataContractRulesGenerator(DQEngineBase):
     def _has_any_threshold_field(cls, quality_rule: DataQuality) -> bool:
         """Return True if any of the eight ODCS threshold fields is set on quality_rule."""
         return any(getattr(quality_rule, field) is not None for field in cls._THRESHOLD_FIELDS)
+
+    @staticmethod
+    def _is_zero_threshold(value: Any) -> bool:  # value: mustBe is Any-typed on the ODCS DataQuality model
+        """Return True only for a genuine numeric zero threshold.
+
+        A plain `value == 0` would also match the boolean `False` (`False == 0` is `True` in
+        Python) and would miss a numeric string like `"0"`. Bool is checked before the numeric
+        branch since `bool` is a subclass of `int`.
+        """
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, (int, float)):
+            return value == 0
+        if isinstance(value, str):
+            try:
+                return float(value) == 0
+            except ValueError:
+                return False
+        return False
 
     def _resolve_duplicate_values_unit(self, quality_rule: DataQuality, schema_name: str) -> str | None:
         """Resolve the unit for a non-zero duplicateValues threshold: 'rows' (default) or 'percent'.
@@ -1931,38 +1950,42 @@ class DataContractRulesGenerator(DQEngineBase):
         return unit
 
     @classmethod
-    def _duplicate_values_indicator_sql(cls, key_columns: list[str], unit: str) -> str:
-        """Build the duplicate-count indicator SQL expression, replicating is_unique's nulls_distinct=True.
+    def _duplicate_values_count_expr(cls, key_columns: list[str], unit: str) -> str:
+        """Build a scalar SQL expression for the duplicate row count (unit: rows) or percentage
+        (unit: percent) of key_columns, replicating is_unique's nulls_distinct=True.
 
+        Computed via a GROUP BY subquery -- a genuine aggregate, not a window function -- so it can
+        be safely nested inside the enclosing sql_query comparison's SUM/division. An earlier
+        version built this indicator with `COUNT(*) OVER (PARTITION BY ...)` passed as an is_aggr_*
+        `column` argument; wrapping that in SUM/AVG produces a window function nested inside an
+        aggregate function, which Spark rejects at apply time for every threshold except mustBe: 0.
         A row in an all-non-null key group is only "in the group" with rows sharing its identical
-        non-null key, so gating the whole expression on every key column being non-null is
-        sufficient -- no nested NULL-handling inside the window COUNT(*) is needed. Every key
-        column is quoted via _safe_sql_identifier before interpolation.
+        non-null key, so gating the GROUP BY's source rows on every key column being non-null is
+        sufficient -- no extra NULL-handling in the outer SUM is needed. Every key column is quoted
+        via _safe_sql_identifier before interpolation.
         """
         quoted = [cls._safe_sql_identifier(col) for col in key_columns]
         not_null_clause = " AND ".join(f"{col} IS NOT NULL" for col in quoted)
         partition_by = ", ".join(quoted)
-        value = "1" if unit == "rows" else "100.0"
-        return (
-            f"CASE WHEN {not_null_clause} AND COUNT(*) OVER (PARTITION BY {partition_by}) > 1 "
-            f"THEN {value} ELSE 0 END"
+        group_counts = (
+            f"(SELECT COUNT(*) AS dqx_dup_group_count FROM {{{{ input_view }}}} "
+            f"WHERE {not_null_clause} GROUP BY {partition_by})"
         )
-
-    @staticmethod
-    def _duplicate_values_aggregate_check(function: str, indicator_sql: str, aggr_type: str, limit: Any) -> dict:
-        """Build a dataset-level duplicate-count aggregate check dict (is_aggr_equal / is_aggr_not_equal / etc.)."""
-        return {
-            "function": function,
-            "arguments": {"column": indicator_sql, "limit": limit, "aggr_type": aggr_type},
-        }
+        duplicate_rows = (
+            f"(SELECT COALESCE(SUM(CASE WHEN dqx_dup_group_count > 1 THEN dqx_dup_group_count ELSE 0 END), 0) "
+            f"FROM {group_counts} AS dqx_dup_groups)"
+        )
+        if unit == "rows":
+            return duplicate_rows
+        return f"(100.0 * {duplicate_rows} / NULLIF((SELECT COUNT(*) FROM {{{{ input_view }}}}), 0))"
 
     # nullValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in order.
     # mustBe: 0 is a special case mapping onto the row-level is_not_null check (cheaper, pinpoints
     # the offending row, and is unit-independent: 0 nulls and 0% nulls are the same fact). Every
     # other threshold (including mustBe with N > 0) maps onto a dataset-level null-count/percentage
     # aggregate for the entry's unit: rows (the default, count(*) over rows where the column IS
-    # NULL) or percent (AVG of an F.when(...)-indicator, since is_aggr_*'s row_filter+"*" mechanism
-    # can only count rows, not express a percentage). Strict inequalities and both range forms (both
+    # NULL) or percent (AVG of a CASE WHEN ... SQL string indicator, since is_aggr_*'s row_filter+"*"
+    # mechanism can only count rows, not express a percentage). Strict inequalities and both range forms (both
     # bounds exclusive per ODCS) have no aggregate equivalent and fall back to the dataset-level
     # sql_query escape hatch for both units. See
     # .scratch/odcs-library-metrics/issues/02-nullvalues-mapping.md for the full mapping and rationale.
@@ -2023,7 +2046,7 @@ class DataContractRulesGenerator(DQEngineBase):
         the null-count (unit: rows) or null-percentage (unit: percent) mechanism. Returns None
         (after logging) when no threshold field is set.
         """
-        if quality_rule.mustBe == 0:
+        if self._is_zero_threshold(quality_rule.mustBe):
             return "mustBe", {"function": "is_not_null", "arguments": {"column": property_name}}
 
         if not self._has_any_threshold_field(quality_rule):
@@ -2084,27 +2107,33 @@ class DataContractRulesGenerator(DQEngineBase):
     def _nullvalues_percent_check(self, quality_rule: DataQuality, quoted_column: str) -> tuple[str, dict]:
         """Build the unit: percent null-percentage check.
 
-        Uses an F.when(...)-indicator Column (100.0 when null, else 0.0) with aggr_type="avg" for
-        the exact-fit thresholds, since is_aggr_*'s row_filter+"*" mechanism can only count rows,
-        not express a percentage (validate_star_aggregate rejects "*" with aggr_type="avg"). No
-        row_filter is used for the percentage fallback either, so the denominator stays the full
-        row count rather than shrinking to just the null rows.
+        Uses a CASE WHEN indicator SQL expression (100.0 when null, else 0.0), passed as the
+        *column* argument (resolved via F.expr at check-execution time), with aggr_type="avg" for
+        the exact-fit thresholds -- is_aggr_*'s row_filter+"*" mechanism can only count rows, not
+        express a percentage. A raw Column object is deliberately avoided here: it can't round-trip
+        through YAML/JSON (breaking save_checks()), and ChecksSemanticValidator's conflict-key
+        hashing isn't Column-aware either. A string routes through F.expr() at apply time instead,
+        producing the identical Spark expression without either problem. No row_filter is used for
+        the percentage fallback either, so the denominator stays the full row count rather than
+        shrinking to just the null rows.
         """
-        indicator = F.when(F.expr(f"{quoted_column} IS NULL"), F.lit(100.0)).otherwise(F.lit(0.0))
+        indicator_sql = f"CASE WHEN {quoted_column} IS NULL THEN 100.0 ELSE 0.0 END"
 
         if quality_rule.mustBe is not None:
-            return "mustBe", self._nullvalues_percent_aggregate_check("is_aggr_equal", indicator, quality_rule.mustBe)
+            return "mustBe", self._nullvalues_percent_aggregate_check(
+                "is_aggr_equal", indicator_sql, quality_rule.mustBe
+            )
         if quality_rule.mustNotBe is not None:
             return "mustNotBe", self._nullvalues_percent_aggregate_check(
-                "is_aggr_not_equal", indicator, quality_rule.mustNotBe
+                "is_aggr_not_equal", indicator_sql, quality_rule.mustNotBe
             )
         if quality_rule.mustBeGreaterOrEqualTo is not None:
             return "mustBeGreaterOrEqualTo", self._nullvalues_percent_aggregate_check(
-                "is_aggr_not_less_than", indicator, quality_rule.mustBeGreaterOrEqualTo
+                "is_aggr_not_less_than", indicator_sql, quality_rule.mustBeGreaterOrEqualTo
             )
         if quality_rule.mustBeLessOrEqualTo is not None:
             return "mustBeLessOrEqualTo", self._nullvalues_percent_aggregate_check(
-                "is_aggr_not_greater_than", indicator, quality_rule.mustBeLessOrEqualTo
+                "is_aggr_not_greater_than", indicator_sql, quality_rule.mustBeLessOrEqualTo
             )
 
         percent_expr = f"AVG(CASE WHEN {quoted_column} IS NULL THEN 100.0 ELSE 0.0 END)"
@@ -2137,11 +2166,11 @@ class DataContractRulesGenerator(DQEngineBase):
         }
 
     @staticmethod
-    def _nullvalues_percent_aggregate_check(function: str, indicator: Column, limit: Any) -> dict:
+    def _nullvalues_percent_aggregate_check(function: str, indicator_sql: str, limit: Any) -> dict:
         """Build a dataset-level null-percentage aggregate check dict (is_aggr_equal / is_aggr_not_equal / etc.)."""
         return {
             "function": function,
-            "arguments": {"column": indicator, "limit": limit, "aggr_type": "avg"},
+            "arguments": {"column": indicator_sql, "limit": limit, "aggr_type": "avg"},
         }
 
     # invalidValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in
@@ -2194,7 +2223,7 @@ class DataContractRulesGenerator(DQEngineBase):
             **self._library_severity_metadata(quality_rule),
         }
 
-        if quality_rule.mustBe == 0:
+        if self._is_zero_threshold(quality_rule.mustBe):
             return self._invalid_values_row_level_rules(
                 valid_values, pattern, property_name, contract_metadata, default_criticality
             )
@@ -2484,16 +2513,11 @@ class DataContractRulesGenerator(DQEngineBase):
         quoted_column = self._safe_sql_identifier(property_name)
         clauses = []
         if valid_values is not None:
-            escaped_values = ", ".join(self._invalid_values_sql_literal(value) for value in valid_values)
+            escaped_values = ", ".join(self._sql_scalar_literal(value) for value in valid_values)
             clauses.append(f"{quoted_column} NOT IN ({escaped_values})")
         if pattern is not None:
-            clauses.append(f"NOT ({quoted_column} RLIKE {self._invalid_values_sql_literal(pattern)})")
+            clauses.append(f"NOT ({quoted_column} RLIKE {self._sql_scalar_literal(pattern)})")
         return " OR ".join(clauses)
-
-    @staticmethod
-    def _invalid_values_sql_literal(value: Any) -> str:  # value: any contract-supplied scalar (str, number, bool)
-        """Render a value as a single-quoted SQL string literal, doubling embedded quotes."""
-        return "'" + str(value).replace("'", "''") + "'"
 
     # missingValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in
     # order. missingValues is distinct from nullValues: it combines real NULLs with a
@@ -2552,7 +2576,7 @@ class DataContractRulesGenerator(DQEngineBase):
             **self._library_severity_metadata(quality_rule),
         }
 
-        if quality_rule.mustBe == 0:
+        if self._is_zero_threshold(quality_rule.mustBe):
             return self._missing_values_row_level_rules(
                 has_null, non_null_sentinels, property_name, contract_metadata, default_criticality
             )
@@ -2604,7 +2628,7 @@ class DataContractRulesGenerator(DQEngineBase):
                         "function": "is_not_in_list",
                         "arguments": {
                             "column": property_name,
-                            "forbidden": [F.lit(value) for value in non_null_sentinels],
+                            "forbidden": [self._is_in_list_literal(value) for value in non_null_sentinels],
                             "case_sensitive": True,
                         },
                     },
@@ -2766,14 +2790,9 @@ class DataContractRulesGenerator(DQEngineBase):
         quoted_column = self._safe_sql_identifier(property_name)
         condition = f"{quoted_column} IS NULL"
         if non_null_sentinels:
-            escaped_values = ", ".join(self._missing_values_sql_literal(value) for value in non_null_sentinels)
+            escaped_values = ", ".join(self._sql_scalar_literal(value) for value in non_null_sentinels)
             condition += f" OR {quoted_column} IN ({escaped_values})"
         return condition
-
-    @staticmethod
-    def _missing_values_sql_literal(value: Any) -> str:  # value: any contract-supplied scalar (str, number, bool)
-        """Render a non-null sentinel value as a single-quoted SQL string literal, doubling embedded quotes."""
-        return "'" + str(value).replace("'", "''") + "'"
 
     def _read_library_argument(
         self, arguments: dict[str, Any] | None, key: str, expected_type: type[_T], *, allow_empty: bool = False
@@ -2816,6 +2835,28 @@ class DataContractRulesGenerator(DQEngineBase):
             for segment in segments
         ]
         return ".".join(quoted_segments)
+
+    @staticmethod
+    def _sql_scalar_literal(value: Any) -> str:  # value: any contract-supplied scalar (str, number, bool)
+        """Render a contract-supplied scalar as a SQL literal for safe interpolation into an
+        invalidValues/missingValues NOT IN/IN/RLIKE condition.
+
+        A number passes through unquoted (e.g. `123`, `1.5`) so a numeric column compares
+        numerically, matching the row-level is_in_list/regex_match path's own handling of
+        `arguments.validValues` (see _is_in_list_literal). Bool is checked before the numeric
+        branch since `bool` is a subclass of `int` in Python. Every other value (in practice,
+        always a string) is rendered as a single-quoted SQL string literal: embedded backslashes
+        are doubled first, then embedded single quotes, so a literal backslash in the value (e.g.
+        a RLIKE pattern such as `\\d+`) survives Spark's string-literal escape processing intact --
+        with Spark's default spark.sql.parser.escapedStringLiterals=false, an unescaped backslash
+        in a SQL string literal is not preserved as-is.
+        """
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return str(value)
+        escaped = str(value).replace("\\", "\\\\").replace("'", "''")
+        return f"'{escaped}'"
 
     @classmethod
     def _is_library_pattern_safe(cls, pattern: str) -> bool:

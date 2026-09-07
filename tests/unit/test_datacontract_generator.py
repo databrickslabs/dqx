@@ -13,6 +13,7 @@ from datacontract.lint.resolve import resolve_data_contract
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidator
 import databricks.labs.dqx.datacontract.contract_rules_generator as contract_rules_generator_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
@@ -3804,7 +3805,7 @@ class TestDataContractGeneratorLibraryRulesRowCount(DataContractGeneratorTestBas
 
         assert len(rules) == 1
         rule = rules[0]
-        assert rule["name"] == "orders_rowCount"
+        assert rule["name"] == "orders_rowCount_mustBe"
         assert rule["check"]["function"] == "is_aggr_equal"
         assert rule["check"]["arguments"] == {"column": "*", "limit": 100, "aggr_type": "count"}
         user_metadata = rule["user_metadata"]
@@ -3881,6 +3882,23 @@ class TestDataContractGeneratorLibraryRulesRowCount(DataContractGeneratorTestBas
         assert rules == []
         assert "rowCount entry on schema 'orders' has no recognized threshold field set" in caplog.text
 
+    def test_multiple_row_count_entries_get_distinct_rule_names(self, generator):
+        """Two rowCount entries on one schema (e.g. a lower and an upper bound) must not collide
+        on rule name -- each carries its own threshold_field suffix."""
+        contract_dict = self.create_basic_contract(
+            schema_name="orders",
+            properties=[{"name": "order_id", "physicalType": "STRING"}],
+        )
+        contract_dict["schema"][0]["quality"] = [
+            {"type": "library", "metric": "rowCount", "mustBeGreaterOrEqualTo": 10},
+            {"type": "library", "metric": "rowCount", "mustBeLessOrEqualTo": 1000},
+        ]
+        rules = self._generate(generator, contract_dict)
+
+        assert len(rules) == 2
+        names = {rule["name"] for rule in rules}
+        assert names == {"orders_rowCount_mustBeGreaterOrEqualTo", "orders_rowCount_mustBeLessOrEqualTo"}
+
 
 class TestDataContractGeneratorLibraryRulesNullValues(DataContractGeneratorTestBase):
     """Tests for the type: library nullValues metric mapping onto DQX checks."""
@@ -3942,6 +3960,31 @@ class TestDataContractGeneratorLibraryRulesNullValues(DataContractGeneratorTestB
         }
         assert rule["user_metadata"]["threshold_field"] == "mustBeLessOrEqualTo"
         assert rule["user_metadata"]["unit"] == "rows"
+
+    def test_percent_column_is_a_serializable_sql_string_not_a_pyspark_column(self, generator):
+        """The percent path's `column` argument must be a plain SQL string, not a live PySpark
+        Column: a Column can't round-trip through YAML/JSON (breaking save_checks()) and is
+        unhashable (breaking ChecksSemanticValidator's conflict-key grouping, which silently skips
+        conflict detection on a TypeError). Two conflicting percent-unit nullValues entries on the
+        same property must therefore now be flagged as a conflict.
+        """
+        contract_dict = self.create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[
+                {"type": "library", "metric": "nullValues", "mustBe": 5, "unit": "percent"},
+                {"type": "library", "metric": "nullValues", "mustBe": 10, "unit": "percent"},
+            ],
+            schema_name="test_table",
+        )
+        rules = self._generate(generator, contract_dict)
+
+        assert len(rules) == 2
+        for rule in rules:
+            assert isinstance(rule["check"]["arguments"]["column"], str)
+
+        issues = ChecksSemanticValidator.detect_conflicts(rules)
+        assert any("Conflicting rules detected" in issue for issue in issues)
 
     def test_unit_percent_generates_avg_indicator_check(self, generator):
         """unit: percent compares the percentage of null rows via an AVG-of-indicator aggregate,
@@ -4040,16 +4083,6 @@ class TestDataContractGeneratorLibraryRulesMissingValues(DataContractGeneratorTe
         finally:
             os.unlink(temp_path)
 
-    @staticmethod
-    def _forbidden_literals(forbidden: list) -> list:
-        """Render an is_not_in_list `forbidden` list of F.lit(...) Columns back to plain values.
-
-        Column.__eq__ builds a comparison Column rather than a bool, so comparing the list
-        directly (or via a dict == containing it) would crash on the implicit bool() coercion.
-        Comparing string reprs instead sidesteps that entirely.
-        """
-        return [str(item) for item in forbidden]
-
     def test_must_be_zero_with_null_and_sentinel_generates_two_row_level_rules(self, generator):
         """mustBe: 0 with both a null and a non-null sentinel listed splits into two independent
         row-level rules (is_not_null, is_not_in_list) that share identical user_metadata, only
@@ -4070,7 +4103,9 @@ class TestDataContractGeneratorLibraryRulesMissingValues(DataContractGeneratorTe
         sentinel_args = sentinel_rule["check"]["arguments"]
         assert sentinel_args["column"] == "email"
         assert sentinel_args["case_sensitive"] is True
-        assert self._forbidden_literals(sentinel_args["forbidden"]) == [str(F.lit("")), str(F.lit("N/A"))]
+        # Plain quoted string literals (not F.lit(...) Columns), so the rule stays
+        # YAML/JSON-serializable through save_checks() and hashable for conflict detection.
+        assert sentinel_args["forbidden"] == ["''", "'N/A'"]
 
         for rule in rules:
             user_metadata = rule["user_metadata"]
@@ -4492,6 +4527,30 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(DataContractGeneratorTe
         assert rules == []
         assert "failed the ReDoS safety guard" in caplog.text
 
+    def test_numeric_valid_values_are_unquoted_in_not_in_clause(self, generator):
+        """Numeric validValues entries are rendered unquoted, so the NOT IN clause compares
+        numerically -- matching the row-level is_in_list path's own numeric handling -- rather
+        than stringified (which would silently mismatch on a numeric column)."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values({"mustBeGreaterThan": 3, "arguments": {"validValues": [1, 2, 3]}}),
+        )
+
+        assert len(rules) == 1
+        assert rules[0]["check"]["arguments"]["row_filter"] == "status NOT IN (1, 2, 3)"
+
+    def test_pattern_backslash_is_escaped_for_rlike(self, generator):
+        """A pattern containing a backslash (e.g. \\d+) has it doubled before interpolation, so it
+        survives Spark's string-literal escape processing and reaches RLIKE as the literal
+        backslash the row-level regex_match path (mustBe: 0) would also see."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values({"mustBeGreaterThan": 3, "arguments": {"pattern": r"\d+"}}),
+        )
+
+        assert len(rules) == 1
+        assert rules[0]["check"]["arguments"]["row_filter"] == r"NOT (status RLIKE '\\d+')"
+
 
 class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGeneratorTestBase):
     """Tests for the type: library duplicateValues metric mapping onto DQX checks."""
@@ -4551,6 +4610,24 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
         assert "fields" not in user_metadata
         assert "severity" not in user_metadata
 
+    def test_must_be_false_does_not_use_is_unique_fast_path(self, generator):
+        """mustBe: false (a boolean, not a genuine numeric zero) must not be special-cased into
+        is_unique -- `False == 0` is True in Python, so a naive `mustBe == 0` check would wrongly
+        treat it as mustBe: 0."""
+        rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBe": False}))
+
+        assert len(rules) == 1
+        assert rules[0]["check"]["function"] != "is_unique"
+        assert rules[0]["user_metadata"]["threshold_field"] == "mustBe"
+
+    def test_must_be_numeric_string_zero_uses_is_unique_fast_path(self, generator):
+        """mustBe: "0" (a numeric string, not a genuine numeric zero) must still be special-cased
+        into is_unique -- a naive `mustBe == 0` check would miss it since `"0" == 0` is False."""
+        rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBe": "0"}))
+
+        assert len(rules) == 1
+        assert rules[0]["check"] == {"function": "is_unique", "arguments": {"columns": ["order_id"]}}
+
     def test_composite_properties_must_be_zero_generates_is_unique_across_columns(self, generator):
         """A schema-level arguments.properties composite key with mustBe: 0 generates is_unique
         across every listed column."""
@@ -4569,57 +4646,68 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
         assert user_metadata["fields"] == ["tenant_id", "order_id"]
         assert "field" not in user_metadata
 
-    def test_non_zero_unit_rows_generates_sum_indicator_aggregate(self, generator):
-        """A non-zero threshold with unit: rows (or absent) uses the window-function duplicate
-        indicator passed via `column`, with aggr_type='sum'."""
+    @staticmethod
+    def _duplicate_count_expr(group_by_clause: str, where_clause: str) -> str:
+        """Build the expected GROUP BY-based duplicate row-count scalar subquery expression."""
+        group_counts = (
+            f"(SELECT COUNT(*) AS dqx_dup_group_count FROM {{{{ input_view }}}} "
+            f"WHERE {where_clause} GROUP BY {group_by_clause})"
+        )
+        return (
+            f"(SELECT COALESCE(SUM(CASE WHEN dqx_dup_group_count > 1 THEN dqx_dup_group_count ELSE 0 END), 0) "
+            f"FROM {group_counts} AS dqx_dup_groups)"
+        )
+
+    def test_non_zero_unit_rows_falls_back_to_sql_query(self, generator):
+        """A non-zero threshold with unit: rows (or absent) falls back to sql_query, keyed on a
+        GROUP BY-based duplicate row count (not a window function, which Spark rejects when
+        nested inside an aggregate)."""
         rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBeLessOrEqualTo": 5}))
 
         assert len(rules) == 1
         rule = rules[0]
-        assert rule["check"]["function"] == "is_aggr_not_greater_than"
-        args = rule["check"]["arguments"]
-        assert args["aggr_type"] == "sum"
-        assert args["limit"] == 5
-        assert args["column"] == (
-            "CASE WHEN order_id IS NOT NULL AND COUNT(*) OVER (PARTITION BY order_id) > 1 THEN 1 ELSE 0 END"
+        assert rule["check"]["function"] == "sql_query"
+        count_expr = self._duplicate_count_expr("order_id", "order_id IS NOT NULL")
+        assert rule["check"]["arguments"]["query"] == (
+            f"SELECT {count_expr} > 5 AS condition FROM {{{{ input_view }}}}"
         )
+        assert rule["check"]["arguments"]["condition_column"] == "condition"
         assert rule["user_metadata"]["unit"] == "rows"
         assert rule["user_metadata"]["threshold_field"] == "mustBeLessOrEqualTo"
 
-    def test_unit_percent_generates_avg_indicator_aggregate(self, generator):
-        """unit: percent uses the same indicator with the 100.0 percent value and aggr_type='avg'."""
+    def test_unit_percent_falls_back_to_sql_query(self, generator):
+        """unit: percent divides the same duplicate row count by the total row count, times 100."""
         rules = self._generate(
             generator, self._contract_with_duplicate_values_property({"mustBe": 10, "unit": "percent"})
         )
 
         assert len(rules) == 1
         rule = rules[0]
-        assert rule["check"]["function"] == "is_aggr_equal"
-        args = rule["check"]["arguments"]
-        assert args["aggr_type"] == "avg"
-        assert args["limit"] == 10
-        assert args["column"] == (
-            "CASE WHEN order_id IS NOT NULL AND COUNT(*) OVER (PARTITION BY order_id) > 1 THEN 100.0 ELSE 0 END"
+        assert rule["check"]["function"] == "sql_query"
+        count_expr = self._duplicate_count_expr("order_id", "order_id IS NOT NULL")
+        percent_expr = f"(100.0 * {count_expr} / NULLIF((SELECT COUNT(*) FROM {{{{ input_view }}}}), 0))"
+        assert rule["check"]["arguments"]["query"] == (
+            f"SELECT {percent_expr} <> 10 AS condition FROM {{{{ input_view }}}}"
         )
         assert rule["user_metadata"]["unit"] == "percent"
 
     def test_must_be_greater_than_falls_back_to_sql_query(self, generator):
         """A strict threshold (mustBeGreaterThan) has no aggregate equivalent, so it falls back to
-        sql_query, keyed on the same duplicate-count indicator."""
+        sql_query, keyed on the same duplicate-count expression."""
         rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBeGreaterThan": 3}))
 
         assert len(rules) == 1
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
+        count_expr = self._duplicate_count_expr("order_id", "order_id IS NOT NULL")
         assert rule["check"]["arguments"]["query"] == (
-            "SELECT SUM(CASE WHEN order_id IS NOT NULL AND COUNT(*) OVER (PARTITION BY order_id) > 1 "
-            "THEN 1 ELSE 0 END) <= 3 AS condition FROM {{ input_view }}"
+            f"SELECT {count_expr} <= 3 AS condition FROM {{{{ input_view }}}}"
         )
         assert rule["check"]["arguments"]["condition_column"] == "condition"
         assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
 
     def test_composite_between_falls_back_to_sql_query_with_exclusive_bounds(self, generator):
-        """A composite-key mustBeBetween falls back to sql_query with exclusive bounds, partitioned
+        """A composite-key mustBeBetween falls back to sql_query with exclusive bounds, grouped
         by every listed column."""
         rules = self._generate(
             generator,
@@ -4631,12 +4719,9 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
         assert len(rules) == 1
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
-        indicator = (
-            "CASE WHEN tenant_id IS NOT NULL AND order_id IS NOT NULL AND "
-            "COUNT(*) OVER (PARTITION BY tenant_id, order_id) > 1 THEN 1 ELSE 0 END"
-        )
+        count_expr = self._duplicate_count_expr("tenant_id, order_id", "tenant_id IS NOT NULL AND order_id IS NOT NULL")
         assert rule["check"]["arguments"]["query"] == (
-            f"SELECT NOT (SUM({indicator}) > 1 AND SUM({indicator}) < 4) AS condition FROM {{{{ input_view }}}}"
+            f"SELECT NOT ({count_expr} > 1 AND {count_expr} < 4) AS condition FROM {{{{ input_view }}}}"
         )
         assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
 
