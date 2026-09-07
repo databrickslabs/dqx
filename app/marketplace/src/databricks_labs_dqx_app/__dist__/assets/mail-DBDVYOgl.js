@@ -1,0 +1,1 @@
+import{W as c}from"./index-CkQcByrl.js";const e=[["path",{d:"M21.801 10A10 10 0 1 1 17 3.335",key:"yps3ct"}],["path",{d:"m9 11 3 3L22 4",key:"1pflzl"}]],o=c("circle-check-big",e);const t=[["path",{d:"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7",key:"132q7q"}],["rect",{x:"2",y:"4",width:"20",height:"16",rx:"2",key:"izxlao"}]],a=c("mail",t);export{o as C,a as M};

@@ -1,0 +1,1 @@
+import{c8 as t,G as p}from"./index-CkQcByrl.js";function u(){const{data:e}=t({query:{staleTime:1/0}}),{canApproveRules:a}=p(),s=e?.data?.mode,o=s==="auto_bypass"||s==="disabled"?s:"enabled";return{mode:o,willAutoApprove:o==="disabled"||o==="auto_bypass"&&a}}export{u};
