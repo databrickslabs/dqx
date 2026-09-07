@@ -312,7 +312,7 @@ def _validate_int_min(value: int, *, label: str, min_value: int) -> None:
         raise InvalidParameterError(f"{label} must be >= {min_value}. Got {value}.")
 
 
-def validate_training_params(params: AnomalyParams, expected_anomaly_rate: float) -> None:
+def validate_training_params(params: AnomalyParams) -> None:
     """Validate training parameters with strict fail-fast checks."""
     _validate_float_range(params.sample_fraction, label="params.sample_fraction", min_exclusive=0.0, max_inclusive=1.0)
     _validate_float_range(params.train_ratio, label="params.train_ratio", min_exclusive=0.0, max_inclusive=1.0)
@@ -321,13 +321,6 @@ def validate_training_params(params: AnomalyParams, expected_anomaly_rate: float
 
     if params.ensemble_size is not None:
         _validate_int_min(params.ensemble_size, label="params.ensemble_size", min_value=1)
-
-    _validate_float_range(
-        expected_anomaly_rate,
-        label="expected_anomaly_rate",
-        min_exclusive=0.0,
-        max_inclusive=0.5,
-    )
 
     algo_cfg = params.algorithm_config
     if algo_cfg.contamination is not None:

@@ -54,9 +54,9 @@ _REFERENCE_SCORES = [
 def _reference_params() -> AnomalyParams:
     """Params as production actually presents them to ``fit_sklearn_model``.
 
-    ``contamination`` is explicit because a bare ``AnomalyParams()`` cannot be fitted at all:
-    ``IsolationForestConfig.contamination`` defaults to None and scikit-learn rejects that. Production
-    fills it from *expected_anomaly_rate* (default 0.02) before training, so 0.02 is the real default.
+    ``contamination`` is stated explicitly to keep this fixture readable, though it is now redundant:
+    ``IsolationForestConfig.contamination`` defaults to 0.02 directly. It used to default to None and be
+    filled by a training parameter that has since been removed, which is why it is spelled out here.
     """
     return AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.02))
 

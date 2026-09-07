@@ -108,24 +108,6 @@ class AnomalyTrainingService:
         return profile.recommended_columns, profile.recommended_segments or None
 
     @staticmethod
-    def apply_expected_anomaly_rate_if_default_contamination(
-        params: AnomalyParams | None, expected_anomaly_rate: float
-    ) -> AnomalyParams:
-        """Apply expected_anomaly_rate to params if contamination is not explicitly set."""
-        if params is None:
-            params = AnomalyParams()
-        params = deepcopy(params)
-        if params.algorithm_config.contamination is None:
-            params.algorithm_config.contamination = expected_anomaly_rate
-            logger.info(f"Using expected_anomaly_rate={expected_anomaly_rate:.2%} for model training")
-        else:
-            logger.info(
-                f"Using explicitly set contamination={params.algorithm_config.contamination:.2%} "
-                f"(expected_anomaly_rate={expected_anomaly_rate:.2%} ignored)"
-            )
-        return params
-
-    @staticmethod
     def _model_exists_in_uc(model_name: str) -> bool:
         """Check if a model exists in Unity Catalog using MLflow API."""
         try:
@@ -323,7 +305,6 @@ class AnomalyTrainingService:
         columns: list[str] | None,
         params: AnomalyParams | None,
         exclude_columns: list[str] | None,
-        expected_anomaly_rate: float,
         baseline_by: list[str] | None = None,
         profile: str | None = None,
         baseline_over_time: str | None = None,
@@ -346,7 +327,7 @@ class AnomalyTrainingService:
                 raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid}")
 
         params = AnomalyParams() if params is None else params
-        validate_training_params(params, expected_anomaly_rate)
+        validate_training_params(params)
         declared_baseline_by = baseline_by if baseline_by is not None else params.baseline_by
 
         columns, df_filtered = self._resolve_columns_and_filtered_df(df, columns, exclude_list)
@@ -390,8 +371,8 @@ class AnomalyTrainingService:
             baseline_by=baseline_by,
         )
 
-        params = self.apply_expected_anomaly_rate_if_default_contamination(params, expected_anomaly_rate)
-        # Already a deepcopy, so recording the resolved grouping here cannot leak back to the
+        params = deepcopy(params) if params is not None else AnomalyParams()
+        # A deepcopy, so recording the resolved grouping here cannot leak back to the
         # caller's params. Downstream feature engineering reads baseline_by off params, because
         # every narrowing select is already handed params and nothing else.
         params.baseline_by = baseline_by
@@ -405,7 +386,6 @@ class AnomalyTrainingService:
             registry_table=registry_table,
             columns=columns,
             params=params,
-            expected_anomaly_rate=expected_anomaly_rate,
             exclude_columns=exclude_columns,
             auto_discovery_used=auto_discovery_used,
             baseline_by=baseline_by,

@@ -81,8 +81,8 @@ SMALL_SAMPLE_ROWS_PER_FEATURE = 10
 CONSTANT_FEATURE_TOLERANCE = 1e-12
 # Ridge added to the covariance diagonal, as a fraction of the average variance so it is scale-free.
 DEFAULT_RIDGE = 1e-6
-# Fallback expected anomaly rate, matching AnomalyEngine.train's expected_anomaly_rate default. Only
-# used if contamination somehow reached this point unset; production fills it in before training.
+# Fallback used only if contamination reached this point unset. `IsolationForestConfig.contamination`
+# defaults to the same value, so production never relies on this.
 DEFAULT_CONTAMINATION = 0.02
 
 
@@ -261,8 +261,8 @@ def fit_mahalanobis_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> 
     the estimator — so ``named_steps["model"]`` resolves identically for both algorithms.
 
     *contamination* is read from ``algorithm_config``, which is where
-    ``training_service.apply_expected_anomaly_rate_if_default_contamination`` puts
-    *expected_anomaly_rate*. Reusing that field rather than adding a parallel one keeps one source of
+    ``IsolationForestConfig.contamination`` carries it.
+    Reusing that field rather than adding a parallel one keeps one source of
     truth for "how many anomalies do we expect"; the genuinely IsolationForest-specific fields beside it
     (tree count, subsampling) are simply not read here.
     """

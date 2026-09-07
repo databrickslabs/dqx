@@ -186,10 +186,11 @@ def test_small_samples_fall_back_to_shrinkage(caplog):
 def test_contamination_moves_the_predict_boundary_but_not_the_scores():
     """Pinned because the docstrings now promise exactly this, and a plausible "fix" would break it.
 
-    ``expected_anomaly_rate`` flows into ``contamination``, which for both shipping detectors places
-    ``offset_`` and therefore only ``predict`` / ``decision_function``. Every DQX scoring path reads
-    ``-score_samples`` and ranks it against the training score quantiles, so the parameter cannot change
-    which rows are flagged -- the check's ``threshold`` does that.
+    ``contamination`` places ``offset_`` for both shipping detectors, and therefore only ``predict`` /
+    ``decision_function``. Every DQX scoring path reads ``-score_samples`` and ranks it against the
+    training score quantiles, so it cannot change which rows are flagged -- the check's ``threshold``
+    does that. This is why the user-facing training parameter that used to set it was removed: its name
+    promised a detection knob that the scoring path never consults.
 
     Asserting both halves matters. Dropping the parameter would break someone who loads the registered
     model and calls ``predict``; treating it as a detection knob is what the documentation used to imply.

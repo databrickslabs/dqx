@@ -159,7 +159,10 @@ class ProfilerConfig:
 class IsolationForestConfig:
     """Algorithm parameters for Spark ML IsolationForest."""
 
-    contamination: float | None = None
+    # 0.02 is the value `AnomalyEngine.train`'s removed `expected_anomaly_rate` used to fill in, so the
+    # effective default is unchanged. It places only the estimator's own `predict`/`offset_` boundary,
+    # which DQX's scoring path does not read -- what DQX flags is decided by the check's `threshold`.
+    contamination: float | None = 0.02
     num_trees: int = 200
     max_depth: int | None = None
     subsampling_rate: float | None = None

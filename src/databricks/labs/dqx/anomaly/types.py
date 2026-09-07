@@ -84,7 +84,6 @@ class AnomalyTrainingContext:
     registry_table: str
     columns: list[str]
     params: AnomalyParams
-    expected_anomaly_rate: float
     exclude_columns: list[str] | None
     auto_discovery_used: bool
     baseline_by: list[str] | None = None

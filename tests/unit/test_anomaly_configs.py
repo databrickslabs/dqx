@@ -20,7 +20,9 @@ from databricks.labs.dqx.config import (
 def test_isolation_forest_config_defaults():
     """Test IsolationForestConfig with default values."""
     cfg = IsolationForestConfig()
-    assert cfg.contamination is None
+    # 0.02 rather than None since `expected_anomaly_rate` was removed: that parameter existed only to
+    # fill this field when unset, and defaulted to 0.02, so the effective default is unchanged.
+    assert cfg.contamination == 0.02
     assert cfg.num_trees == 200
     assert cfg.random_seed == 42
 

@@ -188,7 +188,6 @@ def train_model_with_params(
     registry_table: str,
     columns: list[str],
     params: AnomalyParams,
-    expected_anomaly_rate: float = 0.02,
     baseline_by: list[str] | None = None,
     baseline_over_time: str | None = None,
     profile: str | None = None,
@@ -202,7 +201,6 @@ def train_model_with_params(
         baseline_by=baseline_by,
         baseline_over_time=baseline_over_time,
         params=params,
-        expected_anomaly_rate=expected_anomaly_rate,
         profile=profile,
     )
 

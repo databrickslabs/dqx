@@ -295,33 +295,33 @@ def test_registry_stores_metadata(
     assert record["training"]["metrics"] is not None
 
 
-def test_expected_anomaly_rate_applied_when_contamination_unset(
+def test_the_contamination_default_reaches_the_persisted_hyperparameters(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
 ):
-    """Verify expected_anomaly_rate sets contamination when not explicitly provided."""
+    """The default the removed training parameter used to supply is now the config field's own, and it
+    must still travel to the registry.
+
+    Replaces a test that passed that parameter explicitly at 0.02 and asserted contamination came out at
+    0.02. The parameter is gone; the value it produced is unchanged, so this asserts the same end state
+    by the shorter route. Worth keeping rather than deleting: it is the only test that the algorithm
+    config flows all the way into ``training.hyperparameters``.
+    """
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"{anomaly_registry_prefix}.test_expected_rate_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_contamination_{make_random(4).lower()}"
 
-    training_data = get_standard_2d_training_data()
-    train_df = spark.createDataFrame(training_data, "amount double, quantity double")
-
-    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=None))
-    expected_rate = 0.02
+    train_df = spark.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
 
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
-        params=params,
-        expected_anomaly_rate=expected_rate,
     )
 
     record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
-    contamination = float(record["training"]["hyperparameters"]["contamination"])
-    assert contamination == expected_rate
+    assert float(record["training"]["hyperparameters"]["contamination"]) == 0.02
 
 
 def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry_prefix):

@@ -62,7 +62,6 @@ class AnomalyEngine(DQEngineBase):
         columns: list[str] | None = None,
         params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
-        expected_anomaly_rate: float = 0.02,
         baseline_by: list[str] | None = None,
         profile: str | None = None,
         baseline_over_time: str | None = None,
@@ -127,16 +126,6 @@ class AnomalyEngine(DQEngineBase):
                             Exclusions always take precedence over `columns` if both are provided.
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
-            expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
-                                   Supplies the default *contamination* for the estimator, which places
-                                   scikit-learn's own ``predict`` / ``offset_`` boundary.
-                                   **It does not change which rows DQX flags.** Scoring reads
-                                   ``score_samples`` and ranks it against the training score quantiles,
-                                   so the rows you see are decided by the *threshold* on the check, not
-                                   by this. Nor does it mitigate anomalies present in the training
-                                   sample: nothing downweights them. Set it if you load the registered
-                                   model yourself and call ``predict``; otherwise tune *threshold*.
-                                   Overridden if params.algorithm_config.contamination is set explicitly.
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
             - Choose behavioral columns, not identifiers. Good: amount, quantity. Bad: user_id.
@@ -161,18 +150,12 @@ class AnomalyEngine(DQEngineBase):
                 exclude_columns=["user_id", "order_id"],
             )
 
-            # Adjust expected anomaly rate for specific use cases
-            anomaly_engine.train(
-                df,
+            # How much gets flagged is set on the *check*, not at training time: threshold is an
+            # alert budget over training severity, so 95 flags the top 5%.
+            check = has_no_row_anomalies(
                 model_name="catalog.schema.fraud_detector",
                 registry_table="catalog.schema.dqx_anomaly_models",
-                expected_anomaly_rate=0.01,  # 1% fraud
-            )
-            anomaly_engine.train(
-                df,
-                model_name="catalog.schema.quality_monitor",
-                registry_table="catalog.schema.dqx_anomaly_models",
-                expected_anomaly_rate=0.10,  # 10% defects
+                threshold=99.0,  # a tighter budget for a rare-event table
             )
 
             # Explicit columns
@@ -201,7 +184,6 @@ class AnomalyEngine(DQEngineBase):
             columns=columns,
             params=params,
             exclude_columns=exclude_columns,
-            expected_anomaly_rate=expected_anomaly_rate,
             baseline_by=baseline_by,
             profile=profile,
             baseline_over_time=baseline_over_time,
