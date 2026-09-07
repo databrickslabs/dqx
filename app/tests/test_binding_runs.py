@@ -371,6 +371,37 @@ class TestSubmission:
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 1000
 
+    def test_draft_uses_configured_limit_when_admin_set_it(
+        self, service, monitored_tables, materializer, job_service, settings_service
+    ):
+        """Draft runs with no caller sample_size resolve the admin-configured
+        limit (not the compiled-in default) — the source-of-truth guard so the
+        backend honours the admin knob even if the UI omits the size."""
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
+        materializer.render_binding_checks.return_value = _CHECKS
+        settings_service.get_draft_run_sample_limit.return_value = 500
+
+        service.run_binding("b1", source="draft", version=None, user_email="alice@x")
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["sample_size"] == 500
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["sample_size"] == 500
+
+    def test_draft_configured_zero_means_unlimited_when_sample_size_omitted(
+        self, service, monitored_tables, materializer, job_service, settings_service
+    ):
+        """An admin who sets the limit to 0 (whole table) is honoured on draft
+        runs — 0 is a real configured value, distinct from 'unset' (→ 1000)."""
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
+        materializer.render_binding_checks.return_value = _CHECKS
+        settings_service.get_draft_run_sample_limit.return_value = 0
+
+        service.run_binding("b1", source="draft", version=None, user_email="alice@x")
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["sample_size"] == 0
+
     def test_approved_does_not_consult_the_draft_sample_limit(
         self, service, monitored_tables, version_service, settings_service
     ):

@@ -251,14 +251,19 @@ class BindingRunService:
         checks = _stamp_run_provenance(checks, run_mode, binding_version)
 
         # Approved runs honour the caller's scope and fall back to a full
-        # table; draft runs fall back to the compiled-in default of 1000
-        # (0 = unlimited everywhere).
+        # table; draft runs fall back to the admin-configured draft-run sample
+        # limit (compiled-in default of 1000 when unset). 0 = unlimited
+        # everywhere. Resolving from the setting here is belt-and-suspenders:
+        # the UI now sends the configured size on draft runs, but a caller that
+        # omits it (or a scheduled/programmatic path) still honours the admin
+        # knob rather than silently scanning the whole table.
         if sample_size is not None:
             resolved_sample_size = sample_size
         elif source == "approved":
             resolved_sample_size = 0
         else:
-            resolved_sample_size = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+            configured = self._settings_service.get_draft_run_sample_limit()
+            resolved_sample_size = configured if configured is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
 
         run_id = uuid4().hex[:16]
         # Persisted ``run_type`` for the ``dq_validation_runs`` row — the
