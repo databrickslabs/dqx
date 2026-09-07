@@ -212,13 +212,26 @@ class ScheduleGrantService:
         single principal, inclusive of parent-securable and group inheritance.
         With *principal* ``None`` it returns every principal's effective
         privileges — used to enumerate ``MANAGE`` holders for the warning card.
+
+        Reads **all** pages: on a heavily-granted table a group's ``MANAGE`` (or a
+        holder) can land on a later page, and missing it would falsely hard-block
+        a legitimate MANAGE-via-group user. Whatever was collected before a
+        mid-pagination failure is still returned.
         """
+        assignments: list = []
+        page_token: str | None = None
         try:
-            resp = self._obo.grants.get_effective(_TABLE_SECURABLE, fqn, principal=principal)
+            while True:
+                resp = self._obo.grants.get_effective(
+                    _TABLE_SECURABLE, fqn, principal=principal, page_token=page_token
+                )
+                assignments.extend(resp.privilege_assignments or [])
+                page_token = getattr(resp, "next_page_token", None)
+                if not page_token:
+                    break
         except Exception:
             logger.debug("Could not read effective grants for manage check", exc_info=True)
-            return []
-        return list(resp.privilege_assignments or [])
+        return assignments
 
     @staticmethod
     def _assignment_has_manage(assignment: object) -> bool:
@@ -259,11 +272,13 @@ class ScheduleGrantService:
             return True
 
         # MANAGE effective for the caller specifically (folds in parent + group
-        # inheritance). Filtered to the caller's user name so another principal's
-        # MANAGE never counts as the caller's.
+        # inheritance). The API returns only *user_name*'s privileges, but we
+        # assert that explicitly per assignment — defense-in-depth so another
+        # principal's MANAGE can never be mis-attributed to the caller.
         if user_name:
             for assignment in self._manage_assignments(fqn, principal=user_name):
-                if self._assignment_has_manage(assignment):
+                who = (getattr(assignment, "principal", None) or "").strip().lower()
+                if who == user_name and self._assignment_has_manage(assignment):
                     return True
 
         # MANAGE held by any of the caller's groups (enumerate all principals).

@@ -75,7 +75,7 @@ class TestUserCanManage:
         assert service.user_can_manage(FQN) is True
 
     def test_true_via_effective_manage_for_user(self, service, obo):
-        def _ge(_type, _fqn, *, principal=None):
+        def _ge(_type, _fqn, *, principal=None, page_token=None):
             if principal == "alice@example.com":
                 return _eff([_assignment("alice@example.com", [Privilege.MANAGE])])
             return _eff([])
@@ -86,7 +86,7 @@ class TestUserCanManage:
     def test_true_via_group_manage(self, service, obo):
         obo.current_user.me.return_value = _me(groups=[("data-eng", "g1")])
 
-        def _ge(_type, _fqn, *, principal=None):
+        def _ge(_type, _fqn, *, principal=None, page_token=None):
             if principal is None:
                 return _eff([_assignment("data-eng", [Privilege.MANAGE])])
             return _eff([])
@@ -106,6 +106,52 @@ class TestUserCanManage:
 
     def test_false_for_synthetic_fqn(self, service):
         assert service.user_can_manage("__sql_check__/my_check") is False
+
+    def test_false_safe_default_when_me_raises(self, service, obo):
+        # Identity unresolved (me() raises) → block. Even though another
+        # principal (bob) owns the table and holds MANAGE, the caller must NOT
+        # inherit it, and we must short-circuit before consulting any grant.
+        obo.current_user.me.side_effect = RuntimeError("no identity")
+        obo.tables.get.return_value = SimpleNamespace(owner="bob@example.com")
+        obo.grants.get_effective.return_value = _eff([_assignment("bob@example.com", [Privilege.MANAGE])])
+
+        assert service.user_can_manage(FQN) is False
+        # The safe-default guard short-circuits before any securable/grant read,
+        # so another principal's MANAGE can never be mis-attributed to the caller.
+        obo.grants.get_effective.assert_not_called()
+        obo.tables.get.assert_not_called()
+
+    def test_false_safe_default_when_identity_empty(self, service, obo):
+        # me() returns an empty/None user_name with no groups and no emails →
+        # empty principal set → block, again without consulting any grant.
+        obo.current_user.me.return_value = _me(user_name="", emails=(), groups=())
+        obo.tables.get.return_value = SimpleNamespace(owner="bob@example.com")
+        obo.grants.get_effective.return_value = _eff([_assignment("bob@example.com", [Privilege.MANAGE])])
+
+        assert service.user_can_manage(FQN) is False
+        obo.grants.get_effective.assert_not_called()
+        obo.tables.get.assert_not_called()
+
+    def test_true_via_group_manage_on_later_page(self, service, obo):
+        # A group's MANAGE on a SECOND page of effective grants must still count —
+        # otherwise a legitimate MANAGE-via-group user is falsely hard-blocked.
+        obo.current_user.me.return_value = _me(groups=[("data-eng", "g1")])
+
+        def _ge(_type, _fqn, *, principal=None, page_token=None):
+            if principal is not None:
+                return SimpleNamespace(privilege_assignments=[], next_page_token=None)
+            if page_token is None:
+                return SimpleNamespace(
+                    privilege_assignments=[_assignment("someone@example.com", [Privilege.SELECT])],
+                    next_page_token="p2",
+                )
+            return SimpleNamespace(
+                privilege_assignments=[_assignment("data-eng", [Privilege.MANAGE])],
+                next_page_token=None,
+            )
+
+        obo.grants.get_effective.side_effect = _ge
+        assert service.user_can_manage(FQN) is True
 
 
 class TestManageHolders:
@@ -161,7 +207,7 @@ class TestGrant:
 
     def test_raises_cannot_manage_when_user_lacks_manage(self, service, obo):
         # Only bob holds MANAGE — the caller (alice) has nothing on the table.
-        def _ge(_type, _fqn, *, principal=None):
+        def _ge(_type, _fqn, *, principal=None, page_token=None):
             if principal is None:
                 return _eff([_assignment("bob@example.com", [Privilege.MANAGE])])
             return _eff([])  # alice's own effective privileges: none
