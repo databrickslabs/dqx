@@ -281,12 +281,24 @@ def test_attribution_semantics_distinguishes_correlation_from_value_anomalies():
     relationship between them had broken. Given per-feature importances and nothing else, the model cannot
     tell the two situations apart -- they look identical in shape -- so it defaults to the value reading
     and asserts something the data does not support.
+
+    Asserted on the protections rather than on any single word, so a rewording that keeps the guarantees
+    passes and one that drops them fails. The correlation-aware text no longer *mandates* the relationship
+    reading either -- a high contribution is genuinely consistent with a large individual move, so naming
+    one reading as the truth was its own overclaim -- but it must still refuse the value reading as a
+    default, which is what produced "Abnormal coolant flow".
     """
     correlation = llm_explainer.attribution_semantics("Mahalanobis")
-    assert "relationship" in correlation
+    # The contribution is joint, not univariate: the reason the observed claim was wrong.
+    assert "once every other metric is accounted for" in correlation
     assert "inside its normal range" in correlation
     # The instruction that prevents the specific false claim observed.
-    assert "do NOT call an individual metric abnormal" in correlation
+    assert "does not distinguish" in correlation
+    assert "do not assert either" in correlation
+
+    values = llm_explainer.attribution_semantics("IsolationForest")
+    assert "feature's own value" in values
+    assert correlation != values
 
     value_based = llm_explainer.attribution_semantics("IsolationForest")
     assert "own value was unusual" in value_based
@@ -330,3 +342,93 @@ def test_explanation_context_defaults_algorithm_to_none():
     )
     assert ctx.algorithm is None
     assert llm_explainer.attribution_semantics(ctx.algorithm) == llm_explainer.attribution_semantics("IsolationForest")
+
+
+# ── the prompt must not teach the model to invent direction ──────────────────────────────────────────
+
+# Words that assert which way a metric moved. The inputs the prompt is built from carry contribution
+# magnitudes, severity percentiles and unsigned drift scores -- nothing that distinguishes a metric far
+# above its norm from one equally far below. A row at (8, 0.5) and its mirror at (-8, -0.5) score
+# identically and produce identical contribution maps, so any of these words is right half the time.
+_DIRECTIONAL_WORDS = (
+    "far above",
+    "far below",
+    "elevated",
+    "inflated",
+    "dropped",
+    "spiked",
+    "surged",
+    "plummeted",
+    "too high",
+    "too low",
+)
+
+
+def _exemplar_responses() -> list[str]:
+    """The JSON responses from the few-shot exemplars, which is the part a model imitates."""
+    return [
+        line.partition("Response: ")[2]
+        for line in llm_explainer._PROMPT_EXAMPLES.splitlines()
+        if line.startswith("Response: ")
+    ]
+
+
+def test_the_few_shot_responses_assert_no_direction():
+    """A few-shot example is an instruction, so an unfounded exemplar teaches unfounded output.
+
+    The previous pair said "sits far above the norm" and "Inflated amount fields overstate revenue"
+    from inputs with no sign in them at all. Because a smaller serving model copies the shape of these
+    responses, that made confident, business-language, half-of-the-time-backwards claims the house style.
+    """
+    responses = _exemplar_responses()
+    assert len(responses) == 2, "expected both exemplars to still carry a response to check"
+
+    for response in responses:
+        lowered = response.lower()
+        offenders = [word for word in _DIRECTIONAL_WORDS if word in lowered]
+        assert not offenders, f"exemplar asserts direction its inputs cannot support: {offenders}"
+
+
+def test_the_instructions_name_the_absence_of_direction_and_reconcile_it_with_being_direct():
+    """Two rules could otherwise be read as licensing invention: "be direct, avoid hedging" and the
+    detector-family reading. Being direct must mean stating what the input holds, not filling the gap."""
+    header = llm_explainer._render_ai_query_prompt_header()
+
+    assert "NO DIRECTION" in header
+    assert "does not license asserting a direction" in header
+
+
+def test_every_exemplar_shows_the_attribution_basis_it_is_reading():
+    """The field that decides how contributions may be described has to appear in the demonstrations.
+
+    Both readings are shown, because an exemplar set that only ever displays one teaches the model to
+    treat that one as the default and ignore the field.
+    """
+    bases = [
+        line.partition("attribution_basis: ")[2]
+        for line in llm_explainer._PROMPT_EXAMPLES.splitlines()
+        if line.startswith("attribution_basis: ")
+    ]
+
+    assert len(bases) == 2, "each exemplar must state the basis it is reading"
+    assert bases[0] != bases[1], "the exemplars must demonstrate both readings, not one twice"
+
+
+def test_the_correlation_aware_reading_does_not_assert_a_broken_relationship():
+    """A high contribution there is consistent with a large individual move *or* with a metric that
+    stopped tracking the others while staying in its normal range. The input cannot tell them apart, so
+    instructing the model to describe a broken relationship states more than is known."""
+    semantics = llm_explainer.attribution_semantics("Mahalanobis")
+
+    assert "does not distinguish" in semantics
+    assert "do not assert either" in semantics
+
+
+def test_ensemble_agreement_is_not_presented_as_confidence_in_the_finding():
+    """*confidence* is seed agreement on one training set. It says nothing about whether the flag is
+    right or whether the data has drifted since, and the prompt has to say so or the narrative will
+    imply otherwise."""
+    description = dict(llm_explainer._PROMPT_INPUT_FIELDS)["confidence"]
+
+    assert "random seed" in description
+    assert "NOT how reliable the flag is" in description

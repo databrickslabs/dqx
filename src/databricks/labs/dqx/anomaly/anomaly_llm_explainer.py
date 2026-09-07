@@ -34,12 +34,20 @@ from databricks.labs.dqx.errors import InvalidParameterError
 # these tables — the rendered header and the structured-output schema both derive from them.
 _PROMPT_INSTRUCTIONS = (
     "You are a data quality analyst. Given aggregate metadata for a GROUP of anomalous rows "
-    "sharing the same root-cause pattern, explain in plain business language why this group was "
-    "flagged. Your explanation will be shown for every row in the group — describe the pattern, "
-    "not a specific row.\n"
-    "Be direct and concrete. Avoid hedging phrases like 'The data shows', 'It appears that', or "
-    "'might indicate'. Do not restate the input field names back to the user, and do not invent "
-    "feature names, values, or baseline groups that are not present in the input."
+    "sharing the same contribution pattern, explain in plain business language why the model "
+    "flagged this group. Your explanation will be shown for every row in the group — describe the "
+    "pattern, not a specific row. You are describing what the model measured, not diagnosing a "
+    "root cause: the inputs cannot establish one.\n"
+    "The inputs carry NO DIRECTION. A contribution says how much a metric mattered to the score, "
+    "never whether it was high or low: a metric far above its norm and one equally far below "
+    "produce the identical number. So never say a value was high, low, above, below, elevated, "
+    "inflated, dropped, spiked, or missing. Say it departed from its expected pattern, and leave "
+    "which way unsaid. The same applies to drift magnitudes, which are also unsigned.\n"
+    "Be direct and concrete: name the metrics, their shares and the group size without hedging "
+    "phrases like 'The data shows', 'It appears that', or 'might indicate'. Being direct means "
+    "stating plainly what the inputs contain — it does not license asserting a direction, a cause, "
+    "or a value they do not contain. Do not restate the input field names back to the user, and do "
+    "not invent feature names, values, or baseline groups that are not present in the input."
 )
 # What a contribution means, per detector family. Keyed by the ``ModelIdentity.algorithm`` prefix that is
 # persisted in the registry, so a model trained by any version resolves as long as that string is stable.
@@ -48,10 +56,12 @@ _PROMPT_INSTRUCTIONS = (
 _ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
     (
         "Mahalanobis",
-        "relationships between metrics. A high contribution means this metric departed from its usual "
-        "relationship with the others -- its own value may sit well inside its normal range. Describe the "
-        "pattern as a broken relationship between metrics, and do NOT call an individual metric abnormal, "
-        "high, low, or deviating unless the contributions are concentrated in a single metric.",
+        "each metric's position once every other metric is accounted for. A high contribution means this "
+        "metric does not fit the pattern the others imply, which can happen either because its own value "
+        "moved a long way or because it stopped tracking the others while staying inside its normal range. "
+        "The input does not distinguish those two cases, so do not assert either: say the metric does not "
+        "fit the pattern. When the contributions are spread across several metrics, describe it as the "
+        "metrics no longer agreeing with each other rather than as any one of them being abnormal.",
     ),
     (
         "IsolationForest",
@@ -77,8 +87,9 @@ def attribution_semantics(algorithm: str | None) -> str:
 _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
         "attribution_basis",
-        "What the feature_contributions below are measuring. Read them accordingly -- this decides "
-        "whether the pattern is 'these values were extreme' or 'these metrics stopped agreeing'.",
+        "What the feature_contributions below are measuring, which differs by detector and decides how "
+        "you may describe the pattern. Follow this field rather than assuming a reading: one basis "
+        "supports saying a feature's own value was unusual, the other does not.",
     ),
     (
         "feature_contributions",
@@ -91,8 +102,10 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     ("severity_range", "Severity percentile range across the group, e.g. 'mean 97.4, min 95.1, max 99.8'."),
     (
         "confidence",
-        "Model confidence label across the group. 'high' / 'mixed' / 'low' for ensemble, 'n/a' "
-        "for single-model scoring.",
+        "How closely the ensemble's members agreed on the score: 'high' / 'mixed' / 'low', or 'n/a' "
+        "when one model did the scoring. Members differ only by random seed on the same training "
+        "data, so this measures the stability of the score, NOT how reliable the flag is or whether "
+        "the data has since changed. Do not present it to the reader as confidence in the finding.",
     ),
     (
         "baseline_grouping",
@@ -127,8 +140,20 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 )
 # Two few-shot exemplars (one without drift, one with) pin the desired style and JSON shape for
 # smaller serving models. Kept short so the prompt stays well within token budgets.
+#
+# Every clause in both responses is checkable against that exemplar's own inputs, because a few-shot
+# example is an instruction: a smaller model copies its *shape*, and a response that asserts more than
+# its input supports teaches the model to do the same. The previous pair said "sits far above the norm"
+# and "Inflated amount fields overstate revenue" from inputs carrying no sign at all -- a row at (8, 0.5)
+# and its mirror at (-8, -0.5) score identically (65.387) with identical contribution maps, so half of
+# those explanations were backwards, stated confidently, in business language.
+#
+# The two also differ in *attribution_basis*, which is the field deciding how the contributions read.
+# Showing only one reading would leave the other untaught; the values here are abbreviated forms of what
+# *attribution_semantics* emits, since the exemplars exist to pin shape rather than to restate the header.
 _PROMPT_EXAMPLES = (
-    "Example (no drift):\n"
+    "Example (relationship basis, no drift):\n"
+    "attribution_basis: each metric's position once the others are accounted for\n"
     "feature_contributions: amount vs its group baseline (61%), quantity (22%)\n"
     "group_size: 312 rows\n"
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
@@ -136,11 +161,12 @@ _PROMPT_EXAMPLES = (
     "baseline_grouping: region\n"
     "threshold: 95.0\n"
     "drift_summary: none\n"
-    'Response: {"narrative":"312 rows are driven mainly by amount, which sits far above the norm '
-    'for its own region (61%), with quantity secondary (22%).","business_impact":"Inflated amount '
-    'fields overstate revenue if these rows are processed unchanged.","action":"Reconcile amount '
-    'against source orders within each affected region."}\n\n'
-    "Example (with drift):\n"
+    'Response: {"narrative":"Across 312 rows, amount departs most from what its own region implies '
+    '(61%), with quantity next (22%).","business_impact":"Amount values that do not match their '
+    "region's usual pattern distort revenue reporting if processed unchanged.\",\"action\":"
+    '"Reconcile amount against source orders for the affected regions."}\n\n'
+    "Example (value basis, with drift):\n"
+    "attribution_basis: each feature's own value compared against the rows it was scored against\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
     "group_size: 88 rows\n"
     "severity_range: mean 98.9, min 97.0, max 99.9\n"
@@ -149,9 +175,9 @@ _PROMPT_EXAMPLES = (
     "threshold: 95.0\n"
     "drift_summary: drift detected: latency_ms=4.12\n"
     'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which has also drifted from '
-    'baseline; retries contribute modestly (12%).","business_impact":"Elevated latency risks SLA '
-    'breaches for downstream consumers.","action":"Investigate latency_ms regressions against the '
-    'training baseline."}'
+    'its training baseline; retries contribute modestly (12%).","business_impact":"Latency that no '
+    'longer matches its baseline risks SLA breaches for downstream consumers.","action":"Compare '
+    'latency_ms against the training baseline to find what changed."}'
 )
 
 if TYPE_CHECKING:
