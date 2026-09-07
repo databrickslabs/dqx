@@ -58,9 +58,7 @@ class TestMonitoredTableScheduleGate:
         body = UpdateMonitoredTableScheduleIn(schedule_cron="0 0 * * *", schedule_tz="UTC")
 
         with pytest.raises(HTTPException) as exc:
-            update_monitored_table_schedule(
-                "b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc
-            )
+            update_monitored_table_schedule("b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
         assert exc.value.status_code == 403
         assert exc.value.detail["code"] == "cannot_manage_schedule_tables"

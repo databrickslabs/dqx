@@ -62,7 +62,9 @@ class ScheduleConfigService:
         cross-table keys (``__sql_check__/<name>``) carry no physical table and
         are excluded.
         """
-        rows = self._sql.query(f"SELECT DISTINCT table_fqn FROM {self._rules_table} WHERE status = 'approved'")  # noqa: S608
+        rows = self._sql.query(
+            f"SELECT DISTINCT table_fqn FROM {self._rules_table} WHERE status = 'approved'"
+        )  # noqa: S608
         fqns = [r[0] for r in rows if r[0] and not str(r[0]).startswith("__sql_check__/")]
 
         mode = config.get("scope_mode", "all")

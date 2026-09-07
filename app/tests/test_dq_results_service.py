@@ -327,8 +327,12 @@ class TestBreakdowns:
         # A group pools rows from several runs whose frozen thresholds differ;
         # the group surfaces the threshold stamped on the NEWEST run.
         rows = [
-            make_row("c1", failed=1, total=10, rule_id="r", run_id="old", run_date="2026-07-01 00:00:00", pass_threshold=80),
-            make_row("c1", failed=1, total=10, rule_id="r", run_id="new", run_date="2026-07-05 00:00:00", pass_threshold=95),
+            make_row(
+                "c1", failed=1, total=10, rule_id="r", run_id="old", run_date="2026-07-01 00:00:00", pass_threshold=80
+            ),
+            make_row(
+                "c1", failed=1, total=10, rule_id="r", run_id="new", run_date="2026-07-05 00:00:00", pass_threshold=95
+            ),
         ]
         out = compute_entity_results(rows, ResultFacets())
         assert len(out.by_rule) == 1

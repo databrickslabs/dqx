@@ -222,9 +222,7 @@ class ScheduleGrantService:
         page_token: str | None = None
         try:
             while True:
-                resp = self._obo.grants.get_effective(
-                    _TABLE_SECURABLE, fqn, principal=principal, page_token=page_token
-                )
+                resp = self._obo.grants.get_effective(_TABLE_SECURABLE, fqn, principal=principal, page_token=page_token)
                 assignments.extend(resp.privilege_assignments or [])
                 page_token = getattr(resp, "next_page_token", None)
                 if not page_token:
