@@ -51,6 +51,7 @@ from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.compute_service import ComputeService, resolve_warehouse_id
+from .services.schedule_grant_service import ScheduleGrantService
 from .services.rule_test_service import RuleTestService
 from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
@@ -687,6 +688,18 @@ async def get_compute_service(
     return ComputeService(sp_ws=sp_ws, app_settings=app_settings)
 
 
+async def get_schedule_grant_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ScheduleGrantService:
+    """Create a ScheduleGrantService (OBO grantability checks + scheduler grants, Task 12).
+
+    Reads and grants run under the caller's OBO client; *sp_ws* is used only to
+    resolve the app SP identity and derive the task-runner SP from the bound job.
+    """
+    return ScheduleGrantService(obo_ws=obo_ws, sp_ws=sp_ws, job_id=conf.job_id)
+
+
 async def get_preview_sql_executor(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
@@ -1213,6 +1226,7 @@ __all__ = [
     "get_user_role",
     "get_comments_service",
     "get_compute_service",
+    "get_schedule_grant_service",
     "get_preview_sql_executor",
     "get_table_data_service",
     "get_rule_test_service",

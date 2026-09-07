@@ -2571,6 +2571,44 @@ class ScheduleConfigHistoryOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Schedule grant preflight models (Task 12)
+# ---------------------------------------------------------------------------
+
+
+class ManageHolderOut(BaseModel):
+    """A user or group that can grant on a table (holds MANAGE or is an owner)."""
+
+    principal: str = Field(description="User name / email or group name that can grant on the table")
+    type: str = Field(description="Best-effort classification: 'user' or 'group'")
+
+
+class SchedulePreflightIn(BaseModel):
+    """Body of ``POST /schedule-grants/preflight`` — the table(s) about to be scheduled."""
+
+    table_fqns: list[str] = Field(description="Fully qualified table names the schedule will run against")
+
+
+class SchedulePreflightTableOut(BaseModel):
+    """Per-table grantability for the schedule editor.
+
+    ``can_manage`` is ``True`` when the caller can grant SELECT to the scheduler
+    service principals (they own the table/schema/catalog or hold MANAGE,
+    directly or via a group). When ``False`` the schedule save is hard-blocked
+    and ``manage_holders`` names who to ask instead.
+    """
+
+    fqn: str
+    can_manage: bool
+    manage_holders: list[ManageHolderOut] = Field(default_factory=list)
+
+
+class SchedulePreflightOut(BaseModel):
+    """Response of the schedule preflight — one entry per requested table."""
+
+    tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # DQX check function registry models
 # ---------------------------------------------------------------------------
 

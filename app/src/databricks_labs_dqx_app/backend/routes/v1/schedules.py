@@ -7,6 +7,7 @@ from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, 
 from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_schedule_config_service,
+    get_schedule_grant_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -16,6 +17,11 @@ from databricks_labs_dqx_app.backend.models import (
     ScheduleConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.schedule_config_service import ScheduleConfigService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    ScheduleGrantService,
+    manage_block_detail,
+)
 
 router = APIRouter()
 
@@ -24,6 +30,53 @@ _ADMINS = [UserRole.ADMIN]
 # Schedule listing/reading is gated on CAN_RUN_ROLES: the schedules tab
 # lives inside the Run Rules page, which only ADMIN and RULE_AUTHOR may
 # see. Mutation endpoints stay admin-only.
+
+
+def _schedule_is_enabled(config: dict) -> bool:
+    """Whether a scope-config schedule is active (would fire runs).
+
+    Saving a schedule enables it by default; only an explicit ``enabled: false``
+    or ``paused: true`` in the config marks it dormant, in which case no
+    source-table access is needed yet.
+    """
+    return bool(config.get("enabled", True)) and not bool(config.get("paused", False))
+
+
+def _enforce_scheduler_grants(
+    config: dict,
+    svc: ScheduleConfigService,
+    grant_svc: ScheduleGrantService,
+) -> None:
+    """Gate + grant scheduler SELECT on a scope-config schedule's target tables.
+
+    Hard-blocks (403) when the caller lacks MANAGE on any resolved table; grants
+    (idempotently) to the scheduler SPs otherwise. A no-op for dormant schedules
+    or scopes that resolve to no tables.
+    """
+    if not _schedule_is_enabled(config):
+        return
+    target_fqns = svc.resolve_scope_table_fqns(config)
+    if not target_fqns:
+        return
+    blocked: list[tuple[str, list[dict[str, str]]]] = []
+    for fqn in target_fqns:
+        if not grant_svc.user_can_manage(fqn):
+            blocked.append((fqn, grant_svc.manage_holders(fqn)))
+    if blocked:
+        raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
+    try:
+        for fqn in target_fqns:
+            grant_svc.grant_select_to_schedulers(fqn)
+    except CannotManageError as e:
+        raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to grant scheduler access for schedule scope: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not grant the scheduler read access to the scheduled tables. Please try again.",
+        )
 
 
 def _notify_scheduler() -> None:
@@ -99,8 +152,18 @@ def save_schedule(
     body: ScheduleConfigIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
 ) -> ScheduleConfigOut:
-    """Create or update a schedule configuration."""
+    """Create or update a schedule configuration.
+
+    When the schedule is enabled, the caller must be able to grant the scheduler
+    service principals SELECT on every table the schedule's scope resolves to —
+    scheduled runs read those tables as the SPs, without an OBO token. Tables the
+    caller can grant on are granted (idempotently) before saving; if they lack
+    MANAGE on any, the save is hard-blocked (403) naming the blocked tables and,
+    for each, the users/groups that hold MANAGE (Task 12).
+    """
+    _enforce_scheduler_grants(body.config, svc, grant_svc)
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
