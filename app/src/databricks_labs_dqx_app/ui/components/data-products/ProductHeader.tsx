@@ -312,9 +312,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const runMut = useRunDataProduct({ mutation: { onError: () => {} } });
   // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
   // table). "Run now" (approved) always scans the full table (sample_size 0).
-  // The backend re-resolves this from the same admin setting if omitted.
+  // While the limit query has not resolved (loading OR error) this is
+  // `undefined`, NOT 0 — so the draft run OMITS sample_size and the backend
+  // resolves the configured draft default. Never fall back to 0 here: 0 = full
+  // table and the backend can't rescue it.
   const draftSampleQuery = useGetDraftRunSampleLimit();
-  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit ?? 0;
+  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit;
   const deleteMut = useDeleteDataProduct({ mutation: { onError: () => {} } });
   const approveMut = useApproveDataProductWithRationale({ mutation: { onError: () => {} } });
   const rejectMut = useRejectDataProductWithRationale({ mutation: { onError: () => {} } });
@@ -419,12 +422,15 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
   const handleRun = async (
     source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource],
-    sampleSize: number,
+    sampleSize: number | undefined,
   ) => {
     setBusyRun(true);
     try {
       const resp = await runMut.mutateAsync({
         productId: product.product_id,
+        // `sample_size: undefined` is dropped from the JSON body, so the
+        // backend receives None and resolves the configured draft default —
+        // draft runs are never accidentally sent as full-table (sample_size 0).
         data: { source, sample_size: sampleSize },
       });
       // The run endpoint returns 200 even when EVERY member failed to launch
@@ -457,7 +463,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // Run draft is demoted. Draft wins as primary when both exist (item 59).
   const draftIsPrimary = canRunDraft;
 
-  const handleRunDraft = async (sampleSize: number) => {
+  const handleRunDraft = async (sampleSize: number | undefined) => {
     // Spans the whole save-then-run sequence, not just the run mutation, so a
     // fast double-click can't fire a second save while the first is still in
     // flight (the save leg predates `handleRun`'s own `busyRun` toggle).

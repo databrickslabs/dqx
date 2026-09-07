@@ -1108,10 +1108,12 @@ function RunTableAction({
   const runMutation = useRunMonitoredTable();
   // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
   // table) so exploratory runs on large tables stay cheap. "Run now" (approved)
-  // always scans the full table (sample_size 0). The backend re-resolves this
-  // from the same admin setting if the UI ever omits it.
+  // always scans the full table (sample_size 0). While the limit query has not
+  // resolved (loading OR error) this is `undefined`, NOT 0 — so the draft run
+  // OMITS sample_size and the backend resolves the configured draft default.
+  // Never fall back to 0 here: 0 = full table and the backend can't rescue it.
   const draftSampleQuery = useGetDraftRunSampleLimit();
-  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit ?? 0;
+  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit;
   const hasApproved = (table.version ?? 0) > 0;
   // Run draft is available only when there is a draft to run: either the
   // binding itself is in draft, or there are unsaved applied-rule edits that
@@ -1125,9 +1127,12 @@ function RunTableAction({
   // fire a second save-then-run while the first save is still in flight.
   const [runDraftBusy, setRunDraftBusy] = useState(false);
 
-  const handleRun = (source: "approved" | "draft", sampleSize: number, version?: number) => {
+  const handleRun = (source: "approved" | "draft", sampleSize: number | undefined, version?: number) => {
     runMutation.mutate(
       {
+        // `sample_size: undefined` is dropped from the JSON body, so the
+        // backend receives None and resolves the configured draft default —
+        // draft runs are never accidentally sent as full-table (sample_size 0).
         bindingId,
         data: { source, version, sample_size: sampleSize },
       },
@@ -1151,7 +1156,7 @@ function RunTableAction({
 
   // Save any pending edits first (so the draft run reflects them), then run.
   // A save failure is surfaced by `onSaveDraft` and we do NOT run.
-  const handleRunDraft = async (sampleSize: number) => {
+  const handleRunDraft = async (sampleSize: number | undefined) => {
     setRunDraftBusy(true);
     try {
       if (isDirty) {
