@@ -226,8 +226,11 @@ def test_a_redundant_dummy_costs_nothing_and_an_unseen_category_scores_high():
     covariance is singular along that direction. Two things follow, and only one of them is obvious:
 
     - for rows that *do* satisfy the constraint, the redundant dummy changes nothing: the score is
-      identical to the same data encoded with one dummy, because the ridged pseudo-inverse gives the
-      zero-variance direction no weight
+      identical to the same data encoded with one dummy. The mechanism is the **ridge floor**, which is
+      added as a fraction of the average variance and is what leaves the singular covariance factorable
+      by Cholesky at all; it is not a pseudo-inverse, and the detector never forms one. Both dummies vary,
+      so neither is dropped by the constant-feature mask, which keys on per-feature spread rather than on
+      directions in feature space.
     - a row that violates it -- an unseen category, encoded all-zeros -- sits off the surface every
       training row lay on, and scores enormously
 
