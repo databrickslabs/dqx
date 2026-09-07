@@ -251,6 +251,19 @@ def _holdout_residual_scale(seconds: np.ndarray, values: np.ndarray, basis: Temp
 
     This is the statistic changepoint counts are chosen by. It has to be measured *after* the fit window
     because that is where over-flexible trends go wrong: an in-sample criterion is blind to it.
+
+    Subtracting the residual median makes this a measure of *spread*, so it cannot see a constant forecast
+    bias -- a basis whose predictions are uniformly off by the same amount scores as well as one that is
+    right. That is deliberate, and the blind spot is exactly the case that cannot matter downstream: a
+    constant offset in a ``_rel_time`` feature cancels before it can reach a score. The correlation-aware
+    detector centres on the training mean, so the shift subtracts back out; IsolationForest draws split
+    thresholds from each feature's observed range, so shifting a column shifts its candidates with it and
+    the partition is unchanged. Measured against no offset, offsets of 5 and 500 move the correlation-aware
+    score by 1.7e-14 and 1.9e-12 relative -- floating-point residue from the centring, twelve orders of
+    magnitude below the quantile spacing that decides a severity percentile -- and leave IsolationForest
+    bit-identical. Non-constant error, a wrong slope or the wrong shape, inflates residual spread instead,
+    which this statistic does penalise. So do not "fix" this by scoring bias: it would trade a criterion
+    that tracks what matters for one that also tracks what cannot.
     """
     order = np.argsort(seconds)
     t_sorted, v_sorted = seconds[order], values[order]

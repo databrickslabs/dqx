@@ -403,6 +403,14 @@ anomaly_engine.train(
 
 Now each metric is judged against its own group's baseline, so the collapse stands out even though its value is ordinary for the table as a whole.
 
+<Admonition type="note" title="What baseline_by does and does not condition on">
+`baseline_by` conditions on **level** — where each group's values normally sit — not on the **relationships** between metrics inside a group. One model is still fitted, and it learns one set of relationships shared across all groups.
+
+That is the right trade for the usual case, where groups differ in scale and agree in behaviour: one region's orders run ten times another's, but order count and revenue move together everywhere. It cannot express groups whose metrics relate to each other *differently*. Measured on a deliberate counterexample — group A where `y` rises with `x`, group B where `y` falls as `x` rises, both centred identically — the pooled model scores a row that is impossible for B at 1.3, where a model fitted on B alone scores it 260. Because the two groups have the same medians, group-relative features are identical and the transform changes nothing.
+
+If your groups genuinely behave differently rather than merely sitting at different levels, train one model per group and give each its own `model_name`. The same applies to `baseline_over_time`: it removes one shared trend, so groups trending in opposite directions or at different phases are not separated by it either.
+</Admonition>
+
 <Admonition type="warning" title="Choosing baseline columns">
 A baseline column is the basis of comparison, not a metric being compared, so it never becomes a model feature. Passing the same column in both `columns` and `baseline_by` is an error, and if you let DQX auto-discover `columns`, it drops your declared baseline columns from the feature list for you. Baseline columns must be string, integral, boolean, or date. Float, double, and decimal are rejected, because Spark and Python format floating-point values differently and the baseline lookup would silently match nothing. Bucket the value or cast it to a string first.
 </Admonition>
@@ -535,47 +543,31 @@ tabular data and weak when the anomaly *is* a broken relationship: if CPU is nor
 normal, no single-feature split separates the row, even though "high CPU with idle memory" never happens
 on a healthy machine.
 
-Measured on the full Server Machine Dataset: real machine telemetry, 28 machines, 38 metrics, 327 labelled
-incidents across 708,420 rows. Both detectors were trained the way DQX trains — a 30% sample of the table
-being scored, 80% of that sample used to fit — so the training data contains the anomalies, as it does on
-your table:
+Measured on the Server Machine Dataset: real machine telemetry, 28 machines, 38 metrics, 327 labelled
+incidents. Trained on an earlier period and scored on a later one, which is what you do when you train once
+and check new data:
 
-| `profile` | Incidents surfaced, 1% budget | 5% budget | Precision at 1% | ROC-AUC | Average precision |
-|---|---|---|---|---|---|
-| `"tabular"` | 65.4% | 92.8% | 54.6% | 0.826 | 0.374 |
-| `"timeseries"` | **96.8%** | **99.3%** | 55.4% | **0.845** | 0.380 |
+| `profile` | Incidents surfaced, 1% budget | Average precision |
+|---|---|---|
+| `"tabular"` | 57.5% | 0.277 |
+| `"timeseries"` | **65.3%** | **0.423** |
 
-An incident counts as surfaced if the detector flags at least one of its rows, so this measures whether you
-would have been paged, not how many rows you would have had to read. The best precision a 1% budget allows
-on this data is 95.7%, so both detectors are well short of the ceiling; the difference between them is
-*which* incidents they find, not how cleanly.
+An incident counts as surfaced if the detector flags at least one of its rows, so the first column measures
+whether you would have been paged. The comparison is between detectors on raw metric matrices; DQX's own
+feature engineering is not part of it.
 
-**Coverage is the difference that holds up per machine.** The gap at a 1% budget averages +31 points with a
-standard deviation of 30, and the correlation-aware detector wins on 22 of the 28 machines and loses on 1.
-Average precision, by contrast, is a wash under this protocol: +0.006, and 14 wins to 14 losses. So choose
-`"timeseries"` for telemetry because it surfaces more incidents, not because it ranks rows better.
+That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data the two are closer than
+this table suggests, so **choose on the shape of the anomaly you expect, not on an expected accuracy gap.**
+Two things independent of accuracy do favour the default: `"tabular"` trains an ensemble, so it can report
+`confidence_std`, and its contributions come from SHAP. Detection quality on DQX's own synthetic fixtures is
+published in [Benchmarks](/docs/reference/benchmarks).
 
-<Admonition type="note" title="Why a clean training split looks worse for both">
-Fitting SMD's own held-out training period instead — the conventional protocol, with no overlap between
-training and scored rows — gives 57.5% against 65.3% at a 1% budget, with average precision 0.277 against
-0.423. Both detectors do *worse* that way, because SMD's training period drifts from its test period, and a
-model fitted on a sample of the rows it will score does not inherit that drift.
-
-That is a property of how DQX trains rather than of the benchmark, so the table above is the representative
-one. It is not an artefact of scoring rows that were trained on: restricting the ranking metrics to the rows
-the model never saw gives ROC-AUC 0.826 against 0.845 and average precision 0.380 against 0.382 — the same
-numbers. Event coverage is not reported for that check, because dropping a quarter of the rows breaks
-incidents into fragments and would count a different set of events.
-
-Both protocols come from one archived run. The comparison is between *estimators* on raw metric matrices:
-DQX's own feature engineering, including `baseline_by` and `baseline_over_time`, is not part of it.
-</Admonition>
-
-That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data the two detectors are
-closer than this table might suggest, so choose on the *shape* of the anomaly you expect rather than on an
-expected accuracy gap. Two things independent of accuracy do favour the default: `"tabular"` trains an
-ensemble, so it can report `confidence_std`, and its contributions come from SHAP. Detection quality on
-DQX's own synthetic fixtures is published in [Benchmarks](/docs/reference/benchmarks).
+One capability difference is worth knowing because no accuracy number shows it. A **category that never
+appeared in training** — a new payment type, an unrecognised status code — is caught by `"timeseries"` but
+generally not by `"tabular"`. Both encode the row the same way, but only a detector that reads features
+jointly can tell that the encoding is impossible; Isolation Forest splits one feature at a time and scores
+such a row as ordinary. If unrecognised values are something you need to fail on, that is a membership
+question rather than an anomaly one — use `is_in_list` or `foreign_key` on the column, under either profile.
 
 <Admonition type="info" title="Why not choose for you?">
 DQX does not detect which profile you need. Getting it right cannot be verified without labelled

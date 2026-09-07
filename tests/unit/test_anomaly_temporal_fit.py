@@ -11,6 +11,7 @@ import logging
 
 import numpy as np
 import pytest
+from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import Ridge
 
 from databricks.labs.dqx.anomaly.temporal import (
@@ -25,6 +26,7 @@ from databricks.labs.dqx.anomaly.temporal import (
     select_basis,
     trend_strength,
 )
+from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
 
 HOUR = 3600.0
 DAY = 86400.0
@@ -460,3 +462,40 @@ def test_a_metric_with_more_than_half_identical_values_still_fits():
 
     assert "metric" in fitted
     assert all(np.isfinite(fitted["metric"]))
+
+
+def test_a_constant_offset_in_a_relative_feature_cannot_reach_a_score():
+    """Why the selection criterion is allowed to be blind to constant forecast bias.
+
+    ``_holdout_residual_scale`` subtracts the residual median, so it measures spread and scores a
+    uniformly-biased basis as well as an unbiased one. That looks like a gap in the objective until you
+    ask what a constant offset in a ``_rel_time`` column can actually do downstream: nothing. The
+    correlation-aware detector centres on the training mean, so the shift cancels exactly; IsolationForest
+    picks split thresholds from each feature's observed range, so shifting the whole column shifts the
+    thresholds with it and leaves the partition identical.
+
+    The cancellation is algebraic, so what survives is floating-point residue from centring a shifted
+    column, not sensitivity to the offset. Measured relative movement in the correlation-aware score:
+    1.7e-14 at an offset of 5 and 1.9e-12 at 500 -- twelve orders of magnitude below the quantile spacing
+    that decides a severity percentile, so no flag can turn on it. IsolationForest is bit-identical at
+    both, because shifting a column shifts its candidate split thresholds with it.
+
+    Asserted at a tolerance rather than at bit equality, since bit equality is false and asserting it
+    would have made this test a statement about float arithmetic instead of about the criterion.
+    """
+    rng = np.random.default_rng(0)
+    base = rng.normal(0.0, 1.0, (2000, 3))
+    probe_base = rng.normal(0.0, 1.0, (50, 3))
+
+    def scores_with_offset(offset: float) -> tuple[np.ndarray, np.ndarray]:
+        shift = np.array([0.0, 0.0, offset])  # only the derived, time-relative column moves
+        detector = MahalanobisDetector().fit(base + shift)
+        forest = IsolationForest(n_estimators=50, random_state=0).fit(base + shift)
+        probe = probe_base + shift
+        return detector.score_samples(probe), forest.score_samples(probe)
+
+    reference_maha, reference_forest = scores_with_offset(0.0)
+    for offset in (5.0, 500.0):
+        maha, forest = scores_with_offset(offset)
+        np.testing.assert_allclose(maha, reference_maha, rtol=1e-10)
+        assert np.array_equal(forest, reference_forest), f"IsolationForest scores moved at offset {offset}"
