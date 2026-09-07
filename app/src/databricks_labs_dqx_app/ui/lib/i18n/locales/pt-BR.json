@@ -26,6 +26,16 @@
       "thursday": "quinta-feira",
       "friday": "sexta-feira",
       "saturday": "sábado"
+    },
+    "grantWarning": {
+      "title": "Você não pode configurar esta programação",
+      "descriptionTable": "As execuções programadas leem esta tabela como uma conta de serviço, então configurar uma programação concede acesso de leitura a essa conta — o que exige o privilégio MANAGE que você não tem nesta tabela.",
+      "descriptionCollection": "As execuções programadas leem cada tabela como uma conta de serviço, então configurar uma programação concede acesso de leitura a essa conta — o que exige o privilégio MANAGE que você não tem em uma ou mais tabelas desta coleção.",
+      "holdersLabel": "Peça a um destes para configurá-la no seu lugar:",
+      "holdersLabelForTable": "Quem pode conceder acesso a {{fqn}}:",
+      "noHolders": "Nenhum usuário ou grupo com a permissão necessária foi encontrado. Entre em contato com o administrador do seu workspace ou com o proprietário da tabela.",
+      "typeUser": "usuário",
+      "typeGroup": "grupo"
     }
   },
   "lifecycle": {

@@ -26,6 +26,16 @@
       "thursday": "jeudi",
       "friday": "vendredi",
       "saturday": "samedi"
+    },
+    "grantWarning": {
+      "title": "Vous ne pouvez pas configurer cette planification",
+      "descriptionTable": "Les exécutions planifiées lisent cette table via un compte de service ; configurer une planification accorde donc un accès en lecture à ce compte, ce qui nécessite le privilège MANAGE dont vous ne disposez pas sur cette table.",
+      "descriptionCollection": "Les exécutions planifiées lisent chaque table via un compte de service ; configurer une planification accorde donc un accès en lecture à ce compte, ce qui nécessite le privilège MANAGE dont vous ne disposez pas sur une ou plusieurs tables de cette collection.",
+      "holdersLabel": "Demandez à l'une de ces personnes ou groupes de la configurer à votre place :",
+      "holdersLabelForTable": "Qui peut accorder l'accès à {{fqn}} :",
+      "noHolders": "Aucun utilisateur ni groupe disposant de l'autorisation requise n'a été trouvé. Contactez l'administrateur de votre espace de travail ou le propriétaire de la table.",
+      "typeUser": "utilisateur",
+      "typeGroup": "groupe"
     }
   },
   "lifecycle": {

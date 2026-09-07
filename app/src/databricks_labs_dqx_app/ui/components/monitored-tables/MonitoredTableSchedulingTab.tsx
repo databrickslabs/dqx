@@ -9,13 +9,19 @@
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { CalendarClock, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScheduleEditor, DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
-import { useListDataProducts, useUpdateMonitoredTableSchedule, type MonitoredTableOut } from "@/lib/api";
+import { ScheduleGrantWarning } from "@/components/common/ScheduleGrantWarning";
+import {
+  preflightScheduleGrants,
+  useListDataProducts,
+  useUpdateMonitoredTableSchedule,
+  type MonitoredTableOut,
+} from "@/lib/api";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { cronHint } from "@/lib/cron";
 
@@ -52,7 +58,23 @@ export function MonitoredTableSchedulingTab({
   const dirty =
     cron !== serverCron ||
     (cron !== null && (tz !== serverTz || scheduleKind !== serverKind || sampleSize !== serverSampleSize));
-  const canSave = dirty && !cronInvalid;
+
+  // Preflight: scheduled runs read this table as a service account, so setting
+  // up a schedule requires the caller to be able to grant those SPs SELECT.
+  // When they can't, we hard-block the save and show a warning naming who can.
+  const preflightQuery = useQuery({
+    queryKey: ["scheduleGrantPreflight", table.table_fqn],
+    queryFn: async () => (await preflightScheduleGrants({ table_fqns: [table.table_fqn] })).data,
+    enabled: canEdit,
+    staleTime: 60_000,
+  });
+  const preflightTable = preflightQuery.data?.tables?.[0];
+  const cannotManage = !!preflightTable && !preflightTable.can_manage;
+  // Only block when a schedule is actually being set/kept — clearing it (null
+  // cron) needs no grant, matching the backend gate.
+  const blockForSchedule = cannotManage && cron !== null;
+
+  const canSave = dirty && !cronInvalid && !blockForSchedule;
 
   const updateMut = useUpdateMonitoredTableSchedule({ mutation: { onError: () => {} } });
 
@@ -114,6 +136,11 @@ export function MonitoredTableSchedulingTab({
         onSampleSizeChange={setSampleSize}
         onRemove={() => setCron(null)}
         onValidityChange={(valid) => setCronInvalid(!valid)}
+        banner={
+          cannotManage ? (
+            <ScheduleGrantWarning entity="table" blockedTables={preflightTable ? [preflightTable] : []} />
+          ) : undefined
+        }
         footerNote={t("monitoredTables.scheduleFooterNote")}
         emptyText={t("monitoredTables.scheduleEmptyText")}
         actions={

@@ -26,6 +26,16 @@
       "thursday": "Thursday",
       "friday": "Friday",
       "saturday": "Saturday"
+    },
+    "grantWarning": {
+      "title": "You can't set up this schedule",
+      "descriptionTable": "Scheduled runs read this table as a service account, so setting up a schedule grants that account read access — which needs the MANAGE privilege you don't have on this table.",
+      "descriptionCollection": "Scheduled runs read each table as a service account, so setting up a schedule grants that account read access — which needs the MANAGE privilege you don't have on one or more of this collection's tables.",
+      "holdersLabel": "Ask one of these to set it up instead:",
+      "holdersLabelForTable": "Who can grant access to {{fqn}}:",
+      "noHolders": "No users or groups with the required permission were found. Contact your workspace administrator or the table's owner.",
+      "typeUser": "user",
+      "typeGroup": "group"
     }
   },
   "lifecycle": {

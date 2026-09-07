@@ -2108,6 +2108,16 @@ export interface LifecycleRationaleIn {
   rationale?: LifecycleRationaleInRationale;
 }
 
+/**
+ * A user or group that can grant on a table (holds MANAGE or is an owner).
+ */
+export interface ManageHolderOut {
+  /** User name / email or group name that can grant on the table */
+  principal: string;
+  /** Best-effort classification: 'user' or 'group' */
+  type: string;
+}
+
 export interface MarketplacePackOut {
   id: string;
   title: string;
@@ -4037,6 +4047,35 @@ export interface ScheduleConfigOut {
   created_at?: ScheduleConfigOutCreatedAt;
   updated_by?: ScheduleConfigOutUpdatedBy;
   updated_at?: ScheduleConfigOutUpdatedAt;
+}
+
+/**
+ * Body of ``POST /schedule-grants/preflight`` — the table(s) about to be scheduled.
+ */
+export interface SchedulePreflightIn {
+  /** Fully qualified table names the schedule will run against */
+  table_fqns: string[];
+}
+
+/**
+ * Response of the schedule preflight — one entry per requested table.
+ */
+export interface SchedulePreflightOut {
+  tables?: SchedulePreflightTableOut[];
+}
+
+/**
+ * Per-table grantability for the schedule editor.
+
+``can_manage`` is ``True`` when the caller can grant SELECT to the scheduler
+service principals (they own the table/schema/catalog or hold MANAGE,
+directly or via a group). When ``False`` the schedule save is hard-blocked
+and ``manage_holders`` names who to ask instead.
+ */
+export interface SchedulePreflightTableOut {
+  fqn: string;
+  can_manage: boolean;
+  manage_holders?: ManageHolderOut[];
 }
 
 export type SchemaOutComment = string | null;
@@ -9448,6 +9487,13 @@ export function useListSchedulesSuspense<TData = Awaited<ReturnType<typeof listS
 
 /**
  * Create or update a schedule configuration.
+
+When the schedule is enabled, the caller must be able to grant the scheduler
+service principals SELECT on every table the schedule's scope resolves to —
+scheduled runs read those tables as the SPs, without an OBO token. Tables the
+caller can grant on are granted (idempotently) before saving; if they lack
+MANAGE on any, the save is hard-blocked (403) naming the blocked tables and,
+for each, the users/groups that hold MANAGE (Task 12).
  * @summary Save Schedule
  */
 export const saveSchedule = (
@@ -15386,6 +15432,12 @@ export const useUpdateMonitoredTableOwner = <TError = AxiosError<HTTPValidationE
 Requires ``MODIFY`` on the monitored table unless the caller is an
 admin/approver. Orthogonal to the review lifecycle — does NOT flip the
 binding's status. An approved table with a cron fires on the in-app scheduler.
+
+When a schedule is being *set* (a non-empty cron), the caller must be able to
+grant the scheduler service principals SELECT on the source table — scheduled
+runs have no OBO token and read as those SPs. If the caller can grant we do so
+(idempotently) before saving; if not, the save is hard-blocked (403) naming
+the users/groups that hold MANAGE (Task 12).
  * @summary Update Monitored Table Schedule
  */
 export const updateMonitoredTableSchedule = (
@@ -23950,6 +24002,13 @@ export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getD
 
 Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
 caller is an admin/approver.
+
+When a schedule is being *set* (a non-empty cron), the caller must be able to
+grant the scheduler service principals SELECT on *every* member table —
+scheduled runs have no OBO token and read as those SPs. If the caller can
+grant on all members we do so (idempotently) before saving; if they lack
+MANAGE on any member the save is hard-blocked (403) naming the blocked
+tables and, for each, the users/groups that hold MANAGE (Task 12).
  * @summary Update Data Product
  */
 export const updateDataProduct = (
@@ -28223,3 +28282,70 @@ export function useListMarketplacePacksSuspense<TData = Awaited<ReturnType<typeo
 
   return query;
 }
+
+
+
+
+
+/**
+ * Return per-table grantability for the tables a schedule will run against.
+ * @summary Preflight Schedule Grants
+ */
+export const preflightScheduleGrants = (
+    schedulePreflightIn: SchedulePreflightIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SchedulePreflightOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/preflight`,
+      schedulePreflightIn,options
+    );
+  }
+
+
+
+export const getPreflightScheduleGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightScheduleGrants>>, TError,{data: SchedulePreflightIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof preflightScheduleGrants>>, TError,{data: SchedulePreflightIn}, TContext> => {
+
+const mutationKey = ['preflightScheduleGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preflightScheduleGrants>>, {data: SchedulePreflightIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  preflightScheduleGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreflightScheduleGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof preflightScheduleGrants>>>
+    export type PreflightScheduleGrantsMutationBody = SchedulePreflightIn
+    export type PreflightScheduleGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preflight Schedule Grants
+ */
+export const usePreflightScheduleGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightScheduleGrants>>, TError,{data: SchedulePreflightIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof preflightScheduleGrants>>,
+        TError,
+        {data: SchedulePreflightIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreflightScheduleGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
