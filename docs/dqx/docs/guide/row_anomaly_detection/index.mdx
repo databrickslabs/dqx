@@ -609,11 +609,12 @@ Both profiles get the same feature engineering, so these need no configuration:
 
 ## Upgrading and breaking changes
 
-Row anomaly detection was **Experimental** in earlier releases and is now **Beta**. This release replaces the old per-group model path (`segment_by`) with `baseline_by`, which measured better on detection, reliability, and cost. If you never used `segment_by`, nothing here affects you.
+Row anomaly detection was **Experimental** in earlier releases and is now **Beta**. This release replaces the old per-group model path (`segment_by`) with `baseline_by`, which measured better on detection, reliability, and cost, and removes one parameter that never did what its name promised.
 
-If you did, here is the whole migration.
+Two changes need action from you, and the rest is handled. **Every existing model must be retrained** whether or not you used any of this. And if you passed `segment_by` or `expected_anomaly_rate` to `train()`, those calls will now raise.
 
 - **Replace `segment_by` with `baseline_by`.** They are not the same. `segment_by` trained one model per group; `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change. `AnomalyParams.max_segment_models` is gone too, since there is only ever one model now.
+- **Remove `expected_anomaly_rate`.** It set the estimator's `contamination`, which places only scikit-learn's own `predict` boundary, so it never changed which rows DQX flagged. Nothing replaces it, because nothing needs to: to change how much gets flagged, set `threshold` on the check, which is an alert budget over training severity. If you were relying on `contamination` itself — because you load the registered model and call `predict` yourself — set `params.algorithm_config.contamination` instead. The default is unchanged at 0.02, so a call that did not pass it behaves identically.
 - **Retrain your models.** A model trained before this release raises an error at scoring time until you retrain it, rather than scoring against a feature list that no longer matches.
 - **Your registry table is handled for you.** Retraining writes the new schema into your existing table in place. The `segmentation` column becomes `grouping`, and a table you never retrain into keeps the old column and will not be read.
 - **`_dq_info[].anomaly` changes shape.** The `segment` field is gone (it was always null once per-group models were), and `is_new_baseline`, `new_baseline_key`, `is_stale_baseline` and `stale_baseline_horizon` are added. Named-field queries keep working, but appending to a table that already holds `_dq_info` needs `mergeSchema`.
@@ -736,6 +737,14 @@ Use row anomaly detection when you want to catch unusual combinations across col
 <summary><strong>Q: I upgraded and my `segment_by` code stopped working. What do I do?</strong></summary>
 
 `segment_by` has been removed. Replace it with `baseline_by`, which compares each metric against its own group's baseline on a single model instead of training one model per group, and retrain (models from earlier releases no longer load). Row anomaly detection was Experimental in earlier releases, which is what allowed this break, and it is now Beta. See [Upgrading and breaking changes](#upgrading-and-breaking-changes).
+</details>
+
+<details>
+<summary><strong>Q: `train()` says it got an unexpected keyword argument `expected_anomaly_rate`. What replaced it?</strong></summary>
+
+Nothing, deliberately. It supplied the estimator's `contamination`, which places scikit-learn's own `predict` boundary and nothing else — DQX scores by ranking against training-score quantiles, so the parameter never changed which rows were flagged despite its name.
+
+To control how much gets flagged, set `threshold` on the check: it is an alert budget over training severity, so `threshold=95` flags the top 5%. To set `contamination` because you load the registered model and call `predict` yourself, pass `params=AnomalyParams(algorithm_config=IsolationForestConfig(contamination=...))`. Its default is unchanged, so removing the argument alone changes no behaviour.
 </details>
 
 <details>
