@@ -652,7 +652,7 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `is_anomaly` | boolean | `true` if `severity_percentile` ≥ threshold. |
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
-| `contributions` | map&lt;string, double&gt; | Contribution percentages (0–100). Keyed by **source column** for `profile="timeseries"` and by engineered feature for `profile="tabular"` — see step 4 of [How it works](#how-it-works). On by default (`enable_contributions=True`); populated only for anomalous rows (`null` for non-anomalous rows or if you set it `False`). |
+| `contributions` | map&lt;string, double&gt; | Contribution percentages (0–100). Keyed by **source column** for `profile="timeseries"` and by engineered feature for `profile="tabular"` — see step 4 of [How it works](#how-it-works-under-the-hood). On by default (`enable_contributions=True`); populated only for anomalous rows (`null` for non-anomalous rows or if you set it `False`). |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
 | `is_new_baseline` | boolean | `true` when the row's group was absent from training, in which case `score` and `severity_percentile` are `null` and the row is **not** flagged. See [Groups that appear after training](#groups-that-appear-after-training). |
 | `new_baseline_key` | string | The unrecognised group key, for rows where `is_new_baseline` is `true`; `null` otherwise. |
