@@ -102,6 +102,15 @@ class ScheduleGrantService:
         self._obo = obo_ws
         self._sp_ws = sp_ws
         self._job_id = (job_id or "").strip()
+        # Per-request memoization of the (otherwise per-table) identity lookups.
+        # The service is constructed per request (see ``get_schedule_grant_service``),
+        # so caching here scopes each identity round-trip to a single request —
+        # ``current_user.me()`` / ``jobs.get`` fire once, not once per table.
+        self._caller_identity_cache: tuple[str, set[str]] | None = None
+        self._app_sp_id_cache: str | None = None
+        self._app_sp_id_cached: bool = False
+        self._task_runner_sp_id_cache: str | None = None
+        self._task_runner_sp_id_cached: bool = False
 
     # ------------------------------------------------------------------
     # SP identity resolution
@@ -112,7 +121,14 @@ class ScheduleGrantService:
 
         Prefers ``DATABRICKS_CLIENT_ID`` (injected into a deployed Databricks
         App) and falls back to the SP's own SCIM ``me()`` for local dev.
+        Memoized per request so the ``me()`` fallback is not re-issued per table.
         """
+        if not self._app_sp_id_cached:
+            self._app_sp_id_cache = self._resolve_app_sp_id()
+            self._app_sp_id_cached = True
+        return self._app_sp_id_cache or ""
+
+    def _resolve_app_sp_id(self) -> str:
         env_id = (os.environ.get("DATABRICKS_CLIENT_ID") or "").strip()
         if env_id:
             return env_id
@@ -127,8 +143,15 @@ class ScheduleGrantService:
         """Derive the task-runner SP's application id from the job's ``run_as``.
 
         Best-effort: returns ``None`` when no job id is configured or the job's
-        ``run_as`` cannot be read. Callers must still grant the app SP.
+        ``run_as`` cannot be read. Callers must still grant the app SP. Memoized
+        per request so ``jobs.get`` fires once, not once per table.
         """
+        if not self._task_runner_sp_id_cached:
+            self._task_runner_sp_id_cache = self._resolve_task_runner_sp_id()
+            self._task_runner_sp_id_cached = True
+        return self._task_runner_sp_id_cache
+
+    def _resolve_task_runner_sp_id(self) -> str | None:
         if not self._job_id:
             return None
         try:
@@ -140,12 +163,36 @@ class ScheduleGrantService:
         spn = getattr(run_as, "service_principal_name", None)
         return spn.strip() if spn else None
 
+    def prime_caller_identity(self) -> None:
+        """Resolve and cache the OBO caller identity once (before concurrent gates).
+
+        Fanning the per-table ``user_can_manage`` checks out across threads would
+        otherwise let several of them race into :meth:`_caller_identity` before
+        the cache is populated, re-issuing ``current_user.me()``. Priming it once,
+        serially, guarantees exactly one identity round-trip per request.
+        """
+        self._caller_identity()
+
+    def prime_scheduler_sp_identities(self) -> None:
+        """Resolve and cache both scheduler SP identities once (before concurrent grants)."""
+        self.app_sp_id()
+        self.task_runner_sp_id()
+
     # ------------------------------------------------------------------
     # Caller identity + ownership
     # ------------------------------------------------------------------
 
     def _caller_identity(self) -> tuple[str, set[str]]:
         """Return the OBO caller's ``(user_name, principal_set)`` (lowercased).
+
+        Memoized per request — see :meth:`prime_caller_identity`.
+        """
+        if self._caller_identity_cache is None:
+            self._caller_identity_cache = self._resolve_caller_identity()
+        return self._caller_identity_cache
+
+    def _resolve_caller_identity(self) -> tuple[str, set[str]]:
+        """Compute the OBO caller's ``(user_name, principal_set)`` (lowercased).
 
         The principal set includes the user name, any registered emails, and
         every group the user belongs to — by both display name and SCIM id — so
@@ -346,11 +393,11 @@ class ScheduleGrantService:
     def grant_select_to_schedulers(self, fqn: str) -> list[str]:
         """Grant ``SELECT`` on *fqn* to the app SP (essential) + task-runner SP.
 
-        Raises :class:`CannotManageError` when the caller cannot grant (the
-        route maps it to a hard block). The app-SP grant is essential and any
-        failure propagates; the task-runner grant is best-effort. Idempotent —
-        re-granting an existing privilege is a no-op. Returns the list of
-        principals granted.
+        Checks grantability first and raises :class:`CannotManageError` when the
+        caller cannot grant (the route maps it to a hard block). The app-SP grant
+        is essential and any failure propagates; the task-runner grant is
+        best-effort. Idempotent — re-granting an existing privilege is a no-op.
+        Returns the list of principals granted.
         """
         validate_fqn(fqn)
         if not _is_real_three_part_fqn(fqn):
@@ -359,6 +406,22 @@ class ScheduleGrantService:
 
         if not self.user_can_manage(fqn):
             raise CannotManageError(fqn, self.manage_holders(fqn))
+
+        return self._grant_to_schedulers_unchecked(fqn)
+
+    def _grant_to_schedulers_unchecked(self, fqn: str) -> list[str]:
+        """Grant SELECT to the scheduler SPs **without** re-checking MANAGE.
+
+        The caller must have already gated on :meth:`user_can_manage` for *fqn*
+        (the enforce path does this once per table). Splitting the grant from the
+        gate is a performance fix — it avoids re-issuing the ownership +
+        effective-privilege round-trips that :meth:`user_can_manage` performs. The
+        security guarantee is unchanged: every table is still MANAGE-gated before
+        any grant is attempted.
+        """
+        validate_fqn(fqn)
+        if not _is_real_three_part_fqn(fqn):
+            return []
 
         app_id = self.app_sp_id()
         if not app_id:
@@ -389,5 +452,6 @@ class ScheduleGrantService:
     async def manage_holders_async(self, fqn: str) -> list[dict[str, str]]:
         return await asyncio.to_thread(self.manage_holders, fqn)
 
-    async def grant_select_to_schedulers_async(self, fqn: str) -> list[str]:
-        return await asyncio.to_thread(self.grant_select_to_schedulers, fqn)
+    async def grant_select_precleared_async(self, fqn: str) -> list[str]:
+        """Async wrapper for :meth:`_grant_to_schedulers_unchecked` (MANAGE pre-gated)."""
+        return await asyncio.to_thread(self._grant_to_schedulers_unchecked, fqn)
