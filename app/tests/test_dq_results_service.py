@@ -338,6 +338,23 @@ class TestBreakdowns:
         assert len(out.by_rule) == 1
         assert out.by_rule[0].pass_threshold == 95
 
+    def test_group_threshold_newest_none_clears_older_value(self):
+        # #C6: when the NEWEST run carries no frozen threshold (e.g. the
+        # pass-threshold feature was turned off after an earlier run had it on),
+        # the group must surface the newest run's (None) threshold rather than
+        # latch a stale older value.
+        rows = [
+            make_row(
+                "c1", failed=1, total=10, rule_id="r", run_id="old", run_date="2026-07-01 00:00:00", pass_threshold=80
+            ),
+            make_row(
+                "c1", failed=1, total=10, rule_id="r", run_id="new", run_date="2026-07-05 00:00:00", pass_threshold=None
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert len(out.by_rule) == 1
+        assert out.by_rule[0].pass_threshold is None
+
     def test_group_threshold_none_for_legacy_runs(self):
         # Runs predating the stamp carry no frozen threshold; the group leaves
         # pass_threshold None so the UI shows nothing.

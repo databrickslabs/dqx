@@ -301,13 +301,19 @@ class _GroupAcc:
     # mirrors how the by-rule group takes its display label from the newest run.
     # Stays None when no contributing row carried a frozen threshold (legacy runs).
     pass_threshold: int | None = None
-    threshold_run_date: str = ""
+    # None = nothing seen yet; "" = an undated contributing row (sorts oldest).
+    threshold_run_date: str | None = None
 
     def add(self, row: CheckResultRow, resolve: ThresholdResolver | None = None) -> None:
         self.failed += row.failed
-        if row.pass_threshold is not None and (row.run_date or "") >= self.threshold_run_date:
-            self.pass_threshold = row.pass_threshold
-            self.threshold_run_date = row.run_date or ""
+        # Track the newest contributing run across ALL rows and adopt THAT run's
+        # frozen threshold — even when it is None (the pass-threshold feature was
+        # turned off after an earlier run had it on). Strict '>' lets the
+        # first-seen row win ties, matching the by-rule label's tie behaviour.
+        row_date = row.run_date or ""  # undated rows sort oldest
+        if self.threshold_run_date is None or row_date > self.threshold_run_date:
+            self.threshold_run_date = row_date
+            self.pass_threshold = row.pass_threshold  # may be None — newest run wins
         if row.total is not None:
             self.total = (self.total or 0) + row.total
         self.rule_keys.add(_rule_key(row))
