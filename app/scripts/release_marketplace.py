@@ -54,11 +54,6 @@ def _studio_release(tag: str) -> _StudioRelease:
     return _StudioRelease(version=version, branch=f"dqx-studio/marketplace/v{version}")
 
 
-def release_branch_name(tag: str) -> str:
-    """Return the release branch name for a valid Marketplace version tag."""
-    return _studio_release(tag).branch
-
-
 def release_push_commands(tag: str, branch: str) -> tuple[str, str]:
     """Return the manual commands that publish a Studio release."""
     return f"git push origin {branch}", f"git push origin {tag}"

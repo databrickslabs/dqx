@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 from scripts import release_marketplace as release_marketplace_module
-from scripts.release_marketplace import CommandResult, release_branch_name, release_marketplace
+from scripts.release_marketplace import CommandResult, release_marketplace
 
 
 class RecordingCommandRunner:
@@ -82,10 +82,6 @@ class RecordingCommandRunner:
         return any(command[: len(prefix)] == prefix for command in self.commands)
 
 
-def test_release_branch_name_is_derived_from_version_tag() -> None:
-    assert release_branch_name("studio-v0.1.0") == "dqx-studio/marketplace/v0.1.0"
-
-
 def test_release_push_commands_include_signed_tag_and_release_branch() -> None:
     assert hasattr(release_marketplace_module, "release_push_commands")
     assert release_marketplace_module.release_push_commands("studio-v0.1.0", "dqx-studio/marketplace/v0.1.0") == (
@@ -100,7 +96,7 @@ def test_release_push_commands_include_signed_tag_and_release_branch() -> None:
 )
 def test_release_rejects_invalid_tag_names(tag: str) -> None:
     with pytest.raises(ValueError, match="studio-vX.Y.Z"):
-        release_branch_name(tag)
+        release_marketplace(tag, Path.cwd(), RecordingCommandRunner())
 
 
 def test_release_refuses_existing_local_tag(tmp_path: Path) -> None:
