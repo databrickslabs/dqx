@@ -241,6 +241,7 @@ class TestScopeConfigScheduleGate:
 
     async def test_single_unmanageable_table_hard_blocks_listing_all_blocked(self, obo, sp, grant_svc):
         fqns = ["cat.sch.t0", "cat.sch.t1", "cat.sch.t2"]
+
         # t1 is manageable (owned by alice); t0 and t2 are not.
         def _tables_get(fqn):
             return SimpleNamespace(owner="alice@example.com" if fqn == "cat.sch.t1" else None)

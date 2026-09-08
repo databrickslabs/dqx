@@ -164,9 +164,7 @@ class TestAppSettingsStatusPreservation:
         oltp = _FakeExecutor()
         DatabaseResetService(delta_sql=delta, oltp_sql=oltp).reset_all_data(performed_by="a@x")
 
-        settings_stmts = [
-            s for s, t in zip(oltp.executed, _targeted_tables(oltp.executed)) if t == "dq_app_settings"
-        ]
+        settings_stmts = [s for s, t in zip(oltp.executed, _targeted_tables(oltp.executed)) if t == "dq_app_settings"]
         assert len(settings_stmts) == 1
         stmt = settings_stmts[0]
         # Scoped to keep exactly the two in-flight job-status keys and clear the
