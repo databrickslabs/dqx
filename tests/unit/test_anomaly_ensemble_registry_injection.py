@@ -10,6 +10,10 @@ Reaching the assertion without Spark depends on ``EnsembleTrainer.train`` consul
 it engineers any features. That ordering is load-bearing for the test and not for the product, so it is
 stated here rather than left implicit: if the two are ever swapped, this test fails for the wrong reason
 and its docstring is where to look.
+
+Only the ensemble path is covered. The single-model path already forwarded the injected registry, and it
+fits before consulting it, so reaching that call without a real Spark session is not possible -- the
+existing integration tests are what cover it.
 """
 
 from unittest.mock import create_autospec
@@ -74,19 +78,4 @@ def test_the_ensemble_path_uses_the_injected_registry(default_registry_spy):
         _train(IsolationForestTrainingStrategy(registry=injected), ensemble_size=3)
 
     injected.ensure_registry_configured.assert_called_once()
-    assert not default_registry_spy.method_calls, "the default registry should never have been consulted"
-
-
-def test_the_single_model_path_also_uses_the_injected_registry(default_registry_spy):
-    """The path that already worked, pinned so the fix cannot be mistaken for the whole story.
-
-    Reaches the registry later than the ensemble path -- after fitting -- so any Spark stand-in fails
-    first; what matters here is only that the default registry is still never the one consulted.
-    """
-    injected = create_autospec(ModelRegistryBase, instance=True)
-    injected.ensure_registry_configured.side_effect = _RegistryReached
-
-    with pytest.raises(Exception):  # pylint: disable=broad-exception-caught
-        _train(IsolationForestTrainingStrategy(registry=injected), ensemble_size=1)
-
     assert not default_registry_spy.method_calls, "the default registry should never have been consulted"
