@@ -435,3 +435,86 @@ def test_ensemble_agreement_is_not_presented_as_confidence_in_the_finding():
 
     assert "random seed" in description
     assert "NOT how reliable the flag is" in description
+
+
+# ── how the row was judged is a per-run fact the contributions cannot carry ───────────────────────────
+
+
+def test_the_temporal_baseline_reaches_the_prompt_as_its_own_field():
+    """The gap this closes: grouping was told to the model and temporal conditioning was not.
+
+    Temporal conditioning used to leak through by accident, because contributions were keyed by
+    engineered feature and one of those keys rendered as "X vs its expected level at that time". Keying by
+    source column closed that channel -- correctly, since one column should report once however many ways
+    it was compared -- and left the model with no way to know the comparison was against time at all.
+    """
+    input_names = [name for name, _ in llm_explainer._PROMPT_INPUT_FIELDS]
+
+    assert "temporal_baseline" in input_names
+    # Sibling of the grouping field, and adjacent to it, because they answer the same question.
+    assert input_names.index("temporal_baseline") == input_names.index("baseline_grouping") + 1
+
+
+@pytest.mark.parametrize("baseline_over_time, expected", [("event_ts", "event_ts"), ("", "none")])
+def test_the_temporal_baseline_string_reports_the_time_column_or_none(baseline_over_time, expected):
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "revenue", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["revenue"],
+        baseline_over_time=baseline_over_time,
+    )
+
+    assert llm_explainer._temporal_baseline_str(metadata) == expected
+
+
+def test_the_temporal_baseline_string_is_none_without_metadata():
+    """A caller who built the context directly gets the conservative answer rather than a crash."""
+    assert llm_explainer._temporal_baseline_str(None) == "none"
+
+
+def test_the_temporal_field_says_a_normal_looking_value_can_still_be_wrong():
+    """The substantive capability, not just the field's presence.
+
+    A metric compared against its expected level at a moment can sit inside every range the table has
+    ever held. Without being told that, a model reads a large share and reaches for "unusually high",
+    which is the one claim the evidence cannot support.
+    """
+    description = dict(llm_explainer._PROMPT_INPUT_FIELDS)["temporal_baseline"]
+
+    assert "AT THAT POINT IN TIME" in description
+    assert "still be wrong for when it arrived" in description
+
+
+def test_both_comparison_states_are_demonstrated_in_the_exemplars():
+    """A field the header tells the model to follow has to appear in the demonstrations, in both states.
+
+    Showing only one state teaches the model to treat it as the default and stop reading the field, which
+    is how the same mistake would come back.
+    """
+    values = [
+        line.partition("temporal_baseline: ")[2]
+        for line in llm_explainer._PROMPT_EXAMPLES.splitlines()
+        if line.startswith("temporal_baseline: ")
+    ]
+
+    assert len(values) == 2, "each exemplar must state whether a temporal baseline applied"
+    assert sorted(values) == ["event_ts", "none"]
+
+
+def test_the_temporal_exemplar_describes_the_expected_level_rather_than_an_extreme_value():
+    """The exemplar has to model the reading, since that is what a smaller model copies."""
+    responses = [line for line in llm_explainer._PROMPT_EXAMPLES.splitlines() if line.startswith("Response: ")]
+    temporal_response = responses[1]
+
+    assert "expected of it at that point in time" in temporal_response
+    for word in ("far above", "far below", "elevated", "inflated", "spiked"):
+        assert word not in temporal_response.lower()
+
+
+def test_the_instructions_tie_the_claim_to_what_it_was_measured_against():
+    """Otherwise "avoid hedging" plus a large share reads as licence to call the metric unusual outright."""
+    header = llm_explainer._render_ai_query_prompt_header()
+
+    assert "measured AGAINST is given to you" in header
+    assert "do not fall back on calling it unusual outright" in header

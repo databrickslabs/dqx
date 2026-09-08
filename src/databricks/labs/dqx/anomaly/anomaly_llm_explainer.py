@@ -43,6 +43,12 @@ _PROMPT_INSTRUCTIONS = (
     "produce the identical number. So never say a value was high, low, above, below, elevated, "
     "inflated, dropped, spiked, or missing. Say it departed from its expected pattern, and leave "
     "which way unsaid. The same applies to drift magnitudes, which are also unsigned.\n"
+    "What a contribution is measured AGAINST is given to you, in baseline_grouping and "
+    "temporal_baseline, and it changes what you may claim. Say the metric departed from whichever "
+    "comparison those fields describe -- its group's normal, the level expected at that time, or the "
+    "table as a whole when both are 'none'. A metric judged against its group or its own history can be "
+    "entirely ordinary for the table and still be wrong, so do not fall back on calling it unusual "
+    "outright when a narrower comparison is what objected.\n"
     "Be direct and concrete: name the metrics, their shares and the group size without hedging "
     "phrases like 'The data shows', 'It appears that', or 'might indicate'. Being direct means "
     "stating plainly what the inputs contain — it does not license asserting a direction, a cause, "
@@ -114,7 +120,17 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "baseline_grouping",
         "The columns whose values define each row's baseline group, e.g. 'region' or "
         "'region, product'. Anomalies are judged relative to the row's own group baseline; "
-        "'none' when the model is not grouped.",
+        "'none' when the model is not grouped. When set, a value can be ordinary for the table as a "
+        "whole and still be wrong for its own group, so say the metric departed from what its group "
+        "normally looks like rather than that it was unusual outright.",
+    ),
+    (
+        "temporal_baseline",
+        "The time column each metric is judged along, e.g. 'event_ts', or 'none'. When set, each metric "
+        "is compared against the level expected of it AT THAT POINT IN TIME, not against its whole "
+        "history. So its value can sit well inside the range the data has always covered and still be "
+        "wrong for when it arrived: say it departed from the level expected at that time. Do not call it "
+        "unusual, high or low for the metric overall, because the comparison was never against that.",
     ),
     ("threshold", "The severity percentile threshold configured by the user (0–100)."),
     (
@@ -151,9 +167,14 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 # and its mirror at (-8, -0.5) score identically (65.387) with identical contribution maps, so half of
 # those explanations were backwards, stated confidently, in business language.
 #
-# The two also differ in *attribution_basis*, which is the field deciding how the contributions read.
-# Showing only one reading would leave the other untaught; the values here are abbreviated forms of what
-# *attribution_semantics* emits, since the exemplars exist to pin shape rather than to restate the header.
+# The pair also differs in every field that changes how a contribution may be described, and differs
+# deliberately: *attribution_basis*, which decides whether a share can be read as a feature's own value
+# being unusual, and *temporal_baseline*, which decides whether "unusual" is against the metric's whole
+# range or against the level expected of it at one moment. A field the header tells the model to follow
+# has to appear in the demonstrations, and in both states, or the model learns to treat whichever state
+# it saw as the default and stops reading the field. The *attribution_basis* values here are abbreviated
+# forms of what *attribution_semantics* emits, since the exemplars pin shape rather than restate the
+# header.
 _PROMPT_EXAMPLES = (
     "Example (relationship basis, no drift):\n"
     "attribution_basis: each metric's position once the others are accounted for\n"
@@ -162,25 +183,28 @@ _PROMPT_EXAMPLES = (
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
     "confidence: high\n"
     "baseline_grouping: region\n"
+    "temporal_baseline: none\n"
     "threshold: 95.0\n"
     "drift_summary: none\n"
     'Response: {"narrative":"Across 312 rows, amount departs most from what its own region implies '
     '(61%), with quantity next (22%).","business_impact":"Amount values that do not match their '
     "region's usual pattern distort revenue reporting if processed unchanged.\",\"action\":"
     '"Reconcile amount against source orders for the affected regions."}\n\n'
-    "Example (value basis, with drift):\n"
+    "Example (value basis, judged against time, with drift):\n"
     "attribution_basis: each feature's own value compared against the rows it was scored against\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
     "group_size: 88 rows\n"
     "severity_range: mean 98.9, min 97.0, max 99.9\n"
     "confidence: mixed\n"
     "baseline_grouping: none\n"
+    "temporal_baseline: event_ts\n"
     "threshold: 95.0\n"
     "drift_summary: drift detected: latency_ms=4.12\n"
-    'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which has also drifted from '
-    'its training baseline; retries contribute modestly (12%).","business_impact":"Latency that no '
-    'longer matches its baseline risks SLA breaches for downstream consumers.","action":"Compare '
-    'latency_ms against the training baseline to find what changed."}'
+    'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which departs from the level '
+    'expected of it at that point in time and has also drifted from its training baseline; retries '
+    'contribute modestly (12%).","business_impact":"Latency that no longer tracks its expected level '
+    'risks SLA breaches for downstream consumers.","action":"Compare latency_ms against its expected '
+    'level for that period rather than against its overall range."}'
 )
 
 if TYPE_CHECKING:
@@ -371,6 +395,26 @@ def _baseline_grouping_str(metadata: SparkFeatureMetadata | None) -> str:
     return ", ".join(metadata.baseline_by)
 
 
+def _temporal_baseline_str(metadata: SparkFeatureMetadata | None) -> str:
+    """The time column each metric is judged along, e.g. 'event_ts', or 'none'.
+
+    The sibling of :func:`_baseline_grouping_str`, and it exists for the same reason: how a row was judged
+    is a per-run fact the model cannot infer from the contributions. Grouping has always been told to the
+    model; temporal conditioning never was. It used to leak through by accident, because contributions were
+    keyed by engineered feature and one of those keys rendered as "X vs its expected level at that time".
+    Attribution is now keyed by source column -- so one column reports once however many ways it was
+    compared -- and that accidental channel closed with it.
+
+    This matters for more than completeness. When a metric is judged against its own history, its value can
+    sit comfortably inside the range the table has ever held and still be wrong for *when* it arrived. A
+    model told only that the metric mattered will reach for "unusually high", which is the one thing the
+    evidence does not say. Like the grouping columns, this is a column *name* and carries no row values.
+    """
+    if metadata is None or not metadata.baseline_over_time:
+        return "none"
+    return metadata.baseline_over_time
+
+
 def _human_labels(metadata: SparkFeatureMetadata | None) -> dict[str, str]:
     """Engineered-name -> human-label map for the model's features, omitting identity labels.
 
@@ -513,6 +557,7 @@ def _build_ai_query_prompt_column(
     instructions and field semantics.
     """
     baseline_grouping = _baseline_grouping_str(ctx.feature_metadata)
+    temporal_baseline = _temporal_baseline_str(ctx.feature_metadata)
     confidence_expr = (
         F.when((F.col("mean_std").isNull()) | F.lit(not is_ensemble), F.lit("n/a"))
         .when(F.col("mean_std") < F.lit(_CONFIDENCE_HIGH_BELOW), F.lit("high"))
@@ -545,6 +590,9 @@ def _build_ai_query_prompt_column(
         F.lit("\n"),
         F.lit("baseline_grouping: "),
         F.lit(baseline_grouping),
+        F.lit("\n"),
+        F.lit("temporal_baseline: "),
+        F.lit(temporal_baseline),
         F.lit("\n"),
         F.lit("threshold: "),
         F.lit(str(ctx.threshold)),
