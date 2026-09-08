@@ -16,6 +16,7 @@ from sklearn.linear_model import Ridge
 
 from databricks.labs.dqx.anomaly.temporal import (
     CANDIDATE_PERIODS_SECONDS,
+    MAD_TO_SIGMA,
     MIN_SEASONAL_CYCLES,
     SEASONAL_HARMONICS,
     TemporalBasis,
@@ -464,24 +465,25 @@ def test_a_metric_with_more_than_half_identical_values_still_fits():
     assert all(np.isfinite(fitted["metric"]))
 
 
-def test_a_constant_offset_in_a_relative_feature_cannot_reach_a_score():
-    """Why the selection criterion is allowed to be blind to constant forecast bias.
+def test_translating_a_metric_and_refitting_leaves_the_scores_unchanged():
+    """Translation invariance *of refitting* -- which is the property selection actually relies on.
 
-    ``_holdout_residual_scale`` subtracts the residual median, so it measures spread and scores a
-    uniformly-biased basis as well as an unbiased one. That looks like a gap in the objective until you
-    ask what a constant offset in a ``_rel_time`` column can actually do downstream: nothing. The
-    correlation-aware detector centres on the training mean, so the shift cancels exactly; IsolationForest
-    picks split thresholds from each feature's observed range, so shifting the whole column shifts the
-    thresholds with it and leaves the partition identical.
+    Named for what it measures, after an earlier version of this test was used to support a stronger claim
+    it does not establish. It shifts the training data *and* the scored data and refits, so it shows that a
+    level error shared by a candidate basis and its reference cancels from the ratio they are judged on.
+    That is why ``_holdout_residual_scale`` may measure spread alone: the *choice* between bases is
+    unaffected by a shared translation.
+
+    It is **not** evidence that forecast bias is harmless. A bias present only in future residuals, with
+    the detector already fitted, does reach the score -- see
+    :func:`test_a_bias_appearing_only_after_the_fit_window_does_reach_the_score`.
 
     The cancellation is algebraic, so what survives is floating-point residue from centring a shifted
-    column, not sensitivity to the offset. Measured relative movement in the correlation-aware score:
-    1.7e-14 at an offset of 5 and 1.9e-12 at 500 -- twelve orders of magnitude below the quantile spacing
-    that decides a severity percentile, so no flag can turn on it. IsolationForest is bit-identical at
-    both, because shifting a column shifts its candidate split thresholds with it.
-
-    Asserted at a tolerance rather than at bit equality, since bit equality is false and asserting it
-    would have made this test a statement about float arithmetic instead of about the criterion.
+    column: 1.7e-14 relative at an offset of 5 and 1.9e-12 at 500, twelve orders of magnitude below the
+    quantile spacing that decides a severity percentile. IsolationForest is bit-identical, because shifting
+    a column shifts its candidate split thresholds with it. Asserted at a tolerance, since bit equality is
+    false for the correlation-aware detector and asserting it would make this a statement about float
+    arithmetic.
     """
     rng = np.random.default_rng(0)
     base = rng.normal(0.0, 1.0, (2000, 3))
@@ -499,3 +501,55 @@ def test_a_constant_offset_in_a_relative_feature_cannot_reach_a_score():
         maha, forest = scores_with_offset(offset)
         np.testing.assert_allclose(maha, reference_maha, rtol=1e-10)
         assert np.array_equal(forest, reference_forest), f"IsolationForest scores moved at offset {offset}"
+
+
+def test_the_basis_choice_is_unchanged_by_translating_the_metric():
+    """The criterion-level statement, which is what the docstring is really about.
+
+    The test above measures the *detector*; this one measures the selector. ``select_basis`` compares
+    candidates all refitted on the same data, and standardisation centres by median, so adding a constant to
+    a metric must not change which basis wins. Asserted through the public function rather than through
+    ``_holdout_residual_scale``, so it survives a change of internal statistic.
+    """
+    seconds = np.arange(0.0, 60 * DAY, HOUR)
+    values = 100.0 + 0.002 * seconds + np.sin(seconds * 2 * np.pi / DAY) * 5.0
+
+    chosen, _ = select_basis(seconds, {"m": values})
+    shifted, _ = select_basis(seconds, {"m": values + 5.0})
+
+    assert chosen.to_dict() == shifted.to_dict()
+
+
+def test_a_bias_appearing_only_after_the_fit_window_does_reach_the_score():
+    """The counterexample, recorded so the limitation is executable rather than merely described.
+
+    An earlier docstring here claimed a constant forecast bias "cannot matter" because centring cancels it.
+    That holds only when the bias is present while the model is fitted. A bias that appears *after* the fit
+    window meets a detector centred on training residuals that never saw it, so nothing cancels.
+
+    Both halves are asserted, because together they are the finding: the selection criterion is blind to it
+    (the residual spread is unchanged, so no basis choice would differ) *and* it dominates the score. That
+    is why drift detection and the staleness horizon exist and why this criterion is not the mechanism for
+    it -- not an argument for making the criterion bias-sensitive, which a refit already handles.
+    """
+    rng = np.random.default_rng(0)
+    train_residuals = rng.normal(0.0, 1.0, (4000, 2))
+    detector = MahalanobisDetector().fit(train_residuals)
+    alert_threshold = np.percentile(-detector.score_samples(train_residuals), 99)
+
+    holdout = rng.normal(0.0, 1.0, (2000, 2))
+    shifted = holdout + np.array([0.0, 5.0])
+
+    def robust_spread(residuals: np.ndarray) -> float:
+        column = residuals[:, 1]
+        return float(np.median(np.abs(column - np.median(column))) * MAD_TO_SIGMA)
+
+    def alert_fraction(residuals: np.ndarray) -> float:
+        return float((-detector.score_samples(residuals) >= alert_threshold).mean())
+
+    # The criterion cannot see it: a median-centred spread is translation-invariant by construction.
+    assert robust_spread(shifted) == pytest.approx(robust_spread(holdout), rel=1e-12)
+
+    # The score can: measured 1.3% against 98.4% on this fixture.
+    assert alert_fraction(holdout) < 0.05
+    assert alert_fraction(shifted) > 0.90

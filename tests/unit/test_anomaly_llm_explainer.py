@@ -473,17 +473,26 @@ def test_the_temporal_baseline_string_is_none_without_metadata():
     assert llm_explainer._temporal_baseline_str(None) == "none"
 
 
-def test_the_temporal_field_says_a_normal_looking_value_can_still_be_wrong():
-    """The substantive capability, not just the field's presence.
+def test_the_temporal_field_describes_an_available_comparison_not_one_that_happened():
+    """The field widens what a contribution is consistent with; it does not explain it.
 
-    A metric compared against its expected level at a moment can sit inside every range the table has
-    ever held. Without being told that, a model reads a large share and reaches for "unusually high",
-    which is the one claim the evidence cannot support.
+    An earlier version of this test pinned the opposite, and was wrong. Setting a time column does not mean
+    every metric was judged against time: where no expectation could be fitted for a metric, feature
+    engineering emits a constant zero for its time-relative feature, so that comparison contributes nothing
+    for it. Nor is the contribution attributable to one comparison even when several ran, because the share
+    is the total across them.
+
+    What the field legitimately buys is the *absence* of a wrong conclusion: with it set, a metric can be
+    ordinary for the table and still have departed from a narrower comparison, so "unusually high" stops
+    being the obvious reading of a large share.
     """
     description = dict(llm_explainer._PROMPT_INPUT_FIELDS)["temporal_baseline"]
 
-    assert "AT THAT POINT IN TIME" in description
-    assert "still be wrong for when it arrived" in description
+    assert "MAY have been compared" in description
+    assert "not every metric is" in description
+    assert "say the comparison was available" in description
+    # The overclaim this replaced: asserting the departure rather than the availability.
+    assert "departed from the level expected" not in description
 
 
 def test_both_comparison_states_are_demonstrated_in_the_exemplars():
@@ -502,19 +511,59 @@ def test_both_comparison_states_are_demonstrated_in_the_exemplars():
     assert sorted(values) == ["event_ts", "none"]
 
 
-def test_the_temporal_exemplar_describes_the_expected_level_rather_than_an_extreme_value():
-    """The exemplar has to model the reading, since that is what a smaller model copies."""
+def test_no_exemplar_attributes_the_departure_to_a_particular_comparison():
+    """An exemplar is an instruction, so it must not model a claim the inputs cannot support.
+
+    The previous version of this test required the temporal exemplar to say the metric "departs from the
+    level expected of it at that point in time" -- which is precisely the attribution that is unavailable.
+    Both exemplars now name the comparisons in use and stop there.
+    """
     responses = [line for line in llm_explainer._PROMPT_EXAMPLES.splitlines() if line.startswith("Response: ")]
-    temporal_response = responses[1]
+    assert len(responses) == 2
 
-    assert "expected of it at that point in time" in temporal_response
-    for word in ("far above", "far below", "elevated", "inflated", "spiked"):
-        assert word not in temporal_response.lower()
+    for response in responses:
+        lowered = response.lower()
+        for phrase in ("departs from the level expected", "no longer tracks its expected level"):
+            assert phrase not in lowered, f"exemplar attributes the departure to one comparison: {phrase}"
+        for word in ("far above", "far below", "elevated", "inflated", "spiked"):
+            assert word not in lowered
 
 
-def test_the_instructions_tie_the_claim_to_what_it_was_measured_against():
-    """Otherwise "avoid hedging" plus a large share reads as licence to call the metric unusual outright."""
+def test_the_exemplars_state_business_impact_conditionally():
+    """Whether a contribution means real damage depends on facts the model does not have.
+
+    An unusual amount need not distort revenue and a latency change need not breach an SLA -- the row may
+    be legitimate. Both exemplars previously asserted the consequence outright, which is what a smaller
+    model copies into every explanation it writes.
+    """
+    responses = [line for line in llm_explainer._PROMPT_EXAMPLES.splitlines() if line.startswith("Response: ")]
+
+    for response in responses:
+        impact = response.partition('"business_impact":"')[2].partition('","')[0]
+        assert impact.lower().startswith("if "), f"impact should be conditional, got {impact!r}"
+
+
+def test_the_instructions_present_the_comparisons_as_context_not_cause():
+    """Otherwise "avoid hedging" plus a large share reads as licence to name a responsible comparison."""
     header = llm_explainer._render_ai_query_prompt_header()
 
-    assert "measured AGAINST is given to you" in header
-    assert "do not fall back on calling it unusual outright" in header
+    assert "which comparisons were AVAILABLE to the model, not which one objected" in header
+    assert "do not assign the departure to one of them" in header
+    assert "do not call it unusual outright" in header
+
+
+def test_spread_contributions_do_not_license_a_broken_relationship_claim():
+    """Spread means several metrics contributed. It does not identify a mechanism.
+
+    A review probe settled this: two metrics with training correlation 6e-18, both marginally extreme at
+    once, produce contributions of 50% and 50%. Nothing about that shape distinguishes metrics that stopped
+    agreeing with each other from unrelated metrics that happened to be unusual together, so the earlier
+    instruction to describe spread as "the metrics no longer agreeing" was asserting a mechanism from
+    evidence that does not carry one.
+    """
+    correlation = llm_explainer.attribution_semantics("Mahalanobis")
+
+    assert "each of them contributed, and nothing more" in correlation
+    assert "do not claim a relationship between them broke" in correlation.lower()
+    # The instruction this replaced.
+    assert "describe it as the metrics no longer agreeing with each other" not in correlation

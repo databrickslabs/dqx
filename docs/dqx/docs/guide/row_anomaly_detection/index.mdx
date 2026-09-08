@@ -560,16 +560,30 @@ That is telemetry, which is what `"timeseries"` is for. On ordinary tabular data
 this table suggests, so **choose on the shape of the anomaly you expect, not on an expected accuracy gap.**
 One thing independent of accuracy favours the default: `"tabular"` trains an ensemble, so it can report
 `confidence_std`. Its contributions come from SHAP rather than an exact decomposition, but both profiles
-report them the same way — one entry per column you passed, and on an ensemble averaged across members, so
-the score, `confidence_std` and the contributions all describe the same aggregate. Detection quality on
-DQX's own synthetic fixtures is published in [Benchmarks](/docs/reference/benchmarks).
+report them the same way — one entry per column you passed, and on an ensemble the mean across members: the
+same members, in the same proportions, that produced the score. Read the result as a **ranking of columns**
+rather than a breakdown of the score's magnitude. Averaging decomposes the members' mean isolation depth
+exactly, while the score is the mean of a strictly monotone but *nonlinear* function of that depth, so the
+two order rows almost identically without being the same quantity. Detection quality on DQX's own synthetic
+fixtures is published in [Benchmarks](/docs/reference/benchmarks).
 
-One capability difference is worth knowing because no accuracy number shows it. A **category that never
-appeared in training** — a new payment type, an unrecognised status code — is caught by `"timeseries"` but
-generally not by `"tabular"`. Both encode the row the same way, but only a detector that reads features
-jointly can tell that the encoding is impossible; Isolation Forest splits one feature at a time and scores
-such a row as ordinary. If unrecognised values are something you need to fail on, that is a membership
-question rather than an anomaly one — use `is_in_list` or `foreign_key` on the column, under either profile.
+One capability difference is worth knowing because no accuracy number shows it, and it is narrower than it
+first looks. A **category that never appeared in training** — a new payment type, an unrecognised status
+code — is caught by `"timeseries"` and generally not by `"tabular"`, **but only where the column is one-hot
+encoded**, which is when its cardinality is at or below the categorical threshold (20 by default). There
+every category keeps its own indicator, the indicators sum to one on every training row, and an unseen value
+sets none of them: a detector reading features jointly sees a row off the surface all its training data lay
+on, while Isolation Forest splits one feature at a time, so an all-zero row sits inside every indicator's own
+range and scores as ordinary.
+
+Above that threshold the column is frequency-encoded into a single number and an unseen value becomes `0.0`,
+which carries much less. If the training frequencies were near-uniform that coordinate barely varies, the
+correlation-aware detector drops it from the distance as constant, and an unseen value does not move the
+score at all — measured with 21 equally frequent categories, a known and an unseen value both score 0.1837.
+
+So neither profile is a substitute for a vocabulary check. If unrecognised values are something you need to
+fail on, that is a membership question rather than an anomaly one — use `is_in_list` or `foreign_key` on the
+column, under either profile.
 
 <Admonition type="info" title="Why not choose for you?">
 DQX does not detect which profile you need. Getting it right cannot be verified without labelled
@@ -623,7 +637,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 1. **Feature engineering** (automatic): DQX detects column types and creates features (numerical standardized, categorical one-hot or frequency-encoded, temporal expanded to hour/day/month/weekend).
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains the detector your `profile` selects — an ensemble of Isolation Forest models by default, or a single correlation-aware model for `profile="timeseries"` — and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; each `train()` call registers one model under its name and archives the previously active version.
-4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Feature contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring. How they are computed depends on the detector — SHAP for Isolation Forest, an exact decomposition for the correlation-aware detector — but both report **one entry per column you passed**, not per engineered feature, so you read back your own column names. That matters because DQX derives up to three features from one numeric column; scoring each separately splits the column's evidence between them and understates it. Each value is that column's share of the evidence that made the row look unusual. A column that made the row look *more* normal shows `0`, and a flagged row for which nothing pointed towards an anomaly carries an all-null map rather than an invented even split. With an ensemble, the contributions are the mean across members, so the score, `confidence_std` and the contributions all describe the same aggregate.
+4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Feature contributions (which features drove each score) are on by default and computed only for anomalous rows; set `enable_contributions=False` to skip them for the fastest scoring. How they are computed depends on the detector — SHAP for Isolation Forest, an exact decomposition for the correlation-aware detector — but both report **one entry per column you passed**, not per engineered feature, so you read back your own column names. That matters because DQX derives up to three features from one numeric column; scoring each separately splits the column's evidence between them and understates it. Each value is that column's share of the evidence that made the row look unusual. A column that made the row look *more* normal shows `0`, and a flagged row for which nothing pointed towards an anomaly carries an all-null map rather than an invented even split. With an ensemble the contributions are the mean across members — the aggregate the score comes from — but what averaging decomposes exactly is the members' mean isolation depth, not the mean score, which is a nonlinear function of it. Read the shares as a ranking of columns, not as a breakdown of the score.
 5. **Auto-discovery of columns and grouping**: When you call `train()` without `columns`, DQX selects numeric columns with enough variance as features. It also looks for a grouping (categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per group, for example region or product category). A discovered grouping is used as `baseline_by` (see [Group-aware anomaly detection](#group-aware-anomaly-detection)), so it costs one model regardless of how many groups it turns out to have. To compare against the whole table instead, pass `baseline_by=[]`. When you *do* pass `columns`, you have decided what to measure, so DQX leaves the comparison pooled rather than adding a grouping you did not ask for. If your data looks grouped it says so in a warning naming the grouping to pass.
 
 ### Which algorithm, and why

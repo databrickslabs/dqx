@@ -17,6 +17,8 @@ import pytest
 from sklearn.ensemble import IsolationForest
 
 from databricks.labs.dqx.anomaly.explainability import compute_row_attributions, format_shap_contributions
+from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
+from databricks.labs.dqx.errors import InvalidParameterError
 
 
 def _shares(model: IsolationForest, row: pd.DataFrame, columns: list[str], blocks=None) -> dict[str, float]:
@@ -134,3 +136,82 @@ def test_a_block_sums_signed_values_so_a_normalising_view_cancels():
     clipped_sum = float(np.maximum(per_view[0, :2], 0.0).sum())
     if per_view[0, :2].min() < 0:
         assert blocked[0, 0] < clipped_sum
+
+
+# ── the attribution contract: shape must match the names it will be reported under ────────────────────
+
+
+class _PerFeatureOnly:
+    """An estimator that can attribute per feature but cannot group by source column.
+
+    Reachable for two reasons, neither hypothetical. ``timeseries_detector`` is registered with cloudpickle
+    *by value*, so an older class definition travels inside a persisted model and is restored without
+    methods added since; and the config hash covers only columns and the comparison bases, so such a model
+    passes scoring-time validation unchanged. A third-party estimator supplied through the documented
+    training-strategy extension point is the other.
+    """
+
+    def feature_contributions(self, rows: np.ndarray) -> np.ndarray:
+        return np.tile(np.array([1e-5, 1e-5, 0.13]), (len(rows), 1))
+
+
+_BLOCKED_COLUMNS = ["x", "x_rel_time", "y"]
+_BLOCKS = {"x": [0, 1], "y": [2]}
+
+
+def test_an_estimator_that_cannot_group_by_source_is_refused_rather_than_misreported():
+    """The defect: per-feature width reported under source-column names, silently.
+
+    Left alone this published ``{'x': 0.0, 'y': 0.0}`` -- nothing identified as a driver -- on a row whose
+    score was identical to a correctly explained one. Both halves of that are bad: the substantial value
+    landed in the normalising denominator and was then never emitted, and the two names it did emit belonged
+    to different columns than the numbers behind them.
+
+    Summing the drops instead is not an option: they are not additive, which is the whole reason source
+    blocking exists for this detector.
+    """
+    frame = pd.DataFrame([[8.0, 5.0, 0.5]], columns=_BLOCKED_COLUMNS)
+
+    with pytest.raises(InvalidParameterError, match="cannot group it by source column"):
+        compute_row_attributions(_PerFeatureOnly(), frame, _BLOCKED_COLUMNS, _BLOCKS)
+
+
+def test_the_same_estimator_is_still_attributed_when_no_blocks_are_asked_for():
+    """The refusal is about the combination, not about the estimator.
+
+    Without this the guard could be satisfied by rejecting the estimator outright, which would break a
+    caller who never wanted source blocking in the first place.
+    """
+    frame = pd.DataFrame([[8.0, 5.0, 0.5]], columns=_BLOCKED_COLUMNS)
+
+    attribution, valid, keys = compute_row_attributions(_PerFeatureOnly(), frame, _BLOCKED_COLUMNS)
+
+    assert keys == _BLOCKED_COLUMNS
+    assert attribution.shape == (1, 3)
+    assert valid.all()
+
+
+def test_an_estimator_that_can_group_by_source_is_unaffected():
+    """The guard must not be satisfiable by refusing everything, so the working path is pinned beside it."""
+    rng = np.random.default_rng(0)
+    metric = rng.normal(0, 1, 2000)
+    train = np.column_stack([metric, metric - 3.0, rng.normal(0, 1, 2000)])
+    detector = MahalanobisDetector().fit(train)
+    frame = pd.DataFrame([[8.0, 5.0, 0.5]], columns=_BLOCKED_COLUMNS)
+
+    attribution, _, keys = compute_row_attributions(detector, frame, _BLOCKED_COLUMNS, _BLOCKS)
+
+    assert keys == ["x", "y"]
+    assert attribution.shape == (1, 2)
+
+
+def test_the_formatter_refuses_a_matrix_that_does_not_match_its_keys():
+    """Guarded twice on purpose, because this function is reachable with a hand-built matrix.
+
+    ``compute_row_attributions`` catches the case it can diagnose, with a remedy. This catches any producer
+    -- a future branch, a caller assembling values itself -- at the point where a column acquires a name.
+    """
+    three_wide = np.array([[1e-5, 1e-5, 0.13]])
+
+    with pytest.raises(InvalidParameterError, match="cannot be reported under 2 keys"):
+        format_shap_contributions(three_wide, np.array([True]), 1, ["x", "y"])

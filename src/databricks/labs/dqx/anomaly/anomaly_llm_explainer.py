@@ -43,12 +43,14 @@ _PROMPT_INSTRUCTIONS = (
     "produce the identical number. So never say a value was high, low, above, below, elevated, "
     "inflated, dropped, spiked, or missing. Say it departed from its expected pattern, and leave "
     "which way unsaid. The same applies to drift magnitudes, which are also unsigned.\n"
-    "What a contribution is measured AGAINST is given to you, in baseline_grouping and "
-    "temporal_baseline, and it changes what you may claim. Say the metric departed from whichever "
-    "comparison those fields describe -- its group's normal, the level expected at that time, or the "
-    "table as a whole when both are 'none'. A metric judged against its group or its own history can be "
-    "entirely ordinary for the table and still be wrong, so do not fall back on calling it unusual "
-    "outright when a narrower comparison is what objected.\n"
+    "baseline_grouping and temporal_baseline tell you which comparisons were AVAILABLE to the model, not "
+    "which one objected. A metric may be compared against the table, against its own group and against "
+    "its expected level at that time all at once, and the contribution you are given is the total across "
+    "those, so it cannot say which comparison drove it. Treat these fields as context that widens what "
+    "the number is consistent with: when either is set, a metric can be entirely ordinary for the table "
+    "and still have departed from a narrower comparison, so do not call it unusual outright. State that "
+    "the metric contributed and name the comparisons that were in use; do not assign the departure to "
+    "one of them.\n"
     "Be direct and concrete: name the metrics, their shares and the group size without hedging "
     "phrases like 'The data shows', 'It appears that', or 'might indicate'. Being direct means "
     "stating plainly what the inputs contain — it does not license asserting a direction, a cause, "
@@ -66,8 +68,10 @@ _ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
         "metric does not fit the pattern the others imply, which can happen either because its own value "
         "moved a long way or because it stopped tracking the others while staying inside its normal range. "
         "The input does not distinguish those two cases, so do not assert either: say the metric does not "
-        "fit the pattern. When the contributions are spread across several metrics, describe it as the "
-        "metrics no longer agreeing with each other rather than as any one of them being abnormal.",
+        "fit the pattern. Contributions spread across several metrics mean each of them contributed, and "
+        "nothing more -- that happens when metrics stop agreeing with each other, and equally when several "
+        "unrelated metrics are each unusual at the same time. Name the metrics that contributed; do not "
+        "claim a relationship between them broke.",
     ),
     (
         "IsolationForest",
@@ -102,10 +106,10 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     ),
     (
         "feature_contributions",
-        "Mean contributions across the group, already named for a reader, e.g. 'amount vs its "
-        "group baseline (82%), quantity (11%), discount (5%)'. A phrase like 'X vs its group "
-        "baseline' means X was unusual relative to its own baseline group, not in absolute terms. "
-        "These are aggregated relative importances — not raw data values.",
+        "Mean share across the group of the evidence the model acted on, per column the caller named, "
+        "e.g. 'amount (82%), quantity (11%), discount (5%)'. One entry per column however many ways that "
+        "column was compared, so a share says the column was involved and not which comparison objected. "
+        "These are aggregated relative importances — not raw data values, and not percentages of the score.",
     ),
     ("group_size", "Number of rows in this group, e.g. '312 rows'."),
     ("severity_range", "Severity percentile range across the group, e.g. 'mean 97.4, min 95.1, max 99.8'."),
@@ -126,11 +130,14 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     ),
     (
         "temporal_baseline",
-        "The time column each metric is judged along, e.g. 'event_ts', or 'none'. When set, each metric "
-        "is compared against the level expected of it AT THAT POINT IN TIME, not against its whole "
-        "history. So its value can sit well inside the range the data has always covered and still be "
-        "wrong for when it arrived: say it departed from the level expected at that time. Do not call it "
-        "unusual, high or low for the metric overall, because the comparison was never against that.",
+        "The time column the model was allowed to judge metrics along, e.g. 'event_ts', or 'none'. When "
+        "set, a metric MAY have been compared against the level expected of it at that point in time as "
+        "well as against its overall range -- but not every metric is: where no expectation could be "
+        "fitted for one, that comparison contributes nothing for it. So this widens what a contribution "
+        "is consistent with rather than explaining it: a metric can sit well inside the range the data "
+        "has always covered and still have departed from what was expected when it arrived. Do not call a "
+        "metric unusual, high or low overall on the strength of this field, and do not state that it "
+        "departed from its expected level -- say the comparison was available.",
     ),
     ("threshold", "The severity percentile threshold configured by the user (0–100)."),
     (
@@ -178,7 +185,7 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 _PROMPT_EXAMPLES = (
     "Example (relationship basis, no drift):\n"
     "attribution_basis: each metric's position once the others are accounted for\n"
-    "feature_contributions: amount vs its group baseline (61%), quantity (22%)\n"
+    "feature_contributions: amount (61%), quantity (22%)\n"
     "group_size: 312 rows\n"
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
     "confidence: high\n"
@@ -186,10 +193,10 @@ _PROMPT_EXAMPLES = (
     "temporal_baseline: none\n"
     "threshold: 95.0\n"
     "drift_summary: none\n"
-    'Response: {"narrative":"Across 312 rows, amount departs most from what its own region implies '
-    '(61%), with quantity next (22%).","business_impact":"Amount values that do not match their '
-    "region's usual pattern distort revenue reporting if processed unchanged.\",\"action\":"
-    '"Reconcile amount against source orders for the affected regions."}\n\n'
+    'Response: {"narrative":"Across 312 rows, amount accounts for most of what the model measured (61%), '
+    'with quantity next (22%); these rows are judged against their own region.","business_impact":"If '
+    "amount is wrong on these rows, revenue reporting for the affected regions would be affected too.\","
+    '"action":"Reconcile amount against source orders for the affected regions."}\n\n'
     "Example (value basis, judged against time, with drift):\n"
     "attribution_basis: each feature's own value compared against the rows it was scored against\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
@@ -200,11 +207,11 @@ _PROMPT_EXAMPLES = (
     "temporal_baseline: event_ts\n"
     "threshold: 95.0\n"
     "drift_summary: drift detected: latency_ms=4.12\n"
-    'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which departs from the level '
-    'expected of it at that point in time and has also drifted from its training baseline; retries '
-    'contribute modestly (12%).","business_impact":"Latency that no longer tracks its expected level '
-    'risks SLA breaches for downstream consumers.","action":"Compare latency_ms against its expected '
-    'level for that period rather than against its overall range."}'
+    'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which has also drifted from its '
+    'training baseline; retries contribute modestly (12%). These rows are judged against expected levels '
+    'over time as well as overall.","business_impact":"If latency_ms is genuinely off on these rows, '
+    'downstream consumers with SLAs would be the first to notice.","action":"Compare latency_ms against '
+    'its expected level for that period as well as against its overall range."}'
 )
 
 if TYPE_CHECKING:
@@ -330,9 +337,10 @@ class ExplanationContext:
 def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadata | None = None) -> frozenset[str]:
     """Columns to redact, plus every engineered feature derived from them.
 
-    Redaction matches contribution keys exactly, and which vocabulary those keys use depends on the
-    detector: source columns where attribution is blocked by source, engineered feature names on the
-    tree path. Covering both is why the source column *and* its descendants go into the set. So
+    Redaction matches contribution keys exactly, and both detectors now key by source column, which
+    :func:`compute_row_attributions` enforces rather than leaves to chance. The set still covers the
+    engineered names as well, deliberately: a redaction that silently under-covers is a privacy failure, so
+    it costs nothing to keep both vocabularies while attribution shape is a runtime property. So
     redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of the same
     column -- and redacting ``country`` must stop ``country_US``, ``country_DE``, ``country_freq`` and
     ``country_is_null``. A caller naming a column sensitive means every feature derived from it is

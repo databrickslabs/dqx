@@ -125,6 +125,16 @@ def format_shap_contributions(
     if attribution.size == 0 or num_keys == 0:
         return contributions
 
+    # The funnel where column j acquires the name keys[j]. A mismatch here is invisible downstream: the
+    # normalisation runs over every column while only the first len(keys) are emitted, so the map looks
+    # ordinary and describes the wrong features. Guarded again here rather than trusting
+    # compute_row_attributions, because this function is reachable with a hand-built matrix.
+    if attribution.ndim != 2 or attribution.shape[1] != num_keys:
+        raise InvalidParameterError(
+            f"Attribution of shape {attribution.shape} cannot be reported under {num_keys} keys: the "
+            "emitted map would name only the leading columns while normalising across all of them."
+        )
+
     magnitudes = np.maximum(attribution, 0.0)
     totals = magnitudes.sum(axis=1, keepdims=True)
     normalized = np.divide(magnitudes, totals, out=np.zeros_like(magnitudes), where=totals > 0)
@@ -203,8 +213,37 @@ def compute_row_attributions(
             len(engineered_feature_cols),
             [blocks[key] for key in keys] if blocked and blocks is not None else None,
         )
+        _reject_malformed_attribution(attribution, keys, int(valid_indices.sum()), estimator)
 
     return attribution, valid_indices, keys
+
+
+def _reject_malformed_attribution(attribution: np.ndarray, keys: list[str], expected_rows: int, estimator: Any) -> None:
+    """Refuse an attribution whose shape does not match the keys it will be reported under.
+
+    :func:`format_shap_contributions` pairs column *j* with ``keys[j]`` and normalises across the full
+    width, so a mismatch does not raise anywhere -- it emits a plausible map built from the wrong columns.
+    Observed when an estimator supplied one value per engineered feature while the keys were source
+    columns: three columns, two keys, and a published map of ``{'x': 0.0, 'y': 0.0}`` on a row whose score
+    was identical to a correctly explained one. Nothing downstream can detect that, which is exactly why
+    the check belongs here rather than in a consumer.
+
+    Args:
+        attribution: The matrix about to be returned.
+        keys: The names its columns will be reported under.
+        expected_rows: Number of rows that reached attribution.
+        estimator: The bare estimator, named in the error so the failing model is identifiable.
+
+    Raises:
+        InvalidParameterError: If the width or row count disagrees with what was asked for.
+    """
+    if attribution.ndim != 2 or attribution.shape[1] != len(keys) or attribution.shape[0] != expected_rows:
+        raise InvalidParameterError(
+            f"{type(estimator).__name__} produced attribution of shape "
+            f"{attribution.shape} for {expected_rows} rows and {len(keys)} keys "
+            f"({', '.join(keys[:4])}{'...' if len(keys) > 4 else ''}). Reporting it would pair values with "
+            "the wrong names. Retrain the model so its attribution matches the persisted feature contract."
+        )
 
 
 def _attribute(
@@ -217,6 +256,14 @@ def _attribute(
     the plain sum, which is correct because SHAP is additive. A model with a single feature has nothing to
     decompose, so that feature takes the whole share.
 
+    An estimator whose attribution is non-additive and which cannot group it is **refused** rather than
+    quietly attributed per feature. Summing leave-one-out drops would reinstate the error blocking exists to
+    remove -- each view of a shared source measures almost nothing on its own -- and returning per-feature
+    values under source-column keys silently pairs numbers with the wrong names. This is reachable because
+    :mod:`databricks.labs.dqx.anomaly.timeseries_detector` is registered with cloudpickle *by value*, so an
+    older class definition travels inside a persisted model and can be restored without the method. A
+    version string cannot substitute for the check: the capability is a property of the restored object.
+
     Args:
         estimator: The bare estimator, already unwrapped from any pipeline.
         rows: Feature values for the rows to attribute, scaled if the model carries a scaler.
@@ -225,12 +272,22 @@ def _attribute(
 
     Returns:
         Signed attribution, oriented so larger means more responsible, one column per block when blocked.
+
+    Raises:
+        InvalidParameterError: If source blocks were asked for and this estimator's attribution can be
+            neither grouped by it nor summed soundly.
     """
     if num_features == 1:
         return np.ones((len(rows), 1))
     if block_indices is not None and hasattr(estimator, "block_contributions"):
         return np.asarray(estimator.block_contributions(rows, block_indices))
     if hasattr(estimator, "feature_contributions"):
+        if block_indices is not None:
+            raise InvalidParameterError(
+                f"{type(estimator).__name__} supplies per-feature attribution but cannot group it by source "
+                "column, and its values are not additive, so they cannot be summed. This model predates "
+                "source-column attribution; retrain it to get explanations."
+            )
         return np.asarray(estimator.feature_contributions(rows))
 
     per_feature = _oriented_towards_anomaly(np.asarray(SHAP.TreeExplainer(estimator).shap_values(rows)))

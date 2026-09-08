@@ -254,16 +254,26 @@ def _holdout_residual_scale(seconds: np.ndarray, values: np.ndarray, basis: Temp
 
     Subtracting the residual median makes this a measure of *spread*, so it cannot see a constant forecast
     bias -- a basis whose predictions are uniformly off by the same amount scores as well as one that is
-    right. That is deliberate, and the blind spot is exactly the case that cannot matter downstream: a
-    constant offset in a ``_rel_time`` feature cancels before it can reach a score. The correlation-aware
-    detector centres on the training mean, so the shift subtracts back out; IsolationForest draws split
-    thresholds from each feature's observed range, so shifting a column shifts its candidates with it and
-    the partition is unchanged. Measured against no offset, offsets of 5 and 500 move the correlation-aware
-    score by 1.7e-14 and 1.9e-12 relative -- floating-point residue from the centring, twelve orders of
-    magnitude below the quantile spacing that decides a severity percentile -- and leave IsolationForest
-    bit-identical. Non-constant error, a wrong slope or the wrong shape, inflates residual spread instead,
-    which this statistic does penalise. So do not "fix" this by scoring bias: it would trade a criterion
-    that tracks what matters for one that also tracks what cannot.
+    right. The blind spot is **bounded rather than harmless**, and the bound is where the fit is.
+
+    What it legitimately need not see: selection compares candidate bases that are all refitted on the same
+    data, and a level error shared by a candidate and its reference cancels from the ratio they are judged
+    on. Translating a metric and refitting moves the correlation-aware score by 1.7e-14 relative and leaves
+    IsolationForest bit-identical, because the detector centres on the training mean and the forest draws
+    split thresholds from each feature's observed range. So the *choice* is translation-invariant, and a
+    refit already cancels the part selection could have acted on.
+
+    What it cannot cover, and what an earlier version of this docstring wrongly claimed it could: a bias
+    appearing only *after* the fit window, in the residuals a fixed model produces on future rows. The
+    detector is centred on training residuals that never saw the shift, so nothing cancels. Measured on a
+    fitted detector with +5 added to one held-out residual dimension, the residual MAD is unchanged at
+    1.0026 -- this statistic is blind to it -- while the fraction of rows above the training p99 goes from
+    **1.3% to 98.4%**. Drift detection and the staleness horizon are what surface that; this criterion is
+    not one of them.
+
+    Non-constant error, a wrong slope or the wrong shape, does inflate residual spread and is penalised. So
+    do not "fix" this by scoring in-window bias, and equally do not read it as a claim that forecast bias is
+    harmless.
     """
     order = np.argsort(seconds)
     t_sorted, v_sorted = seconds[order], values[order]

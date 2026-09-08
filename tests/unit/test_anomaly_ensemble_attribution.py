@@ -169,13 +169,21 @@ class _WrongWidthEstimator:
         return np.ones((len(rows), 1))
 
 
-def test_members_whose_attributions_cannot_be_aligned_are_rejected(members: list[IsolationForest], probe: pd.DataFrame):
+def test_a_member_whose_attribution_is_malformed_is_rejected(members: list[IsolationForest], probe: pd.DataFrame):
     """Averaging misaligned columns would blend different features into one confident, wrong answer.
 
-    That is indistinguishable from correct output downstream -- exactly the failure mode this whole
-    function exists to remove -- so it raises rather than quietly falling back to one member.
+    Two guards stand between that and the output, and this exercises the earlier one. A member whose
+    attribution does not match the keys it would be reported under is refused where it is *produced*, by
+    ``compute_row_attributions``, so the failure names the offending estimator rather than surfacing as an
+    averaging problem one frame later. That guard also covers the single-model path, which averaging never
+    touches.
+
+    ``mean_row_attributions`` keeps its own cross-member check. Width can no longer differ between members
+    -- every member is validated against the same key list -- but the per-row valid mask is derived from
+    each member's own scaler, so two members can still disagree about which rows were attributable, and only
+    the cross-member check sees that.
     """
-    with pytest.raises(InvalidParameterError, match="cannot be averaged"):
+    with pytest.raises(InvalidParameterError, match="Reporting it would pair values with the wrong names"):
         mean_row_attributions([members[0], _WrongWidthEstimator()], probe, _COLUMNS)
 
 

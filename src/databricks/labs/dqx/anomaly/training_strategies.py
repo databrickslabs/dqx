@@ -22,7 +22,7 @@ from databricks.labs.dqx.anomaly.core import (
     prepare_engineered_pandas,
     prepare_training_features,
 )
-from databricks.labs.dqx.anomaly.ensemble_training import train_ensemble
+from databricks.labs.dqx.anomaly.ensemble_training import EnsembleTrainer
 from databricks.labs.dqx.anomaly.mlflow_registry import ModelRegistryBase, get_default_registry
 from databricks.labs.dqx.anomaly.timeseries_detector import fit_mahalanobis_model
 from databricks.labs.dqx.anomaly.types import TrainingResult
@@ -120,10 +120,16 @@ class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
         ensemble_size = params.ensemble_size if allow_ensemble and params.ensemble_size else 1
 
         if ensemble_size > 1:
-            model_uris, hyperparams, validation_metrics, score_quantiles, feature_metadata = train_ensemble(
-                train_df, val_df, columns, params, ensemble_size, model_name
-            )
-            model_uri = ",".join(model_uris)
+            # The injected registry, not the default one. A module-level helper used to construct
+            # EnsembleTrainer() with no argument here, so a registry passed to this strategy was honoured
+            # for a single model and silently ignored for an ensemble -- which is the default path, and the
+            # one where a test's fake registry would therefore have reached MLflow instead.
+            result = EnsembleTrainer(self._registry).train(train_df, val_df, columns, params, ensemble_size, model_name)
+            model_uri = ",".join(result.model_uris)
+            hyperparams = result.hyperparams
+            validation_metrics = result.aggregated_metrics
+            score_quantiles = result.score_quantiles
+            feature_metadata = result.feature_metadata
             run_id = "ensemble"
         else:
             model, hyperparams, feature_metadata = fit_isolation_forest(train_df, columns, params)
