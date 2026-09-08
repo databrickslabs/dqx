@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Python 3.12+**
+- **Python 3.12**
 - **Node.js 18+** (provides `npm`) — install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download) — and **yarn** classic v1 (`npm install -g yarn`, used for the committed `app/yarn.lock`; `bun.lock` / `package-lock.json` are gitignored)
 - **bun** — used by `make app-check` to run `tsc -b` (TypeScript incremental compile). Install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.
 - **uv** — Python package manager
@@ -20,6 +20,9 @@ project-specific CLI required. **Prefer `make` from the project root.**
 |---|---|
 | `make app-install` | Install JS dependencies (yarn) |
 | `make app-build` | Compile UI, generate OpenAPI schema, assemble the `.build/` deploy tree (runs `app/scripts/build_app.py`) |
+| `make app-build-marketplace` | Generate a complete local `app/marketplace/` artifact for inspection |
+| `make app-check-marketplace` | Validate Marketplace generation and the signed-release tooling |
+| `app/scripts/release_marketplace.sh vX.Y.Z` | Create and verify local signed branch `marketplace/vX.Y.Z`; never pushes |
 | `make app-start-dev` | Build then start uvicorn + vite via `app/scripts/dev.py` (foreground; Ctrl+C to stop) |
 | `make app-stop-dev` | Stop dev servers started in another shell (`pkill`-based) |
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
@@ -30,6 +33,17 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make integration` | Integration tests (requires live workspace) |
 
 > Lock files (`yarn.lock` and `uv.lock`) must be committed to ensure reproducible builds.
+
+### Marketplace release workflow
+
+Main intentionally excludes the generated `app/marketplace/` artifact. Canonical application source and Marketplace templates remain tracked. Start a release from an annotated signed tag whose version matches `app/pyproject.toml`:
+
+```bash
+app/scripts/release_marketplace.sh v0.16.1
+git push origin marketplace/v0.16.1
+```
+
+The first command creates the release branch in a temporary worktree, builds and validates its complete self-contained Marketplace source, signs and verifies the local commit, and removes the temporary worktree. It never pushes. The Studio package/tag version and the published DQX Core pin are separate: the tag matches `app/pyproject.toml`, while the artifact reads its DQX pin from `app/databricks.yml`. Inspect the branch before running the explicit push command. Normal DAB builds continue to use `.build/`.
 
 ## 1. Configure Authentication
 
@@ -49,10 +63,10 @@ DQX_CATALOG=dqx                             # Unity Catalog catalog name
 DQX_SCHEMA=dqx_studio                       # schema inside the catalog
 DQX_JOB_ID=<task-runner-job-id>             # required for profiler/dry-run
 DQX_WHEELS_VOLUME=/Volumes/dqx/dqx_studio/wheels  # UC volume path; auto-set by DABs in production
-DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access; AppConfig default is unset (no bootstrap admin locally) — set this to your test admin group
+DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access; AppConfig defaults to workspace admins in every path, and this overrides it for a test or deployment group
 
-# Lakebase (optional — leave DQX_LAKEBASE_ENDPOINT empty to run OLTP tables on Delta locally)
-DQX_LAKEBASE_ENDPOINT=                      # e.g. projects/dqx-studio-db/branches/dqx/endpoints/primary; empty = Delta-only mode
+# Lakebase (required — DQX Studio stores transactional state in Postgres)
+DQX_LAKEBASE_ENDPOINT=projects/<project>/branches/<branch>/endpoints/primary
 DQX_LAKEBASE_DATABASE_NAME=databricks_postgres  # logical Postgres DB; defaults to the always-present admin DB
 DQX_LAKEBASE_SCHEMA=dqx_studio              # Postgres schema (default: dqx_studio)
 DQX_LAKEBASE_POOL_MIN_SIZE=1                # psycopg connection pool floor
@@ -60,12 +74,12 @@ DQX_LAKEBASE_POOL_MAX_SIZE=10               # psycopg connection pool ceiling
 DQX_LAKEBASE_TOKEN_REFRESH_MINUTES=50       # OAuth token refresh cadence (token expires at 60)
 ```
 
-`DQX_JOB_ID`, `DQX_WHEELS_VOLUME`, `DQX_LAKEBASE_ENDPOINT`, and `DQX_LAKEBASE_DATABASE_NAME` are injected automatically when deployed via DABs. For local dev, set them manually only if you want to exercise the corresponding feature locally:
+`DQX_JOB_ID`, `DQX_WHEELS_VOLUME`, `DQX_LAKEBASE_ENDPOINT`, and `DQX_LAKEBASE_DATABASE_NAME` are injected automatically when deployed via DABs. For local development, provide all four values from resources you manage:
 
 | Want to test... | Set... |
 |---|---|
 | Profiler / dry-run | `DQX_JOB_ID` (and the wheel volume must exist) |
-| Lakebase OLTP path | `DQX_LAKEBASE_ENDPOINT` (empty = falls back to Delta — fine for most local dev) |
+| Lakebase OLTP path | `DQX_LAKEBASE_ENDPOINT` (required) |
 | Wheel sync | `DQX_WHEELS_VOLUME` |
 
 > **Lakebase locally:** The same OAuth token-refresh logic that runs in production also runs locally. The app authenticates as your CLI user (via `databricks-sdk` default auth chain), so your CLI principal must have a Postgres role on the project branch. Easiest path: run the bundle once against your dev workspace so the `postgres_roles` block provisions the role, then point `DQX_LAKEBASE_ENDPOINT` at the project's endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`).
@@ -78,9 +92,9 @@ Local dev **never provisions** anything — it always points at resources that a
 |---|---|---|
 | **SQL warehouse** | `DATABRICKS_WAREHOUSE_ID=<existing-id>` | Any warehouse you have `CAN_USE` on. Required for queries, profiling, and dry-runs. |
 | **Catalog** | `DQX_CATALOG=<existing-catalog>` (+ `DQX_SCHEMA`, `DQX_TMP_SCHEMA`) | The catalog and schemas must already exist; local dev does **not** create them. You need `USE CATALOG` + `USE SCHEMA` (+ `SELECT` to profile tables). |
-| **Lakebase** | `DQX_LAKEBASE_ENDPOINT=<existing-endpoint-path>` | Point at an existing project endpoint you have a Postgres role on (`projects/<project>/branches/<branch>/endpoints/primary`). **Leave it empty** to skip Lakebase and run OLTP tables on Delta — the simplest local setup. |
+| **Lakebase** | `DQX_LAKEBASE_ENDPOINT=<existing-endpoint-path>` | Required. Point at a project endpoint where your CLI identity has a Postgres role (`projects/<project>/branches/<branch>/endpoints/primary`). |
 
-In production the bundle always provisions its own SQL warehouse and Lakebase project (the catalog is always pre-existing). The fastest way to get a matching warehouse + catalog + Lakebase for local dev is to run `make app-deploy` once against a dev workspace, then copy the resulting IDs/endpoint path into `app/.env`.
+In production the bundle always provisions its own SQL warehouse and Lakebase project (the catalog is always pre-existing). The fastest way to get a matching warehouse + catalog + Lakebase for local development is to run `make app-deploy` once against a development workspace, then copy the resulting IDs and endpoint path into `app/.env`. Delta-backed application state has been removed and has no migration path.
 
 ## 2. Install Dependencies
 

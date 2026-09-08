@@ -484,6 +484,13 @@
     arguments:
       column: col_email
 
+# is_valid_url check
+- criticality: error
+  check:
+    function: is_valid_url
+    arguments:
+      column: col_url
+
 # is_valid_uuid check
 - criticality: error
   check:

@@ -31,11 +31,13 @@ import random
 import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 from databricks.sdk import WorkspaceClient
+from pydantic import SecretStr
 from psycopg import Connection, Cursor
 from psycopg_pool import ConnectionPool
 
@@ -61,14 +63,19 @@ from databricks_labs_dqx_app.backend.sql_executor import (
     _render_value,
 )
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.setup.resources import LakebaseConnection
 
 logger = logging.getLogger(__name__)
 
 # Re-exports so ``from backend.pg_executor import run_trusted_sql`` keeps
 # working after the helpers moved to ``backend.pg_cursor_helpers``.
 __all__ = [
+    "CredentialProvider",
     "PgExecutor",
+    "StaticCredentialProvider",
+    "WorkspaceCredentialProvider",
     "build_pg_executor",
+    "build_pg_executor_from_connection",
     "run_parameterized_sql",
     "run_trusted_sql",
 ]
@@ -112,6 +119,50 @@ def _generate_token(ws: WorkspaceClient, endpoint: str) -> str:
     if not cred.token:
         raise RuntimeError(f"Lakebase credential response had no token (endpoint={endpoint})")
     return cred.token
+
+
+class CredentialProvider(Protocol):
+    """Password source for a Lakebase connection pool."""
+
+    @property
+    def refreshable(self) -> bool:
+        """Whether the provider can mint replacement credentials."""
+        ...
+
+    def get_password(self) -> str:
+        """Return the current connection password."""
+        ...
+
+
+@dataclass(frozen=True)
+class StaticCredentialProvider:
+    """Platform-supplied credential that remains valid for the app process."""
+
+    password: SecretStr
+
+    @property
+    def refreshable(self) -> bool:
+        """Static platform credentials are not refreshed by the app."""
+        return False
+
+    def get_password(self) -> str:
+        """Reveal the password only at the connection-pool boundary."""
+        return self.password.get_secret_value()
+
+
+@dataclass(frozen=True)
+class WorkspaceCredentialProvider:
+    """Refreshable OAuth credential issued for a Lakebase endpoint."""
+
+    workspace: WorkspaceClient
+    endpoint: str
+
+    @property
+    def refreshable(self) -> bool:
+        return True
+
+    def get_password(self) -> str:
+        return _generate_token(self.workspace, self.endpoint)
 
 
 def _to_text(value: Any) -> str | None:
@@ -166,7 +217,7 @@ def _pg_render_value(value: Any) -> str:
 class PgExecutor:
     """Drop-in :class:`SqlExecutor` replacement backed by Lakebase Postgres.
 
-    Constructed at app startup when ``conf.lakebase_enabled`` is true;
+    Constructed during app setup before OLTP services are enabled;
     the lifespan handler kicks off the token-refresh thread and runs
     the Postgres migrations once before traffic arrives.
     """
@@ -183,11 +234,12 @@ class PgExecutor:
         self,
         *,
         ws: WorkspaceClient,
-        endpoint: str,
+        endpoint: str | None,
         database: str,
         schema: str,
         username: str,
         host: str,
+        credential_provider: CredentialProvider | None = None,
         port: int = 5432,
         token_refresh_minutes: int = 50,
         token_refresh_retry_seconds: int = 10,
@@ -203,6 +255,11 @@ class PgExecutor:
         self._username = username
         self._host = host
         self._port = port
+        if credential_provider is None:
+            if endpoint is None:
+                raise ValueError("A credential provider is required without a Lakebase endpoint")
+            credential_provider = WorkspaceCredentialProvider(ws, endpoint)
+        self._credential_provider = credential_provider
         self._token_refresh_seconds = max(60, token_refresh_minutes * 60)
         # Retry tuning: clamp to sensible floors so a mis-configured
         # env var can't degenerate into a busy-loop or an unbounded
@@ -221,7 +278,7 @@ class PgExecutor:
         # counts as a successful refresh — the metric / counter start
         # in the "healthy" state, not a transient "never refreshed"
         # one that would confuse a health endpoint at t=0.
-        self._token_holder = _TokenHolder(_generate_token(ws, endpoint))
+        self._token_holder = _TokenHolder(self._credential_provider.get_password())
         self._last_successful_refresh_at: datetime | None = datetime.now(timezone.utc)
         self._consecutive_refresh_failures: int = 0
 
@@ -278,12 +335,14 @@ class PgExecutor:
         )
 
         self._stop = threading.Event()
-        self._refresher = threading.Thread(
-            target=self._token_refresh_loop,
-            name="dqx-lakebase-token-refresh",
-            daemon=True,
-        )
-        self._refresher.start()
+        self._refresher: threading.Thread | None = None
+        if self._credential_provider.refreshable:
+            self._refresher = threading.Thread(
+                target=self._token_refresh_loop,
+                name="dqx-lakebase-token-refresh",
+                daemon=True,
+            )
+            self._refresher.start()
 
     # ------------------------------------------------------------------
     # Public API mirrors SqlExecutor
@@ -835,7 +894,7 @@ class PgExecutor:
             if self._stop.wait(self._next_wait_seconds()):
                 return
             try:
-                fresh = _generate_token(self._ws, self._endpoint)
+                fresh = self._credential_provider.get_password()
                 self._token_holder.token = fresh
                 # Mutating the same dict the pool was constructed with
                 # is the supported way to inject rotating credentials
@@ -900,27 +959,71 @@ def build_pg_executor(
     its :meth:`__init__` and :meth:`_token_refresh_loop` for the
     full back-off / escalation contract.
     """
-    endpoint_obj = ws.postgres.get_endpoint(name=endpoint)
-    status = endpoint_obj.status
-    host = status.hosts.host if status and status.hosts else None
-    if not host:
-        raise RuntimeError(
-            f"Lakebase endpoint {endpoint!r} has no read/write host. "
-            "Is the project branch/endpoint provisioned and running?"
-        )
+    return build_pg_executor_from_connection(
+        ws,
+        LakebaseConnection(
+            endpoint=endpoint,
+            host=None,
+            port=5432,
+            database=database,
+            username=None,
+            password=None,
+            schema=schema,
+        ),
+        token_refresh_minutes=token_refresh_minutes,
+        token_refresh_retry_seconds=token_refresh_retry_seconds,
+        token_refresh_retry_jitter=token_refresh_retry_jitter,
+        token_refresh_max_failures=token_refresh_max_failures,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+    )
 
-    me = ws.current_user.me()
-    username = me.user_name or me.id or ""
-    if not username:
-        raise RuntimeError("Could not determine workspace identity for Lakebase connection")
+
+def build_pg_executor_from_connection(
+    ws: WorkspaceClient,
+    connection: LakebaseConnection,
+    *,
+    token_refresh_minutes: int = 50,
+    token_refresh_retry_seconds: int = 10,
+    token_refresh_retry_jitter: float = 0.3,
+    token_refresh_max_failures: int = 12,
+    pool_min_size: int = 1,
+    pool_max_size: int = 10,
+) -> PgExecutor:
+    """Construct an executor from endpoint or platform-bound connection values."""
+    endpoint = connection.endpoint
+    if endpoint is not None:
+        endpoint_obj = ws.postgres.get_endpoint(name=endpoint)
+        status = endpoint_obj.status
+        host = status.hosts.host if status and status.hosts else None
+        if not host:
+            raise RuntimeError(
+                f"Lakebase endpoint {endpoint!r} has no read/write host. "
+                "Is the project branch/endpoint provisioned and running?"
+            )
+
+        me = ws.current_user.me()
+        username = me.user_name or me.id or ""
+        if not username:
+            raise RuntimeError("Could not determine workspace identity for Lakebase connection")
+        credential_provider: CredentialProvider = WorkspaceCredentialProvider(ws, endpoint)
+    else:
+        host = connection.host
+        username = connection.username
+        password = connection.password
+        if not host or not username or password is None:
+            raise RuntimeError("Platform-bound Lakebase host, username, and password are required")
+        credential_provider = StaticCredentialProvider(password)
 
     return PgExecutor(
         ws=ws,
         endpoint=endpoint,
-        database=database,
-        schema=schema,
+        database=connection.database,
+        schema=connection.schema,
         username=username,
         host=host,
+        port=connection.port,
+        credential_provider=credential_provider,
         token_refresh_minutes=token_refresh_minutes,
         token_refresh_retry_seconds=token_refresh_retry_seconds,
         token_refresh_retry_jitter=token_refresh_retry_jitter,

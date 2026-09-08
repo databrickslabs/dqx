@@ -1,5 +1,8 @@
+from unittest.mock import create_autospec
+
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window, has_no_gaps_per_time_window
@@ -143,6 +146,22 @@ def test_compare_datasets_invalid_tolerance_exceptions(abs_tolerance, rel_tolera
                 "rel_tolerance": rel_tolerance,
             },
         )
+
+
+@pytest.mark.parametrize("streaming_side", ["source", "reference"])
+@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True])
+def test_compare_datasets_rejects_streaming_dataframes(streaming_side: str, raise_on_duplicate_keys: bool):
+    _, apply = check_funcs.compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", raise_on_duplicate_keys=raise_on_duplicate_keys
+    )
+    df = create_autospec(DataFrame, instance=True)
+    df.isStreaming = streaming_side == "source"
+    ref_df = create_autospec(DataFrame, instance=True)
+    ref_df.isStreaming = streaming_side == "reference"
+    spark = create_autospec(SparkSession, instance=True)
+
+    with pytest.raises(InvalidParameterError, match="does not support streaming inputs"):
+        apply(df, spark, {"ref_df": ref_df})
 
 
 def test_sql_query_empty_merge_columns():

@@ -133,6 +133,24 @@ app-install: ## Install app frontend dependencies (yarn --frozen-lockfile)
 app-build: ## Build app: openapi → orval → vite (CI parity)
 	cd app && $(UV_RUN) python scripts/build_app.py
 
+app-build-marketplace: app-build ## Build the Databricks Marketplace source folder
+	cd app && $(UV_RUN) python scripts/build_marketplace.py
+
+app-check-marketplace: ## Validate Marketplace generation and signed-release tooling
+	cd app && $(UV_RUN) --group test pytest tests/test_build_marketplace.py tests/test_release_marketplace.py -v
+	@tracked="$$(git ls-files 'app/marketplace/**')"; \
+	deleted="$$(git diff --name-only --diff-filter=D -- 'app/marketplace/**')"; \
+	test -z "$$tracked" || test "$$tracked" = "$$deleted" || \
+	  (echo "Generated Marketplace artifacts must not be tracked on main."; exit 1)
+
+app-release-marketplace: ## Create and verify a local signed Marketplace release branch (TAG=vX.Y.Z)
+	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=vX.Y.Z"; exit 1)
+	app/scripts/release_marketplace.sh $(TAG)
+
+app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
+	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)
+	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ -v
+
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
 # built-in proxy so the documented http://localhost:9001 URL works
@@ -201,7 +219,7 @@ app-test-ui: ## Run app UI unit tests (bun test)
 # adding an ``all`` extra later "just works".
 app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
-	cd app && $(UV_RUN) --group test pytest tests/ --ignore=tests/ai_eval \
+	cd app && $(UV_RUN) --group test pytest tests/ --ignore=tests/ai_eval --ignore=tests/integration \
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
 
@@ -451,4 +469,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

@@ -30,9 +30,12 @@ import datetime as dt
 import logging
 import threading
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
+from pydantic import SecretStr
+
+from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.pg_executor import (
     PgExecutor,
@@ -41,7 +44,10 @@ from databricks_labs_dqx_app.backend.pg_executor import (
     _to_text,
     _TokenHolder,
     build_pg_executor,
+    build_pg_executor_from_connection,
+    WorkspaceCredentialProvider,
 )
+from databricks_labs_dqx_app.backend.setup.resources import LakebaseConnection
 from databricks_labs_dqx_app.backend.sql_executor import RawSql, WhereIn
 
 # ---------------------------------------------------------------------------
@@ -60,74 +66,30 @@ def _make_pg_executor(
     token_refresh_max_failures: int = 12,
     initial_token: str = "tok-initial",
 ) -> PgExecutor:
-    """Build a method-callable :class:`PgExecutor` without running ``__init__``.
-
-    Skips the real ``ConnectionPool`` open, the bootstrap
-    ``_generate_token`` call, and the refresher-thread spawn.
-
-    *Why ``__new__`` here, unlike* ``conftest.make_scheduler`` *which uses
-    the real constructor?* ``SchedulerService.__init__`` is pure
-    attribute assignment, so injecting dependencies through the real
-    constructor is straightforward. ``PgExecutor.__init__``, in
-    contrast, performs three unavoidable side effects: it calls
-    ``_generate_token`` (a network round-trip to the SDK), opens a
-    real ``ConnectionPool`` (a TCP connect to Postgres), and starts a
-    daemon thread. A unit test cannot perform any of these. Adding
-    constructor kwargs to gate each side effect would expose
-    test-only seams in production code — worse than the localised
-    ``__new__`` here, which is contained to this single test helper.
-    The ``_make_pg_executor`` factory makes the asymmetry explicit
-    and keeps the boundary in test code.
-
-    The returned instance has the minimum attribute surface every
-    method under test reads:
-
-    - ``_ws`` / ``_endpoint`` — used by the refresh loop and by
-      :func:`build_pg_executor` smoke tests.
-    - ``_schema`` / ``_database`` — used by ``schema`` / ``database`` /
-      ``fqn`` / ``catalog`` properties.
-    - ``_token_holder`` — real :class:`_TokenHolder` so the refresh-loop
-      tests can read its mutated state.
-    - ``_connect_kwargs`` — real ``dict`` so the refresh-loop tests can
-      observe the mutated ``password`` key.
-    - ``_pool`` — :class:`MagicMock` with a context-manager-shaped
-      ``connection()`` so the executor methods that go through the
-      pool can be exercised without psycopg.
-    - ``_stop`` — real :class:`threading.Event` so the refresh-loop
-      tests can terminate the loop deterministically.
-
-    Tests that need to inspect the inner cursor build it inline (see
-    ``_cursor_of`` below) rather than baking it into the helper to
-    keep this factory uncluttered.
-    """
-    inst = PgExecutor.__new__(PgExecutor)
-    inst._ws = MagicMock(name="WorkspaceClient")
-    inst._endpoint = endpoint
-    inst._database = database
-    inst._schema = schema
-    inst._username = "test-user"
-    inst._host = "test-host"
-    inst._port = 5432
-    inst._token_refresh_seconds = token_refresh_seconds
-    inst._token_refresh_retry_seconds = token_refresh_retry_seconds
-    inst._token_refresh_retry_jitter = token_refresh_retry_jitter
-    inst._token_refresh_max_failures = token_refresh_max_failures
-    inst._token_holder = _TokenHolder(initial_token)
-    inst._connect_kwargs = {"password": initial_token}
-    inst._last_successful_refresh_at = None
-    inst._consecutive_refresh_failures = 0
-
-    # Pool is a MagicMock with the context-manager protocol wired so
-    # ``with self._pool.connection() as conn:`` yields a deterministic
-    # mock connection.
+    """Build a real executor while replacing only its external side effects."""
+    workspace = MagicMock(name="WorkspaceClient")
+    workspace.postgres.generate_database_credential.return_value = MagicMock(token=initial_token)
     pool = MagicMock(name="ConnectionPool")
     conn_cm = pool.connection.return_value
     conn_cm.__exit__.return_value = None  # don't swallow exceptions
-    inst._pool = pool
-
-    inst._stop = threading.Event()
-    inst._refresher = MagicMock(name="Thread")  # never started in tests
-    return inst
+    with (
+        patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool", return_value=pool) as pool_factory,
+        patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
+    ):
+        pool_factory.check_connection = MagicMock()
+        return PgExecutor(
+            ws=workspace,
+            endpoint=endpoint,
+            database=database,
+            schema=schema,
+            username="test-user",
+            host="test-host",
+            credential_provider=WorkspaceCredentialProvider(workspace, endpoint),
+            token_refresh_minutes=token_refresh_seconds // 60,
+            token_refresh_retry_seconds=token_refresh_retry_seconds,
+            token_refresh_retry_jitter=token_refresh_retry_jitter,
+            token_refresh_max_failures=token_refresh_max_failures,
+        )
 
 
 def _conn_of(executor: PgExecutor) -> MagicMock:
@@ -1487,6 +1449,66 @@ class TestBuildPgExecutor:
         assert kwargs["username"] == "sp-1234", "fell through user_name=None to id"
         assert kwargs["host"] == "ok.host"
         assert kwargs["endpoint"] == "projects/dqx/branches/dev/endpoints/primary"
+
+
+class TestBuildPgExecutorFromConnection:
+    """Construct an executor from either supported Lakebase binding shape."""
+
+    @staticmethod
+    def _workspace() -> WorkspaceClient:
+        return create_autospec(WorkspaceClient, instance=True)
+
+    def test_endpoint_binding_uses_workspace_credential_provider(self) -> None:
+        ws = self._workspace()
+        ws.postgres.get_endpoint.return_value = MagicMock(status=MagicMock(hosts=MagicMock(host="endpoint.example")))
+        ws.current_user.me.return_value = MagicMock(user_name="app-client-id", id="app-id")
+        ws.postgres.generate_database_credential.return_value = MagicMock(token="oauth-token")
+        connection = LakebaseConnection(
+            endpoint="projects/p/branches/b/endpoints/e",
+            host=None,
+            port=5432,
+            database="databricks_postgres",
+            username=None,
+            password=None,
+            schema="dqx_studio",
+        )
+
+        with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
+            patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
+        ):
+            pool.check_connection = MagicMock()
+            executor = build_pg_executor_from_connection(ws, connection, pool_min_size=1, pool_max_size=1)
+
+        assert executor.schema == "dqx_studio"
+        ws.postgres.generate_database_credential.assert_called_once_with(endpoint="projects/p/branches/b/endpoints/e")
+
+    def test_platform_binding_uses_supplied_credentials_without_control_plane(self) -> None:
+        ws = self._workspace()
+        connection = LakebaseConnection(
+            endpoint=None,
+            host="db.example",
+            port=5432,
+            database="dqx",
+            username="app",
+            password=SecretStr("secret"),
+            schema="dqx_studio",
+        )
+
+        with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
+            patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread") as thread_factory,
+        ):
+            pool.check_connection = MagicMock()
+            executor = build_pg_executor_from_connection(ws, connection, pool_min_size=1, pool_max_size=1)
+
+        assert executor.schema == "dqx_studio"
+        assert executor.username == "app"
+        assert pool.call_args.kwargs["kwargs"]["password"] == "secret"
+        thread_factory.assert_not_called()
+        ws.postgres.get_endpoint.assert_not_called()
+        ws.postgres.generate_database_credential.assert_not_called()
+        ws.current_user.me.assert_not_called()
 
 
 # ===========================================================================

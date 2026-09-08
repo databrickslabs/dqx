@@ -183,7 +183,7 @@ class MonitoredTableService:
     ``profiling_sql`` is a separate executor because ``dq_profiling_results``
     is always a Delta analytical table (written by the profiler job),
     independent of whether the OLTP tables live in Lakebase Postgres or the
-    Delta OLTP-fallback baseline.
+    Lakebase OLTP baseline.
     """
 
     VALID_STATUSES: frozenset[str] = frozenset(get_args(MonitoredTableStatus))

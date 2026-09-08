@@ -5,6 +5,12 @@ Web application for the DQX framework — a UI for authoring and managing data q
 - **[Local Development →](DEVELOPMENT.md)** — set up your environment, run dev servers, test changes
 - **[Deployment →](DEPLOYMENT.md)** — deploy to Databricks Apps via DABs
 
+## Marketplace release artifacts
+
+The main branch tracks the canonical application source and Marketplace templates, while the generated `app/marketplace/` artifact remains untracked. An annotated signed version tag is the immutable input for a complete Marketplace release. A releaser runs `app/scripts/release_marketplace.sh vX.Y.Z`; the script verifies the tag and matching app version, builds and force-stages the self-contained artifact on local branch `marketplace/vX.Y.Z`, signs and verifies its commit, and never pushes. After inspection, publish it manually with `git push origin marketplace/vX.Y.Z`.
+
+DAB deployments are independent and continue to build and consume `app/.build/`.
+
 ## Architecture
 
 - **Backend**: FastAPI (`src/databricks_labs_dqx_app/backend/`) — REST API under `/api/v1`, no Spark in the app process
@@ -29,9 +35,9 @@ Operations that must respect the logged-in user's permissions use the `X-Forward
 Operations the app owns and manages run as the app's own service principal:
 
 - **Job submission** for profiler and dry-run tasks
-- **Rules catalog CRUD** (reading and writing rules — Lakebase Postgres by default, Delta in fallback mode)
-- **Schema migrations** (creating and evolving both Delta and Lakebase tables)
-- **App settings** (reading and writing settings — Lakebase Postgres by default)
+- **Rules catalog CRUD** (reading and writing rules in Lakebase Postgres)
+- **Schema migrations** (creating and evolving Delta analytical and Lakebase application tables)
+- **App settings** (reading and writing settings in Lakebase Postgres)
 - **Wheel upload** — on startup the app uploads DQX wheels to the UC volume and patches the task-runner job environment
 
 This ensures:
@@ -102,7 +108,7 @@ The schemas, wheels volume, and Lakebase Postgres **project** are declared as bu
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── wheels (UC volume)               ← DQX + task-runner wheels uploaded at app startup
 
-Lakebase (Postgres) — when enabled (default):
+Lakebase (Postgres) — required:
  dqx-studio-db (postgres project; `var.lakebase_project_id`)
  └── databricks_postgres (database)    ← always-present admin DB; no per-app logical DB provisioned
      └── dqx_studio (schema)           ← created by PgMigrationRunner on first start (DQX_LAKEBASE_SCHEMA)
@@ -112,7 +118,7 @@ Lakebase (Postgres) — when enabled (default):
          └── dq_migrations              ← Lakebase migration version tracker
 ```
 
-`(OLTP*)` = lives in **Lakebase Postgres** when `lakebase_endpoint` is set in `databricks.yml`, otherwise in **Delta** (the `v2: Delta OLTP fallback` migration). The split is invisible to service code: `SqlExecutor` (Delta) and `PgExecutor` (Lakebase) share an identical public surface — `execute`, `query`, `query_dicts`, `upsert`, plus the dialect helpers `q(identifier)`, `json_literal_expr(json_str)`, and `ts_text(col)` that emit dialect-correct SQL fragments.
+`(OLTP*)` = lives in **Lakebase Postgres**. Lakebase is mandatory: the previous Delta-backed application state was removed without a migration path. The split is invisible to service code: `SqlExecutor` (Delta) and `PgExecutor` (Lakebase) share an identical public surface — `execute`, `query`, `query_dicts`, `upsert`, plus the dialect helpers `q(identifier)`, `json_literal_expr(json_str)`, and `ts_text(col)` that emit dialect-correct SQL fragments.
 
 ### Role-Based Access Control
 
@@ -143,6 +149,6 @@ The app aligns with the [DQX Summary Metrics spec](https://github.com/databricks
 
 ## Stack
 
-- **Backend**: Python 3.12+, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
+- **Backend**: Python 3.12, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
 - **Frontend**: React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation**: orval (OpenAPI → TypeScript types + React Query hooks)
