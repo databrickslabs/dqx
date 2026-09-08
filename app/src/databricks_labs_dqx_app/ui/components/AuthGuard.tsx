@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { currentUser } from "@/lib/api";
+import { currentUser, getGetSetupStatusQueryKey, getSetupStatus } from "@/lib/api";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 interface AuthGuardProps {
@@ -19,6 +20,7 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
   const tRef = useRef(t);
+  const queryClient = useQueryClient();
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +28,18 @@ export function AuthGuard({ children }: AuthGuardProps) {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+
+  // Warm the setup-readiness check in PARALLEL with the auth handshake so
+  // SetupGate doesn't add a second sequential round-trip once auth resolves.
+  // Retries like the auth check below (the OBO token may not be ready on the
+  // first tick); SetupGate reads the same query key, so it reuses this fetch.
+  useEffect(() => {
+    void queryClient.prefetchQuery({
+      queryKey: getGetSetupStatusQueryKey(),
+      queryFn: () => getSetupStatus(),
+      retry: 15,
+    });
+  }, [queryClient]);
 
   useEffect(() => {
     let cancelled = false;
