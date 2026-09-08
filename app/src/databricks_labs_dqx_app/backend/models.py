@@ -1455,9 +1455,28 @@ class DryRunOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ProfileRunIn(BaseModel):
+class ProfilerSampleOverride(BaseModel):
+    """Optional per-run override of the admin profiler sampling setting.
+
+    Both fields default to ``None``, meaning "use the configured admin
+    setting". *sample_kind* picks which form *sample_value* takes, so the
+    two forms are mutually exclusive by construction — there is no way to
+    request a row cap and a percentage at the same time.
+    """
+
+    sample_kind: Literal["full", "records", "percent"] | None = Field(
+        default=None,
+        description="Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.",
+    )
+    sample_value: int | None = Field(
+        default=None,
+        ge=1,
+        description="Row count when sample_kind is records, 1-100 when percent. Ignored for full.",
+    )
+
+
+class ProfileRunIn(ProfilerSampleOverride):
     table_fqn: str = Field(description="Fully qualified table name to profile")
-    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample")
     columns: list[str] | None = Field(default=None, description="Specific columns to profile (all if None)")
     profile_options: dict[str, Any] | None = Field(
         default=None,
@@ -1517,9 +1536,8 @@ class ProfileRunSummaryOut(BaseModel):
     job_run_id: int | None = None
 
 
-class BatchProfileRunIn(BaseModel):
+class BatchProfileRunIn(ProfilerSampleOverride):
     table_fqns: list[str] = Field(description="List of fully qualified table names to profile")
-    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample per table")
     profile_options: dict[str, Any] | None = Field(
         default=None,
         description="Advanced profiler options applied to all tables",

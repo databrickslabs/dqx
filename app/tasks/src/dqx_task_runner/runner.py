@@ -354,7 +354,16 @@ def _run_profile(
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.labs.dqx.profiler.generator import DQGenerator
 
-    sample_limit = config.get("sample_limit", 50_000)
+    # Sampling is applied by the temp view the submitting route built (see
+    # ``ViewService._sample_body``), so the runner must NOT re-limit here — a
+    # second ``df.limit`` would silently override a percentage sample and make
+    # ``rows_profiled`` disagree with what was actually profiled.
+    sample_kind = config.get("sample_kind", "full")
+    sample_value = int(config.get("sample_value") or 0)
+    # The results table stores one integer cap. A percentage or full-table run
+    # has no exact row cap, so record 0 (the existing "unlimited" convention)
+    # and let ``rows_profiled`` carry the real figure.
+    sample_limit = sample_value if sample_kind == "records" else 0
     source_table_fqn = config.get("source_table_fqn", "")
     columns = config.get("columns") or None
     profile_options = config.get("profile_options") or {}
@@ -363,8 +372,11 @@ def _run_profile(
     start = time.time()
 
     df = _read_view_with_retry(spark, view_fqn)
-    if sample_limit:
-        df = df.limit(sample_limit)
+
+    # ``rows_profiled`` must reflect what the profiler actually saw, so count
+    # the view once here and reuse it — the profiler's own sampling options are
+    # pinned off by the route, so the view row count IS the profiled row count.
+    rows_profiled = df.count()
 
     profiler = DQProfiler(ws, spark)
     summary, profiles = profiler.profile(df, columns=columns, options=profile_options)
@@ -373,7 +385,6 @@ def _run_profile(
     rules = generator.generate_dq_rules(profiles)
 
     duration = round(time.time() - start, 2)
-    rows_profiled = df.count()
     columns_profiled = len(profiles) if profiles else 0
 
     # Write result row. Profiling has no checks yet, but we still record a

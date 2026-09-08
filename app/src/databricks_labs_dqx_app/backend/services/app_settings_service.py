@@ -1,6 +1,8 @@
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
@@ -26,6 +28,77 @@ DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
 # org-wide minimum pass rate (%) below which a check warns. Shared by
 # the breach evaluator (results service) and the admin settings endpoint.
 DEFAULT_PASS_THRESHOLD_DEFAULT = 70
+
+# Compiled-in fallbacks for the profiler sampling setting — how much of a
+# source table the profiler reads. ``kind`` is one of ``full`` (whole
+# table), ``records`` (a random row cap) or ``percent`` (a random
+# fraction); ``value`` is the row count or the percentage respectively
+# and is ignored for ``full``. Shared by the profiler routes and the
+# ``/compute/profiler-sample`` admin endpoints.
+ProfilerSampleKind = Literal["full", "records", "percent"]
+PROFILER_SAMPLE_KIND_FULL: ProfilerSampleKind = "full"
+PROFILER_SAMPLE_KIND_RECORDS: ProfilerSampleKind = "records"
+PROFILER_SAMPLE_KIND_PERCENT: ProfilerSampleKind = "percent"
+PROFILER_SAMPLE_KIND_DEFAULT: ProfilerSampleKind = PROFILER_SAMPLE_KIND_PERCENT
+PROFILER_SAMPLE_VALUE_DEFAULT = 10
+# Per-kind fallback when the kind is set but the value is missing or corrupt.
+# A single global fallback is unsafe across units: 50,000 as a *percentage*
+# clamps to 100, which silently means "whole table" — the opposite of a cap.
+PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND: dict[str, int] = {
+    PROFILER_SAMPLE_KIND_PERCENT: 10,
+    PROFILER_SAMPLE_KIND_RECORDS: 50_000,
+}
+# Sanity ceiling for the ``records`` form. Admins who genuinely want the
+# whole table pick ``full`` rather than an enormous row count.
+PROFILER_SAMPLE_RECORDS_MAX = 10_000_000
+
+
+@dataclass(frozen=True)
+class ProfilerSample:
+    """Resolved profiler sampling policy.
+
+    Attributes:
+        kind: One of ``full``, ``records`` or ``percent``.
+        value: Row count when *kind* is ``records``, percentage 1-100 when
+            *kind* is ``percent``, and 0 when *kind* is ``full``.
+    """
+
+    kind: ProfilerSampleKind
+    value: int
+
+    @property
+    def is_full_table(self) -> bool:
+        """Whether the profiler should read the whole table."""
+        return self.kind == PROFILER_SAMPLE_KIND_FULL
+
+
+def parse_profiler_sample_kind(raw: str | None) -> ProfilerSampleKind | None:
+    """Narrow *raw* to a known sampling kind, or ``None`` if unrecognised.
+
+    Explicit literal returns so the type checker can prove the result is a
+    :data:`ProfilerSampleKind` rather than a bare ``str``.
+    """
+    kind = (raw or "").strip().lower()
+    if kind == "full":
+        return "full"
+    if kind == "records":
+        return "records"
+    if kind == "percent":
+        return "percent"
+    return None
+
+
+def _clamp_profiler_sample_value(kind: ProfilerSampleKind, value: int) -> int:
+    """Clamp *value* into the range valid for *kind*.
+
+    Percentages clamp to 1-100; row counts clamp to
+    1-:data:`PROFILER_SAMPLE_RECORDS_MAX`. Callers rely on this so a
+    corrupt or hostile stored value can never widen the scan.
+    """
+    if kind == PROFILER_SAMPLE_KIND_PERCENT:
+        return max(1, min(100, int(value)))
+    return max(1, min(PROFILER_SAMPLE_RECORDS_MAX, int(value)))
+
 
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
@@ -260,6 +333,73 @@ class AppSettingsService:
         """Persist the draft-run sample limit (0 = unlimited). Returns the saved value."""
         self.save_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY, str(int(limit)), user_email=user_email)
         return int(limit)
+
+    # ------------------------------------------------------------------
+    # Profiler sampling — how much of a source table the profiler reads.
+    # Stored as two keys so the shape stays greppable in dq_app_settings
+    # and a corrupt value in one cannot silently change the other:
+    #   * ``profiler_sample_kind``  — ``full`` | ``records`` | ``percent``
+    #   * ``profiler_sample_value`` — row count (records) or 1-100 (percent)
+    # The two forms are mutually exclusive by construction: ``kind`` picks
+    # which one ``value`` means. An unset or unparseable pair reads back as
+    # the compiled-in default so profiling always has a bounded default.
+    # ------------------------------------------------------------------
+
+    _PROFILER_SAMPLE_KIND_KEY = "profiler_sample_kind"
+    _PROFILER_SAMPLE_VALUE_KEY = "profiler_sample_value"
+
+    def get_profiler_sample(self) -> ProfilerSample:
+        """Return the configured profiler sampling policy, falling back to the default.
+
+        Never raises: an unset, unknown or out-of-range stored value is
+        logged and replaced by the compiled-in default so a corrupt row
+        cannot make profiling read an unbounded table by accident.
+        """
+        raw_kind = self.get_setting(self._PROFILER_SAMPLE_KIND_KEY)
+        parsed = parse_profiler_sample_kind(raw_kind)
+        if parsed is None:
+            if raw_kind:
+                logger.warning(
+                    "Setting %s is not a known kind (%r); using default",
+                    self._PROFILER_SAMPLE_KIND_KEY,
+                    replace_control_characters(str(raw_kind)),
+                )
+            parsed = PROFILER_SAMPLE_KIND_DEFAULT
+        kind = parsed
+
+        if kind == PROFILER_SAMPLE_KIND_FULL:
+            return ProfilerSample(kind=kind, value=0)
+
+        value = self._get_int_setting(self._PROFILER_SAMPLE_VALUE_KEY)
+        if value is None:
+            # Fall back in the unit the kind actually uses — see
+            # PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND for why this must not be a
+            # single global default.
+            value = PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND.get(kind, PROFILER_SAMPLE_VALUE_DEFAULT)
+        return ProfilerSample(kind=kind, value=_clamp_profiler_sample_value(kind, value))
+
+    def save_profiler_sample(self, kind: str, value: int, *, user_email: str | None = None) -> ProfilerSample:
+        """Persist the profiler sampling policy. Returns the saved value.
+
+        Args:
+            kind: One of ``full``, ``records`` or ``percent``.
+            value: Row count (*records*) or percentage 1-100 (*percent*).
+                Ignored when *kind* is ``full``.
+            user_email: Acting admin, recorded for audit.
+
+        Raises:
+            ValueError: If *kind* is not a known sampling kind.
+        """
+        cleaned_kind = parse_profiler_sample_kind(kind)
+        if cleaned_kind is None:
+            raise ValueError(f"Unknown profiler sample kind: {kind!r}")
+
+        stored_value = (
+            0 if cleaned_kind == PROFILER_SAMPLE_KIND_FULL else _clamp_profiler_sample_value(cleaned_kind, value)
+        )
+        self.save_setting(self._PROFILER_SAMPLE_KIND_KEY, cleaned_kind, user_email=user_email)
+        self.save_setting(self._PROFILER_SAMPLE_VALUE_KEY, str(stored_value), user_email=user_email)
+        return ProfilerSample(kind=cleaned_kind, value=stored_value)
 
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)

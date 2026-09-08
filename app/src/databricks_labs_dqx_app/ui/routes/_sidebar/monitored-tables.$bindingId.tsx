@@ -76,6 +76,7 @@ import {
   getGetMonitoredTableQueryKey,
   getListMonitoredTablesQueryKey,
   useSubmitProfileRun,
+  useGetProfilerSample,
   getProfileRunStatus,
   useListProfileRuns,
   useGetProfileRunResults,
@@ -126,6 +127,7 @@ import {
   type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import { LifecycleDecisionNote } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
@@ -1743,9 +1745,46 @@ function ProfileTab({
 
   const running = submitMutation.isPending || runId !== null;
 
-  const handleRunProfile = useCallback(() => {
+  // One-off profile runs ask for their sampling in a modal, pre-filled from the
+  // admin default (Settings → Compute → Profiling). Confirming overrides that
+  // default for this run only; it never writes the setting back.
+  const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
+  const [sampleKind, setSampleKind] = useState<SampleKind>("percent");
+  const [sampleValue, setSampleValue] = useState(10);
+  const [sampleHydrated, setSampleHydrated] = useState(false);
+  const profilerSampleQuery = useGetProfilerSample();
+
+  useEffect(() => {
+    const cfg = profilerSampleQuery.data?.data;
+    if (cfg && !sampleHydrated) {
+      setSampleKind(cfg.sample_kind);
+      setSampleValue(cfg.sample_value || cfg.default_value || 10);
+      setSampleHydrated(true);
+    }
+  }, [profilerSampleQuery.data, sampleHydrated]);
+
+  const handleSampleKind = useCallback((k: SampleKind) => {
+    setSampleKind(k);
+    // records → percent would reinterpret a row count as a percentage.
+    if (k === "percent") setSampleValue((v) => Math.min(100, Math.max(1, v)));
+  }, []);
+
+  /** Opens the sampling modal. Every one-off profile entry point goes through
+   *  this so none of them can submit a run without asking for its sample. */
+  const openSampleDialog = useCallback(() => setSampleDialogOpen(true), []);
+
+  /** Submits the run with the sampling chosen in the modal. Only the modal's
+   *  confirm action calls this. */
+  const submitProfileWithSample = useCallback(() => {
+    setSampleDialogOpen(false);
     submitMutation.mutate(
-      { data: { table_fqn: tableFqn } },
+      {
+        data: {
+          table_fqn: tableFqn,
+          sample_kind: sampleKind,
+          sample_value: sampleKind === "full" ? null : sampleValue,
+        },
+      },
       {
         onSuccess: (resp) => {
           setRunId(resp.data.run_id);
@@ -1757,7 +1796,7 @@ function ProfileTab({
         },
       },
     );
-  }, [submitMutation, tableFqn, t, queryClient]);
+  }, [submitMutation, tableFqn, sampleKind, sampleValue, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
 
@@ -1847,10 +1886,40 @@ function ProfileTab({
             </div>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={handleRunProfile} disabled={running}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={openSampleDialog}
+          disabled={running}
+        >
           <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", running && "animate-spin")} />
           {running ? t("monitoredTables.profileRunningButton") : t("monitoredTables.profileRefreshButton")}
         </Button>
+        <AlertDialog open={sampleDialogOpen} onOpenChange={setSampleDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("monitoredTables.profileSampleDialogTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("monitoredTables.profileSampleDialogDescription")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="flex items-center rounded-md border p-3">
+              <SampleSelector
+                kind={sampleKind}
+                value={sampleValue}
+                onKind={handleSampleKind}
+                onValue={setSampleValue}
+                compact
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction onClick={submitProfileWithSample}>
+                {t("monitoredTables.profileSampleDialogConfirm")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {initialLoading ? (
@@ -1869,7 +1938,7 @@ function ProfileTab({
             {t("monitoredTables.profileEmptyHint")}
           </p>
           {!running && (
-            <Button size="sm" className="gap-2" onClick={handleRunProfile}>
+            <Button size="sm" className="gap-2" onClick={openSampleDialog}>
               <RefreshCw className="h-3.5 w-3.5" />
               {t("monitoredTables.profileRunButton")}
             </Button>

@@ -83,6 +83,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
     set_reserved_tag,
     set_slot_tags,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    PROFILER_SAMPLE_KIND_RECORDS,
+    ProfilerSample,
+)
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService, DesiredAppliedRule
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
@@ -137,6 +141,7 @@ _PROFILE_TIMEOUT_SECONDS = 900
 _PROFILE_POLL_SECONDS = 10
 # Rows the demo profiler samples from its source table.
 _PROFILE_SAMPLE_LIMIT = 50_000
+_PROFILE_SAMPLE = ProfilerSample(kind=PROFILER_SAMPLE_KIND_RECORDS, value=_PROFILE_SAMPLE_LIMIT)
 
 
 @dataclass
@@ -439,12 +444,15 @@ class DemoSeedService:
         run_id = uuid4().hex[:16]
         view_fqn: str | None = None
         try:
-            view_fqn = profiler_view.create_view(table_fqn, sample_limit=_PROFILE_SAMPLE_LIMIT)
+            view_fqn = profiler_view.create_view(table_fqn, sample=_PROFILE_SAMPLE)
             config = {
-                "sample_limit": _PROFILE_SAMPLE_LIMIT,
+                "sample_kind": _PROFILE_SAMPLE.kind,
+                "sample_value": _PROFILE_SAMPLE.value,
                 "source_table_fqn": table_fqn,
                 "columns": None,
-                "profile_options": None,
+                # Pin the profiler's own sampling off — the view already carries
+                # the sample. See ``routes/v1/profiler._sample_profile_options``.
+                "profile_options": {"sample_fraction": None, "limit": 0},
             }
             job_run_id = job_service.submit_run(
                 task_type="profile",

@@ -48,7 +48,14 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    PROFILER_SAMPLE_KIND_DEFAULT,
+    PROFILER_SAMPLE_KIND_FULL,
+    PROFILER_SAMPLE_KIND_PERCENT,
+    PROFILER_SAMPLE_RECORDS_MAX,
+    PROFILER_SAMPLE_VALUE_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService, resolve_warehouse_id
 from databricks_labs_dqx_app.backend.setup.models import StepState
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
@@ -163,6 +170,63 @@ def _settings_out(app_settings: AppSettingsService) -> ComputeSettingsOut:
         warehouse_is_override=bool(configured),
         jobs_compute=JobsComputeModel(**jobs),
     )
+
+
+class ProfilerSampleOut(BaseModel):
+    """Current profiler sampling policy plus the bounds the UI needs."""
+
+    sample_kind: Literal["full", "records", "percent"]
+    sample_value: int
+    records_max: int = PROFILER_SAMPLE_RECORDS_MAX
+    default_kind: Literal["full", "records", "percent"] = PROFILER_SAMPLE_KIND_DEFAULT
+    default_value: int = PROFILER_SAMPLE_VALUE_DEFAULT
+
+
+class ProfilerSampleIn(BaseModel):
+    """New profiler sampling policy.
+
+    *sample_value* is required for ``records`` and ``percent`` and ignored for
+    ``full``. The kind decides which unit the value carries, so a row cap and a
+    percentage can never both be active.
+    """
+
+    sample_kind: Literal["full", "records", "percent"]
+    sample_value: int | None = Field(default=None, ge=1)
+
+
+@router.get(
+    "/profiler-sample",
+    response_model=ProfilerSampleOut,
+    operation_id="getProfilerSample",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_profiler_sample(
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ProfilerSampleOut:
+    """Return how much of a source table the profiler reads (admin only)."""
+    sample = app_settings.get_profiler_sample()
+    return ProfilerSampleOut(sample_kind=sample.kind, sample_value=sample.value)
+
+
+@router.put(
+    "/profiler-sample",
+    response_model=ProfilerSampleOut,
+    operation_id="saveProfilerSample",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_profiler_sample(
+    body: ProfilerSampleIn,
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> ProfilerSampleOut:
+    """Set how much of a source table the profiler reads (admin only)."""
+    if body.sample_kind != PROFILER_SAMPLE_KIND_FULL and body.sample_value is None:
+        raise HTTPException(status_code=400, detail="sample_value is required unless sample_kind is 'full'.")
+    if body.sample_kind == PROFILER_SAMPLE_KIND_PERCENT and not 1 <= (body.sample_value or 0) <= 100:
+        raise HTTPException(status_code=400, detail="sample_value must be between 1 and 100 for a percentage sample.")
+
+    saved = app_settings.save_profiler_sample(body.sample_kind, body.sample_value or 0, user_email=email)
+    return ProfilerSampleOut(sample_kind=saved.kind, sample_value=saved.value)
 
 
 @router.get(
