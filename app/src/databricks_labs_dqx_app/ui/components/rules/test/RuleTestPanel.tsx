@@ -557,6 +557,7 @@ export function SampleSelector({
   onKind,
   onValue,
   disablePercent = false,
+  compact = false,
 }: {
   kind: SampleKind;
   value: number;
@@ -565,12 +566,19 @@ export function SampleSelector({
   /** When true, hides the "percent" unit option so only records/full are available.
    *  Use in contexts where the underlying setting is rows-only (e.g. draft_sample_limit). */
   disablePercent?: boolean;
+  /** Compact styling (h-8 / text-xs) to match dense settings rows, and a wider
+   *  kind trigger so "Random sample" isn't clipped. */
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
+  const triggerCls = compact ? "h-8 w-44 text-xs" : "w-36";
+  const inputCls = compact ? "h-8 w-24 text-xs" : "w-24";
+  const unitTriggerCls = compact ? "h-8 w-28 text-xs" : "w-28";
+  const unitTextCls = compact ? "text-xs" : "text-sm";
   return (
     <div className="flex items-center gap-1.5">
       <Select value={kind === "full" ? "full" : "sample"} onValueChange={(v) => onKind(v === "full" ? "full" : "records")}>
-        <SelectTrigger className="w-36">
+        <SelectTrigger className={triggerCls}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -584,7 +592,7 @@ export function SampleSelector({
             type="number"
             min={1}
             max={kind === "percent" ? 100 : undefined}
-            className="w-24"
+            className={inputCls}
             value={value}
             onChange={(e) => {
               const n = Number(e.target.value);
@@ -593,7 +601,7 @@ export function SampleSelector({
           />
           {!disablePercent ? (
             <Select value={kind} onValueChange={(v) => onKind(v as "records" | "percent")}>
-              <SelectTrigger className="w-28">
+              <SelectTrigger className={unitTriggerCls}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -602,7 +610,7 @@ export function SampleSelector({
               </SelectContent>
             </Select>
           ) : (
-            <span className="text-sm text-muted-foreground w-28 px-1">{t("ruleTest.records")}</span>
+            <span className={cn(unitTextCls, "text-muted-foreground w-28 px-1")}>{t("ruleTest.records")}</span>
           )}
         </>
       )}

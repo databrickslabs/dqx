@@ -2244,6 +2244,7 @@ function DraftRunSampleLimitSettings() {
             onKind={handleKindChange}
             onValue={handleValueChange}
             disablePercent
+            compact
           />
         </div>
         {!isAdmin && (
