@@ -218,7 +218,11 @@ function CardGrid({ children }: { children: React.ReactNode }) {
 function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) {
   const { t } = useTranslation();
   const { data } = useGetHomeStatsSuspense({
-    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS, refetchOnMount: "always" },
+    // staleTime:Infinity + refetchOnWindowFocus:false (RESULTS_QUERY_OPTIONS):
+    // fetch once, then refresh via run-completion invalidation (this endpoint is
+    // in the results-invalidation list). No refetchOnMount:"always" — that fired
+    // a second /home/stats call right after the page loaded.
+    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
   });
   const { rule_count, monitored_table_count, table_space_count, score, score_delta } = data;
   const trend = data.score_trend ?? [];
