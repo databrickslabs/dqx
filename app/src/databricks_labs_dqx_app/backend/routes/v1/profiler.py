@@ -32,6 +32,7 @@ from databricks_labs_dqx_app.backend.models import (
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
+from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
@@ -42,6 +43,12 @@ _PROFILER_TABLE = "dq_profiling_results"
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
+
+def _run_table_fqn() -> str:
+    resources = rt.require_resources()
+    return f"{resources.volume.catalog}.{resources.volume.schema}.{_PROFILER_TABLE}"
+
 
 # Prefix the scheduler stamps onto ``requesting_user`` for every run it
 # launches (see ``SchedulerService._submit_profile_run``:
@@ -155,7 +162,7 @@ def list_profile_runs(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        table = _run_table_fqn()
         rows = job_svc.list_run_rows(table, source_table_fqn=table_fqn)
         return [
             ProfileRunSummaryOut(
@@ -200,7 +207,7 @@ def list_recent_profile_failures(
     The full profiler run history is still available via ``GET /profiler/runs``.
     """
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        table = _run_table_fqn()
         rows = job_svc.list_run_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
 
         results: list[RunFailureOut] = []
@@ -266,7 +273,7 @@ def submit_profile_run(
                 requesting_user=requesting_user,
             )
 
-            results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+            results_table = _run_table_fqn()
             job_svc.record_run_started(
                 table=results_table,
                 run_id=run_id,
@@ -349,7 +356,7 @@ def submit_batch_profile_run(
                     runs.append(ProfileRunOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
                     logger.info("Submitted batch profile run for %s (run_id=%s)", table_fqn, run_id)
 
-                    results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+                    results_table = _run_table_fqn()
                     job_svc.record_run_started(
                         table=results_table,
                         run_id=run_id,
@@ -580,7 +587,7 @@ def get_profile_run_results(
 ) -> ProfileResultsOut:
     """Read profiler results from the Delta table."""
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        table = _run_table_fqn()
         row = job_svc.get_run_result_row(table, run_id)
 
         if row is None:

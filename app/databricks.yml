@@ -174,7 +174,7 @@ artifacts:
     # the app backend (which runs the vendored source). Built last so build_app.py's stale
     # .build/*.whl sweep doesn't remove it.
     build: >
-      uv run python scripts/build_app.py &&
+      uv run --frozen python scripts/build_app.py &&
       rm -rf .build/tasks &&
       uv build tasks/ --wheel --out-dir .build/tasks/ &&
       uv build .. --wheel --out-dir .build/

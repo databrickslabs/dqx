@@ -253,14 +253,11 @@ class TestHyphenatedAppCatalog:
     QUOTED_RUNS = "`prod-east`.`dqx-studio`.dq_validation_runs"
 
     @pytest.fixture
-    def sql_mock(self):
-        from unittest.mock import create_autospec
-
-        from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-
-        mock = create_autospec(SqlExecutor, instance=True)
-        mock.query_dicts.return_value = []
-        return mock
+    def sql_mock(self, sql_executor_mock):
+        sql_executor_mock.catalog = "prod-east"
+        sql_executor_mock.schema = "dqx-studio"
+        sql_executor_mock.query_dicts.return_value = []
+        return sql_executor_mock
 
     @pytest.fixture
     def client(self, sql_mock, app_config):

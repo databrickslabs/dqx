@@ -1,12 +1,9 @@
 """Schema tests for the DQ score cache + history tables (P3.4 / P3.5).
 
-``dq_score_cache`` and ``dq_score_history`` ship on both baselines — the
-Postgres v1 baseline and the Delta OLTP fallback. Both must declare the same
-logical columns so the ``ScoreCacheService`` read/write path and the list
-endpoints' LEFT JOINs are portable across backends.
+``dq_score_cache`` and ``dq_score_history`` ship in the Postgres v1 baseline,
+the sole OLTP schema.
 """
 
-from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 _SCORE_COLS = (
@@ -63,22 +60,6 @@ class TestScoreCachePostgres:
         assert "PRIMARY KEY (scope_type, scope_key)" in ddl
 
 
-class TestScoreCacheDelta:
-    def test_columns(self):
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, "dq_score_cache")
-        for col in _SCORE_COLS:
-            assert col in ddl
-
-    def test_primary_key_is_scope_type_scope_key(self):
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, "dq_score_cache")
-        assert "PRIMARY KEY (scope_type, scope_key)" in ddl
-
-    def test_check_constraint_follows_the_table(self):
-        # Delta accepts only PK/FK inline, so the CHECK arrives as a separate
-        # ALTER TABLE … ADD CONSTRAINT statement in the same baseline.
-        assert "chk_dq_score_cache_scope_type" in _V2_OLTP_FALLBACK
-
-
 class TestScoreHistoryPostgres:
     """``dq_score_history`` — append-only score trend rows."""
 
@@ -91,16 +72,3 @@ class TestScoreHistoryPostgres:
         # The only read is "last N points for one scope, newest first".
         assert "idx_dq_score_history_scope_computed_at" in _PG_BASELINE
         assert "(scope_type, scope_key, computed_at DESC)" in _PG_BASELINE
-
-
-class TestScoreHistoryDelta:
-    def test_columns(self):
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, "dq_score_history")
-        for col in _HISTORY_COLS:
-            assert col in ddl
-
-    def test_clustered_on_the_read_path(self):
-        # Delta has no secondary indexes; liquid clustering covers the same
-        # "last N points for one scope" read the Postgres index serves.
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, "dq_score_history")
-        assert "CLUSTER BY (scope_type, scope_key, computed_at)" in ddl

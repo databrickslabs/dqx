@@ -73,10 +73,9 @@ PLAIN_TABLE = TableInfo(row_filter=None, columns=[ColumnInfo(name="id"), ColumnI
 
 
 @pytest.fixture
-def sql_mock() -> MagicMock:
-    mock = create_autospec(SqlExecutor, instance=True)
-    mock.query_dicts.return_value = []
-    return mock
+def sql_mock(sql_executor_mock: MagicMock) -> MagicMock:
+    sql_executor_mock.query_dicts.return_value = []
+    return sql_executor_mock
 
 
 @pytest.fixture
@@ -1032,7 +1031,9 @@ class TestHyphenatedAppCatalog:
     QUOTED_GENIE = "`prod-east`.`genie`"
 
     @pytest.fixture(autouse=True)
-    def _hyphenated_conf(self, client, app_config):
+    def _hyphenated_resources(self, client, sql_mock, app_config):
+        sql_mock.catalog = "prod-east"
+        sql_mock.schema = "dqx-studio"
         client.app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
             update={"catalog": "prod-east", "schema_name": "dqx-studio"}
         )

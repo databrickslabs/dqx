@@ -76,7 +76,41 @@ def installation_folder(ws, make_random):
 
 
 @pytest.fixture
-def api_client(ws, test_app_folder, monkeypatch, make_schema):
+def lakebase_settings_service(ws, make_random):
+    """Provide an isolated Lakebase-backed application settings service."""
+    lakebase_endpoint = os.environ.get("DQX_LAKEBASE_ENDPOINT", "").strip()
+    if not lakebase_endpoint:
+        pytest.skip("DQX_LAKEBASE_ENDPOINT is required for app backend integration tests")
+
+    from databricks_labs_dqx_app.backend.config import conf
+    from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
+    from databricks_labs_dqx_app.backend.pg_executor import build_pg_executor
+
+    pg_schema = f"dqx_test_{make_random(8).lower()}"
+    pg_executor = build_pg_executor(
+        ws,
+        endpoint=lakebase_endpoint,
+        database=conf.lakebase_database_name,
+        schema=pg_schema,
+        token_refresh_minutes=conf.lakebase_token_refresh_minutes,
+        token_refresh_retry_seconds=conf.lakebase_token_refresh_retry_seconds,
+        token_refresh_retry_jitter=conf.lakebase_token_refresh_retry_jitter,
+        token_refresh_max_failures=conf.lakebase_token_refresh_max_failures,
+        pool_min_size=conf.lakebase_pool_min_size,
+        pool_max_size=conf.lakebase_pool_max_size,
+    )
+    PgMigrationRunner(pg_executor).run_all()
+
+    yield AppSettingsService(sql=pg_executor)
+
+    try:
+        pg_executor.execute_no_schema(f"DROP SCHEMA {pg_executor.q(pg_schema)} CASCADE")
+    finally:
+        pg_executor.close()
+
+
+@pytest.fixture
+def api_client(ws, test_app_folder, monkeypatch, make_schema, lakebase_settings_service):
     """Fixture that provides a FastAPI test client with dependency overrides."""
     # Import app lazy here to avoid module-level initialization during fixture collection
     from databricks_labs_dqx_app.backend.app import app
@@ -108,17 +142,8 @@ def api_client(ws, test_app_folder, monkeypatch, make_schema):
     test_schema = make_schema(catalog_name=TEST_CATALOG)
     _sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=TEST_CATALOG, schema=test_schema.name)
 
-    # Create the OLTP fallback tables (dq_app_settings, dq_quality_rules, ...)
-    # in the test schema. ``AppSettingsService.ensure_table()`` is a no-op
-    # since the Lakebase refactor — DDL now lives in MigrationRunner.
-    from databricks_labs_dqx_app.backend.migrations import MigrationRunner
-
-    MigrationRunner(_sql).run_all(include_oltp_fallback=True)
-
-    _settings_svc = AppSettingsService(sql=_sql)
-
     async def override_get_app_settings_service() -> AppSettingsService:
-        return _settings_svc
+        return lakebase_settings_service
 
     # The production proxy injects ``X-Forwarded-Email``; ``TestClient`` does
     # not, so without this override every write endpoint returns 401.
