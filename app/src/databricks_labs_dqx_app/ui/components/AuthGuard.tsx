@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { currentUser, getGetSetupStatusQueryKey, getSetupStatus } from "@/lib/api";
+import {
+  currentUser,
+  getCurrentUserQueryKey,
+  getGetSetupStatusQueryKey,
+  getSetupStatus,
+} from "@/lib/api";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 interface AuthGuardProps {
@@ -47,9 +52,14 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     const checkAuth = async () => {
       try {
-        await currentUser({ timeout: 10000 });
+        const me = await currentUser({ timeout: 10000 });
 
         if (!cancelled) {
+          // Seed the React Query cache with the current-user response we just
+          // fetched, so useCurrentUserSuspense (home route + sidebar shell)
+          // resolves from cache instead of suspending into a blank/black frame
+          // the instant the loading spinner hands off to the router.
+          queryClient.setQueryData(getCurrentUserQueryKey(), me);
           setIsAuthReady(true);
         }
       } catch (err) {
@@ -98,7 +108,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         clearTimeout(timeoutId);
       }
     };
-  }, [retryCount, isAuthReady, error]);
+  }, [retryCount, isAuthReady, error, queryClient]);
 
   // Show error state
   if (error) {
