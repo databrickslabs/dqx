@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -15,10 +14,10 @@ import {
 import { setupView } from "@/lib/setup-state";
 import { useWorkspaceHost } from "@/lib/api-custom";
 import {
-  SetupLoading,
   SetupStatusUnavailable,
   SetupWizard,
 } from "@/components/setup/SetupWizard";
+import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
   children: React.ReactNode;
@@ -58,25 +57,6 @@ export function reconciliationMutationOptions(
 }
 
 /**
- * Returns true only once `active` has stayed true continuously for `delayMs`.
- * Used to suppress the setup loading screen during a fast readiness check so it
- * doesn't flash on every page load — the screen appears only if the check is
- * genuinely slow.
- */
-function useDelayedFlag(active: boolean, delayMs: number): boolean {
-  const [elapsed, setElapsed] = useState(false);
-  useEffect(() => {
-    if (!active) {
-      setElapsed(false);
-      return;
-    }
-    const timer = setTimeout(() => setElapsed(true), delayMs);
-    return () => clearTimeout(timer);
-  }, [active, delayMs]);
-  return active && elapsed;
-}
-
-/**
  * Blocks Studio routes until the authenticated caller's setup readiness is
  * known. Remediation actions are rendered only from the backend report.
  */
@@ -102,12 +82,10 @@ export function SetupGate({ children }: SetupGateProps) {
         setupStatus.data.data.report.state !== "ready",
     },
   });
-  // Don't flash the setup screen for a fast readiness check: while the query is
-  // in flight, render nothing until it has been pending long enough (500ms) to
-  // be worth a loading state. A ready Studio resolves well under that, so the
-  // common path goes straight to the app with no flash.
-  const showSetupLoading = useDelayedFlag(setupStatus.isPending, 500);
-  if (setupStatus.isPending) return showSetupLoading ? <SetupLoading /> : null;
+  // While readiness is being checked, show the same "Loading DQX Studio" spinner
+  // AuthGuard uses, so the check reads as one continuous load — no flash of the
+  // "Checking Studio readiness" card, and no blank/black screen.
+  if (setupStatus.isPending) return <StudioLoadingScreen />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
   const view = setupView(setupStatus.data.data);

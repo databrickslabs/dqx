@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { currentUser } from "@/lib/api";
+import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -108,14 +108,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   // Show loading state while waiting for auth
   if (!isAuthReady) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center space-y-4">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-          <div className="text-lg font-medium">{t("auth.loadingMessage")}</div>
-        </div>
-      </div>
-    );
+    return <StudioLoadingScreen />;
   }
 
   // Auth is ready, render the app
