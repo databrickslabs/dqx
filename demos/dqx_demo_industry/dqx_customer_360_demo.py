@@ -13,11 +13,14 @@
 # MAGIC
 # MAGIC * `customer_id` not null
 # MAGIC * `customer_id` uniqueness
+# MAGIC * required customer name, email, and status
 # MAGIC * valid email format
+# MAGIC * supported customer status values
 # MAGIC * non-negative `total_revenue`
 # MAGIC * non-negative `open_ticket_count`
 # MAGIC * `last_purchase_date` not in the future
-# MAGIC * `active_customer_flag` consistency
+# MAGIC * `last_campaign_engagement_date` not in the future
+# MAGIC * `active_customer_flag` consistency with `customer_status`
 # MAGIC
 # MAGIC ### Why this matters
 # MAGIC
@@ -168,6 +171,72 @@ customer_360_data = [
         active_customer_flag=False
     ),
 
+    # Invalid: missing required customer name
+    Row(
+        customer_id="CUST-007",
+        customer_name=None,
+        email="missing.name@example.com",
+        customer_status="ACTIVE",
+        total_revenue=425.00,
+        last_purchase_date=date(2026, 6, 20),
+        last_campaign_engagement_date=date(2026, 6, 22),
+        open_ticket_count=0,
+        active_customer_flag=True
+    ),
+
+    # Invalid: missing required email
+    Row(
+        customer_id="CUST-008",
+        customer_name="Missing Email Customer",
+        email=None,
+        customer_status="ACTIVE",
+        total_revenue=610.00,
+        last_purchase_date=date(2026, 6, 18),
+        last_campaign_engagement_date=date(2026, 6, 21),
+        open_ticket_count=0,
+        active_customer_flag=True
+    ),
+
+    # Invalid: unsupported customer status
+    Row(
+        customer_id="CUST-009",
+        customer_name="Invalid Status Customer",
+        email="invalid.status@example.com",
+        customer_status="UNKNOWN",
+        total_revenue=275.00,
+        last_purchase_date=date(2026, 5, 25),
+        last_campaign_engagement_date=date(2026, 5, 28),
+        open_ticket_count=0,
+        active_customer_flag=False
+    ),
+
+    # Invalid: negative open ticket count
+    Row(
+        customer_id="CUST-010",
+        customer_name="Negative Ticket Customer",
+        email="negative.ticket@example.com",
+        customer_status="ACTIVE",
+        total_revenue=825.00,
+        last_purchase_date=date(2026, 6, 15),
+        last_campaign_engagement_date=date(2026, 6, 17),
+        open_ticket_count=-1,
+        active_customer_flag=True
+    ),
+
+    # Warning-level issue: future campaign engagement date.
+    # Warning-level violations remain in valid_df and are not quarantined.
+    Row(
+        customer_id="CUST-011",
+        customer_name="Future Engagement Customer",
+        email="future.engagement@example.com",
+        customer_status="ACTIVE",
+        total_revenue=530.00,
+        last_purchase_date=date(2026, 6, 12),
+        last_campaign_engagement_date=date(2099, 1, 1),
+        open_ticket_count=0,
+        active_customer_flag=True
+    ),
+
     # Invalid: first record in a duplicate customer_id pair
     Row(
         customer_id="CUST-DUP-001",
@@ -236,18 +305,65 @@ customer_360_checks_yaml = """
     domain: customer_360
     rule_type: identity
 
-# 3. Email should follow a basic email pattern
-- criticality: warn
-  name: valid_email_format
+# 3. Customer name must be present
+- criticality: error
+  name: customer_name_not_null
   check:
-    function: sql_expression
+    function: is_not_null_and_not_empty
     arguments:
-      expression: "email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Za-z]{2,}$'"
+      column: customer_name
+  user_metadata:
+    domain: customer_360
+    rule_type: identity
+
+# 4. Email must be present
+- criticality: error
+  name: email_not_null
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: email
   user_metadata:
     domain: customer_360
     rule_type: contact_quality
 
-# 4. Revenue should not be negative
+# 5. Email should have a valid format
+- criticality: warn
+  name: valid_email_format
+  check:
+    function: is_valid_email
+    arguments:
+      column: email
+  user_metadata:
+    domain: customer_360
+    rule_type: contact_quality
+
+# 6. Customer status must be present
+- criticality: error
+  name: customer_status_not_null
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: customer_status
+  user_metadata:
+    domain: customer_360
+    rule_type: status_quality
+
+# 7. Customer status must use a supported value
+- criticality: error
+  name: customer_status_allowed
+  check:
+    function: is_in_list
+    arguments:
+      column: customer_status
+      allowed:
+      - "'ACTIVE'"
+      - "'INACTIVE'"
+  user_metadata:
+    domain: customer_360
+    rule_type: status_quality
+
+# 8. Revenue should not be negative
 - criticality: error
   name: total_revenue_non_negative
   check:
@@ -259,7 +375,7 @@ customer_360_checks_yaml = """
     domain: customer_360
     rule_type: revenue_quality
 
-# 5. Open ticket count should not be negative
+# 9. Open ticket count should not be negative
 - criticality: error
   name: open_ticket_count_non_negative
   check:
@@ -271,31 +387,37 @@ customer_360_checks_yaml = """
     domain: customer_360
     rule_type: operational_quality
 
-# 6. Last purchase date should not be in the future
+# 10. Last purchase date should not be in the future
 - criticality: error
   name: last_purchase_date_not_in_future
   check:
-    function: sql_expression
+    function: is_not_in_future
     arguments:
-      expression: "last_purchase_date <= current_date() OR last_purchase_date IS NULL"
+      column: last_purchase_date
   user_metadata:
     domain: customer_360
     rule_type: date_quality
 
-# 7. Active customer flag should align with recent customer activity
+# 11. Last campaign engagement date should not be in the future
+- criticality: warn
+  name: last_campaign_engagement_date_not_in_future
+  check:
+    function: is_not_in_future
+    arguments:
+      column: last_campaign_engagement_date
+  user_metadata:
+    domain: customer_360
+    rule_type: date_quality
+
+# 12. Active customer flag should align with customer status
 - criticality: warn
   name: active_customer_flag_consistency
   check:
     function: sql_expression
     arguments:
-      expression: >
-        NOT (
-          active_customer_flag = false
-          AND (
-            last_purchase_date >= add_months(current_date(), -12)
-            OR last_campaign_engagement_date >= add_months(current_date(), -12)
-          )
-        )
+      expression: >-
+        (customer_status = 'ACTIVE' AND active_customer_flag = true)
+        OR (customer_status = 'INACTIVE' AND active_customer_flag = false)
   user_metadata:
     domain: customer_360
     rule_type: business_logic
@@ -355,10 +477,3 @@ quarantine_table = f"{catalog}.{schema}.customer_360_quarantine"
 invalid_df.write.mode("overwrite").saveAsTable(quarantine_table)
 
 print(f"Customer 360 invalid records saved to {quarantine_table}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Practical Takeaway
-# MAGIC
-# MAGIC DQX provides a centralized and reusable way to enforce Customer 360 quality rules before publishing the data to downstream consumers.
