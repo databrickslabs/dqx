@@ -111,6 +111,7 @@ docs-install: ## Install docs site dependencies (yarn --frozen-lockfile)
 
 docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build)
 	$(UV_RUN) --group docs pydoc-markdown
+	yarn --cwd docs/dqx test
 	yarn --cwd docs/dqx build
 
 docs-serve-dev: ## Run docusaurus dev server with hot reload
@@ -143,8 +144,8 @@ app-check-marketplace: ## Validate Marketplace generation and signed-release too
 	test -z "$$tracked" || test "$$tracked" = "$$deleted" || \
 	  (echo "Generated Marketplace artifacts must not be tracked on main."; exit 1)
 
-app-release-marketplace: ## Create and verify a local signed Marketplace release branch (TAG=vX.Y.Z)
-	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=vX.Y.Z"; exit 1)
+app-release-marketplace: ## Create and verify a local signed Marketplace release branch and tag (TAG=studio-vX.Y.Z)
+	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=studio-vX.Y.Z"; exit 1)
 	app/scripts/release_marketplace.sh $(TAG)
 
 app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)

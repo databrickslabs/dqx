@@ -6,7 +6,8 @@ import subprocess
 
 import pytest
 
-from scripts.release_marketplace import CommandResult, release_branch_name, release_marketplace
+from scripts import release_marketplace as release_marketplace_module
+from scripts.release_marketplace import CommandResult, release_marketplace
 
 
 class RecordingCommandRunner:
@@ -15,31 +16,41 @@ class RecordingCommandRunner:
     def __init__(
         self,
         *,
-        project_version: str = "0.16.1",
-        fail_on: tuple[str, ...] | None = None,
+        project_version: str = "0.1.0",
         existing_branch: bool = False,
+        existing_tag: bool = False,
+        fail_on: tuple[str, ...] | None = None,
     ) -> None:
         self.project_version = project_version
-        self.fail_on = fail_on
         self.existing_branch = existing_branch
+        self.existing_tag = existing_tag
+        self.fail_on = fail_on
         self.commands: list[tuple[str, ...]] = []
         self.created_worktree: Path | None = None
 
     def run(self, command: tuple[str, ...], *, cwd: Path, check: bool = True) -> CommandResult:
         self.commands.append(command)
-        if command == ("git", "rev-parse", "--show-toplevel"):
-            return CommandResult(returncode=0, stdout=f"{cwd}\n")
-        if command[:2] == ("git", "verify-tag") and self.fail_on == command[:2]:
+        if self.fail_on is not None and command[: len(self.fail_on)] == self.fail_on:
+            if command[:2] == ("git", "branch"):
+                self.existing_branch = True
+            if command[:2] == ("git", "tag"):
+                self.existing_tag = True
             if check:
                 raise RuntimeError("command failed")
             return CommandResult(returncode=1)
+        if command == ("git", "rev-parse", "--show-toplevel"):
+            return CommandResult(returncode=0, stdout=f"{cwd}\n")
+        if command == ("git", "rev-parse", "HEAD^{commit}"):
+            return CommandResult(returncode=0, stdout="abc123\n")
         if command[:2] == ("git", "show"):
             return CommandResult(
                 returncode=0,
                 stdout=f'[project]\nname = "databricks-labs-dqx-app"\nversion = "{self.project_version}"\n',
             )
         if command[:4] == ("git", "show-ref", "--verify", "--quiet"):
-            return CommandResult(returncode=0 if self.existing_branch else 1)
+            reference = command[-1]
+            exists = self.existing_tag if reference.startswith("refs/tags/") else self.existing_branch
+            return CommandResult(returncode=0 if exists else 1)
         if command[:3] == ("git", "worktree", "add"):
             self.created_worktree = Path(command[-2])
             self.created_worktree.mkdir(parents=True)
@@ -47,6 +58,18 @@ class RecordingCommandRunner:
         if command[:3] == ("git", "worktree", "remove"):
             self.created_worktree = self.created_worktree or Path(command[-1])
             self.created_worktree.rmdir()
+            return CommandResult(returncode=0)
+        if command[:3] == ("git", "branch", "-D"):
+            self.existing_branch = False
+            return CommandResult(returncode=0)
+        if command[:2] == ("git", "branch"):
+            self.existing_branch = True
+            return CommandResult(returncode=0)
+        if command[:2] == ("git", "tag") and "--delete" not in command:
+            self.existing_tag = True
+            return CommandResult(returncode=0)
+        if command[:3] == ("git", "tag", "--delete"):
+            self.existing_tag = False
             return CommandResult(returncode=0)
         if command == ("git", "diff", "--cached", "--quiet"):
             return CommandResult(returncode=1)
@@ -59,28 +82,37 @@ class RecordingCommandRunner:
         return any(command[: len(prefix)] == prefix for command in self.commands)
 
 
-def test_release_branch_name_is_derived_from_version_tag() -> None:
-    assert release_branch_name("v0.16.1") == "marketplace/v0.16.1"
+def test_release_push_commands_include_signed_tag_and_release_branch() -> None:
+    assert hasattr(release_marketplace_module, "release_push_commands")
+    assert release_marketplace_module.release_push_commands("studio-v0.1.0", "dqx-studio/marketplace/v0.1.0") == (
+        "git push origin dqx-studio/marketplace/v0.1.0",
+        "git push origin studio-v0.1.0",
+    )
 
 
-@pytest.mark.parametrize("tag", ["0.16.1", "v0.16", "vnext", "v0.16.1/extra"])
+@pytest.mark.parametrize(
+    "tag",
+    ["0.1.0", "v0.1.0", "studio-0.1.0", "studio-v0.1", "studio-vnext", "studio-v0.1.0/extra"],
+)
 def test_release_rejects_invalid_tag_names(tag: str) -> None:
-    with pytest.raises(ValueError, match="vX.Y.Z"):
-        release_branch_name(tag)
+    with pytest.raises(ValueError, match="studio-vX.Y.Z"):
+        release_marketplace(tag, Path.cwd(), RecordingCommandRunner())
 
 
-def test_release_verifies_tag_before_creating_branch(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(fail_on=("git", "verify-tag"))
-    with pytest.raises(RuntimeError, match="signed tag"):
-        release_marketplace("v0.16.1", tmp_path, commands)
+def test_release_refuses_existing_local_tag(tmp_path: Path) -> None:
+    commands = RecordingCommandRunner(existing_tag=True)
+    with pytest.raises(RuntimeError, match="tag.*already exists"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert not commands.contains_prefix(("git", "worktree", "add"))
 
 
 def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(project_version="0.16.1")
-    branch = release_marketplace("v0.16.1", tmp_path, commands)
-    assert branch == "marketplace/v0.16.1"
-    assert commands.contains(("git", "show", "v0.16.1:app/pyproject.toml"))
+    commands = RecordingCommandRunner(project_version="0.1.0")
+    branch = release_marketplace("studio-v0.1.0", tmp_path, commands)
+    assert branch == "dqx-studio/marketplace/v0.1.0"
+    assert commands.contains(("git", "show", "abc123:app/pyproject.toml"))
+    assert commands.contains(("git", "branch", branch, "abc123"))
+    assert commands.contains(("git", "worktree", "add", str(commands.created_worktree), branch))
     assert commands.contains(("make", "app-install"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"))
     assert commands.contains(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"))
@@ -103,22 +135,87 @@ def test_release_creates_and_verifies_signed_commit_without_push(tmp_path: Path)
     assert commands.contains(("git", "add", "-f", "-A", "app/marketplace"))
     assert commands.contains_prefix(("git", "commit", "-S"))
     assert commands.contains(("git", "verify-commit", "HEAD"))
+    tag_command = (
+        "git",
+        "tag",
+        "-s",
+        "-a",
+        "studio-v0.1.0",
+        "-m",
+        "DQX Studio 0.1.0",
+        "HEAD",
+    )
+    assert commands.contains(tag_command)
+    assert commands.commands.index(("git", "verify-commit", "HEAD")) < commands.commands.index(tag_command)
+    assert commands.contains(("git", "verify-tag", "studio-v0.1.0"))
+    assert commands.contains(("git", "cat-file", "-e", "studio-v0.1.0:app/marketplace/manifest.yaml"))
+    assert commands.contains(
+        ("git", "cat-file", "-e", "studio-v0.1.0:app/marketplace/src/databricks_labs_dqx_app/backend/app.py")
+    )
+    assert commands.contains(
+        (
+            "git",
+            "cat-file",
+            "-e",
+            "studio-v0.1.0:app/marketplace/src/databricks_labs_dqx_app/__dist__/index.html",
+        )
+    )
     assert not commands.contains_prefix(("git", "push"))
     assert commands.created_worktree is not None
     assert not commands.created_worktree.exists()
 
 
+@pytest.mark.parametrize(
+    "failed_command",
+    [
+        ("make", "app-install"),
+        ("git", "commit", "-S"),
+        ("git", "verify-tag"),
+        ("git", "cat-file", "-e"),
+    ],
+)
+def test_release_failure_removes_partial_refs_and_worktree(tmp_path: Path, failed_command: tuple[str, ...]) -> None:
+    commands = RecordingCommandRunner(fail_on=failed_command)
+
+    with pytest.raises(RuntimeError, match="command failed"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
+
+    assert commands.existing_branch is False
+    assert commands.existing_tag is False
+    assert commands.created_worktree is None or not commands.created_worktree.exists()
+
+
+def test_release_does_not_delete_concurrently_created_branch(tmp_path: Path) -> None:
+    commands = RecordingCommandRunner(fail_on=("git", "branch", "dqx-studio/marketplace/v0.1.0"))
+
+    with pytest.raises(RuntimeError, match="command failed"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
+
+    assert commands.existing_branch is True
+    assert commands.existing_tag is False
+
+
+def test_release_does_not_delete_concurrently_created_tag(tmp_path: Path) -> None:
+    commands = RecordingCommandRunner(fail_on=("git", "tag", "-s"))
+
+    with pytest.raises(RuntimeError, match="command failed"):
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
+
+    assert commands.existing_branch is False
+    assert commands.existing_tag is True
+
+
 def test_release_refuses_existing_local_branch(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(project_version="0.16.1", existing_branch=True)
+    commands = RecordingCommandRunner(project_version="0.1.0", existing_branch=True)
     with pytest.raises(RuntimeError, match="already exists"):
-        release_marketplace("v0.16.1", tmp_path, commands)
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
     assert not commands.contains_prefix(("git", "worktree", "add"))
 
 
 def test_release_rejects_tag_version_that_differs_from_app(tmp_path: Path) -> None:
-    commands = RecordingCommandRunner(project_version="0.16.0")
+    commands = RecordingCommandRunner(project_version="0.1.1")
     with pytest.raises(RuntimeError, match="does not match"):
-        release_marketplace("v0.16.1", tmp_path, commands)
+        release_marketplace("studio-v0.1.0", tmp_path, commands)
 
 
 def test_shell_release_entrypoint_requires_one_tag_argument(tmp_path: Path) -> None:
@@ -133,7 +230,7 @@ def test_shell_release_entrypoint_requires_one_tag_argument(tmp_path: Path) -> N
     )
 
     assert completed.returncode == 2
-    assert "Usage: app/scripts/release_marketplace.sh vX.Y.Z" in completed.stderr
+    assert "Usage: app/scripts/release_marketplace.sh studio-vX.Y.Z" in completed.stderr
 
 
 def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) -> None:
@@ -157,7 +254,7 @@ def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) 
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
 
     completed = subprocess.run(
-        [str(script), "v0.16.1"],
+        [str(script), "studio-v0.1.0"],
         cwd=tmp_path,
         check=False,
         capture_output=True,
@@ -174,7 +271,7 @@ def test_shell_release_entrypoint_uses_frozen_uv_from_repo_root(tmp_path: Path) 
         "python",
         "app/scripts/release_marketplace.py",
         "--tag",
-        "v0.16.1",
+        "studio-v0.1.0",
     ]
 
 
@@ -182,7 +279,7 @@ def test_makefile_exposes_marketplace_release_target() -> None:
     repo_root = Path(__file__).resolve().parents[2]
 
     completed = subprocess.run(
-        ["make", "--dry-run", "app-release-marketplace", "TAG=v0.16.1"],
+        ["make", "--dry-run", "app-release-marketplace", "TAG=studio-v0.1.0"],
         cwd=repo_root,
         check=False,
         capture_output=True,
@@ -190,4 +287,4 @@ def test_makefile_exposes_marketplace_release_target() -> None:
     )
 
     assert completed.returncode == 0
-    assert "app/scripts/release_marketplace.sh v0.16.1" in completed.stdout
+    assert "app/scripts/release_marketplace.sh studio-v0.1.0" in completed.stdout

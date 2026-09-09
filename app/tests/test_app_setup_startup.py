@@ -1,6 +1,7 @@
 """Tests for the post-migration Studio activation boundary."""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
@@ -248,6 +249,38 @@ async def test_startup_exposes_orchestrator_for_setup_routes(resources: ActiveRe
 
     assert context is not None
     assert app.state.setup_orchestrator is orchestrator
+
+
+@pytest.mark.asyncio
+async def test_startup_logs_lakebase_connection_failure(
+    resources: ActiveResources, monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    app = FastAPI()
+
+    async def get_workspace() -> MagicMock:
+        return MagicMock()
+
+    def fail_connection(*_args, **_kwargs) -> None:
+        raise RuntimeError("endpoint resolution failed")
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: resources)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", fail_connection)
+    startup.logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.ERROR, logger=startup.logger.name):
+            context = await startup.start_studio(app)
+    finally:
+        startup.logger.removeHandler(caplog.handler)
+
+    assert context is None
+    assert setup_runtime.report().steps[0].code == "lakebase_connection_unavailable"
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].exc_info is not None
 
 
 @pytest.mark.asyncio
