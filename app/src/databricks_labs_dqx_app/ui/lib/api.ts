@@ -26348,7 +26348,7 @@ export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof
 
 
 /**
- * Return how much of a source table the profiler reads (admin only).
+ * Return how much of a source table the profiler reads (Admin or Author).
  * @summary Get Profiler Sample
  */
 export const getProfilerSample = (

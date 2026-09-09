@@ -355,7 +355,7 @@ def _run_profile(
     from databricks.labs.dqx.profiler.generator import DQGenerator
 
     # Sampling is applied by the temp view the submitting route built (see
-    # ``ViewService._sample_body``), so the runner must NOT re-limit here — a
+    # ``view_service.build_sample_select``), so the runner must NOT re-limit here — a
     # second ``df.limit`` would silently override a percentage sample and make
     # ``rows_profiled`` disagree with what was actually profiled.
     sample_kind = config.get("sample_kind", "full")

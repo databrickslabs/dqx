@@ -166,7 +166,7 @@ class ViewService:
             sample: Optional sampling policy. ``None`` (the default) and the
                 ``full`` kind both select the whole table; ``percent`` and
                 ``records`` narrow it to a *random* subset. See
-                :meth:`_sample_body` for the SQL shape.
+                :func:`build_sample_select` for the SQL shape.
         """
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 

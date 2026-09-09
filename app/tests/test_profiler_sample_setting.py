@@ -22,7 +22,9 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from databricks_labs_dqx_app.backend.models import ProfileRunIn
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
+from databricks_labs_dqx_app.backend.models import ProfileRunIn, ProfilerSampleOverride
+from databricks_labs_dqx_app.backend.routes.v1 import compute as compute_routes
 from databricks_labs_dqx_app.backend.routes.v1.compute import (
     ProfilerSampleIn,
     get_profiler_sample,
@@ -252,6 +254,36 @@ class TestProfilerSampleResolution:
         with pytest.raises(ValidationError):
             ProfileRunIn(table_fqn="c.s.t", sample_kind="records", sample_value=0)
 
+    def test_request_rejects_percent_above_100(self):
+        """Any percentage at or above 100 is the whole table, so an out-of-range
+        request is rejected rather than clamped — clamping would turn a request
+        for a cap into a silent full scan."""
+        with pytest.raises(ValidationError):
+            ProfileRunIn(table_fqn="c.s.t", sample_kind="percent", sample_value=5000)
+
+    def test_request_allows_a_large_row_cap(self):
+        """The same field carries rows, where a big number is legitimate."""
+        assert ProfileRunIn(table_fqn="c.s.t", sample_kind="records", sample_value=500_000).sample_value == 500_000
+
+    def test_override_percent_is_clamped_defensively(self, app_settings):
+        """Defence in depth for a caller that bypasses the model (internal call)."""
+        body = ProfilerSampleOverride.model_construct(sample_kind="percent", sample_value=5000)
+
+        assert resolve_sample(body, app_settings).value == 100
+
+    def test_override_records_is_clamped_to_the_ceiling(self, app_settings):
+        body = ProfilerSampleOverride.model_construct(
+            sample_kind="records", sample_value=PROFILER_SAMPLE_RECORDS_MAX * 10
+        )
+
+        assert resolve_sample(body, app_settings).value == PROFILER_SAMPLE_RECORDS_MAX
+
+    def test_override_kind_without_value_uses_that_kinds_default(self, app_settings):
+        """A kind with no value must not collapse to a 1-row/1% sample."""
+        body = ProfileRunIn(table_fqn="c.s.t", sample_kind="records")
+
+        assert resolve_sample(body, app_settings).value == PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND["records"]
+
 
 class TestProfileOptionPinning:
     """DQX defaults must never silently shrink a run to ~300 rows."""
@@ -340,6 +372,43 @@ class TestProfilerSampleRoutes:
     def test_put_rejects_unknown_kind_at_the_model(self):
         with pytest.raises(ValidationError):
             ProfilerSampleIn(sample_kind="most", sample_value=10)
+
+
+# ---------------------------------------------------------------------------
+# Role gating
+# ---------------------------------------------------------------------------
+
+
+def _allowed_roles(operation_id: str) -> set[UserRole]:
+    """Roles the ``require_role`` gate on *operation_id* admits."""
+    for route in compute_routes.router.routes:
+        if getattr(route, "operation_id", None) != operation_id:
+            continue
+        for dep in route.dependencies:
+            closure = getattr(getattr(dep, "dependency", None), "__closure__", None) or ()
+            for cell in closure:
+                try:
+                    value = cell.cell_contents
+                except ValueError:
+                    continue
+                if isinstance(value, tuple) and value and all(isinstance(v, UserRole) for v in value):
+                    return set(value)
+        raise AssertionError(f"No require_role gate found on {operation_id}")
+    raise AssertionError(f"No route found for operation_id={operation_id}")
+
+
+class TestProfilerSampleRoleGating:
+    def test_read_is_open_to_everyone_who_can_run_a_profile(self):
+        """An ADMIN-only GET would 403 for a RULE_AUTHOR, whose profiler UI would
+        then silently run with the placeholder instead of the configured policy."""
+        assert _allowed_roles("getProfilerSample") == set(CAN_RUN_ROLES)
+        assert UserRole.RULE_AUTHOR in _allowed_roles("getProfilerSample")
+
+    def test_write_stays_admin_only(self):
+        assert _allowed_roles("saveProfilerSample") == {UserRole.ADMIN}
+
+    def test_read_is_not_open_to_viewers(self):
+        assert UserRole.VIEWER not in _allowed_roles("getProfilerSample")
 
 
 # ---------------------------------------------------------------------------

@@ -36,9 +36,13 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
 from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    PROFILER_SAMPLE_KIND_FULL,
     PROFILER_SAMPLE_KIND_PERCENT,
+    PROFILER_SAMPLE_VALUE_DEFAULT,
+    PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND,
     AppSettingsService,
     ProfilerSample,
+    clamp_profiler_sample_value,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
@@ -59,10 +63,25 @@ def resolve_sample(body: ProfilerSampleOverride, app_settings: AppSettingsServic
     that run; anything else falls back to the configured default. This is
     the single place the precedence is decided, so the single-table and
     batch routes cannot drift apart.
+
+    A per-run override is clamped with the same helper the stored setting uses.
+    Without it an unbounded percentage (``TABLESAMPLE (5000 PERCENT)``) would
+    include every row — a "cap" that silently widens to the whole table, which
+    is exactly the failure the admin path already guards against. An override
+    that names a kind but no value falls back to that kind's default rather
+    than to zero.
     """
     if body.sample_kind is None:
         return app_settings.get_profiler_sample()
-    return ProfilerSample(kind=body.sample_kind, value=body.sample_value or 0)
+    if body.sample_kind == PROFILER_SAMPLE_KIND_FULL:
+        return ProfilerSample(kind=body.sample_kind, value=0)
+    requested = body.sample_value
+    if requested is None:
+        requested = PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND.get(body.sample_kind, PROFILER_SAMPLE_VALUE_DEFAULT)
+    return ProfilerSample(
+        kind=body.sample_kind,
+        value=clamp_profiler_sample_value(body.sample_kind, requested),
+    )
 
 
 def recorded_sample_limit(sample: ProfilerSample) -> int:

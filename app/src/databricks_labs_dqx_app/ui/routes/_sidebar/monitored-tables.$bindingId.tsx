@@ -1780,11 +1780,17 @@ function ProfileTab({
     setSampleDialogOpen(false);
     submitMutation.mutate(
       {
-        data: {
-          table_fqn: tableFqn,
-          sample_kind: sampleKind,
-          sample_value: sampleKind === "full" ? null : sampleValue,
-        },
+        // Send an override only once the admin default has loaded. Before that
+        // the selector still shows its placeholder, and posting it would
+        // override the configured policy with a value the admin never chose;
+        // omitting the fields makes the backend resolve the setting itself.
+        data: sampleHydrated
+          ? {
+              table_fqn: tableFqn,
+              sample_kind: sampleKind,
+              sample_value: sampleKind === "full" ? null : sampleValue,
+            }
+          : { table_fqn: tableFqn },
       },
       {
         onSuccess: (resp) => {
@@ -1797,7 +1803,7 @@ function ProfileTab({
         },
       },
     );
-  }, [submitMutation, tableFqn, sampleKind, sampleValue, t, queryClient]);
+  }, [submitMutation, tableFqn, sampleHydrated, sampleKind, sampleValue, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
 
@@ -1915,7 +1921,7 @@ function ProfileTab({
             </div>
             <AlertDialogFooter>
               <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-              <AlertDialogAction onClick={submitProfileWithSample}>
+              <AlertDialogAction onClick={submitProfileWithSample} disabled={!sampleHydrated}>
                 {t("monitoredTables.profileSampleDialogConfirm")}
               </AlertDialogAction>
             </AlertDialogFooter>

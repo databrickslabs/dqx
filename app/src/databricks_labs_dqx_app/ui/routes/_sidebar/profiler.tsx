@@ -812,11 +812,13 @@ function ProfilerPageInner() {
     if (k === "percent") setSampleValue((v) => Math.min(100, Math.max(1, v)));
   };
 
-  /** Request payload for the sampling override. */
-  const sampleOverride = {
-    sample_kind: sampleKind,
-    sample_value: sampleKind === "full" ? null : sampleValue,
-  };
+  /** Request payload for the sampling override.
+   *  Empty until the admin default has loaded — posting the pre-hydration
+   *  placeholder would override the configured policy with a value nobody
+   *  chose, so the backend is left to resolve the setting itself. */
+  const sampleOverride = sampleHydrated
+    ? { sample_kind: sampleKind, sample_value: sampleKind === "full" ? null : sampleValue }
+    : {};
 
   const [isCancellingSingle, setIsCancellingSingle] = useState(false);
   const [cancellingBatchRunIds, setCancellingBatchRunIds] = useState<Set<string>>(new Set());

@@ -39,7 +39,7 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_compute_service,
@@ -195,15 +195,19 @@ class ProfilerSampleIn(BaseModel):
 
 
 @router.get(
+    # Readable by everyone who can run a profile, not just admins: the profiler
+    # page and the Profile tab hydrate their sampling control from this, and a
+    # 403 would leave a RULE_AUTHOR silently running with the UI's placeholder
+    # instead of the admin-configured policy. Only the PUT below is ADMIN-only.
     "/profiler-sample",
     response_model=ProfilerSampleOut,
     operation_id="getProfilerSample",
-    dependencies=[require_role(UserRole.ADMIN)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def get_profiler_sample(
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> ProfilerSampleOut:
-    """Return how much of a source table the profiler reads (admin only)."""
+    """Return how much of a source table the profiler reads (Admin or Author)."""
     sample = app_settings.get_profiler_sample()
     return ProfilerSampleOut(sample_kind=sample.kind, sample_value=sample.value)
 

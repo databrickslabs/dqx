@@ -90,7 +90,7 @@ def parse_profiler_sample_kind(raw: str | None) -> ProfilerSampleKind | None:
     return None
 
 
-def _clamp_profiler_sample_value(kind: ProfilerSampleKind, value: int) -> int:
+def clamp_profiler_sample_value(kind: ProfilerSampleKind, value: int) -> int:
     """Clamp *value* into the range valid for *kind*.
 
     Percentages clamp to 1-100; row counts clamp to
@@ -378,7 +378,7 @@ class AppSettingsService:
             # PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND for why this must not be a
             # single global default.
             value = PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND.get(kind, PROFILER_SAMPLE_VALUE_DEFAULT)
-        return ProfilerSample(kind=kind, value=_clamp_profiler_sample_value(kind, value))
+        return ProfilerSample(kind=kind, value=clamp_profiler_sample_value(kind, value))
 
     def save_profiler_sample(self, kind: str, value: int, *, user_email: str | None = None) -> ProfilerSample:
         """Persist the profiler sampling policy. Returns the saved value.
@@ -397,7 +397,7 @@ class AppSettingsService:
             raise ValueError(f"Unknown profiler sample kind: {kind!r}")
 
         stored_value = (
-            0 if cleaned_kind == PROFILER_SAMPLE_KIND_FULL else _clamp_profiler_sample_value(cleaned_kind, value)
+            0 if cleaned_kind == PROFILER_SAMPLE_KIND_FULL else clamp_profiler_sample_value(cleaned_kind, value)
         )
         self.save_setting(self._PROFILER_SAMPLE_KIND_KEY, cleaned_kind, user_email=user_email)
         self.save_setting(self._PROFILER_SAMPLE_VALUE_KEY, str(stored_value), user_email=user_email)
