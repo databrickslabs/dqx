@@ -100,7 +100,12 @@ def displayed_severity_expr(severity: Column, threshold: float) -> Column:
         The severity to publish: never above the true value, and never below it by enough to change how it
         compares against *threshold*.
     """
-    return F.call_function("floor", severity, F.lit(displayed_severity_decimals(threshold)))
+    # Cast back to double explicitly. ``floor(expr, scale)`` does not promise the input's type -- with a
+    # scale argument Spark can return a decimal -- while anomaly_info_struct_schema declares this field as
+    # DoubleType and callers union scored rows with null-scored rows built from that schema. A struct whose
+    # field is decimal on one side of a union and double on the other does not merge, so pinning the type
+    # here keeps the published field independent of how the SQL function chooses to type its result.
+    return F.call_function("floor", severity, F.lit(displayed_severity_decimals(threshold))).cast(DoubleType())
 
 
 def create_null_scored_dataframe(

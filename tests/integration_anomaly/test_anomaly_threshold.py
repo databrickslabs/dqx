@@ -218,6 +218,36 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
             assert abs(score1 - score2) < 0.001  # Allow small floating point error
 
 
+def test_published_severity_is_a_double_not_a_decimal(spark, test_df_factory, quick_model_factory):
+    """The published severity must keep the type its schema declares.
+
+    Regression test. The displayed severity is floored to the threshold's own precision, and the SQL
+    ``floor(expr, scale)`` used for that does not preserve its input's type -- it returns
+    ``decimal(17,1)`` for a double input. The values stay correct, so every unit test and both anomaly
+    suites passed while ``_dq_info[].anomaly.severity_percentile`` silently changed from ``double`` to
+    ``decimal`` for anyone reading the scored table.
+
+    Asserting the dtype needs a real Spark plan, so it can only live here: a unit test sees values and
+    never sees a type.
+    """
+    model_name, registry_table, _columns = quick_model_factory(spark, params=AnomalyParams(max_rows=50))
+
+    result = apply_anomaly_check_direct(
+        test_df_factory(spark),
+        model_name,
+        registry_table,
+        threshold=DEFAULT_SCORE_THRESHOLD,
+    )
+
+    # element_at + getField rather than subscripting: the pattern the guide documents for Spark Connect.
+    severity = result.select(
+        F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("severity_percentile").alias("severity")
+    )
+    dtype = dict(severity.dtypes)["severity"]
+
+    assert dtype == "double", f"severity_percentile is published as {dtype}, but its schema declares double"
+
+
 def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory):
     """Test that validation metrics are stored in registry."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
