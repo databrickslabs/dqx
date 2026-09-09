@@ -1023,10 +1023,7 @@ def test_list_failure_does_not_create_duplicate(settings: MagicMock, ws: MagicMo
 
 
 def test_incomplete_space_listing_does_not_create_duplicate(settings: MagicMock, ws: MagicMock) -> None:
-    ws.api_client.do.side_effect = [
-        {"spaces": [], "next_page_token": f"page-{page + 1}"}
-        for page in range(20)
-    ]
+    ws.api_client.do.side_effect = [{"spaces": [], "next_page_token": f"page-{page + 1}"} for page in range(20)]
 
     assert ensure(settings, ws) is None
 
