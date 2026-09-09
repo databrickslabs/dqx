@@ -70,8 +70,23 @@ def displayed_severity_expr(severity: Column, threshold: float) -> Column:
     The precision is derived rather than fixed at one decimal, because a fixed decimal is correct only for
     thresholds that happen to be that precise. Measured over dense sweeps around each threshold plus the
     float neighbours of every gridpoint: rounding disagrees on 560 sampled values at each of 90, 95, 99,
-    99.5 and 99.9; flooring at one decimal disagrees on none of those but on 560 at a threshold of 99.95;
-    flooring at the threshold's precision disagrees on none at any of them, up to 99.995.
+    99.5 and 99.9, while flooring at one decimal disagrees on none of those but on 560 at a threshold of
+    99.95.
+
+    **The floor is taken in decimal space, not by scaling and flooring**, and that distinction is the whole
+    correctness argument rather than a stylistic one. ``floor(severity * 10**n) / 10**n`` looks equivalent
+    and is not: the multiply is a double operation that can round *up* across an integer, so the floor lands
+    exactly on the threshold for a row whose true severity is one ulp below it -- reintroducing this defect
+    in its harmful direction, where the display reads at the threshold and the flag says no. Enumerated over
+    every legal threshold at each precision, the scaling form disagrees at 98 of 1000 one-decimal thresholds
+    (0.9, 1.8, 3.6 and so on), 140 of 1001 two-decimal, and 30 of 1001 three-decimal; the decimal form
+    disagrees at none. The failing thresholds are all outside the commonly used range, which is exactly why
+    a sweep of 90, 95, 99, 99.5 and 99.9 misses them -- so the tests sweep thresholds too, not only values.
+
+    ``floor(expr, scale)`` is called through :func:`pyspark.sql.functions.call_function` rather than
+    ``F.floor(col, scale)`` because the two-argument Python wrapper only exists in PySpark 4, while this
+    package supports a ``databricks-connect`` floor of 15.4 whose client is PySpark 3.5. The SQL function
+    itself has taken a scale since Spark 3.3, so every supported runtime provides it.
 
     Rounding the *decision* to match the display would also make the two agree, and is the wrong trade: it
     would begin flagging every row in ``[threshold - 0.05, threshold)``, changing the detector to fix a
@@ -85,8 +100,7 @@ def displayed_severity_expr(severity: Column, threshold: float) -> Column:
         The severity to publish: never above the true value, and never below it by enough to change how it
         compares against *threshold*.
     """
-    scale = float(10 ** displayed_severity_decimals(threshold))
-    return F.floor(severity * F.lit(scale)) / F.lit(scale)
+    return F.call_function("floor", severity, F.lit(displayed_severity_decimals(threshold)))
 
 
 def create_null_scored_dataframe(

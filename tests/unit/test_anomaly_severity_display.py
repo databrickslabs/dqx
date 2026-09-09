@@ -10,21 +10,36 @@ equivalence itself rather than the formula, so a different implementation of the
 """
 
 import math
+from decimal import ROUND_FLOOR, Decimal
 
 import pytest
 
 from databricks.labs.dqx.anomaly.scoring_utils import displayed_severity_decimals
 
-# The documented thresholds, plus finer ones to show the guarantee does not stop at one decimal.
-_THRESHOLDS = [90.0, 95.0, 99.0, 99.5, 99.9, 99.95, 99.995]
+# The commonly used thresholds, plus finer ones, plus three that a first version of this fix got WRONG.
+# 0.9, 90.01 and 99.01 are here because scaling-then-flooring disagrees with the flag on the double one ulp
+# below each of them, and none of the ordinary thresholds show it. An earlier version of this file swept
+# values densely at seven clean thresholds and passed against a defective implementation.
+_THRESHOLDS = [90.0, 95.0, 99.0, 99.5, 99.9, 99.95, 99.995, 0.9, 90.01, 99.01, 99.058]
 
 
 def _displayed(severity: float, threshold: float) -> float:
-    """The published value, in Python, mirroring *displayed_severity_expr*'s arithmetic.
+    """The published value, in Python, mirroring *displayed_severity_expr*.
 
-    Duplicated deliberately: the Spark expression cannot be evaluated without a session, and the property
-    under test is arithmetic. The integration suite is what checks that Spark agrees with this.
+    Flooring in decimal space on the shortest representation, which is what Spark's ``floor(expr, scale)``
+    does for a double: it routes through ``BigDecimal.valueOf``, i.e. ``Double.toString``. Deliberately not
+    ``floor(severity * scale) / scale`` -- that is the form this fix replaced, and
+    :func:`test_scaling_then_flooring_would_reintroduce_the_defect` pins why.
+
+    A mirror, so it proves a property of the arithmetic and not of the product. The integration suite is
+    what checks Spark agrees with it.
     """
+    quantum = Decimal(1).scaleb(-displayed_severity_decimals(threshold))
+    return float(Decimal(repr(severity)).quantize(quantum, rounding=ROUND_FLOOR))
+
+
+def _scaled_then_floored(severity: float, threshold: float) -> float:
+    """The rejected form, kept so its failure is executable rather than described."""
     scale = float(10 ** displayed_severity_decimals(threshold))
     return math.floor(severity * scale) / scale
 
@@ -114,3 +129,50 @@ def test_a_saturated_severity_is_published_unchanged():
     """The tail expression reaches 100 exactly; flooring must not shave it to 99.9."""
     for threshold in _THRESHOLDS:
         assert _displayed(100.0, threshold) == 100.0
+
+
+def _threshold_grid(start: float, stop: float, step: float, places: int) -> list[float]:
+    """Every legal threshold at one precision, so the sweep covers thresholds and not only values."""
+    count = int(round((stop - start) / step))
+    return [round(start + step * k, places) for k in range(count + 1)]
+
+
+@pytest.mark.parametrize(
+    "grid",
+    [
+        pytest.param(_threshold_grid(0.1, 100.0, 0.1, 1), id="every_one_decimal_threshold"),
+        pytest.param(_threshold_grid(90.0, 100.0, 0.01, 2), id="every_two_decimal_threshold_from_90"),
+        pytest.param(_threshold_grid(99.0, 100.0, 0.001, 3), id="every_three_decimal_threshold_from_99"),
+    ],
+)
+def test_the_equivalence_holds_at_every_legal_threshold_not_just_the_common_ones(grid: list[float]):
+    """Swept over thresholds, which is the axis the first version of this fix left untested.
+
+    Its predecessor swept values densely at seven thresholds that all happen to be clean, so it passed
+    against an implementation that disagreed with the flag at 268 other legal thresholds. The failure was
+    always one ulp below the threshold and always in the harmful direction: the display read at the
+    threshold while the row was not flagged.
+    """
+    failures = []
+    for threshold in grid:
+        probe = threshold
+        for _ in range(4):
+            probe = math.nextafter(probe, -math.inf)
+            if (_displayed(probe, threshold) >= threshold) != (probe >= threshold):
+                failures.append((threshold, probe))
+                break
+
+    assert not failures, f"{len(failures)} thresholds disagree, e.g. {failures[:3]}"
+
+
+@pytest.mark.parametrize("threshold, probe", [(0.9, 0.8999999999999999), (90.01, 90.00999999999999)])
+def test_scaling_then_flooring_would_reintroduce_the_defect(threshold: float, probe: float):
+    """The rejected implementation, pinned at two of the thresholds where it fails.
+
+    ``severity * 10**n`` is a double multiply and can round up across an integer, after which the floor
+    lands on the threshold for a row below it. Without this test the shorter form looks equivalent, reads
+    more simply, and passes every threshold anyone would think to try.
+    """
+    assert probe < threshold
+    assert _scaled_then_floored(probe, threshold) >= threshold, "expected the rejected form to overstate"
+    assert _displayed(probe, threshold) < threshold, "the shipped form must not"

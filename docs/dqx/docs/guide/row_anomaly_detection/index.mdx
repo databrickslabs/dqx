@@ -360,6 +360,15 @@ for cutoff in (90, 95, 98, 99, 99.5):
     print(f"threshold {cutoff}: {alerts} alerts ({alerts / total:.2%} of rows)")
 ```
 
+One precision caveat, because it decides which cutoffs this loop can answer. The published
+`severity_percentile` carries exactly the precision the *scoring* threshold needed — one decimal for a
+threshold of 95, two for 99.95 — which is what makes `severity >= threshold` agree with `is_anomaly`. So
+counts are exact at any cutoff at or coarser than that precision, and **undercount** at a finer one: scored
+at `threshold=95`, every severity in `[99.95, 100)` was published as `99.9`, so a cutoff of `99.95` misses
+those rows. Stay at or below the scoring threshold's precision, or rescore at the finer threshold. The
+`threshold` field sits next to `severity_percentile` in the same struct, so a scored table always says which
+precision it carries.
+
 Pick the cutoff whose alert count matches how many rows someone can actually investigate. Both anomaly demos
 under `demos/` print this table, and one of them chooses its threshold from it rather than inheriting the
 default.
