@@ -1060,8 +1060,8 @@ function VersionBadge({ table }: { table: MonitoredTableOut }) {
 /** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
  *  checked by the caller). "Run now" (approved) scans the whole table
  *  (sample_size 0); "Run draft" scans the admin-configured draft sample
- *  (default 1000 rows; 0 = whole table) fetched from `useGetDraftRunSampleLimit`
- *  so exploratory runs on large tables stay cheap. Primary click runs
+ *  (default 0 = whole table) fetched from `useGetDraftRunSampleLimit`,
+ *  which an admin can narrow to a row cap. Primary click runs
  *  the latest approved snapshot ("Run now (vN)"), disabled with a tooltip at
  *  v0. The attached dropdown
  *  offers "Run draft" at the TOP (item 15) followed by each approved version.
@@ -1108,12 +1108,13 @@ function RunTableAction({
   const versionsQuery = useListMonitoredTableVersions(bindingId);
   const versions = versionsQuery.data?.data ?? [];
   const runMutation = useRunMonitoredTable();
-  // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
-  // table) so exploratory runs on large tables stay cheap. "Run now" (approved)
-  // always scans the full table (sample_size 0). While the limit query has not
-  // resolved (loading OR error) this is `undefined`, NOT 0 — so the draft run
-  // OMITS sample_size and the backend resolves the configured draft default.
-  // Never fall back to 0 here: 0 = full table and the backend can't rescue it.
+  // Draft runs scan the admin-configured sample, which defaults to the whole
+  // table (0 = unlimited) so a draft's pass rate describes the table; an admin
+  // can set a row cap to keep exploratory runs on large tables cheap. "Run now"
+  // (approved) always scans the full table (sample_size 0). While the limit
+  // query has not resolved (loading OR error) this is `undefined`, NOT 0 — so
+  // the draft run OMITS sample_size and the backend resolves the configured
+  // default itself.
   const draftSampleQuery = useGetDraftRunSampleLimit();
   const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit;
   const hasApproved = (table.version ?? 0) > 0;

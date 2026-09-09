@@ -20,9 +20,11 @@ _SETUP_COMPLETED_BY_KEY = "setup_completed_by"
 
 # Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
 # row cap applied to DRAFT monitored-table runs when the admin has not
-# configured one. 0 means unlimited. Shared by ``BindingRunService`` and
-# the ``/config/draft-run-sample-limit`` admin endpoints.
-DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
+# configured one. 0 means unlimited, so out of the box a draft run scans the
+# whole table, matching approved runs; a pass rate measured on a subset is not
+# the table's pass rate. Shared by ``BindingRunService`` and the
+# ``/config/draft-run-sample-limit`` admin endpoints.
+DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 0
 
 # Compiled-in fallback for the ``default_pass_threshold`` setting — the
 # org-wide minimum pass rate (%) below which a check warns. Shared by

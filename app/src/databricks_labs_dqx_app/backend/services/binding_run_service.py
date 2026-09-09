@@ -47,7 +47,7 @@ _SQL_CHECK_PREFIX = "__sql_check__/"
 #     scheduled runs from the schedule's own ``schedule_sample_size``, which is
 #     NULL (→ whole table) unless someone set it.
 #   * source='draft'    → caller-supplied sample_size, or
-#     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT (1000) when omitted; 0 = unlimited.
+#     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT (0 = unlimited) when omitted.
 # Dryrun/preview routes (routes/v1/dryrun.py) are a separate flow with
 # their own explicit sampling.
 
@@ -208,7 +208,7 @@ class BindingRunService:
           dialog's answer; the scheduler passes the schedule's
           ``schedule_sample_size``.
         - draft runs use *sample_size* when provided (0 = unlimited);
-          otherwise ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000).
+          otherwise ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (0 = the whole table).
 
         Naming note: the task entrypoint submitted here is historically
         called ``dryrun`` — that is the frozen runner's task_type for

@@ -2183,7 +2183,9 @@ function DraftRunSampleLimitSettings() {
   const saveMutation = useSaveDraftRunSampleLimit();
   const { isAdmin } = usePermissions();
 
-  const [sampleKind, setSampleKind] = useState<SampleKind>("records");
+  // Pre-hydration state matches the compiled-in default (whole table) so the
+  // row does not flash "Random sample / 1000" before the query resolves.
+  const [sampleKind, setSampleKind] = useState<SampleKind>("full");
   const [sampleValue, setSampleValue] = useState(1000);
   const [hydrated, setHydrated] = useState(false);
 
