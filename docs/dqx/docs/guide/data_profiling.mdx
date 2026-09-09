@@ -16,7 +16,7 @@ The generated data quality rules (checks) candidates can be used as input for th
 In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
 
 You can run profiling and quality checks generation using the following approaches:
-* [DQX Studio (no-code UI)](/docs/guide/dqx_studio): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
+* [DQX Studio (no-code UI)](/docs/studio/): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
 * [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
 * [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
 
@@ -92,7 +92,7 @@ Data loaded as a DataFrame can be profiled using DQX classes to generate summary
 ### Profiling a table
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.6.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.6.0" heading={false} />
 </FeatureTags>
 
 Profiling and quality checks generation can be run on individual tables.
@@ -121,7 +121,7 @@ Profiling and quality checks generation can be run on individual tables.
 ### Profiling multiple tables
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.6.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.6.0" heading={false} />
 </FeatureTags>
 
 The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
@@ -630,7 +630,7 @@ When profiling large datasets, use sampling and limits for best performance.
 ## Stratified sampling by column
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.15.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.15.0" heading={false} />
 </FeatureTags>
 
 By default, the profiler uses Spark's `DataFrame.sample` to get a uniform random sample over the whole dataset. For skewed or imbalanced data, this can under-represent (or miss entirely) rare strata of the dataset.

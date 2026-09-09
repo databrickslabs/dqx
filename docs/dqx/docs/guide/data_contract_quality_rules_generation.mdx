@@ -11,7 +11,7 @@ import { AvailableSinceVersion, FeatureTags } from '@site/src/components/Feature
 # Data Contract Quality Rules Generation
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.11.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.11.0" heading={false} />
 </FeatureTags>
 
 DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
@@ -41,10 +41,6 @@ Data contract-based generation is ideal for:
 
 For automated discovery of data patterns without contracts, consider using the [Data Profiling](/docs/guide/data_profiling) approach instead.
 For generating rules from natural language without contracts, see [AI-Assisted Generation](/docs/guide/ai_assisted_quality_checks_generation).
-</Admonition>
-
-<Admonition type="note" title="No-code: do it from DQX Studio">
-The same pipeline is exposed in [DQX Studio](/docs/guide/dqx_studio) under **Create rules → Import rules → From data contract**. Upload or paste an ODCS contract, pick the Unity Catalog table each schema should target, preview the generated checks, and save them as drafts — no Python required. The CLI / Python API documented below is the right entry point when you want the generation to run inside a pipeline or CI job.
 </Admonition>
 
 ### ODCS v3.x Native Support
@@ -136,7 +132,7 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 ### Schema validation
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.14.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.14.0" heading={false} />
 </FeatureTags>
 
 When the contract defines a schema and `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. Set `generate_schema_validation=False` to skip these rules. The **strictness** of schema validation is controlled by `strict_schema_validation`: default `True` (exact columns, order, and types); set to `False` for permissive validation (expected columns must exist with compatible types; extra columns are allowed).

@@ -69,19 +69,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
     };
 
     if (!isAuthReady && !error) {
-      // Add a small delay before first attempt (500ms) to let page fully load
-      // For retries, use exponential backoff calculated in error handler
-      const initialDelay = retryCount === 0 ? 500 : 0;
-      
-      if (initialDelay > 0) {
-        timeoutId = setTimeout(() => {
-          if (!cancelled) {
-            checkAuth();
-          }
-        }, initialDelay);
-      } else {
-        checkAuth();
-      }
+      // Fire the first attempt immediately — the X-Forwarded-Access-Token
+      // header is typically already present by the time React mounts, and
+      // the 401-retry backoff below already covers the case where it isn't
+      // yet. A fixed 500ms pre-delay here used to push out first paint of
+      // the real app for every user, even ones with the token ready
+      // instantly (item 2 load-time investigation).
+      checkAuth();
     }
 
     return () => {
@@ -119,9 +113,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
         <div className="text-center space-y-4">
           <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
           <div className="text-lg font-medium">{t("auth.loadingMessage")}</div>
-          <p className="text-sm text-muted-foreground">
-            {t("auth.loadingDescription")}
-          </p>
         </div>
       </div>
     );

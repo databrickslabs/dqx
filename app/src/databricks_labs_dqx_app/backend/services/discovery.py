@@ -1,12 +1,17 @@
 import asyncio
+import json
 import logging
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import CatalogInfo, SchemaInfo, TableInfo
 
 from ..cache import app_cache
+
+if TYPE_CHECKING:
+    from ..sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +38,68 @@ class TableTags:
     column_tags: dict[str, list[str]]
 
 
+@dataclass
+class GovernedTag:
+    """A governed Unity Catalog tag key (or ``key=value``) with its description."""
+
+    tag: str
+    description: str | None
+
+
+def read_column_tags(sql: "SqlExecutor", table_fqn: str) -> dict[str, list[str]]:
+    """Return a ``column_name -> ["key" | "key=value", ...]`` map for a table.
+
+    Sources tags from ``<catalog>.information_schema.column_tags`` — the reliable
+    source for column governed tags. The ``WorkspaceClient.tables.get`` SDK field
+    is unreliable for column tags (it returns ``tags=None`` for columns that do
+    carry a governed tag), so tag matching must not depend on it.
+
+    Best-effort: validates *table_fqn*, backtick-quotes the catalog, escapes the
+    schema/table string literals, and gates the assembled query with
+    :func:`is_sql_query_safe` before execution. Any failure (validation, unsafe
+    query, or a SQL error) yields an empty map so a tag-read failure never aborts
+    the caller. Never raises.
+    """
+    from databricks.labs.dqx.utils import is_sql_query_safe
+
+    from ..sql_utils import escape_sql_string, quote_ident, validate_fqn
+
+    tags: dict[str, list[str]] = {}
+    try:
+        validate_fqn(table_fqn)
+        catalog, schema, table = table_fqn.split(".")
+        query = (
+            "SELECT column_name, tag_name, tag_value "
+            f"FROM {quote_ident(catalog)}.information_schema.column_tags "
+            f"WHERE schema_name = '{escape_sql_string(schema)}' "
+            f"AND table_name = '{escape_sql_string(table)}'"
+        )
+        if not is_sql_query_safe(query):
+            logger.warning(f"Skipping unsafe column-tag query for {table_fqn}")
+            return {}
+        rows = sql.query(query)
+    except Exception:
+        logger.warning(f"Failed to read column tags for {table_fqn}")
+        return {}
+
+    for row in rows:
+        column_name = row[0] if len(row) > 0 else None
+        tag_name = row[1] if len(row) > 1 else None
+        tag_value = row[2] if len(row) > 2 else None
+        if not column_name or not tag_name:
+            continue
+        tag_str = f"{tag_name}={tag_value}" if isinstance(tag_value, str) and tag_value else tag_name
+        tags.setdefault(column_name, []).append(tag_str)
+    return tags
+
+
 class DiscoveryService:
     """OBO-scoped Unity Catalog browsing with per-user response caching."""
 
-    def __init__(self, ws: WorkspaceClient, user_id: str) -> None:
+    def __init__(self, ws: WorkspaceClient, user_id: str, sql: "SqlExecutor | None" = None) -> None:
         self._ws = ws
         self.user_id = user_id  # exposed for the {_user} cache key expansion
+        self._sql = sql
 
     # ── synchronous ────────────────────────────────────────────
 
@@ -50,6 +111,24 @@ class DiscoveryService:
 
     def list_tables(self, catalog: str, schema: str) -> list[TableInfo]:
         return list(self._ws.tables.list(catalog_name=catalog, schema_name=schema))
+
+    def get_table_owner(self, table_fqn: str) -> str | None:
+        """Return the Unity Catalog owner of *table_fqn*, or ``None``.
+
+        Runs on-behalf-of the calling user, so it only succeeds when the user
+        can read the table's metadata. The owner is UC's raw principal display
+        value — it may be a user, a group, or a service principal; callers
+        store it verbatim and must not assume it is a person. Any failure
+        (missing table, permission denied, transient error) is swallowed and
+        reported as ``None`` so callers can fall back gracefully.
+        """
+        try:
+            table_info = self._ws.tables.get(full_name=table_fqn)
+        except Exception as e:
+            logger.warning("Failed to resolve UC owner for %s: %s", table_fqn, e)
+            return None
+        owner = (table_info.owner or "").strip()
+        return owner or None
 
     def get_table_columns(self, catalog: str, schema: str, table: str) -> list[TableColumn]:
         full_name = f"{catalog}.{schema}.{table}"
@@ -111,8 +190,14 @@ class DiscoveryService:
                         tag_str = f"{tag.key}={tag.value}" if tag.value else tag.key
                         table_tags.append(tag_str)
 
-            # Extract column-level tags if available
-            if table_info.columns:
+            # Extract column-level tags. The reliable source is
+            # ``information_schema.column_tags`` via SQL; the ``tables.get``
+            # column ``tags`` field is unreliable (returns ``None`` for columns
+            # that do carry governed tags). Fall back to the SDK scan only when
+            # no SQL executor is injected.
+            if self._sql is not None:
+                column_tags = read_column_tags(self._sql, full_name)
+            elif table_info.columns:
                 for col in table_info.columns:
                     col_name = col.name or ""
                     col_tags_attr = getattr(col, "tags", None)
@@ -133,6 +218,70 @@ class DiscoveryService:
             table_tags=table_tags,
             column_tags=column_tags,
         )
+
+    def list_governed_tags(self) -> list[GovernedTag]:
+        """Distinct governed tag keys/values visible to the caller (OBO), sorted.
+
+        Sources governed tags via ``SHOW GOVERNED TAGS`` over the SQL warehouse
+        (the ``sql`` scope the app already holds) — the SDK ``tag_policies`` API
+        needs a ``tags`` OAuth scope the app's OBO token does not carry. The
+        statement returns one row per governed tag with columns
+        ``[Tag Key, Id, Description, Values, Create Time, Update Time]`` where
+        *Values* is a JSON-array string of the tag's allowed values.
+
+        For each row it emits the bare ``tag_key`` plus, for every allowed
+        value, a ``"tag_key=value"`` entry — both carrying the tag's
+        description. Empty/whitespace keys are skipped; *Values* is parsed
+        defensively (a parse failure or non-list simply yields no value
+        entries). Results are deduplicated by ``tag`` (first description wins)
+        and sorted by ``tag``. Best-effort: returns ``[]`` on any failure so the
+        route can keep responding with HTTP 200. Never raises.
+        """
+        if self._sql is None:
+            logger.warning("governed tag discovery skipped: no SQL executor available")
+            return []
+
+        from databricks.labs.dqx.utils import is_sql_query_safe
+
+        query = "SHOW GOVERNED TAGS"
+        try:
+            if not is_sql_query_safe(query):
+                logger.warning("governed tag discovery skipped: SHOW GOVERNED TAGS rejected as unsafe")
+                return []
+            rows = self._sql.query(query)
+        except Exception as e:
+            logger.warning(f"governed tag discovery failed: {e}")
+            return []
+
+        by_tag: dict[str, GovernedTag] = {}
+
+        def _add(tag: str, description: str | None) -> None:
+            if tag not in by_tag:
+                by_tag[tag] = GovernedTag(tag=tag, description=description)
+
+        for row in rows:
+            tag_key = (row[0] or "").strip() if len(row) > 0 and row[0] else ""
+            if not tag_key:
+                continue
+            raw_description = row[2] if len(row) > 2 else None
+            description = raw_description if isinstance(raw_description, str) and raw_description.strip() else None
+            _add(tag_key, description)
+
+            values_json = row[3] if len(row) > 3 else None
+            if not isinstance(values_json, str):
+                continue
+            try:
+                values = json.loads(values_json)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                _add(f"{tag_key}={value}", description)
+
+        return [by_tag[tag] for tag in sorted(by_tag)]
 
     # ── async wrappers (cached per user) ───────────────────────
 
@@ -159,6 +308,10 @@ class DiscoveryService:
     @app_cache.cached("discovery:{_user}:schema_ddl:{table_fqn}", ttl=_COLUMN_TTL)
     async def get_table_schema_ddl_async(self, table_fqn: str) -> str:
         return await asyncio.to_thread(self.get_table_schema_ddl, table_fqn)
+
+    @app_cache.cached("discovery:{_user}:governed_tags", ttl=_TAGS_TTL)
+    async def list_governed_tags_async(self) -> list[GovernedTag]:
+        return await asyncio.to_thread(self.list_governed_tags)
 
 
 # Identifiers with characters outside ``[A-Za-z0-9_]`` must be back-tick

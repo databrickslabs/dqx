@@ -32,6 +32,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_url,
     is_valid_uuid,
     is_valid_national_id,
     is_valid_country_code,
@@ -891,6 +892,36 @@ def test_col_sql_expression(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_sql_expression_with_leading_comment(spark):
+    # Regression guard for the DQX Studio "SQL Explain" feature, which prepends
+    # the AI explanation to a rule predicate as `-- ...` comment lines (a blank
+    # line, then the logic). Spark's SQL lexer skips `--` line comments, so
+    # F.expr must evaluate a comment-prefixed expression identically to the bare
+    # expression AS LONG AS the terminating newline is preserved (it is — the
+    # app substitutes slots with str.replace, never collapsing whitespace). A
+    # comment whose prose contains a word like "delete" must not affect the
+    # result. If this ever fails, leading comments do NOT survive F.expr and the
+    # Studio must fall back to stripping comments before persisting.
+    test_df = spark.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 2, 3]], SCHEMA + ", c: string")
+
+    commented_expr = "-- delete stale rows where a is not str2\n-- second explanation line\n\na = 'str2'"
+    actual = test_df.select(
+        sql_expression(commented_expr, name="commented", msg="a is not str2"),
+    )
+
+    checked_schema = "commented: string"
+    expected = spark.createDataFrame(
+        [
+            ["a is not str2"],
+            [None],
+            ["a is not str2"],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_sql_expression_long_name(spark):
     long_col_name = "a" * 300
     normalized_col_name = "a" * 255
@@ -1105,7 +1136,7 @@ def test_col_is_not_in_near_future(spark):
 
 def test_is_col_older_than_n_days_cur(spark):
     schema_dates = "a: string, b: map<string, string>"
-    cur_date = spark.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
+    cur_date = spark.sql("SELECT current_date() AS current_date").collect()[0]["current_date"].strftime("%Y-%m-%d")
 
     test_df = spark.createDataFrame(
         [["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}], [cur_date, {"dt": cur_date}]], schema_dates
@@ -2116,6 +2147,131 @@ def test_col_is_valid_email(spark):
         [violation("user@localhost")],
         [violation("missing@tld")],
         [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_url(spark):
+    schema_url = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid - common web forms
+            ["https://example.com"],
+            ["http://example.com/"],
+            ["https://example.com/path/to/page"],
+            ["https://example.com/path?query=1&other=2"],
+            ["https://example.com/path?query=1#fragment"],
+            ["https://example.com#fragment"],
+            ["https://sub.domain.example.co.uk/a/b/c"],
+            ["HTTPS://EXAMPLE.COM"],  # scheme and host are case-insensitive
+            # Valid - authority components
+            ["https://user@example.com/p"],
+            ["https://user:pw@example.com:8080/p"],
+            ["https://example.com:8080"],
+            ["https://example.com:/p"],  # RFC 3986 permits an empty port
+            ["https://192.0.2.1/p"],  # IPv4 host
+            ["https://[2001:db8::1]:443/p"],  # IPv6 literal host
+            # Valid - non-network schemes (any syntactically valid scheme is accepted)
+            ["ftp://files.example.org/pub/file.txt"],
+            ["s3://bucket/key/part-00001.parquet"],
+            ["mailto:user@example.com"],
+            ["urn:isbn:0451450523"],
+            ["file:///var/log/app.log"],  # empty host is permitted by RFC 3986
+            ["custom-scheme+v2://host/p"],  # scheme may contain '+', '-', '.'
+            ["foo:/"],  # path-absolute with an empty segment: scheme + bare '/' (RFC 3986 hier-part)
+            # Valid - percent-encoding and sub-delims
+            ["https://example.com/a%20b"],
+            ["https://example.com/a,b;c=d"],
+            ["https://example.com/p?a=1+2"],
+            # Valid but NOT safe - syntax-only validation, see the docstring caveat
+            ["javascript:alert(1)"],
+            ["data:text/plain,hello"],
+            [None],  # Null - passes (no violation reported)
+            # Invalid - missing or malformed scheme
+            ["example.com"],  # no scheme
+            ["example.com/path"],
+            ["/relative/path"],
+            ["//example.com/p"],  # network-path reference, not an absolute URI
+            ["://example.com"],  # empty scheme
+            ["1https://example.com"],  # scheme must start with a letter
+            ["ht tp://example.com"],  # space in scheme
+            [""],  # empty string
+            # Invalid - whitespace and control characters
+            ["https://exa mple.com"],
+            ["https://example.com/a b"],
+            ["http://example.com\n"],  # trailing newline must be rejected (see issue #1440)
+            ["https://example.com\t/p"],
+            # Invalid - characters that must be percent-encoded
+            ["https://example.com/a<b"],
+            ['https://example.com/a"b'],
+            ["https://example.com/a|b"],
+            ["https://example.com/a\\b"],  # backslash is not a valid path character
+            ["https://example.com/p?q=1#a#b"],  # '#' may not repeat in a fragment
+            # Valid - lowercase hex in percent-encoding is accepted (contrast with the cases above)
+            ["https://example.com/a%2b"],
+        ],
+        schema_url,
+    )
+
+    actual = test_df.select(is_valid_url("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'URL'"
+
+    checked_schema = "a_does_not_match_pattern_url: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],  # https://example.com
+        [None],  # http://example.com/
+        [None],  # https://example.com/path/to/page
+        [None],  # https://example.com/path?query=1&other=2
+        [None],  # https://example.com/path?query=1#fragment
+        [None],  # https://example.com#fragment
+        [None],  # https://sub.domain.example.co.uk/a/b/c
+        [None],  # HTTPS://EXAMPLE.COM
+        [None],  # https://user@example.com/p
+        [None],  # https://user:pw@example.com:8080/p
+        [None],  # https://example.com:8080
+        [None],  # https://example.com:/p
+        [None],  # https://192.0.2.1/p
+        [None],  # https://[2001:db8::1]:443/p
+        [None],  # ftp://files.example.org/pub/file.txt
+        [None],  # s3://bucket/key/part-00001.parquet
+        [None],  # mailto:user@example.com
+        [None],  # urn:isbn:0451450523
+        [None],  # file:///var/log/app.log
+        [None],  # custom-scheme+v2://host/p
+        [None],  # foo:/ - path-absolute with an empty segment
+        [None],  # https://example.com/a%20b
+        [None],  # https://example.com/a,b;c=d
+        [None],  # https://example.com/p?a=1+2
+        [None],  # javascript:alert(1) - syntactically valid
+        [None],  # data:text/plain,hello - syntactically valid
+        [None],  # Null
+        # Invalid - missing or malformed scheme
+        [violation("example.com")],
+        [violation("example.com/path")],
+        [violation("/relative/path")],
+        [violation("//example.com/p")],
+        [violation("://example.com")],
+        [violation("1https://example.com")],
+        [violation("ht tp://example.com")],
+        [violation("")],
+        # Invalid - whitespace and control characters
+        [violation("https://exa mple.com")],
+        [violation("https://example.com/a b")],
+        [violation("http://example.com\n")],
+        [violation("https://example.com\t/p")],
+        # Invalid - characters that must be percent-encoded
+        [violation("https://example.com/a<b")],
+        [violation('https://example.com/a"b')],
+        [violation("https://example.com/a|b")],
+        [violation("https://example.com/a\\b")],
+        [violation("https://example.com/p?q=1#a#b")],
+        # Valid
+        [None],  # https://example.com/a%2b
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 
@@ -4457,6 +4613,84 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_comparison_checks_with_nulls_failing(spark):
+    schema = "a: int"
+    test_df = spark.createDataFrame([[1], [5], [None]], schema)
+
+    actual = test_df.select(
+        is_equal_to("a", 1, allow_nulls=False),
+        is_not_equal_to("a", 5, allow_nulls=False),
+        is_not_less_than("a", 1, allow_nulls=False),
+        is_not_greater_than("a", 1, allow_nulls=False),
+        is_in_range("a", 1, 2, allow_nulls=False),
+        is_not_in_range("a", 4, 6, allow_nulls=False),
+    )
+
+    expected_schema = (
+        "a_is_null_or_not_equal_to_value: string, a_is_null_or_equal_to_value: string, "
+        "a_is_null_or_less_than_limit: string, a_is_null_or_greater_than_limit: string, "
+        "a_is_null_or_not_in_range: string, a_is_null_or_in_range: string"
+    )
+    null_message = "Column 'a' value is null"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None, None, None],
+            [
+                "Value '5' in Column 'a' is not equal to value: 1",
+                "Value '5' in Column 'a' is equal to value: 5",
+                None,
+                "Value '5' in Column 'a' is greater than limit: 1",
+                "Value '5' in Column 'a' not in range: [1, 2]",
+                "Value '5' in Column 'a' in range: [4, 6]",
+            ],
+            [null_message] * 6,
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_comparison_checks_with_nulls_failing_column_expression(spark):
+    # For a column expression the check operates on the whole expression, so nullness is reported
+    # against the expression (e.g. 'a + b' is null when either operand is null), not the operand.
+    schema = "a: int, b: int"
+    test_df = spark.createDataFrame([[1, 1], [10, 10], [None, 1]], schema)
+
+    actual = test_df.select(
+        is_equal_to("a + b", 2, allow_nulls=False),
+        is_not_equal_to("a + b", 5, allow_nulls=False),
+        is_not_less_than("a + b", 1, allow_nulls=False),
+        is_not_greater_than("a + b", 3, allow_nulls=False),
+        is_in_range("a + b", 1, 3, allow_nulls=False),
+        is_not_in_range("a + b", 5, 7, allow_nulls=False),
+    )
+
+    expected_schema = (
+        "a_b_is_null_or_not_equal_to_value: string, a_b_is_null_or_equal_to_value: string, "
+        "a_b_is_null_or_less_than_limit: string, a_b_is_null_or_greater_than_limit: string, "
+        "a_b_is_null_or_not_in_range: string, a_b_is_null_or_in_range: string"
+    )
+    null_message = "Column 'a + b' value is null"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None, None, None],
+            [
+                "Value '20' in Column 'a + b' is not equal to value: 2",
+                None,
+                None,
+                "Value '20' in Column 'a + b' is greater than limit: 3",
+                "Value '20' in Column 'a + b' not in range: [1, 3]",
+                None,
+            ],
+            [null_message] * 6,
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_equal_to(spark, set_utc_timezone):
     schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
@@ -4613,14 +4847,14 @@ def test_is_valid_json(spark):
             ['{"key": "value"}', '{"key": value}'],
             ['{"number": 123}', '{"number": 123}'],
             ['{"array": [1, 2, 3]}', '{"array": [1, 2, 3}'],
-            ['Not a JSON string', 'Also not JSON'],
+            ["Not a JSON string", "Also not JSON"],
             [None, None],
-            ['123', '"a string"'],
-            ['true', 'null'],
-            ['[]', '{}'],
+            ["123", '"a string"'],
+            ["true", "null"],
+            ["[]", "{}"],
             ['{"a": 1,}', '{key: "value"}'],
-            ['[1, 2,', '{"a": "b"'],
-            ["{'a': 'b'}", ''],
+            ["[1, 2,", '{"a": "b"'],
+            ["{'a': 'b'}", ""],
             [' {"a": 1} ', '{"b": 2}\n'],
         ],
         schema,
@@ -4672,8 +4906,8 @@ def test_has_json_keys_require_all_true(spark):
             ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
             ['{"key": "value"}', '{"missing_key": "value"}'],
             [None, None],
-            ['Not a JSON string', '{"key": "value"}'],
-            ['{"key": "value"}', 'Not a JSON string'],
+            ["Not a JSON string", '{"key": "value"}'],
+            ['{"key": "value"}', "Not a JSON string"],
             ['{"key": "value"}', None],
             [None, '{"key": "value"}'],
             ['{"nested": {"inner_key": "inner_value"}}', '{"nested": {"inner_key": "inner_value"}}'],
@@ -4713,8 +4947,8 @@ def test_has_json_keys_require_all_true(spark):
             ["Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]", None],
             [None, None],
             [
-                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'a' is missing keys in the list: [key, another_key]",
-                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'b' is missing keys in the list: [key]",
+                'Value \'{"nested": {"inner_key": "inner_value"}}\' in Column \'a\' is missing keys in the list: [key, another_key]',
+                'Value \'{"nested": {"inner_key": "inner_value"}}\' in Column \'b\' is missing keys in the list: [key]',
             ],
             [
                 None,
@@ -4735,9 +4969,9 @@ def test_has_json_keys_require_at_least_one(spark):
             ['{"key": 1, "another_key": 2, "extra_key": 3}', '{"key": 1, "another_key": 2, "extra_key": 3}'],
             ['{"key": 1}', '{"key": 1}'],
             ['{"number": 123}', '{"random_sample": 1523}'],
-            ['{}', '{}'],
+            ["{}", "{}"],
             ['{"key": "value"', '{"key": "value"'],
-            [None, 'Not a JSON string'],
+            [None, "Not a JSON string"],
             [None, None],
             ['{"key": null}', '{"nested": {"key": null}}'],
         ],
@@ -4789,8 +5023,8 @@ def test_has_valid_json_schema(spark):
             ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
             ['{"key": "value"}', '{"missing_key": "value"}'],
             [None, None],
-            ['Not a JSON string', '{"key": "value"}'],
-            ['{"key": "value"}', 'Not a JSON string'],
+            ["Not a JSON string", '{"key": "value"}'],
+            ['{"key": "value"}', "Not a JSON string"],
             ['{"key": "value"}', None],
         ],
         schema,
@@ -4802,7 +5036,7 @@ def test_has_valid_json_schema(spark):
         [
             [None, None],
             [
-                "Value '{\"key\": \"value\", \"another_key\": 123}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                'Value \'{"key": "value", "another_key": 123}\' in Column \'a\' does not conform to expected JSON schema: struct<a:bigint,b:bigint>',
                 "Value '{\"key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
             ],
             [
@@ -4852,7 +5086,7 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
         ['{"level1": {"level2": {"level3": {"level4": {"level6": "sample"}}}}}'],
         [None],
         ['{"level1": null}'],
-        ['Not a JSON string'],
+        ["Not a JSON string"],
     ]
 
     test_df = spark.createDataFrame(test_data, schema)
@@ -4864,12 +5098,12 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
             [None],
             [None],
             [
-                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level5\": null}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
+                'Value \'{"level1": {"level2": {"level3": {"level4": {"level5": null}}}}}\' in Column \'json_data\' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>'
             ],
             [None],
             [None],
             [
-                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level6\": \"sample\"}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>",
+                'Value \'{"level1": {"level2": {"level3": {"level4": {"level6": "sample"}}}}}\' in Column \'json_data\' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>',
             ],
             [None],
             [None],
@@ -4968,10 +5202,10 @@ def test_has_valid_json_schema_with_complex_nested_structure(spark):
             [None],
             [None],
             [
-                "Value '{\"user\": {\"id\": \"invalid\", \"profile\": {\"name\": \"John\", \"age\": 30}}, \"tags\": [\"admin\"]}' in Column 'json_data' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+                'Value \'{"user": {"id": "invalid", "profile": {"name": "John", "age": 30}}, "tags": ["admin"]}\' in Column \'json_data\' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>'
             ],
             [
-                "Value '{\"user\": {\"id\": 1, \"profile\": {\"name\": 123, \"age\": \"thirty\"}}, \"tags\": [\"admin\"]}' in Column 'json_data' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+                'Value \'{"user": {"id": 1, "profile": {"name": 123, "age": "thirty"}}, "tags": ["admin"]}\' in Column \'json_data\' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>'
             ],
             [None],
         ],

@@ -8,8 +8,6 @@ The behaviour we care about:
 - Non-404 errors propagate untouched.
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from pathlib import Path

@@ -5,8 +5,6 @@ position, ``type_text`` preference over ``type_name``, identifier
 quoting for non-standard column names, and skipping malformed columns.
 """
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -58,6 +56,41 @@ class TestQuoteIdentifier:
     )
     def test_unsafe_names_quoted_and_escaped(self, name: str, expected: str):
         assert _quote_ddl_identifier(name) == expected
+
+
+class TestGetTableOwner:
+    def test_returns_owner_when_present(self):
+        ws = MagicMock()
+        ws.tables.get.return_value = SimpleNamespace(owner="alice@x")
+        svc = DiscoveryService(ws=ws, user_id="tester")
+        assert svc.get_table_owner("cat.sch.t") == "alice@x"
+
+    def test_returns_group_or_sp_owner_verbatim(self):
+        # UC owner may be a group or service principal, not a person — stored as-is.
+        ws = MagicMock()
+        ws.tables.get.return_value = SimpleNamespace(owner="data-eng-group")
+        svc = DiscoveryService(ws=ws, user_id="tester")
+        assert svc.get_table_owner("cat.sch.t") == "data-eng-group"
+
+    def test_blank_owner_is_none(self):
+        ws = MagicMock()
+        ws.tables.get.return_value = SimpleNamespace(owner="   ")
+        svc = DiscoveryService(ws=ws, user_id="tester")
+        assert svc.get_table_owner("cat.sch.t") is None
+
+    def test_none_owner_is_none(self):
+        ws = MagicMock()
+        ws.tables.get.return_value = SimpleNamespace(owner=None)
+        svc = DiscoveryService(ws=ws, user_id="tester")
+        assert svc.get_table_owner("cat.sch.t") is None
+
+    def test_swallows_lookup_error_and_returns_none(self):
+        # Permission denied / missing table -> graceful fallback (None), so the
+        # route can default the owner to the creator.
+        ws = MagicMock()
+        ws.tables.get.side_effect = PermissionError("denied")
+        svc = DiscoveryService(ws=ws, user_id="tester")
+        assert svc.get_table_owner("cat.sch.t") is None
 
 
 class TestGetTableSchemaDdl:

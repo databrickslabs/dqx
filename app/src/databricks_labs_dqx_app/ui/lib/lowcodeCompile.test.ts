@@ -1,0 +1,1046 @@
+import { describe, expect, test } from "bun:test";
+import {
+  bodyGranularity,
+  buildSqlBody,
+  compileAstToSql,
+  compileJoinsToSql,
+  compileLowcodeBody,
+  lowcodeHasAdvancedShape,
+  pruneStaleGroupByRefs,
+  queryOmitsInputView,
+  rowStrandedByRetype,
+  sqlEditorShape,
+} from "./lowcodeCompile";
+import type { LowcodeColumnRef } from "./lowcodeCompile";
+import { renameColumnInAst, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
+import {
+  AGGREGATES,
+  aggregateAcceptsFamily,
+  OPERATORS_BY_FAMILY,
+  operatorAllowsColumnRef,
+  type Family,
+} from "./lowcodeOperators";
+
+// Unit tests for the low-code -> SQL compiler. This is the sole guard against
+// the class of bug that shipped the Advanced (joins / group-by) paths broken:
+// the compiler emits the body that materializes and runs, so a wrong shape
+// here becomes a runtime failure in the DQX runner. Run via `bun test` (see
+// `make app-test-ui`).
+
+const row = (over: Partial<AnyRow> = {}): AnyRow =>
+  ({ kind: "row", combinator: null, column_ref: "email", operator: "is not null", value: null, ...over }) as AnyRow;
+
+const ast = (rows: AnyRow[], joins: JoinAst[] = []): LowcodeAstV2 => ({ rows, joins });
+
+describe("compileAstToSql — predicate composition", () => {
+  test("single row compiles the pass-condition with a {{slot}} ref", () => {
+    expect(compileAstToSql(ast([row()]))).toBe("{{email}} IS NOT NULL");
+  });
+
+  test("multiple rows join with their combinator (first row has none)", () => {
+    const rows = [
+      row({ column_ref: "a", operator: "is not null" }),
+      row({ combinator: "AND", column_ref: "b", operator: "is null" }),
+      row({ combinator: "OR", column_ref: "c", operator: "is not null" }),
+    ];
+    expect(compileAstToSql(ast(rows))).toBe("{{a}} IS NOT NULL AND {{b}} IS NULL OR {{c}} IS NOT NULL");
+  });
+
+  test("qualified (dotted) refs are backtick-quoted; plain refs stay wrapped", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "orders.total", operator: ">", value: 5 })]))).toBe(
+      "`orders`.`total` > 5",
+    );
+  });
+
+  test("empty row stack compiles to an empty string", () => {
+    expect(compileAstToSql(ast([]))).toBe("");
+  });
+});
+
+describe("operator SQL", () => {
+  test("contains/starts/ends use Spark builtins so %/_ stay literal", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "name", operator: "contains", value: "O'Brien" })]))).toBe(
+      "contains({{name}}, 'O''Brien')",
+    );
+    expect(compileAstToSql(ast([row({ column_ref: "name", operator: "starts with", value: "O'B" })]))).toBe(
+      "startswith({{name}}, 'O''B')",
+    );
+    expect(compileAstToSql(ast([row({ column_ref: "amt", operator: "contains", value: "100%" })]))).toBe(
+      "contains({{amt}}, '100%')",
+    );
+    expect(compileAstToSql(ast([row({ column_ref: "s", operator: "ends with", value: "_x" })]))).toBe(
+      "endswith({{s}}, '_x')",
+    );
+  });
+
+  test("equality quotes strings and passes numbers/booleans through", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "s", operator: "equals", value: "x" })]))).toBe("{{s}} = 'x'");
+    expect(compileAstToSql(ast([row({ column_ref: "n", operator: "=", value: 3 })]))).toBe("{{n}} = 3");
+    expect(compileAstToSql(ast([row({ column_ref: "b", operator: "is true", value: null })]))).toBe("{{b}} = TRUE");
+  });
+
+  test("between / in render list + range forms", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "n", operator: "between", value: [1, 10] })]))).toBe(
+      "{{n}} BETWEEN 1 AND 10",
+    );
+    expect(compileAstToSql(ast([row({ column_ref: "n", operator: "in", value: ["a", "b"] })]))).toBe(
+      "{{n}} IN ('a', 'b')",
+    );
+  });
+
+  // Full operator catalogue ported from dqlake (item 3): every operator each
+  // column family offers must compile to the exact SQL below. `left` is always
+  // the `{{c}}` slot ref. A regression in any one arm shows up here rather than
+  // only at run time.
+  const OPERATOR_SQL: Array<[string, unknown, string]> = [
+    // Comparison / equality (numeric, temporal, universal)
+    ["=", 3, "{{c}} = 3"],
+    ["!=", 3, "{{c}} != 3"],
+    [">", 3, "{{c}} > 3"],
+    [">=", 3, "{{c}} >= 3"],
+    ["<", 3, "{{c}} < 3"],
+    ["<=", 3, "{{c}} <= 3"],
+    // Text
+    ["equals", "x", "{{c}} = 'x'"],
+    ["not equals", "x", "{{c}} != 'x'"],
+    ["contains", "x", "contains({{c}}, 'x')"],
+    ["does not contain", "x", "NOT contains({{c}}, 'x')"],
+    ["starts with", "x", "startswith({{c}}, 'x')"],
+    ["ends with", "x", "endswith({{c}}, 'x')"],
+    ["matches regex", "^a.*$", "{{c}} RLIKE '^a.*$'"],
+    ["has leading or trailing whitespace", null, "{{c}} != TRIM({{c}})"],
+    ["has no leading or trailing whitespace", null, "{{c}} = TRIM({{c}})"],
+    ["is a valid", "int", "TRY_CAST({{c}} AS INT) IS NOT NULL"],
+    ["is not a valid", "int", "TRY_CAST({{c}} AS INT) IS NULL"],
+    // Range / set
+    ["between", [1, 10], "{{c}} BETWEEN 1 AND 10"],
+    ["in", ["a", "b"], "{{c}} IN ('a', 'b')"],
+    ["not in", ["a", "b"], "{{c}} NOT IN ('a', 'b')"],
+    // Universal null checks
+    ["is null", null, "{{c}} IS NULL"],
+    ["is not null", null, "{{c}} IS NOT NULL"],
+    // Boolean
+    ["is true", null, "{{c}} = TRUE"],
+    ["is false", null, "{{c}} = FALSE"],
+    // Temporal
+    ["before", "2020-01-01", "{{c}} < '2020-01-01'"],
+    ["after", "2020-01-01", "{{c}} > '2020-01-01'"],
+    ["on or before", "2020-01-01", "{{c}} <= '2020-01-01'"],
+    ["on or after", "2020-01-01", "{{c}} >= '2020-01-01'"],
+    ["is in last", { number: 7, unit: "days" }, "{{c}} >= current_timestamp() - INTERVAL '7 days'"],
+    // Length
+    ["has length", 5, "length({{c}}) = 5"],
+    ["is longer than", 3, "length({{c}}) > 3"],
+    ["is shorter than", 8, "length({{c}}) < 8"],
+    ["length between", [2, 4], "length({{c}}) BETWEEN 2 AND 4"],
+    ["is not empty", null, "length(trim({{c}})) > 0"],
+    ["is empty", null, "length(trim({{c}})) = 0"],
+    // Text pattern / format
+    ["does not match regex", "^a$", "NOT ({{c}} RLIKE '^a$')"],
+    ["contains only digits", null, "{{c}} RLIKE '^[0-9]+$'"],
+    ["is uppercase", null, "{{c}} = upper({{c}})"],
+    ["is lowercase", null, "{{c}} = lower({{c}})"],
+    [
+      "is a valid uuid",
+      null,
+      "{{c}} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'",
+    ],
+    [
+      "is a valid ipv4",
+      null,
+      "{{c}} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'",
+    ],
+    // Numeric predicates
+    ["is positive", null, "{{c}} > 0"],
+    ["is negative", null, "{{c}} < 0"],
+    ["is non-negative", null, "{{c}} >= 0"],
+    ["is a whole number", null, "{{c}} = round({{c}})"],
+    ["is a multiple of", 5, "mod({{c}}, 5) = 0"],
+    // Temporal predicates
+    ["is in the future", null, "{{c}} > current_timestamp()"],
+    ["is in the past", null, "{{c}} < current_timestamp()"],
+    ["is today", null, "to_date({{c}}) = current_date()"],
+    // AI (Foundation Model)
+    ["has positive sentiment", null, "ai_analyze_sentiment({{c}}) = 'positive'"],
+    ["has negative sentiment", null, "ai_analyze_sentiment({{c}}) = 'negative'"],
+  ];
+
+  for (const [operator, value, expected] of OPERATOR_SQL) {
+    test(`operator "${operator}" compiles to ${expected}`, () => {
+      expect(compileAstToSql(ast([row({ column_ref: "c", operator, value })]))).toBe(expected);
+    });
+  }
+
+  test("aggregated row compiles the aggregate expression", () => {
+    const agg: AnyRow = {
+      kind: "aggregated",
+      combinator: null,
+      aggregate: "count",
+      column_ref: "id",
+      operator: ">",
+      value: 1,
+    };
+    expect(compileAstToSql(ast([agg]))).toBe("COUNT({{id}}) > 1");
+  });
+
+  test("passes luhn check uses the built-in luhn_check with a normalized-digit length guard", () => {
+    const sql = compileAstToSql(ast([row({ column_ref: "card", operator: "passes luhn check", value: null })]));
+    // Non-digits are stripped (luhn_check returns false on any non-digit) and
+    // the length guard rejects empty input (which would trivially pass Luhn).
+    expect(sql).toBe("length(regexp_replace({{card}}, '[^0-9]', '')) > 0 AND luhn_check(regexp_replace({{card}}, '[^0-9]', ''))");
+  });
+});
+
+// Locks the type-dependent catalogue ported from dqlake (item 3): each family
+// offers only its family-appropriate operator set, and every operator listed
+// has a compilation arm above. A drift here (added/removed/renamed operator)
+// fails loudly rather than silently shipping an operator the compiler can't
+// emit SQL for.
+describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
+  test("each family exposes exactly its operator set", () => {
+    expect(OPERATORS_BY_FAMILY.NUMERIC).toEqual([
+      "between",
+      "=",
+      "!=",
+      ">=",
+      ">",
+      "<=",
+      "<",
+      "in",
+      "not in",
+      "is positive",
+      "is negative",
+      "is non-negative",
+      "is a whole number",
+      "is a multiple of",
+      "passes luhn check",
+    ]);
+    expect(OPERATORS_BY_FAMILY.TEXTUAL).toEqual([
+      "equals",
+      "not equals",
+      "contains",
+      "does not contain",
+      "starts with",
+      "ends with",
+      "in",
+      "not in",
+      "matches regex",
+      "does not match regex",
+      "has length",
+      "is longer than",
+      "is shorter than",
+      "length between",
+      "is not empty",
+      "is empty",
+      "contains only digits",
+      "is uppercase",
+      "is lowercase",
+      "is a valid uuid",
+      "is a valid ipv4",
+      "passes luhn check",
+      "has leading or trailing whitespace",
+      "has no leading or trailing whitespace",
+      "is a valid",
+      "is not a valid",
+      "has positive sentiment",
+      "has negative sentiment",
+    ]);
+    expect(OPERATORS_BY_FAMILY.TEMPORAL).toEqual([
+      "on or after",
+      "on or before",
+      "after",
+      "before",
+      "between",
+      "is in last",
+      "is in the future",
+      "is in the past",
+      "is today",
+      "=",
+      "!=",
+    ]);
+    expect(OPERATORS_BY_FAMILY.BOOLEAN).toEqual(["is true", "is false"]);
+    expect(OPERATORS_BY_FAMILY.ANY).toEqual([
+      "is null",
+      "is not null",
+      "=",
+      "!=",
+      "in",
+      "not in",
+      "is not empty",
+      "is empty",
+    ]);
+  });
+
+  test("every catalogue operator compiles to non-empty SQL (no unhandled arm)", () => {
+    const sampleValue = (op: string): unknown => {
+      if (op === "between" || op === "length between") return [1, 2];
+      if (op === "in" || op === "not in") return ["a"];
+      if (op === "is in last") return { number: 1, unit: "days" };
+      if (op === "is a valid" || op === "is not a valid") return "int";
+      if (op === "has length" || op === "is longer than" || op === "is shorter than" || op === "is a multiple of")
+        return 3;
+      return "x";
+    };
+    const all = new Set(Object.values(OPERATORS_BY_FAMILY).flat());
+    for (const op of all) {
+      const sql = compileAstToSql(ast([row({ column_ref: "c", operator: op, value: sampleValue(op) })]));
+      expect(sql.length, `operator "${op}" produced empty SQL`).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("compileJoinsToSql", () => {
+  test("LEFT JOIN emits the qualified ON condition against a {{slot}} ref", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    // Default qualifies the own side to the input view (low-code path).
+    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{input_view}}.{{customer_id}}");
+    // Raw-SQL editor path opts out — own side stays a bare {{slot}}.
+    expect(compileJoinsToSql(joins, false)).toBe("LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{customer_id}}");
+  });
+
+  test("CROSS JOIN emits no ON clause", () => {
+    expect(compileJoinsToSql([{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }])).toBe(
+      "CROSS JOIN `c`.`s`.`dim`",
+    );
+  });
+});
+
+describe("compileLowcodeBody — folding", () => {
+  test("no joins & no group-by -> { predicate } only (no NOT wrapping)", () => {
+    const body = compileLowcodeBody(ast([row()]), "");
+    expect(body).toEqual({ predicate: "{{email}} IS NOT NULL" });
+    expect(body.sql_query).toBeUndefined();
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("group-by -> row-level sql_query with NOT(P) wrapping + merge_columns = group columns", () => {
+    const agg: AnyRow = {
+      kind: "aggregated",
+      combinator: null,
+      aggregate: "count",
+      column_ref: "id",
+      operator: ">",
+      value: 1,
+    };
+    const body = compileLowcodeBody(ast([agg]), "{{region}}");
+    expect(body.sql_query).toBe(
+      "SELECT {{region}}, (NOT (COUNT({{id}}) > 1)) AS condition FROM {{input_view}} GROUP BY {{region}}",
+    );
+    expect(body.merge_columns).toEqual(["{{region}}"]);
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("joins only -> row-level sql_query merging on the input-side join keys", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: "is not null" })], joins), "");
+    // Predicate + ON own-side qualified to the input view (unambiguous under join);
+    // SELECT projects the qualified source aliased back to the bare merge name.
+    expect(body.sql_query).toBe(
+      "SELECT {{input_view}}.{{customer_id}} AS {{customer_id}}, " +
+        "(NOT ({{input_view}}.{{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{input_view}}.{{customer_id}}",
+    );
+    // merge_columns stay BARE — the library passes them verbatim to df.join(on=);
+    // an {{input_view}}-qualified value would be an invalid bare identifier at run.
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("joins + group-by -> group-by wins as the merge key", () => {
+    const joins: JoinAst[] = [
+      { join_type: "INNER", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "cid" }] },
+    ];
+    const agg: AnyRow = {
+      kind: "aggregated",
+      combinator: null,
+      aggregate: "sum",
+      column_ref: "amount",
+      operator: ">",
+      value: 0,
+    };
+    const body = compileLowcodeBody(ast([agg], joins), "{{region}}");
+    expect(body.merge_columns).toEqual(["{{region}}"]);
+    // ON own-side qualified under the join; GROUP BY stays bare.
+    expect(body.sql_query).toContain("INNER JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{input_view}}.{{cid}}");
+    expect(body.sql_query).toContain("GROUP BY {{region}}");
+  });
+
+  test("expression group-by (legacy raw string) splits at top-level commas only — no corruption", () => {
+    const body = compileLowcodeBody(ast([row()]), "{{region}}, COALESCE({{country}}, 'XX')");
+    // The COALESCE's inner comma must NOT split into invalid fragments.
+    expect(body.merge_columns).toEqual(["{{region}}", "COALESCE({{country}}, 'XX')"]);
+    expect(body.sql_query).toContain("GROUP BY {{region}}, COALESCE({{country}}, 'XX')");
+  });
+
+  test("CROSS-join-only (no keys, no group-by) -> dataset-level query, no merge_columns", () => {
+    const body = compileLowcodeBody(ast([row()], [{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }]), "");
+    // A CROSS join still means a joined table is present, so own predicate
+    // columns are qualified to the input view (unambiguous). No merge key exists.
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{input_view}}.{{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN `c`.`s`.`dim`",
+    );
+    expect(body.merge_columns).toBeUndefined();
+  });
+});
+
+describe("join column qualification (AMBIGUOUS_REFERENCE / INVALID_IDENTIFIER regression)", () => {
+  const JOIN: JoinAst[] = [
+    {
+      join_type: "INNER",
+      target_table: "dqx.dqx_studio_demo.customers",
+      keys: [{ joined_column: "customer_id", column_ref: "customer_id" }],
+    },
+  ];
+
+  test("no-join predicate stays bare (byte-identical)", () => {
+    const body = compileLowcodeBody(ast([row({ column_ref: "amount", operator: ">", value: 0 })]), "");
+    expect(body.predicate).toBe("{{amount}} > 0");
+    expect(body.sql_query).toBeUndefined();
+    expect(body.predicate).not.toContain("input_view");
+  });
+
+  test("join predicate + SELECT own column qualified; merge_columns bare", () => {
+    const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: ">", value: 0 })], JOIN), "");
+    expect(body.sql_query).toContain("NOT ({{input_view}}.{{customer_id}} > 0)");
+    expect(body.sql_query).toContain("SELECT {{input_view}}.{{customer_id}} AS {{customer_id}},");
+    expect(body.sql_query).toContain(
+      "ON `dqx`.`dqx_studio_demo`.`customers`.`customer_id` = {{input_view}}.{{customer_id}}",
+    );
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("joined-table column is backtick-quoted under a join", () => {
+    const body = compileLowcodeBody(
+      ast([row({ column_ref: "dqx.dqx_studio_demo.customers.tier", operator: "=", value: "gold" })], JOIN),
+      "",
+    );
+    expect(body.sql_query).toContain("`dqx`.`dqx_studio_demo`.`customers`.`tier`");
+    expect(body.sql_query).not.toContain("{{input_view}}.dqx.dqx_studio_demo.customers.tier");
+    expect(body.sql_query).not.toContain("{{input_view}}.`dqx`");
+  });
+
+  test("$col value qualified under a join", () => {
+    const body = compileLowcodeBody(
+      ast([row({ column_ref: "start_date", operator: "before", value: { $col: "end_date" } })], JOIN),
+      "",
+    );
+    expect(body.sql_query).toContain("{{input_view}}.{{start_date}} < {{input_view}}.{{end_date}}");
+  });
+
+  // The check the v1 fix LACKED: reproduce BOTH runtime substitution layers and
+  // prove the executed query is valid AND merge_columns are bare.
+  test("end-to-end two-layer substitution yields valid SQL + bare merge_columns", () => {
+    const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: ">", value: 0 })], JOIN), "");
+    const cols = ["customer_id", "start_date", "end_date", "region"];
+    // Layer 1 — app materializer: substitute {{col}} slots in query AND merge_columns
+    // (does NOT touch {{input_view}}).
+    const app = (t: string) => cols.reduce((acc, c) => acc.replaceAll(`{{${c}}}`, c), t);
+    const q1 = app(body.sql_query ?? "");
+    const mc1 = (body.merge_columns ?? []).map(app);
+    // Layer 2 — DQX library: substitute {{input_view}} in the QUERY ONLY.
+    const view = "customer_id_query_condition_violation_input_view_deadbeef";
+    const q2 = q1.replace(/\{\{\s*input_view\s*\}\}/g, view);
+    // No residual placeholders anywhere in the executed query.
+    expect(q2).not.toContain("{{");
+    expect(q2).not.toContain("}}");
+    // merge_columns are BARE column names (valid for df.select / df.join(on=)).
+    expect(mc1).toEqual(["customer_id"]);
+    // Own column resolved qualified against the unique view (no ambiguity).
+    expect(q2).toContain(`${view}.customer_id`);
+  });
+});
+
+describe("lowcodeHasAdvancedShape — Test-tab gating", () => {
+  test("plain row predicate is NOT advanced (row-testable)", () => {
+    expect(lowcodeHasAdvancedShape(ast([row()]), "")).toBe(false);
+  });
+
+  test("group-by makes the rule advanced (not row-testable)", () => {
+    expect(lowcodeHasAdvancedShape(ast([row()]), "{{region}}")).toBe(true);
+  });
+
+  test("joins make the rule advanced (not row-testable)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "cid" }] },
+    ];
+    expect(lowcodeHasAdvancedShape(ast([row({ column_ref: "cid" })], joins), "")).toBe(true);
+  });
+
+  test("classification matches compileLowcodeBody's own sql_query shape", () => {
+    const joins: JoinAst[] = [
+      { join_type: "INNER", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "cid" }] },
+    ];
+    const advancedAst = ast([row({ column_ref: "cid" })], joins);
+    expect(lowcodeHasAdvancedShape(advancedAst, "")).toBe(compileLowcodeBody(advancedAst, "").sql_query !== undefined);
+  });
+});
+
+describe("pruneStaleGroupByRefs", () => {
+  const col = (name: string): LowcodeColumnRef => ({ name, family: "textual" as LowcodeColumnRef["family"] });
+  const declared: LowcodeColumnRef[] = [col("region"), col("country")];
+
+  test("nothing stale -> returns the same value unchanged", () => {
+    const value = "{{region}}, {{country}}";
+    expect(pruneStaleGroupByRefs(value, declared)).toBe(value);
+  });
+
+  test("one stale token (column removed from Columns Used) is pruned", () => {
+    // {{removed}} is no longer a declared column — e.g. dropped from "Columns Used"
+    // after being used as a group-by key.
+    expect(pruneStaleGroupByRefs("{{region}}, {{removed}}", declared)).toBe("{{region}}");
+  });
+
+  test("all tokens stale -> prunes to empty string", () => {
+    expect(pruneStaleGroupByRefs("{{removed1}}, {{removed2}}", declared)).toBe("");
+  });
+
+  test("qualified (dotted) join-key refs are treated as-is, not slot-wrapped", () => {
+    const withJoinKey: LowcodeColumnRef[] = [...declared, col("orders.total")];
+    const value = "{{region}}, orders.total";
+    expect(pruneStaleGroupByRefs(value, withJoinKey)).toBe(value);
+  });
+});
+
+describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without corruption", () => {
+  const CROSS_TABLE_QUERY =
+    "SELECT {{customer_id}}, (NOT ({{amount}} > 0)) AS condition " +
+    "FROM {{input_view}} LEFT JOIN c.s.orders ON c.s.orders.cid = {{customer_id}}";
+
+  test("loaded cross-table rule, unedited resave -> stays sql_query (current text)", () => {
+    // No-edit resave reopens with sqlJoins=[] and the full SELECT in the editor.
+    // It must be persisted as sql_query, NOT flipped into { predicate: <SELECT> }.
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(CROSS_TABLE_QUERY);
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("loaded cross-table rule, EDITED query text -> saves the edit AS sql_query (not sql_expression)", () => {
+    // The literal edit+resave case: the author tweaks the loaded SELECT. As long
+    // as the rule is still a loaded cross-table query, the edited text is saved
+    // as sql_query — never downgraded to a broken sql_expression.
+    const edited = CROSS_TABLE_QUERY.replace("> 0", "> 100");
+    const body = buildSqlBody({
+      sqlPredicate: edited,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(edited);
+    expect(body.predicate).toBeUndefined();
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough preserves merge_columns (row-level merge, not dataset-level)", () => {
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough without merge_columns stays dataset-level (no merge_columns key)", () => {
+    const q = "SELECT (NOT (COUNT(*) > 0)) AS condition FROM {{input_view}} CROSS JOIN `c`.`s`.`dim`";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: {} });
+    expect(body.sql_query).toBe(q);
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("joins re-declared -> recompiles a fresh sql_query from predicate + joins (passthrough ignored)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    const body = buildSqlBody({
+      sqlPredicate: "{{customer_id}} IS NOT NULL",
+      sqlJoins: joins,
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(
+      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN `c`.`s`.`dim` ON `c`.`s`.`dim`.`id` = {{customer_id}}",
+    );
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("no joins, no passthrough -> plain single-table { predicate }", () => {
+    const body = buildSqlBody({ sqlPredicate: "{{email}} IS NOT NULL", sqlJoins: [] });
+    expect(body).toEqual({ predicate: "{{email}} IS NOT NULL" });
+  });
+
+  test("no joins, null passthrough (type changed away) -> falls back to { predicate }", () => {
+    expect(buildSqlBody({ sqlPredicate: "x > 0", sqlJoins: [], sqlQueryPassthrough: null })).toEqual({
+      predicate: "x > 0",
+    });
+  });
+
+  // Item 55: a SQL predicate authored WITH a join must become a runnable
+  // sql_query, not a bare predicate (which the backend renders as an
+  // unrunnable sql_expression).
+  test("bare boolean predicate + JOIN clause -> wraps into a dataset-level sql_query", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{region}} IS NOT NULL\nLEFT JOIN c.s.dim a ON a.region = {{region}}",
+      sqlJoins: [],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{region}} IS NOT NULL)) AS condition FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("a full SELECT … JOIN is persisted as sql_query as-is", () => {
+    const q = "SELECT (NOT (x > 0)) AS condition FROM {{input_view}} INNER JOIN c.s.d d ON d.k = {{k}}";
+    expect(buildSqlBody({ sqlPredicate: q, sqlJoins: [] })).toEqual({ sql_query: q });
+  });
+
+  test("bare 'JOIN' (defaults to INNER) is detected", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{id}} IS NOT NULL JOIN c.s.d d ON d.id = {{id}}",
+      sqlJoins: [],
+    });
+    expect(body.sql_query).toContain("FROM {{input_view}} JOIN c.s.d d ON d.id = {{id}}");
+  });
+
+  // The SQL tab's joins CARD (structured joins, as opposed to a JOIN typed into
+  // the editor). This is what makes a cross-table SQL rule row-level without the
+  // author picking merge keys by hand: the keys come from the join itself, the
+  // same way the visual builder derives them.
+  test("structured joins + bare predicate -> sql_query with merge_columns from the join keys", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "c.id IS NOT NULL",
+      sqlJoins: [
+        {
+          join_type: "LEFT",
+          target_table: "main.sales.customers",
+          keys: [{ joined_column: "id", column_ref: "customer_id" }],
+        },
+      ],
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+    expect(body.sql_query).toContain("SELECT {{customer_id}},");
+    expect(body.sql_query).toContain("FROM {{input_view}} LEFT JOIN `main`.`sales`.`customers`");
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("structured joins + an explicit row-level toggle uses the author's merge keys", () => {
+    // With a full query in the editor the granularity toggle is live, and the
+    // author's keys win over the join-derived ones.
+    const body = buildSqlBody({
+      sqlPredicate: "c.id IS NOT NULL",
+      sqlJoins: [
+        {
+          join_type: "LEFT",
+          target_table: "main.sales.customers",
+          keys: [{ joined_column: "id", column_ref: "customer_id" }],
+        },
+      ],
+      granularity: "row",
+      mergeColumns: ["{{order_id}}"],
+    });
+    expect(body.merge_columns).toEqual(["{{order_id}}"]);
+  });
+
+  test("a plain predicate with no join stays a { predicate } (sql_expression)", () => {
+    expect(buildSqlBody({ sqlPredicate: "{{amount}} > 0 AND {{amount}} < 1e9", sqlJoins: [] })).toEqual({
+      predicate: "{{amount}} > 0 AND {{amount}} < 1e9",
+    });
+  });
+
+  test("a '-- join ...' comment does NOT trip join detection", () => {
+    expect(buildSqlBody({ sqlPredicate: "{{a}} > 0 -- consider a join here", sqlJoins: [] })).toEqual({
+      predicate: "{{a}} > 0 -- consider a join here",
+    });
+  });
+
+});
+
+// Granularity: which rules report per row and which report one verdict for the
+// whole table. `merge_columns` is the ONLY thing that decides it for a
+// `sql_query`, so these guard both the derivation the UI displays and the body
+// the toggle emits.
+describe("bodyGranularity", () => {
+  test("a predicate is row-level (sql_expression is evaluated per row)", () => {
+    expect(bodyGranularity({ predicate: "{{a}} > 0" })).toBe("row");
+  });
+
+  test("a sql_query WITH merge columns is row-level", () => {
+    expect(bodyGranularity({ sql_query: "SELECT ...", merge_columns: ["{{id}}"] })).toBe("row");
+  });
+
+  test("a sql_query with no / empty merge columns is dataset-level", () => {
+    expect(bodyGranularity({ sql_query: "SELECT ..." })).toBe("dataset");
+    expect(bodyGranularity({ sql_query: "SELECT ...", merge_columns: [] })).toBe("dataset");
+  });
+});
+
+describe("sqlEditorShape", () => {
+  test("a bare boolean predicate is a predicate", () => {
+    expect(sqlEditorShape("{{amount}} > 0 AND {{amount}} < 100")).toBe("predicate");
+  });
+
+  test("empty text is a predicate (nothing to choose yet)", () => {
+    expect(sqlEditorShape("   ")).toBe("predicate");
+  });
+
+  test("a full SELECT is a query", () => {
+    expect(sqlEditorShape("SELECT (NOT (x)) AS condition FROM {{input_view}}")).toBe("query");
+  });
+
+  test("a predicate carrying JOIN clauses is a query", () => {
+    expect(sqlEditorShape("{{r}} IS NOT NULL LEFT JOIN c.s.d d ON d.r = {{r}}")).toBe("query");
+  });
+
+  test("a '-- join' comment does not make a predicate look like a query", () => {
+    expect(sqlEditorShape("{{a}} > 0 -- consider a join here")).toBe("predicate");
+  });
+});
+
+describe("queryOmitsInputView", () => {
+  // The exact shape a table-level author lands on: a dataset verdict over a
+  // column of the monitored table, with nothing to read it from. Both DQX and
+  // the Test tab fail it with UNRESOLVED_COLUMN.
+  test("a SELECT over a column slot with no FROM is flagged", () => {
+    expect(queryOmitsInputView("SELECT (COUNT_IF({{customer_id}} IS NULL) > 0) AS condition", ["customer_id"])).toBe(
+      true,
+    );
+  });
+
+  test("the same query reading the input view is fine", () => {
+    expect(
+      queryOmitsInputView("SELECT (COUNT_IF({{customer_id}} IS NULL) > 0) AS condition FROM {{input_view}}", [
+        "customer_id",
+      ]),
+    ).toBe(false);
+  });
+
+  test("whitespace inside the braces still counts as reading the input view", () => {
+    expect(queryOmitsInputView("SELECT ({{a}} > 0) AS condition FROM {{ input_view }}", ["a"])).toBe(false);
+  });
+
+  test("a query over only reference tables is legitimate", () => {
+    expect(queryOmitsInputView("SELECT (COUNT(*) = 0) AS condition FROM {{ref_table}} r", ["customer_id"])).toBe(false);
+  });
+
+  test("a bare predicate is never flagged — it compiles to sql_expression", () => {
+    expect(queryOmitsInputView("{{customer_id}} IS NOT NULL", ["customer_id"])).toBe(false);
+  });
+
+  test("a predicate carrying JOINs is not flagged — buildSqlBody projects the FROM", () => {
+    expect(
+      queryOmitsInputView("{{region}} IS NOT NULL\nLEFT JOIN {{dim}} d ON d.region = {{region}}", ["region"]),
+    ).toBe(false);
+  });
+
+  test("a commented-out input view does not count", () => {
+    expect(queryOmitsInputView("SELECT ({{a}} > 0) AS condition -- FROM {{input_view}}", ["a"])).toBe(true);
+  });
+});
+
+describe("buildSqlBody — row/table granularity toggle", () => {
+  const PRED_WITH_JOIN = "{{region}} IS NOT NULL\nLEFT JOIN c.s.dim a ON a.region = {{region}}";
+
+  // F3: this exact shape (JOIN, no merge columns) raises InvalidParameterError at
+  // runtime on any table with more than one row. Choosing row-level and naming a
+  // key is what makes it runnable, so the key must land in BOTH merge_columns and
+  // the SELECT list — DQX joins the verdict back on a column it has to receive.
+  test("row-level projects the merge keys into the SELECT and sets merge_columns", () => {
+    const body = buildSqlBody({
+      sqlPredicate: PRED_WITH_JOIN,
+      sqlJoins: [],
+      granularity: "row",
+      mergeColumns: ["{{region}}"],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT {{region}}, (NOT ({{region}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.merge_columns).toEqual(["{{region}}"]);
+    expect(bodyGranularity(body)).toBe("row");
+  });
+
+  test("multiple merge keys are all projected, in order", () => {
+    const body = buildSqlBody({
+      sqlPredicate: PRED_WITH_JOIN,
+      sqlJoins: [],
+      granularity: "row",
+      mergeColumns: ["{{region}}", "{{day}}"],
+    });
+    expect(body.sql_query).toContain("SELECT {{region}}, {{day}}, (NOT (");
+    expect(body.merge_columns).toEqual(["{{region}}", "{{day}}"]);
+  });
+
+  test("dataset-level projects nothing and emits no merge columns", () => {
+    const body = buildSqlBody({
+      sqlPredicate: PRED_WITH_JOIN,
+      sqlJoins: [],
+      granularity: "dataset",
+      // Stale keys from a previous row-level choice must not leak through.
+      mergeColumns: ["{{region}}"],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{region}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.merge_columns).toBeUndefined();
+    expect(bodyGranularity(body)).toBe("dataset");
+  });
+
+  test("row-level attaches merge columns to an author-written SELECT without rewriting it", () => {
+    const q = "SELECT {{k}}, (NOT (x > 0)) AS condition FROM {{input_view}} JOIN c.s.d d ON d.k = {{k}}";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], granularity: "row", mergeColumns: ["{{k}}"] });
+    expect(body.sql_query).toBe(q);
+    expect(body.merge_columns).toEqual(["{{k}}"]);
+  });
+
+  test("dataset-level strips the merge columns of a loaded row-level query", () => {
+    const q = "SELECT {{k}}, (NOT (x > 0)) AS condition FROM {{input_view}} JOIN c.s.d d ON d.k = {{k}}";
+    const body = buildSqlBody({
+      sqlPredicate: q,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{k}}"] },
+      granularity: "dataset",
+    });
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("a bare predicate ignores a dataset choice and stays sql_expression", () => {
+    // The UI locks the toggle to row-level for this shape; the compiler agrees
+    // rather than inventing an aggregate the author never wrote.
+    expect(
+      buildSqlBody({ sqlPredicate: "{{a}} > 0", sqlJoins: [], granularity: "dataset", mergeColumns: [] }),
+    ).toEqual({ predicate: "{{a}} > 0" });
+  });
+
+  test("row-level with no keys named emits no merge columns (the UI blocks saving this)", () => {
+    const body = buildSqlBody({ sqlPredicate: PRED_WITH_JOIN, sqlJoins: [], granularity: "row", mergeColumns: [] });
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("omitting granularity preserves the loaded merge columns (pre-toggle behaviour)", () => {
+    const q = "SELECT {{k}}, (NOT (x > 0)) AS condition FROM {{input_view}} JOIN c.s.d d ON d.k = {{k}}";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: { merge_columns: ["{{k}}"] } });
+    expect(body.merge_columns).toEqual(["{{k}}"]);
+  });
+});
+
+describe("item42: column-ref RHS in single-value operators", () => {
+  test("item42: comparison RHS column-ref emits {{col}} not a quoted literal", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })])),
+    ).toBe("{{amount}} >= {{credit_limit}}");
+  });
+
+  test("item42: equals with a column-ref RHS compiles to = {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "a", operator: "equals", value: { $col: "b" } })])),
+    ).toBe("{{a}} = {{b}}");
+  });
+
+  test("item42: temporal 'before' with a column-ref RHS compiles to < {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "start_date", operator: "before", value: { $col: "end_date" } })])),
+    ).toBe("{{start_date}} < {{end_date}}");
+  });
+
+  test("item42: a qualified (join) column RHS is backtick-quoted", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "orders.total" } })])),
+    ).toBe("{{amount}} >= `orders`.`total`");
+  });
+
+  test("item42: literal RHS is unchanged (regression)", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: 100 })]))).toBe(
+      "{{amount}} >= 100",
+    );
+  });
+});
+
+test("item42: between with a column upper bound mixes literal + {{col}}", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "x", operator: "between", value: [0, { $col: "cap" }] })])),
+  ).toBe("{{x}} BETWEEN 0 AND {{cap}}");
+});
+
+test("item42: 'in' with a column entry emits {{col}} alongside literals", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "code", operator: "in", value: ["A", { $col: "fallback_code" }] })])),
+  ).toBe("{{code}} IN ('A', {{fallback_code}})");
+});
+
+test("item42: length between literal bounds unchanged (regression)", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "name", operator: "length between", value: [1, 10] })])),
+  ).toBe("length({{name}}) BETWEEN 1 AND 10");
+});
+
+test("item42: a column-ref value survives JSON round-trip and still compiles", () => {
+  const original = ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })]);
+  const rehydrated = JSON.parse(JSON.stringify(original)) as typeof original;
+  expect(compileAstToSql(rehydrated)).toBe("{{amount}} >= {{credit_limit}}");
+});
+
+describe("operatorAllowsColumnRef", () => {
+  test("returns true for column-enabled single-value operators", () => {
+    expect(operatorAllowsColumnRef("<")).toBe(true);
+    expect(operatorAllowsColumnRef("<=")).toBe(true);
+    expect(operatorAllowsColumnRef(">")).toBe(true);
+    expect(operatorAllowsColumnRef(">=")).toBe(true);
+    expect(operatorAllowsColumnRef("=")).toBe(true);
+    expect(operatorAllowsColumnRef("!=")).toBe(true);
+    expect(operatorAllowsColumnRef("equals")).toBe(true);
+    expect(operatorAllowsColumnRef("not equals")).toBe(true);
+    expect(operatorAllowsColumnRef("before")).toBe(true);
+    expect(operatorAllowsColumnRef("after")).toBe(true);
+    expect(operatorAllowsColumnRef("on or before")).toBe(true);
+    expect(operatorAllowsColumnRef("on or after")).toBe(true);
+  });
+
+  test("returns true for range and set operators (column-enabled bounds/entries)", () => {
+    expect(operatorAllowsColumnRef("between")).toBe(true);
+    expect(operatorAllowsColumnRef("length between")).toBe(true);
+    expect(operatorAllowsColumnRef("in")).toBe(true);
+    expect(operatorAllowsColumnRef("not in")).toBe(true);
+  });
+
+  test("returns false for literal-only operators (LIKE / regex / length predicates)", () => {
+    expect(operatorAllowsColumnRef("contains")).toBe(false);
+    expect(operatorAllowsColumnRef("does not contain")).toBe(false);
+    expect(operatorAllowsColumnRef("starts with")).toBe(false);
+    expect(operatorAllowsColumnRef("ends with")).toBe(false);
+    expect(operatorAllowsColumnRef("matches regex")).toBe(false);
+    expect(operatorAllowsColumnRef("does not match regex")).toBe(false);
+    expect(operatorAllowsColumnRef("has length")).toBe(false);
+    expect(operatorAllowsColumnRef("is longer than")).toBe(false);
+    expect(operatorAllowsColumnRef("is shorter than")).toBe(false);
+    expect(operatorAllowsColumnRef("is a multiple of")).toBe(false);
+  });
+});
+
+// A slot's family constrains which real column may bind to it; `ANY` declares
+// no constraint. Treating a column's ANY as a concrete type made it satisfy
+// nothing, so the aggregate picker offered only the universal aggregates for
+// the DEFAULT slot family — sum/avg/min/max stayed hidden even with Group by set.
+describe("aggregateAcceptsFamily — ANY is a wildcard on both sides", () => {
+  test("an unconstrained (ANY) column accepts every aggregate", () => {
+    for (const agg of AGGREGATES) {
+      expect(aggregateAcceptsFamily(agg, "ANY")).toBe(true);
+    }
+  });
+
+  test("an any-family aggregate accepts every column family", () => {
+    const families: Family[] = ["NUMERIC", "TEXTUAL", "TEMPORAL", "BOOLEAN", "ANY"];
+    for (const family of families) {
+      expect(aggregateAcceptsFamily("count", family)).toBe(true);
+      expect(aggregateAcceptsFamily("null_rate", family)).toBe(true);
+    }
+  });
+
+  test("a concrete family is still checked against the aggregate's own spec", () => {
+    expect(aggregateAcceptsFamily("sum", "NUMERIC")).toBe(true);
+    expect(aggregateAcceptsFamily("sum", "TEXTUAL")).toBe(false);
+    expect(aggregateAcceptsFamily("max", "TEMPORAL")).toBe(true);
+    expect(aggregateAcceptsFamily("max", "BOOLEAN")).toBe(false);
+    expect(aggregateAcceptsFamily("bool_and", "BOOLEAN")).toBe(true);
+    expect(aggregateAcceptsFamily("bool_and", "NUMERIC")).toBe(false);
+  });
+
+  test("an unknown aggregate accepts nothing, ANY column included", () => {
+    expect(aggregateAcceptsFamily("nope", "ANY")).toBe(false);
+    expect(aggregateAcceptsFamily("nope", "NUMERIC")).toBe(false);
+  });
+});
+
+describe("renameColumnInAst — slot rename propagation", () => {
+  const colRefRow = (over: Partial<AnyRow> = {}): AnyRow =>
+    ({ kind: "row", combinator: null, column_ref: "price", operator: "=", value: { $col: "cost" }, ...over }) as AnyRow;
+
+  test("rewrites the LHS column_ref stub", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    const after = renameColumnInAst(before, "email", "contact_email");
+    expect(after.rows[0].column_ref).toBe("contact_email");
+  });
+
+  test("rewrites a { $col } RHS value", () => {
+    const after = renameColumnInAst(ast([colRefRow()]), "cost", "list_cost");
+    expect(after.rows[0].value).toEqual({ $col: "list_cost" });
+    expect(after.rows[0].column_ref).toBe("price"); // LHS untouched
+  });
+
+  test("rewrites both LHS and RHS in a single row", () => {
+    const after = renameColumnInAst(ast([colRefRow({ column_ref: "x", value: { $col: "x" } })]), "x", "y");
+    expect(after.rows[0].column_ref).toBe("y");
+    expect(after.rows[0].value).toEqual({ $col: "y" });
+  });
+
+  test("rewrites join key column_refs", () => {
+    const joins: JoinAst[] = [
+      { join_type: "INNER", target_table: "cat.sch.dim", keys: [{ joined_column: "id", column_ref: "region" }] },
+    ];
+    const after = renameColumnInAst(ast([row()], joins), "region", "region_code");
+    expect(after.joins[0].keys[0].column_ref).toBe("region_code");
+    expect(after.joins[0].keys[0].joined_column).toBe("id"); // joined side untouched
+  });
+
+  test("no-op when the old name is absent (structurally equal)", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    const after = renameColumnInAst(before, "missing", "whatever");
+    expect(after).toEqual(before);
+  });
+
+  test("no-op when old === new (returns same reference)", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    expect(renameColumnInAst(before, "email", "email")).toBe(before);
+  });
+
+  test("leaves literal values and qualified refs alone", () => {
+    const before = ast([row({ column_ref: "amount", operator: "=", value: 5 })]);
+    const after = renameColumnInAst(before, "other", "renamed");
+    expect(after.rows[0].value).toBe(5);
+  });
+});
+
+describe("rowStrandedByRetype — retype stranding predicate", () => {
+  const lookup = (m: Record<string, Family>) => (name: string): Family | undefined => m[name];
+
+  test("LHS: operator no longer offered for the new family strands the row", () => {
+    const r = row({ column_ref: "code", operator: "contains", value: "x" });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(true);
+  });
+
+  test("LHS: operator still valid for the new family does not strand", () => {
+    const r = row({ column_ref: "code", operator: "is not null", value: null });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
+  });
+
+  test("RHS { $col }: retype breaks family match with LHS -> stranded", () => {
+    const r = row({ column_ref: "price", operator: "=", value: { $col: "cost" } });
+    // LHS price is NUMERIC, cost is being retyped to TEXTUAL -> mismatch.
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({ price: "NUMERIC" }))).toBe(true);
+  });
+
+  test("RHS { $col }: retype keeps family match -> not stranded", () => {
+    const r = row({ column_ref: "price", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "NUMERIC", "TEMPORAL", lookup({ price: "NUMERIC" }))).toBe(false);
+  });
+
+  test("RHS { $col }: LHS family ANY never strands", () => {
+    const r = row({ column_ref: "anything", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({ anything: "ANY" }))).toBe(false);
+  });
+
+  test("RHS { $col }: unresolvable LHS falls back to differing-from-old", () => {
+    const r = row({ column_ref: "gone", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({}))).toBe(true);
+    expect(rowStrandedByRetype(r, "cost", "NUMERIC", "NUMERIC", lookup({}))).toBe(false);
+  });
+
+  test("row not referencing the retyped slot is never stranded", () => {
+    const r = row({ column_ref: "other", operator: "contains", value: "x" });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
+  });
+});

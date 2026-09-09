@@ -24,19 +24,19 @@ future migration authors from silently breaking the contract:
    raw ``CREATE SCHEMA prod-east.dqx_studio``.
 """
 
-from __future__ import annotations
-
+import re
 from unittest.mock import MagicMock
 
 import pytest
 
 from databricks_labs_dqx_app.backend.migrations import (
+    ANALYTICAL_TABLE_NAMES,
     MIGRATIONS,
+    OLTP_TABLE_NAMES,
     MigrationRunner,
     _validate_template_safe,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-
 
 # ---------------------------------------------------------------------------
 # Template scanner: positive + negative + live regression
@@ -136,6 +136,81 @@ class TestLiveMigrationsAreTemplateSafe:
 
 
 # ---------------------------------------------------------------------------
+# Baseline shape — the schema is CREATE-only
+# ---------------------------------------------------------------------------
+
+
+def _statements(template: str) -> list[str]:
+    """Split a migration template the way ``_apply`` does, whitespace-normalized."""
+    return [" ".join(stmt.split()) for stmt in template.split(";") if stmt.strip()]
+
+
+class TestBaselineOnlyCatalogue:
+    """The catalogue is one analytical baseline expressed as CREATE TABLE.
+
+    There are no external installs to upgrade yet, so a shape change is
+    edited into the baseline rather than appended as an ALTER. These tests
+    pin that decision: an ``ADD COLUMN``, ``DROP COLUMN``, or backfill
+    ``UPDATE`` creeping back in would mean the schema is once again split
+    across a replay chain — and ``DROP COLUMN`` in particular is rejected
+    outright by Delta tables without the column-mapping feature, which is
+    how the previous chain broke in CI.
+    """
+
+    def test_catalogue_contains_only_the_analytical_baseline(self) -> None:
+        assert [(m.version, m.description) for m in MIGRATIONS] == [
+            (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)")
+        ]
+
+    def test_delta_migrations_do_not_create_oltp_tables(self) -> None:
+        created = {
+            match
+            for migration in MIGRATIONS
+            for match in re.findall(
+                r"CREATE TABLE IF NOT EXISTS \{catalog\}\.\{schema\}\.([a-z_][a-z0-9_]*)",
+                migration.sql_template,
+            )
+        }
+        assert created.isdisjoint(OLTP_TABLE_NAMES)
+
+    def test_every_statement_creates_a_table_or_adds_a_constraint(self) -> None:
+        # ADD CONSTRAINT is the one unavoidable ALTER: Delta accepts only
+        # PK/FK inline in CREATE TABLE, so CHECKs follow their table.
+        for migration in MIGRATIONS:
+            for stmt in _statements(migration.sql_template):
+                creates = stmt.startswith("CREATE TABLE IF NOT EXISTS")
+                constrains = stmt.startswith("ALTER TABLE") and "ADD CONSTRAINT" in stmt
+                assert creates or constrains, f"v{migration.version} statement is neither: {stmt[:120]}"
+
+    def test_no_table_is_created_by_both_baselines(self) -> None:
+        assert not set(ANALYTICAL_TABLE_NAMES) & set(OLTP_TABLE_NAMES)
+
+    def test_analytical_baseline_owns_the_spark_written_tables(self) -> None:
+        assert ANALYTICAL_TABLE_NAMES == (
+            "dq_profiling_results",
+            "dq_validation_runs",
+            "dq_quarantine_records",
+            "dq_metrics",
+        )
+
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "dq_rules",
+            "dq_monitored_tables",
+            "dq_data_products",
+            "dq_pending_applications",
+            "dq_tag_auto_suppressions",
+            "dq_object_grants",
+            "dq_score_cache",
+            "dq_rule_embeddings",
+        ],
+    )
+    def test_oltp_tables_come_from_the_postgres_baseline(self, table: str) -> None:
+        assert table in OLTP_TABLE_NAMES
+
+
+# ---------------------------------------------------------------------------
 # Identifier-quoting contract — review item #8.
 # ---------------------------------------------------------------------------
 
@@ -210,13 +285,12 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
 
         # Use a tiny ad-hoc migration that won't trip the idempotency
         # swallow list (so we can read the captured SQL directly).
-        from databricks_labs_dqx_app.backend.migrations import DeltaMigration
+        from databricks_labs_dqx_app.backend.migrations import Migration
 
-        m = DeltaMigration(
+        m = Migration(
             version=999,
             description="test",
             sql_template="CREATE TABLE IF NOT EXISTS {catalog}.{schema}.test_t (x INT)",
-            oltp_fallback=False,
         )
         runner._apply(m)
 
@@ -228,3 +302,26 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
         assert "prod-east.dqx_studio" not in " ".join(
             captured
         ), "Found raw (un-quoted) interpolation — hyphenated catalogs would emit parse-invalid DDL"
+
+
+# ---------------------------------------------------------------------------
+# Quarantine table liquid-clustering keys
+# ---------------------------------------------------------------------------
+
+
+class TestQuarantineClustering:
+    """dq_quarantine_records is liquid-clustered by (run_id, source_table_fqn)."""
+
+    def test_quarantine_clustered_by_run_id_then_source_table_fqn(self) -> None:
+        from databricks_labs_dqx_app.backend.migrations import MIGRATIONS
+
+        v1 = next(m for m in MIGRATIONS if m.version == 1)
+        sql = v1.sql_template
+        assert "dq_quarantine_records" in sql
+        assert (
+            "CLUSTER BY (run_id, source_table_fqn)" in sql
+        ), "quarantine table must be liquid-clustered by (run_id, source_table_fqn)"
+        # Guard against a stray leftover single-key clause.
+        assert "dq_quarantine_records" not in sql or "CLUSTER BY (run_id)" not in sql.replace(
+            "CLUSTER BY (run_id, source_table_fqn)", ""
+        )

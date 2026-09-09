@@ -7,12 +7,9 @@ Two layers exercised:
   validation for the admin PUT endpoint.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # AppSettingsService — storage layer

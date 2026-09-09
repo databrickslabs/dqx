@@ -1,0 +1,243 @@
+"""Tests for RuleTestService — rule-test execution + AI test-data generation (P22-E)."""
+
+from unittest.mock import create_autospec
+
+import pytest
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+from databricks_labs_dqx_app.backend.rule_test_sql import AdhocSource, TableSource
+from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
+from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestService
+
+
+@pytest.fixture
+def ai_gateway():
+    gw = create_autospec(AIGateway, instance=True)
+    gw.is_enabled.return_value = True
+    gw.endpoint_name.return_value = "databricks-gpt-5-5"
+    return gw
+
+
+@pytest.fixture
+def service(sql_executor_mock, ai_gateway):
+    return RuleTestService(sql=sql_executor_mock, ai_gateway=ai_gateway)
+
+
+class TestAiAvailable:
+    def test_true_when_enabled_with_endpoint(self, service):
+        assert service.ai_available() is True
+
+    def test_false_when_disabled(self, service, ai_gateway):
+        ai_gateway.is_enabled.return_value = False
+        assert service.ai_available() is False
+
+
+class TestRunAdhoc:
+    @pytest.mark.asyncio
+    async def test_runs_and_maps_verdicts(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = [
+            {"amount": "5", "__row_idx": "0", "__passed": "true"},
+            {"amount": "-3", "__row_idx": "1", "__passed": "false"},
+        ]
+        src = AdhocSource(
+            columns=["amount"],
+            rows=[["5"], ["-3"]],
+            families={"amount": "numeric"},
+            column_mapping={"amount": "amount"},
+        )
+
+        result = await service.run_adhoc(predicate="{{amount}} > 0", polarity="pass", source=src)
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "VALUES (0, '5'), (1, '-3')" in sql
+        assert result.columns == ["amount"]
+        assert result.rows[0].passed is True
+        assert result.rows[1].passed is False
+        assert result.rows[0].row_idx == 0
+
+    @pytest.mark.asyncio
+    async def test_rejects_unsafe_predicate(self, service, sql_executor_mock):
+        src = AdhocSource(columns=["a"], rows=[["1"]], families={}, column_mapping={"a": "a"})
+        with pytest.raises(UnsafeSqlQueryError):
+            await service.run_adhoc(predicate="1=1; DROP TABLE x", polarity="pass", source=src)
+        sql_executor_mock.query_dicts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_forbidden_keyword_in_cell_data_is_neutralised_into_a_literal(self, service, sql_executor_mock):
+        # P22-E: a manual (or AI-generated) cell carrying a forbidden statement is
+        # neutralised into a quoted literal by _lit. DQX's safety gate strips quoted
+        # literals before scanning, so this runs as inert data — a keyword typed into
+        # a test cell is not an injection and must not block the whole test run.
+        sql_executor_mock.query_dicts.return_value = [{"a": "foo\\", "__row_idx": "0", "__passed": "true"}]
+        src = AdhocSource(
+            columns=["a", "b"],
+            rows=[["foo\\", "'); DROP TABLE t; --"]],
+            families={"a": "text", "b": "text"},
+            column_mapping={"a": "a", "b": "b"},
+        )
+        await service.run_adhoc(predicate="{{a}} IS NOT NULL", polarity="pass", source=src)
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert r"'foo\\'" in sql  # backslash doubled — literal stays closed
+        assert "'''); DROP TABLE t; --'" in sql  # payload is a quoted literal, not raw SQL
+
+    def test_assembled_query_gate_rejects_live_forbidden_statement(self, service):
+        # The defence-in-depth gate on the FULLY assembled query is still wired: a
+        # forbidden statement that lands OUTSIDE any quoted literal is rejected, so
+        # nothing that escaped _lit's escaping could ever reach the warehouse.
+        with pytest.raises(UnsafeSqlQueryError):
+            service._guard_assembled("SELECT * FROM src; DROP TABLE t")
+
+    @pytest.mark.asyncio
+    async def test_injection_data_without_keyword_runs_as_harmless_literal(self, service, sql_executor_mock):
+        # A trailing-backslash + break-out attempt with no forbidden keyword passes
+        # the safety gate BUT is fully escaped: the payload can only ever appear as
+        # an inert quoted literal, never as executable SQL.
+        sql_executor_mock.query_dicts.return_value = [{"a": "x", "__row_idx": "0", "__passed": "true"}]
+        src = AdhocSource(
+            columns=["a", "b"],
+            rows=[["foo\\", "') OR 1=1 --"]],
+            families={"a": "text", "b": "text"},
+            column_mapping={"a": "a", "b": "b"},
+        )
+        await service.run_adhoc(predicate="{{a}} IS NOT NULL", polarity="pass", source=src)
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert r"'foo\\'" in sql  # backslash doubled — literal stays closed
+        assert "''') OR 1=1 --'" in sql  # payload is a quoted literal, not raw SQL
+
+
+class TestRunTable:
+    @pytest.mark.asyncio
+    async def test_runs_against_table(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = [{"amount": "5", "__passed": "true"}]
+        src = TableSource(table="c.s.t", column_mapping={"amount": "amount"}, sample_kind="records", sample_value=10)
+
+        result = await service.run_table(predicate="{{amount}} > 0", polarity="pass", source=src)
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "FROM `c`.`s`.`t` ORDER BY rand() LIMIT 10" in sql
+        assert result.rows[0].passed is True
+        assert result.rows[0].row_idx is None
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_fqn(self, service):
+        src = TableSource(table="bad", column_mapping={"amount": "amount"})
+        with pytest.raises(ValueError):
+            await service.run_table(predicate="{{amount}} > 0", polarity="pass", source=src)
+
+
+class TestGenerateTestData:
+    @pytest.mark.asyncio
+    async def test_parses_and_projects_columns(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"columns": ["amount"], "rows": [["5"], ["-3"]]}'
+
+        result = await service.generate_test_data(
+            predicate="{{amount}} > 0", polarity="pass", columns=[("amount", "numeric")], row_count=8, user_email="u@x"
+        )
+
+        assert result.columns == ["amount"]
+        assert result.rows == [["5"], ["-3"]]
+
+    @pytest.mark.asyncio
+    async def test_coerces_scalar_cells_and_pads_short_rows(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": [[5, true], ["only-one"]]}'
+
+        result = await service.generate_test_data(
+            predicate="p", polarity="pass", columns=[("a", "numeric"), ("b", "boolean")], row_count=8, user_email="u@x"
+        )
+
+        assert result.columns == ["a", "b"]
+        assert result.rows == [["5", "true"], ["only-one", None]]
+
+    @pytest.mark.asyncio
+    async def test_row_count_clamped_into_prompt(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": []}'
+        await service.generate_test_data(
+            predicate="p", polarity="pass", columns=[("a", "text")], row_count=999, user_email="u@x"
+        )
+        user_msg = ai_gateway.query.call_args.kwargs["messages"][1]["content"]
+        assert '"row_count": 20' in user_msg
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_raises(self, service, ai_gateway):
+        ai_gateway.query.return_value = "not json at all"
+        with pytest.raises(AIResponseParseError):
+            await service.generate_test_data(
+                predicate="p", polarity="pass", columns=[("a", "text")], row_count=8, user_email="u@x"
+            )
+
+
+class TestGenerateCrossTableTestData:
+    """Reference tables shift the ask: the model must also invent each reference
+    table's columns and keep the data consistent across grids."""
+
+    @staticmethod
+    async def _generate(service, columns=None, refs=("ref",)):
+        return await service.generate_test_data(
+            predicate="SELECT (c.id IS NULL) AS condition FROM {{input_view}} JOIN {{ref}} c ON c.id = {{cid}}",
+            polarity="pass",
+            columns=columns or [("cid", "text")],
+            row_count=6,
+            user_email="u@x",
+            ref_tables=list(refs),
+        )
+
+    @pytest.mark.asyncio
+    async def test_reference_tables_reach_the_prompt(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": []}'
+        await self._generate(service)
+        system, user = (m["content"] for m in ai_gateway.query.call_args.kwargs["messages"])
+        assert "cross-table" in system
+        assert '"reference_tables": ["ref"]' in user
+
+    @pytest.mark.asyncio
+    async def test_without_reference_tables_the_single_table_prompt_is_used(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": []}'
+        await service.generate_test_data(
+            predicate="{{a}} > 0", polarity="pass", columns=[("a", "numeric")], row_count=6, user_email="u@x"
+        )
+        system, user = (m["content"] for m in ai_gateway.query.call_args.kwargs["messages"])
+        assert "cross-table" not in system
+        assert "reference_tables" not in user
+
+    @pytest.mark.asyncio
+    async def test_parses_reference_grids(self, service, ai_gateway):
+        ai_gateway.query.return_value = (
+            '{"rows": [["C-1"], ["C-9"]], "refs": {"ref": {"columns": [{"name": "id", "family": "text"}], '
+            '"rows": [["C-1"]]}}}'
+        )
+        result = await self._generate(service)
+        assert result.rows == [["C-1"], ["C-9"]]
+        assert result.refs["ref"].columns == [("id", "text")]
+        assert result.refs["ref"].rows == [["C-1"]]
+
+    @pytest.mark.asyncio
+    async def test_reference_cells_are_coerced_and_padded(self, service, ai_gateway):
+        ai_gateway.query.return_value = (
+            '{"rows": [], "refs": {"ref": {"columns": [{"name": "id"}, {"name": "tier", "family": "numeric"}], '
+            '"rows": [[7, 2], ["only-one"]]}}}'
+        )
+        result = await self._generate(service)
+        assert result.refs["ref"].columns == [("id", "any"), ("tier", "numeric")]
+        assert result.refs["ref"].rows == [["7", "2"], ["only-one", None]]
+
+    @pytest.mark.asyncio
+    async def test_unrequested_reference_tables_are_ignored(self, service, ai_gateway):
+        ai_gateway.query.return_value = (
+            '{"rows": [], "refs": {"other": {"columns": [{"name": "id"}], "rows": [["x"]]}}}'
+        )
+        result = await self._generate(service)
+        assert result.refs == {}
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_grid_is_dropped_not_fatal(self, service, ai_gateway):
+        # The author still gets usable input rows and can fill the grid by hand.
+        ai_gateway.query.return_value = '{"rows": [["C-1"]], "refs": {"ref": {"columns": "nope"}}}'
+        result = await self._generate(service)
+        assert result.rows == [["C-1"]]
+        assert result.refs == {}
+
+    @pytest.mark.asyncio
+    async def test_a_grid_without_usable_column_names_is_dropped(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": [], "refs": {"ref": {"columns": [{"name": "  "}], "rows": []}}}'
+        result = await self._generate(service)
+        assert result.refs == {}

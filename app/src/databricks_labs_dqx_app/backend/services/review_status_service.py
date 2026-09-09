@@ -20,14 +20,12 @@ Storage layout
   even though it may have been virtual.
 
 Both tables live in the OLTP executor — Lakebase Postgres when enabled,
-Delta fallback otherwise — and share the same service surface as
+Lakebase — and share the same service surface as
 ``CommentsService`` / ``AppSettingsService``. The validation-run rows
 themselves stay in Delta because they're append-only Spark output;
 listing routes bulk-fetch effective statuses from this service and merge
 in Python (see :meth:`bulk_get_effective`).
 """
-
-from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
@@ -303,8 +301,7 @@ class ReviewStatusService:
         previous_effective = self.get_effective(run_id).status
         default_value = self._settings.get_default_run_review_status()
 
-        er = escape_sql_string(run_id)
-        self._sql.execute(f"DELETE FROM {self._table} WHERE run_id = '{er}'")
+        self._sql.delete(self._table, where={"run_id": run_id})
 
         self._append_history(
             run_id=run_id,

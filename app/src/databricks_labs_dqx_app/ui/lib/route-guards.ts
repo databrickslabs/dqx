@@ -28,11 +28,12 @@ async function ensureUserRole(queryClient: QueryClient): Promise<UserRoleOut> {
   const cached = await queryClient.ensureQueryData({
     queryKey,
     queryFn: ({ signal }) => currentUserRole({ signal }),
-    // Roles can change while the user is logged in (an admin reassigns
-    // groups), so let React Query revalidate on a normal cadence rather
-    // than caching forever. ``staleTime: 0`` means the cache is *used*
-    // for instant nav but the next mount triggers a background refresh.
-    staleTime: 60_000,
+    // B2-22: the role is session-stable config; the render-side hook
+    // (``usePermissions`` → ``useCurrentUserRoleSuspense``) is pinned to
+    // ``staleTime: Infinity`` so it's fetched once and served from cache.
+    // Align this guard to match so it reads the same cached entry instead
+    // of triggering its own background refresh on every guarded navigation.
+    staleTime: Infinity,
   });
   // Defensive unwrap: the cache normally holds the full AxiosResponse
   // (matching the generated hook), but tolerate older cache entries that
@@ -71,7 +72,7 @@ interface BeforeLoadCtx {
 
 /**
  * ``beforeLoad`` guard for routes that should only be reachable by users
- * with the orthogonal RUNNER role (admins included). Non-runners are
+ * who can run rules (`run_rules` — Admin and Rule Author). Others are
  * redirected to Runs History — which is universally readable — instead
  * of seeing a 403.
  *

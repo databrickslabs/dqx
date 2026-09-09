@@ -15,10 +15,7 @@ dashboards) and quarantine is 30 days (tighter PII window) — so the
 tests exercise both resolvers separately.
 """
 
-from __future__ import annotations
-
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # AppSettingsService — storage layer

@@ -39,8 +39,6 @@ Stop via Ctrl+C, or from a sibling shell::
     pkill -f scripts/dev.py
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import subprocess

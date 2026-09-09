@@ -24,8 +24,6 @@ rows, newest first. Surfaced as a collapsible list on the run detail
 page.
 """
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient

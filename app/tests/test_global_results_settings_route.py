@@ -1,0 +1,95 @@
+"""Tests for the ``/config/global-results-settings`` route.
+
+An admin toggle that enables the app-wide, all-tables Results surface.
+ON by default; read at VIEWER+ and written ADMIN-only.
+See ``AppSettingsService.get_global_results_enabled``.
+"""
+
+import pytest
+
+from databricks_labs_dqx_app.backend.routes.v1.config import (
+    GlobalResultsSettingsIn,
+    get_global_results_settings,
+    save_global_results_settings,
+)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+
+def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
+    store: dict[str, str] = {}
+
+    def _upsert(_table, *, key_cols, value_cols, **_kwargs):
+        store[key_cols["setting_key"]] = value_cols["setting_value"]
+
+    def _query(sql):
+        for key, value in store.items():
+            if f"'{key}'" in sql:
+                return [(value,)]
+        return []
+
+    sql_executor_mock.upsert.side_effect = _upsert
+    sql_executor_mock.query.side_effect = _query
+    return store
+
+
+@pytest.fixture
+def svc(sql_executor_mock):
+    sql_executor_mock.fqn.side_effect = lambda t: t
+    sql_executor_mock.query.return_value = []
+    return AppSettingsService(sql=sql_executor_mock)
+
+
+class TestGetGlobalResultsSettings:
+    def test_defaults_to_enabled_when_unset(self, svc):
+        result = get_global_results_settings(svc)
+
+        assert result.global_results_enabled is True
+
+    def test_rules_results_tab_defaults_to_enabled_when_unset(self, svc):
+        result = get_global_results_settings(svc)
+
+        assert result.rules_results_tab_enabled is True
+
+
+class TestSaveGlobalResultsSettings:
+    def test_enable_round_trips(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+
+        result = save_global_results_settings(GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x")
+
+        assert result.global_results_enabled is True
+        assert get_global_results_settings(svc).global_results_enabled is True
+
+    def test_disable_round_trips(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+
+        save_global_results_settings(GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x")
+        result = save_global_results_settings(GlobalResultsSettingsIn(global_results_enabled=False), svc, "admin@x")
+
+        assert result.global_results_enabled is False
+        assert get_global_results_settings(svc).global_results_enabled is False
+
+    def test_rules_results_tab_round_trips(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+
+        result = save_global_results_settings(GlobalResultsSettingsIn(rules_results_tab_enabled=True), svc, "admin@x")
+
+        assert result.rules_results_tab_enabled is True
+        assert get_global_results_settings(svc).rules_results_tab_enabled is True
+
+    def test_toggles_are_independent(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+
+        # Explicitly disable only the rules tab; the global surface stays at its default (on).
+        after_rules = save_global_results_settings(
+            GlobalResultsSettingsIn(rules_results_tab_enabled=False), svc, "admin@x"
+        )
+        assert after_rules.rules_results_tab_enabled is False
+        assert after_rules.global_results_enabled is True
+
+        # Enabling the global surface must not clobber the rules-tab value.
+        after_global = save_global_results_settings(
+            GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x"
+        )
+        assert after_global.global_results_enabled is True
+        assert after_global.rules_results_tab_enabled is False

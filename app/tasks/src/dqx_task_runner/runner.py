@@ -10,8 +10,6 @@ view in a ``finally`` block.
 Parameters are received as command-line arguments (``--key value``).
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import logging
@@ -23,7 +21,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 from databricks.sdk import WorkspaceClient
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 logger = logging.getLogger("dqx_task_runner")
 
@@ -43,6 +41,9 @@ _BUILTIN_METRIC_NAMES = frozenset(
 # rule. Truncation is logged at WARNING so it's visible in run logs, and the
 # real violation count remains accurate in ``dq_metrics.error_row_count``.
 _SQL_QUARANTINE_MAX_ROWS = 100_000
+
+# Inline stub key when the app stages an oversized config on the wheels volume.
+_STAGED_CONFIG_KEY = "__staged__"
 
 # User-facing observer names written to ``dq_metrics.run_name``. The
 # internal ``run_type`` token (``dryrun`` / ``scheduled`` / ``preview``)
@@ -174,6 +175,111 @@ def _json_dumps(obj: Any) -> str:
     return json.dumps(obj, cls=DateTimeEncoder)
 
 
+def _parse_job_run_id(raw: str | None) -> int | None:
+    """Parse the Databricks job run id passed via the ``{{job.run_id}}`` context.
+
+    The job wires ``--job_run_id {{job.run_id}}`` on the wheel task. In a real
+    job run that resolves to a numeric run id; outside a job (local invocation,
+    or an SDK/templating version that leaves the reference unresolved) it is
+    empty or the literal ``{{job.run_id}}``. Only accept a clean integer,
+    returning ``None`` for anything else so we never persist a bogus link.
+    """
+    if not raw:
+        return None
+    candidate = raw.strip()
+    if candidate.isdigit():
+        return int(candidate)
+    return None
+
+
+def _stamp_run_provenance(
+    result_row: DataFrame,
+    *,
+    job_run_id: int | None,
+    duration_seconds: float | None,
+) -> DataFrame:
+    """Stamp ``created_at`` / ``updated_at`` / ``job_run_id`` onto a terminal row.
+
+    The task runner *appends* a fresh terminal row rather than updating the
+    RUNNING placeholder the app inserted, so the Runs-History UI reads run
+    provenance off this appended row:
+
+    * ``job_run_id`` — carried from the ``{{job.run_id}}`` run context so the
+      "Run" column can deep-link to ``{{host}}/jobs/{{job_id}}/runs/{{job_run_id}}``.
+      Left unset (NULL) when the context didn't supply one (legacy / local
+      runs), matching pre-existing rows.
+    * ``updated_at`` — the completion instant.
+    * ``created_at`` — the run's *start* instant, derived as
+      ``completion - duration_seconds``. ``dq_validation_runs`` has no
+      ``duration_seconds`` column, so the UI derives elapsed time from
+      ``created_at`` → ``updated_at``; spanning the pair across the real
+      runtime is what lets it show a duration for completed runs instead of
+      falling back to a blank/frozen cell. When *duration_seconds* is ``None``
+      (e.g. a FAILED row with no measured runtime) both timestamps collapse to
+      the completion instant.
+
+    Spark evaluates ``current_timestamp()`` once per query, so the value used
+    for ``updated_at`` and the one inside the ``created_at`` expression resolve
+    to the same instant — keeping both on the warehouse clock and making their
+    difference exactly *duration_seconds*.
+    """
+    from pyspark.sql import functions as F
+
+    stamped = result_row.withColumn("updated_at", F.current_timestamp())
+    if duration_seconds is not None and duration_seconds > 0:
+        elapsed_ms = int(round(duration_seconds * 1000))
+        stamped = stamped.withColumn(
+            "created_at",
+            F.expr(f"timestampadd(MILLISECOND, -{elapsed_ms}, current_timestamp())"),
+        )
+    else:
+        stamped = stamped.withColumn("created_at", F.current_timestamp())
+    if job_run_id is not None:
+        stamped = stamped.withColumn("job_run_id", F.lit(int(job_run_id)).cast("bigint"))
+    return stamped
+
+
+def _is_permission_denied(exc: Exception) -> bool:
+    """Whether *exc* looks like a Unity Catalog authorization failure.
+
+    Temp views live in ``dqx_studio_tmp`` and are created by the app on behalf
+    of the user (OBO), so the user owns them. The task-runner job runs as the
+    service principal, which has no MANAGE on those user-owned views, so its
+    best-effort cleanup DROP predictably fails with ``PERMISSION_DENIED``. We
+    match on the error text (rather than an SDK exception type) because the
+    same denial surfaces from both the Statement Execution API and Spark
+    Connect ``spark.sql`` with different exception classes.
+    """
+    text = str(exc).upper()
+    return "PERMISSION_DENIED" in text or "DOES NOT HAVE MANAGE" in text
+
+
+def _read_staged_config(ws: WorkspaceClient, path: str) -> dict[str, Any]:
+    resp = ws.files.download(path)
+    if not resp.contents:
+        raise RuntimeError(f"Staged run config is empty at {path}")
+    parsed = json.loads(resp.contents.read().decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Staged run config at {path} is not a JSON object")
+    return parsed
+
+
+def _resolve_run_config(ws: WorkspaceClient, config_raw: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    staged = config_raw.get(_STAGED_CONFIG_KEY)
+    if isinstance(staged, str) and staged.strip():
+        path = staged.strip()
+        return _read_staged_config(ws, path), path
+    return config_raw, None
+
+
+def _delete_staged_config(ws: WorkspaceClient, path: str) -> None:
+    try:
+        ws.files.delete(path)
+        logger.info("Deleted staged run config at %s", path)
+    except Exception as exc:
+        logger.debug("Could not delete staged run config at %s: %s", path, exc)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DQX Task Runner")
     parser.add_argument("--task_type", required=True, choices=["profile", "dryrun", "scheduled"])
@@ -184,6 +290,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--run_id", required=True, help="App-generated run ID for tracking")
     parser.add_argument("--requesting_user", default="unknown", help="Email of the requesting user")
     parser.add_argument("--warehouse_id", default="", help="SQL warehouse ID for view cleanup")
+    parser.add_argument(
+        "--job_run_id",
+        default="",
+        help="Databricks job run id (wired as {{job.run_id}}) used to deep-link the run in the UI",
+    )
     return parser.parse_args()
 
 
@@ -237,6 +348,7 @@ def _run_profile(
     result_schema: str,
     run_id: str,
     requesting_user: str,
+    job_run_id: int | None = None,
 ) -> None:
     """Run the profiler against the view and write results to Delta."""
     from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -268,11 +380,12 @@ def _run_profile(
     # null fingerprint slot so later pipeline stages that join on
     # rule_set_fingerprint don't have to special-case profile rows.
     #
-    # ``created_at`` is TIMESTAMP per the baseline schema — we materialise
-    # via ``current_timestamp()`` instead of an ISO string so cluster-key
-    # zone maps stay tight and downstream filters behave correctly.
-    from pyspark.sql import functions as F
-
+    # ``created_at`` / ``updated_at`` are TIMESTAMP per the baseline schema —
+    # we materialise them via ``current_timestamp()`` (see
+    # ``_stamp_run_provenance``) instead of an ISO string so cluster-key zone
+    # maps stay tight and downstream filters behave correctly. Profiler runs
+    # already report elapsed time via the ``duration_seconds`` column, so the
+    # created_at→updated_at pair is only used to stamp the completion instant.
     result_row = spark.createDataFrame(
         [
             (
@@ -298,7 +411,8 @@ def _run_profile(
             "status STRING, error_message STRING, "
             "rule_set_fingerprint STRING"
         ),
-    ).withColumn("created_at", F.current_timestamp())
+    )
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=None)
     result_row.writeTo(result_table).append()
     logger.info("Profile results written to %s (run_id=%s)", result_table, run_id)
 
@@ -312,6 +426,7 @@ def _run_dryrun(
     result_schema: str,
     run_id: str,
     requesting_user: str,
+    job_run_id: int | None = None,
 ) -> None:
     """Run a dry-run validation and write results to Delta.
 
@@ -325,8 +440,15 @@ def _run_dryrun(
     sample_size = config.get("sample_size", 1000)
     source_table_fqn = config.get("source_table_fqn", "")
     custom_metrics = _validate_custom_metrics(config.get("custom_metrics") or [])
-    run_type = "preview" if config.get("skip_history") else "dryrun"
+    # ``run_type`` distinguishes Manual (``dryrun``) from Scheduled
+    # (``scheduled``) in Runs History. It is threaded explicitly through the
+    # job config by the submitter (``BindingRunService.run_binding`` derives it
+    # from the run-set trigger); a preview run overrides everything. Manual
+    # UI/batch runs omit it and fall back to ``dryrun``.
+    run_type = "preview" if config.get("skip_history") else str(config.get("run_type") or "dryrun")
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
+
+    start = time.time()
 
     if config.get("is_sql_check"):
         _run_dryrun_sql_check(
@@ -342,6 +464,7 @@ def _run_dryrun(
             result_schema,
             run_type=run_type,
             custom_metrics=custom_metrics,
+            job_run_id=job_run_id,
         )
         return
 
@@ -397,8 +520,6 @@ def _run_dryrun(
         sample_rows = invalid_df.limit(10).collect()
         sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
 
-    from pyspark.sql import functions as F
-
     result_row = spark.createDataFrame(
         [
             (
@@ -429,7 +550,8 @@ def _run_dryrun(
             "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
-    ).withColumn("created_at", F.current_timestamp())
+    )
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
     result_row.writeTo(result_table).append()
     logger.info(
         "Dry-run results written to %s (run_id=%s, run_type=%s, errors=%d, warnings=%d)",
@@ -474,6 +596,7 @@ def _run_dryrun_sql_check(
     custom_metrics: (
         list[str] | None
     ) = None,  # noqa: ARG001 — accepted for API symmetry; SQL checks bypass the observer.
+    job_run_id: int | None = None,
 ) -> None:
     """Run a cross-table SQL check dry run.
 
@@ -482,6 +605,7 @@ def _run_dryrun_sql_check(
     the row-level ``_errors``/``_warnings`` columns so we synthesise
     spec-compatible metric names manually instead of attaching an observer.
     """
+    start = time.time()
     df = _read_view_with_retry(spark, view_fqn)
     violation_df = df.limit(sample_size) if sample_size else df
 
@@ -518,10 +642,6 @@ def _run_dryrun_sql_check(
         err_payload = [{"name": str(check_name), "message": "SQL check violation"}]
         sample_invalid = [{**row.asDict(recursive=True), "_errors": err_payload} for row in sample_rows]
 
-    from pyspark.sql import functions as F
-
-    if run_type == "dryrun" and sample_size == 0:
-        run_type = "scheduled"
     # SQL checks treat every violation as an error (no warning concept), so
     # ``error_rows == invalid_rows`` and ``warning_rows == 0``.
     result_row = spark.createDataFrame(
@@ -554,7 +674,8 @@ def _run_dryrun_sql_check(
             "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
-    ).withColumn("created_at", F.current_timestamp())
+    )
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
     result_row.writeTo(result_table).append()
     logger.info(
         "SQL-check %s results written to %s (run_id=%s, violations=%d)", run_type, result_table, run_id, invalid_rows
@@ -930,6 +1051,7 @@ def _run_scheduled(
     result_schema: str,
     run_id: str,
     requesting_user: str,
+    job_run_id: int | None = None,
 ) -> None:
     """Run a scheduled validation -- single engine pass, then persist results + quarantine + metrics.
 
@@ -941,6 +1063,8 @@ def _run_scheduled(
     checks = config.get("checks", [])
     source_table_fqn = config.get("source_table_fqn", "")
     custom_metrics = _validate_custom_metrics(config.get("custom_metrics") or [])
+
+    start = time.time()
 
     if config.get("is_sql_check"):
         sql_query = config.get("sql_query")
@@ -968,7 +1092,9 @@ def _run_scheduled(
             requesting_user,
             result_catalog,
             result_schema,
+            run_type="scheduled",
             custom_metrics=custom_metrics,
+            job_run_id=job_run_id,
         )
         return
 
@@ -1005,8 +1131,6 @@ def _run_scheduled(
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
 
-    from pyspark.sql import functions as F
-
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
     result_row = spark.createDataFrame(
         [
@@ -1038,7 +1162,8 @@ def _run_scheduled(
             "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
-    ).withColumn("created_at", F.current_timestamp())
+    )
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
     result_row.writeTo(result_table).append()
     logger.info(
         "Scheduled run results written to %s (run_id=%s, errors=%d, warnings=%d)",
@@ -1084,10 +1209,22 @@ def _write_error(
     error_message: str,
     checks: list[dict[str, Any]] | None = None,
     skip_history: bool = False,
+    job_run_id: int | None = None,
+    run_type: str | None = None,
 ) -> None:
-    """Write a FAILED status row so the app can report the error."""
-    from pyspark.sql import functions as F
+    """Write a FAILED status row so the app can report the error.
 
+    *run_type* is the config's run_type and takes precedence over *task_type*
+    for the persisted tag. The two disagree by design: every app-submitted
+    check run is submitted as ``task_type="dryrun"`` (the frozen runner
+    contract), and manual-vs-scheduled is threaded separately through the job
+    config by the submitter. Deriving the tag from *task_type* alone therefore
+    recorded a FAILED scheduled run as ``dryrun``, so Runs History labelled it
+    "Manual" — and, before the history query stopped keying visibility on the
+    RUNNING placeholder, also cost it the ``run_type IN ('scheduled')`` escape
+    hatch that would have kept it visible. *task_type* remains the fallback for
+    callers that submit ``scheduled`` directly and pass no config run_type.
+    """
     checks_str = _json_dumps(checks) if checks else None
     fingerprint = _compute_fingerprint(checks or [])
     if task_type == "profile":
@@ -1117,11 +1254,13 @@ def _write_error(
                 "status STRING, error_message STRING, "
                 "rule_set_fingerprint STRING"
             ),
-        ).withColumn("created_at", F.current_timestamp())
+        )
     else:
         table = f"{result_catalog}.{result_schema}.dq_validation_runs"
         if skip_history:
             error_run_type = "preview"
+        elif run_type:
+            error_run_type = str(run_type)
         elif task_type == "scheduled":
             error_run_type = "scheduled"
         else:
@@ -1156,7 +1295,11 @@ def _write_error(
                 "status STRING, error_message STRING, "
                 "run_type STRING, rule_set_fingerprint STRING"
             ),
-        ).withColumn("created_at", F.current_timestamp())
+        )
+    # FAILED rows carry no measured runtime, so leave duration unset (both
+    # timestamps collapse to now); still stamp job_run_id so the "Run" column
+    # can link a failed run to its Databricks job.
+    row = _stamp_run_provenance(row, job_run_id=job_run_id, duration_seconds=None)
     row.writeTo(table).append()
     logger.info("Error result written to %s (run_id=%s)", table, run_id)
 
@@ -1164,11 +1307,13 @@ def _write_error(
 def main() -> None:
     args = _parse_args()
     _validate_run_id(args.run_id)
-    config = json.loads(args.config_json)
+    config_raw = json.loads(args.config_json)
+    ws = WorkspaceClient()
+    config, staged_config_path = _resolve_run_config(ws, config_raw)
     source_table_fqn = config.get("source_table_fqn", "")
+    job_run_id = _parse_job_run_id(args.job_run_id)
 
     spark = SparkSession.builder.getOrCreate()
-    ws = WorkspaceClient()
 
     try:
         if args.task_type == "profile":
@@ -1181,6 +1326,7 @@ def main() -> None:
                 args.result_schema,
                 args.run_id,
                 args.requesting_user,
+                job_run_id=job_run_id,
             )
         elif args.task_type == "dryrun":
             _run_dryrun(
@@ -1192,6 +1338,7 @@ def main() -> None:
                 args.result_schema,
                 args.run_id,
                 args.requesting_user,
+                job_run_id=job_run_id,
             )
         elif args.task_type == "scheduled":
             _run_scheduled(
@@ -1203,6 +1350,7 @@ def main() -> None:
                 args.result_schema,
                 args.run_id,
                 args.requesting_user,
+                job_run_id=job_run_id,
             )
     except Exception as exc:
         logger.error("Task %s failed: %s", args.task_type, exc, exc_info=True)
@@ -1219,11 +1367,26 @@ def main() -> None:
                 str(exc),
                 checks=config.get("checks"),
                 skip_history=bool(config.get("skip_history")),
+                job_run_id=job_run_id,
+                run_type=config.get("run_type"),
             )
         except Exception as write_exc:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
+        if staged_config_path:
+            _delete_staged_config(ws, staged_config_path)
+        # Best-effort belt-and-suspenders cleanup of the OBO-created temp view.
+        #
+        # The authoritative cleanup is the app's OBO ``drop_view`` (run as the
+        # user, who owns the view) once its status poll sees the job terminate.
+        # This block only fires as a safety net for the case where that poll
+        # never runs (e.g. the browser tab closed). It executes as the
+        # task-runner service principal, which has no MANAGE on a user-owned
+        # view in ``dqx_studio_tmp``, so the DROP predictably fails with
+        # ``PERMISSION_DENIED``. That failure is expected and benign — we log it
+        # at DEBUG rather than WARNING so it doesn't read as an error in run
+        # logs, while genuinely unexpected drop failures stay visible.
         if args.task_type != "scheduled" and "tmp_view_" in args.view_fqn:
             _validate_fqn(args.view_fqn)
             drop_sql = f"DROP VIEW IF EXISTS {_quote_fqn(args.view_fqn)}"
@@ -1240,7 +1403,7 @@ def main() -> None:
                     logger.info("Dropped view %s via SQL warehouse", args.view_fqn)
                     dropped = True
                 except Exception as sql_exc:
-                    logger.warning("SQL warehouse DROP failed for %s: %s", args.view_fqn, sql_exc)
+                    _log_view_drop_failure("SQL warehouse", args.view_fqn, sql_exc)
 
             if not dropped:
                 try:
@@ -1248,7 +1411,27 @@ def main() -> None:
                     spark.sql(drop_sql)
                     logger.info("Dropped temporary view: %s", args.view_fqn)
                 except Exception as spark_exc:
-                    logger.warning("Failed to drop view %s: %s", args.view_fqn, spark_exc)
+                    _log_view_drop_failure("spark.sql", args.view_fqn, spark_exc)
+
+
+def _log_view_drop_failure(via: str, view_fqn: str, exc: Exception) -> None:
+    """Log a best-effort temp-view DROP failure at the right severity.
+
+    A ``PERMISSION_DENIED`` is the expected outcome when the service principal
+    tries to drop a user-owned OBO view (the app's OBO path owns real cleanup),
+    so it's logged at DEBUG. Any other failure is genuinely unexpected and
+    stays at WARNING.
+    """
+    if _is_permission_denied(exc):
+        logger.debug(
+            "%s DROP of temp view %s denied for the service principal (expected — "
+            "the app's OBO cleanup owns this view): %s",
+            via,
+            view_fqn,
+            exc,
+        )
+    else:
+        logger.warning("%s DROP failed for %s: %s", via, view_fqn, exc)
 
 
 if __name__ == "__main__":

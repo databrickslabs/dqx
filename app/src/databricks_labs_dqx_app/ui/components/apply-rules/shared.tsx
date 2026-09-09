@@ -1,0 +1,428 @@
+// Shared helpers for the Apply Rules tab components (registry-rule tag
+// lookups, label coloring, API error extraction). Kept in one place so
+// AddRulesDialog / RuleConfigCard / RulesByColumn agree on the same
+// conventions instead of re-deriving them.
+
+import { Badge } from "@/components/ui/badge";
+import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut, RuleSlot } from "@/lib/api";
+import type { LabelDefinition } from "@/lib/api-custom";
+import type { ColumnFamily } from "./ColumnPicker";
+
+export const RESERVED_NAME_KEY = "name";
+export const RESERVED_DIMENSION_KEY = "dimension";
+export const RESERVED_SEVERITY_KEY = "severity";
+export const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
+
+/** Read a registry rule's default pass threshold from its user_metadata,
+ *  clamped to [0,100] (tolerating a stringified int), or null when unset. */
+export function getRulePassThreshold(rule: RegistryRuleOut): number | null {
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const v = md[RESERVED_PASS_THRESHOLD_KEY];
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseInt(v, 10) : NaN;
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
+
+export function getTag(rule: RegistryRuleOut, key: string): string {
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const v = md[key];
+  return typeof v === "string" ? v : "";
+}
+
+export function extractApiError(err: unknown, fallback: string): string {
+  const axErr = err as { response?: { data?: { detail?: string } } };
+  return axErr?.response?.data?.detail ?? fallback;
+}
+
+export function colorFor(defs: LabelDefinition[], key: string, value: string): string | undefined {
+  const def = defs.find((d) => d.key === key);
+  return def?.value_colors?.[value] ?? undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Rule grouping — DQX materializes one `dq_applied_rules` ROW per mapping
+// GROUP (each call to `useApplyRuleToTable` with a single-entry
+// `column_mapping` array creates its own row/applied-check). dqlake's
+// bindings model keeps every mapping group inside a single binding entity;
+// to render the equivalent "N mapping groups under one rule card" UI here,
+// the by-rule lens groups the flat `AppliedRuleOut[]` list by `rule_id` and
+// flattens every row's `column_mapping` into one combined list.
+// ---------------------------------------------------------------------------
+
+export interface RuleRowGroup {
+  ruleId: string;
+  /** Every applied-rule ROW for this rule_id, in list order. Each row is
+   *  expected to carry exactly one mapping group (the convention every
+   *  apply path in this app follows), so `rows[i]` owns combined-mapping
+   *  index `i` — used to resolve "remove this mapping group" back to the
+   *  concrete row id to delete. */
+  rows: AppliedRuleOut[];
+}
+
+/** Group a flat applied-rules list by `rule_id`, preserving first-seen order. */
+export function groupAppliedRulesByRuleId(appliedRules: AppliedRuleOut[]): RuleRowGroup[] {
+  const order: string[] = [];
+  const map = new Map<string, AppliedRuleOut[]>();
+  for (const rule of appliedRules) {
+    if (!map.has(rule.rule_id)) {
+      map.set(rule.rule_id, []);
+      order.push(rule.rule_id);
+    }
+    map.get(rule.rule_id)!.push(rule);
+  }
+  return order.map((ruleId) => ({ ruleId, rows: map.get(ruleId)! }));
+}
+
+/** Merge a rule-id's rows into one display-only `AppliedRuleOut` whose
+ *  `column_mapping` is the concatenation of every row's mapping groups
+ *  (display metadata — name/dimension/severity/pin — comes from the first
+ *  row). Used everywhere the by-rule lens needs one card per rule_id. */
+export function mergeRuleRowGroup(group: RuleRowGroup): AppliedRuleOut {
+  const [first] = group.rows;
+  return {
+    ...first,
+    column_mapping: group.rows.flatMap((row) => row.column_mapping ?? []),
+  };
+}
+
+/** Every column name a rule is already mapped to, across every mapping
+ *  group and slot (multi-value slots store their columns as a
+ *  comma-joined string — see `AddRulesDialog#handleApply`). Used by the
+ *  "+ Apply to another column" flow to exclude columns the rule already
+ *  covers from the column picker, mirroring dqlake's `usedSetForNew`
+ *  exclusion in `bindings/MappingChips.tsx`. */
+export function getUsedColumnsForRule(rule: AppliedRuleOut): string[] {
+  const used = new Set<string>();
+  for (const group of rule.column_mapping ?? []) {
+    for (const value of Object.values(group)) {
+      if (!value) continue;
+      for (const col of value.split(",")) {
+        if (col) used.add(col);
+      }
+    }
+  }
+  return [...used];
+}
+
+// ---------------------------------------------------------------------------
+// Staged editor helpers (P16-F) — the Apply Rules tab stages every add /
+// mapping-edit / severity-override / pin / removal in a local `stagedRows`
+// array (same `AppliedRuleOut[]` shape the server returns, one row per
+// mapping group, per the "each row owns exactly one mapping group"
+// convention above) and only writes it in one batch via `saveAppliedRules`
+// on Save-as-draft/Publish. These two helpers are the single choke point
+// for creating a new local-only row and for turning `stagedRows` back into
+// the `saveAppliedRules` request payload — every staging call site
+// (AddRulesDialog, AiSuggestionDialog, RuleConfigCard) goes through them so
+// the local-id convention and payload shape never drift apart.
+// ---------------------------------------------------------------------------
+
+let localRowCounter = 0;
+
+/** A stable, never-persisted id for a row staged locally this session.
+ *  `buildDesiredApplications` drops `id` entirely (it regroups by `rule_id`
+ *  and lets the backend re-derive/ignore row identity), so nothing in this
+ *  app currently needs to distinguish a local id from a real server one —
+ *  it only has to be unique within `stagedRows` for the session. */
+export function nextLocalRowId(): string {
+  localRowCounter += 1;
+  return `local-${Date.now()}-${localRowCounter}`;
+}
+
+/** Split every row into one row per mapping GROUP so the "each staged row
+ *  owns exactly one mapping group" convention (relied on by
+ *  `handleRemoveMappingGroup` / `handleChangeMapping` / `handleAddMapping` in
+ *  `monitored-tables.$bindingId.tsx`, which resolve a `groupIdx` from the
+ *  flattened `mergeRuleRowGroup` list back to `rowsForRule[groupIdx]`) always
+ *  holds — even though the server does NOT follow it: `saveAppliedRules`
+ *  persists one `dq_applied_rules` row per `rule_id` carrying the FULL
+ *  `column_mapping` list (see `ApplyRulesService.reconcile`/`apply_rule`), so
+ *  a rule with 2 mapping groups round-trips as a single row with a 2-entry
+ *  `column_mapping`. Without this normalization, `groupIdx` (a position in
+ *  the flattened list) would misalign with `rowsForRule` (server rows) and
+ *  silently corrupt or drop mapping groups on edit/remove.
+ *
+ *  Call this on every path that seeds `stagedRows`/`baseline` from server
+ *  data — initial load, binding switch, and the Save-as-draft/Publish
+ *  response handlers. Rows staged locally (`newStagedRow`, `handleAddMapping`)
+ *  already carry at most one group and pass through unchanged. Split-off
+ *  rows get a fresh local id (`row.id` is display-only here — it's never
+ *  read back by `buildDesiredApplications`, which regroups by `rule_id`). */
+export function normalizeStagedRows(rows: AppliedRuleOut[]): AppliedRuleOut[] {
+  return rows.flatMap((row) => {
+    const groups = row.column_mapping ?? [];
+    if (groups.length <= 1) return [row];
+    return groups.map((group, idx) => ({
+      ...row,
+      id: idx === 0 ? row.id : nextLocalRowId(),
+      column_mapping: [group],
+    }));
+  });
+}
+
+/** Build a new locally-staged applied-rule row for *rule*, not yet persisted
+ *  anywhere. Display metadata (name/dimension/severity tags) is denormalized
+ *  onto the row up front, exactly like the server's `AppliedRuleOut.from_summary`
+ *  join, so every display component that reads `rule_name`/`rule_dimension`/
+ *  `rule_severity` off a row works identically for staged and persisted rows.
+ *
+ *  B2-116: the initial version pin is seeded from the admin
+ *  `default_auto_upgrade` setting so the staged row reflects it, matching the
+ *  server-side `resolve_pinned_version_for_new_attachment` resolution applied
+ *  at save time. `defaultAutoUpgrade` ON → follow latest (`pinned_version:
+ *  null`); OFF → pin to the rule's current version (`rule.version`), so the row
+ *  shows "Pinned (vN)" instead of "Following latest". The per-row pin control
+ *  (RuleConfigCard's VersionPinDropdown) can still override this either way. */
+export function newStagedRow(
+  bindingId: string,
+  rule: RegistryRuleOut,
+  columnMapping: AppliedRuleOutColumnMappingItem[],
+  defaultAutoUpgrade: boolean,
+): AppliedRuleOut {
+  return {
+    id: nextLocalRowId(),
+    binding_id: bindingId,
+    rule_id: rule.rule_id,
+    pinned_version: defaultAutoUpgrade ? null : (rule.version ?? null),
+    severity_override: null,
+    column_mapping: columnMapping,
+    user_metadata: {},
+    mapping_hash: null,
+    created_by: null,
+    created_at: null,
+    rule_name: getTag(rule, RESERVED_NAME_KEY) || null,
+    rule_dimension: getTag(rule, RESERVED_DIMENSION_KEY) || null,
+    rule_severity: getTag(rule, RESERVED_SEVERITY_KEY) || null,
+    // Seed the registry-rule default so a freshly-added rule's threshold pill
+    // shows the rule's own default (not just the admin default) before its
+    // first save — matches how rule_severity/rule_dimension are seeded above.
+    rule_pass_threshold: getRulePassThreshold(rule),
+    // Fresh staged rows start with no per-column threshold overrides.
+    column_pass_thresholds: {},
+  };
+}
+
+/** Merge per-column threshold overrides from every row in a rule_id group into
+ *  one `{col: pct}` map. Later rows win on key conflict (last-write wins, which
+ *  is harmless since all rows for a rule_id share the same overrides in normal
+ *  use). Returns `undefined` (not an empty object) when no overrides exist so
+ *  the field round-trips as absent rather than `{}`, matching the API contract.
+ *
+ *  Correctness: `0` is a valid threshold (never breach). Only `undefined` map
+ *  values (missing keys) indicate "no override" — never use truthiness. */
+export function mergeColumnThresholds(
+  rows: AppliedRuleOut[],
+): Record<string, number> | undefined {
+  const merged: Record<string, number> = {};
+  let hasAny = false;
+  for (const row of rows) {
+    const map = row.column_pass_thresholds;
+    if (!map) continue;
+    for (const [col, pct] of Object.entries(map)) {
+      merged[col] = pct;
+      hasAny = true;
+    }
+  }
+  return hasAny ? merged : undefined;
+}
+
+/** Turn the flat staged row list into the FULL desired-set payload for
+ *  `saveAppliedRules` — one entry per `rule_id`, whose `column_mapping` is
+ *  the concatenation of every one of that rule_id's rows' mapping groups
+ *  (mirrors `mergeRuleRowGroup`'s display-side merge). Display-only fields
+ *  (`rule_name`/`rule_dimension`/`rule_severity`/`mapping_hash`/`created_*`)
+ *  are dropped — the backend re-derives or ignores them. */
+export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredAppliedRuleIn[] {
+  return groupAppliedRulesByRuleId(stagedRows).map(({ ruleId, rows }) => {
+    const [first] = rows;
+    return {
+      rule_id: ruleId,
+      column_mapping: rows.flatMap((row) => row.column_mapping ?? []),
+      pinned_version: first?.pinned_version ?? null,
+      severity_override: first?.severity_override ?? null,
+      // Per-rule overrides live on the rule (all of a rule_id's rows share one
+      // value), so read them off the first row like pin/severity above.
+      pass_threshold: first?.pass_threshold ?? null,
+      // Per-column threshold overrides — merge across all rows for this
+      // rule_id; returns undefined when there are no overrides so the field
+      // is absent in the payload rather than an empty object.
+      column_pass_thresholds: mergeColumnThresholds(rows) ?? null,
+      tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
+    };
+  });
+}
+
+/** Stable, order-independent serialization of a `saveAppliedRules` payload —
+ *  used to diff the staged editor's local rows against the last-persisted
+ *  baseline for `isDirty` (mirrors `RegistryRuleFormDialog`'s
+ *  `stableStringify(currentSnapshot) !== stableStringify(snapshotFromRule(...))`
+ *  pattern). Sorts by `rule_id` and, within each application, by mapping
+ *  group so row insertion order and mapping-group order never cause a false
+ *  "dirty" positive.
+ *
+ *  Threshold dirty-detection (item 33): a per-rule/per-column threshold that
+ *  equals its *effective default* is normalized to the same key as `null`
+ *  ("follow default"), because they mean the same thing to the checker. This
+ *  keeps two facts from producing false diffs against each other: (a) an
+ *  explicit last-saved override equal to the default and a null-follow-default
+ *  are treated as EQUAL, so re-entering the saved value never marks dirty, and
+ *  (b) it never rewrites the persisted payload — `buildDesiredApplications`
+ *  still carries the explicit value, so saving can't silently downgrade an
+ *  explicit override to follow-default.
+ *
+ *  *adminDefault* is the workspace-wide default pass threshold used to resolve
+ *  a rule's effective default when the rule carries no registry default. */
+export function desiredApplicationsKey(stagedRows: AppliedRuleOut[], adminDefault: number): string {
+  // Resolve each rule_id's registry-level default from its rows (dropped by
+  // buildDesiredApplications, so read it off the grouped source rows here).
+  const ruleDefaultById = new Map<string, number>();
+  for (const { ruleId, rows } of groupAppliedRulesByRuleId(stagedRows)) {
+    ruleDefaultById.set(ruleId, rows[0]?.rule_pass_threshold ?? adminDefault);
+  }
+
+  const normalized = buildDesiredApplications(stagedRows)
+    .map((application) => {
+      // Effective per-rule default (registry default ?? admin default). A
+      // per-rule override equal to it means "follow default" → normalize to null.
+      const ruleDefault = ruleDefaultById.get(application.rule_id) ?? adminDefault;
+      const rawPass = application.pass_threshold ?? null;
+      const normPass = rawPass === null || rawPass === ruleDefault ? null : rawPass;
+
+      // Effective per-COLUMN default = the rule-level effective threshold
+      // (explicit per-rule override ?? rule default), mirroring the pill's
+      // `columnEffectiveDefault`. Drop any column override equal to it.
+      const columnDefault = rawPass ?? ruleDefault;
+      const colThresholds = application.column_pass_thresholds;
+      const normColThresholds = colThresholds
+        ? Object.fromEntries(Object.entries(colThresholds).filter(([, pct]) => pct !== columnDefault))
+        : null;
+      const colThresholdsStr =
+        normColThresholds && Object.keys(normColThresholds).length > 0
+          ? JSON.stringify(Object.fromEntries(Object.entries(normColThresholds).sort()))
+          : null;
+
+      return {
+        rule_id: application.rule_id,
+        column_mapping: (application.column_mapping ?? [])
+          .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
+          .sort(),
+        pinned_version: application.pinned_version ?? null,
+        severity_override: application.severity_override ?? null,
+        pass_threshold: normPass,
+        column_pass_thresholds: colThresholdsStr,
+        tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
+      };
+    })
+    .sort((a, b) => a.rule_id.localeCompare(b.rule_id));
+  return JSON.stringify(normalized);
+}
+
+// ---------------------------------------------------------------------------
+// Run-action gating (P23-F fix) — "Run now" executes the last-persisted
+// (approved) snapshot, a server-side state entirely unaffected by local
+// editor state; "Run draft" executes the volatile `stagedRows` edit buffer
+// (saving it first if dirty — see `handleRunDraft` in
+// `monitored-tables.$bindingId.tsx`). Each action's "nothing to run" gate
+// must therefore be evaluated against its OWN source of truth — baseline for
+// Run now, staged rows for Run draft — never the other one. This pure helper
+// is the single choke point for that decision so both call sites (and their
+// tests) can't drift apart.
+// ---------------------------------------------------------------------------
+
+export interface RunGating {
+  /** True when "Run now" has a persisted (approved) applied-rule set to
+   *  execute — i.e. the last-saved `baseline` is non-empty. Unaffected by
+   *  unsaved local edits. */
+  runNowHasRules: boolean;
+  /** True when "Run draft" has something to execute — i.e. the local
+   *  `stagedRows` edit buffer is non-empty (after saving, if dirty). */
+  runDraftHasRules: boolean;
+}
+
+/** Compute the "Apply rules first" gate for each Run action independently.
+ *  *baselineCount* is `baseline.length` (last-persisted applied-rule rows);
+ *  *stagedCount* is `stagedRows.length` (the current, possibly-unsaved,
+ *  edit buffer). See `RunGating` above for why these must not be conflated. */
+export function computeRunGating(baselineCount: number, stagedCount: number): RunGating {
+  return {
+    runNowHasRules: baselineCount > 0,
+    runDraftHasRules: stagedCount > 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Slot selection helper — used by AddRulesDialog when a rule is added from
+// the by-column lens's per-column "+ Add rule" CTA. Given the rule's slot
+// list and the clicked column's family, returns the best slot name to bind
+// that column to: prefer a slot whose family matches (or is "any"), else
+// fall back to the first slot. Returns null when there are no slots (the
+// rule has no column arguments and needs no mapping).
+// ---------------------------------------------------------------------------
+
+/** Rule ids already mapped to a specific column across all staged rows.
+ *  Used by the by-column Add Rule dialog to compute a column-scoped
+ *  "already applied" set: a rule applied to column A is not disabled when
+ *  adding to column B — only rules that ALREADY target that exact column are
+ *  locked (item 4). Multi-value slot values (comma-joined) are parsed the
+ *  same way as `getUsedColumnsForRule` above. */
+export function getRuleIdsForColumn(rows: AppliedRuleOut[], columnName: string): Set<string> {
+  const result = new Set<string>();
+  for (const row of rows) {
+    for (const group of row.column_mapping ?? []) {
+      for (const value of Object.values(group)) {
+        if (!value) continue;
+        for (const col of value.split(",")) {
+          if (col.trim() === columnName) {
+            result.add(row.rule_id);
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/** Pick the slot name to bind a column to when adding a rule from the
+ *  by-column view. Returns the name of the first slot whose family matches
+ *  `columnFamily` (or whose family is "any"), falling back to the first slot
+ *  regardless of family, or null when no slots exist. */
+export function pickSlotForColumn(slots: RuleSlot[], columnFamily: ColumnFamily): string | null {
+  if (slots.length === 0) return null;
+  // Prefer the first slot whose family is compatible (exact match or "any").
+  const match = slots.find((s) => s.family === columnFamily || s.family === "any");
+  return (match ?? slots[0]).name;
+}
+
+/** True when a rule can be applied to a column of the given family — i.e. it
+ *  has at least one column slot whose family is compatible (exact match, or an
+ *  "any"-family slot, or the column itself is untyped "any"). Rules with no
+ *  slots (dataset-level / SQL checks that take no column argument) are NOT
+ *  column-applicable, so they're excluded from the by-column picker. Mirrors
+ *  the slot↔column family rule used by `columnsForSlot` / `pickSlotForColumn`,
+ *  reinstating the by-column data-type compatibility filter. */
+export function isRuleCompatibleWithColumn(rule: RegistryRuleOut, columnFamily: ColumnFamily): boolean {
+  const slots = rule.definition?.slots ?? [];
+  if (slots.length === 0) return false;
+  return slots.some((s) => s.family === "any" || columnFamily === "any" || s.family === columnFamily);
+}
+
+/** Filter published rules to those applicable to a column of `columnFamily`
+ *  (see `isRuleCompatibleWithColumn`). Used by AddRulesDialog when opened from
+ *  a per-column "+ Add rule" CTA so only compatible-type rules are selectable. */
+export function compatibleRulesForColumn(
+  rules: RegistryRuleOut[],
+  columnFamily: ColumnFamily,
+): RegistryRuleOut[] {
+  return rules.filter((r) => isRuleCompatibleWithColumn(r, columnFamily));
+}
+
+export function TagBadge({ label, color }: { label: string; color?: string }) {
+  if (!label) return null;
+  return (
+    <Badge variant="outline" className="gap-1 text-[10px] font-normal">
+      {color && (
+        <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} aria-hidden />
+      )}
+      {label}
+    </Badge>
+  );
+}

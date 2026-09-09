@@ -13,7 +13,6 @@ from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
-
 _ASSET_EXTS = (
     ".js",
     ".mjs",
