@@ -269,6 +269,7 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
     expected_fields = [
         "check_name",
         "score",
+        "severity_percentile",
         "is_anomaly",
         "threshold",
         "model",
@@ -291,6 +292,20 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
     # Verify optional fields are None when not requested
     assert anomaly.contributions is None, "contributions should be None when not requested"
     assert anomaly.confidence_std is None, "confidence_std should be None when not requested"
+
+    # Pin the published numeric types on the schema rather than on the collected values. A Python float
+    # is what both a double and a decimal come back as, so the isinstance checks above cannot tell them
+    # apart -- and the severity is built with the SQL ``floor(expr, scale)``, which returns a decimal.
+    # anomaly_info_struct_schema declares both fields DoubleType and add_info_column casts the struct to
+    # it, so this asserts the cast keeps doing its job for anyone reading a scored table.
+    published = dict(
+        result_df.select(
+            F.element_at(F.col("_dq_info"), 1).getField("anomaly").alias("anomaly"),
+        )
+        .select("anomaly.score", "anomaly.severity_percentile")
+        .dtypes
+    )
+    assert published == {"score": "double", "severity_percentile": "double"}, published
 
 
 def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_3d_model):

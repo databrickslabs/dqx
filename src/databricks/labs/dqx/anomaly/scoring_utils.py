@@ -100,11 +100,13 @@ def displayed_severity_expr(severity: Column, threshold: float) -> Column:
         The severity to publish: never above the true value, and never below it by enough to change how it
         compares against *threshold*.
     """
-    # Cast back to double explicitly. ``floor(expr, scale)`` does not promise the input's type -- with a
-    # scale argument Spark can return a decimal -- while anomaly_info_struct_schema declares this field as
-    # DoubleType and callers union scored rows with null-scored rows built from that schema. A struct whose
-    # field is decimal on one side of a union and double on the other does not merge, so pinning the type
-    # here keeps the published field independent of how the SQL function chooses to type its result.
+    # Cast back to double explicitly, so this helper's own return type is a double whatever the SQL
+    # function decides: ``floor(expr, scale)`` does not promise its input's type, and on serverless
+    # ``floor(<double>, 1)`` returns ``decimal(17,1)``. Nothing published is decimal today even without
+    # this cast -- both call sites coerce, one via ``add_info_column``'s cast of the whole struct to
+    # anomaly_info_struct_schema and one with a cast of its own -- so the cast is not load-bearing. It
+    # stays because a helper named "displayed severity" handing back a decimal is a trap for the next
+    # caller, who would have to know about a cast two functions away to stay correct.
     return F.call_function("floor", severity, F.lit(displayed_severity_decimals(threshold))).cast(DoubleType())
 
 
