@@ -224,8 +224,10 @@ feature documentation:
 
 The following components are available:
 
-*`<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked
+*`<FeatureLifecycleStage stage="experimental | alpha | beta | deprecated" />` — a status badge linked
   to the matching section of the [Feature lifecycle](/docs/reference/feature_lifecycle) reference.
+  Stages run `experimental` → `alpha` → `beta` → GA as a feature matures. There is no `stage="ga"`:
+  a generally available feature carries no badge at all, so an untagged page is GA by definition.
 *`<AvailableSinceVersion productName="DQX" version="0.14.0" />` — "Available since DQX
   v0.14.0", linked to that release's notes.
 *`<DeprecatedInVersion productName="DQX" version="0.16.0" replacement="the new_check function" />`

@@ -98,7 +98,10 @@ button {
 /* Color modifiers. Each sets the border to match its background so the border
    stays the same color as the badge (not inherited from the surrounding link
    text). */
+/* Stage colours run amber -> orange -> brand red as a feature matures, so the badge itself hints at
+   how far along it is: Experimental, then Alpha, then Beta. */
 .dqx-badge--experimental { background-color: #eab308; border-color: #eab308; color: #1b1b1d; }  /* amber  — Experimental */
+.dqx-badge--alpha        { background-color: #f97316; border-color: #f97316; color: #1b1b1d; }  /* orange — Alpha */
 .dqx-badge--beta         { background-color: #ff3621; border-color: #ff3621; color: #fff; }      /* brand red — Beta */
 .dqx-badge--deprecated   { background-color: #6b7280; border-color: #6b7280; color: #fff; }      /* gray   — Deprecated */
 .dqx-badge--version      { background-color: #1b3139; border-color: #1b3139; color: #fff; }      /* navy   — version tag */
