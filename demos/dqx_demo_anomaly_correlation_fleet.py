@@ -8,7 +8,7 @@
 # MAGIC - Generate healthy telemetry where the metrics move together, as real machines do
 # MAGIC - Break the *relationship* between three of them while every reading stays in range
 # MAGIC - Prove no threshold or range check could ever catch it
-# MAGIC - Train with `profile="timeseries"` and read the explanation
+# MAGIC - Train with `profile="correlation"` and read the explanation
 # MAGIC
 # MAGIC **Dataset**: Eight metrics per reading across four CNC machines (no domain expertise required)
 # MAGIC
@@ -42,9 +42,9 @@
 # MAGIC | Your data | `profile` | An anomaly looks like |
 # MAGIC |---|---|---|
 # MAGIC | **Independent records.** Card payments, insurance claims, customer records, product listings. | `"tabular"` (default) | A row whose values, or combination of values, is unusual |
-# MAGIC | **Repeated measurements of the same things.** Machine sensors, server metrics, patient vitals, smart meters. | `"timeseries"` | Metrics that normally move **together** stop doing so, each staying in its own range |
+# MAGIC | **Repeated measurements of the same things.** Machine sensors, server metrics, patient vitals, smart meters. | `"correlation"` | Metrics that normally move **together** stop doing so, each staying in its own range |
 # MAGIC
-# MAGIC This notebook uses `"timeseries"`, because the bearing story above is exactly its case. The default
+# MAGIC This notebook uses `"correlation"`, because the bearing story above is exactly its case. The default
 # MAGIC detector splits on one column at a time, so a broken relationship between two in-range values is close
 # MAGIC to invisible to it. On the **Server Machine Dataset**, 28 machines of real telemetry with labelled
 # MAGIC incidents, trained the way DQX trains, the correlation-aware detector surfaces **96.8%** of incidents
@@ -362,7 +362,7 @@ print("   No threshold, no range check and no per-metric z-score can separate th
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 3: Train with `profile="timeseries"`
+# MAGIC ## Section 3: Train with `profile="correlation"`
 # MAGIC
 # MAGIC One word selects the correlation-aware detector. Everything else is unchanged: the same automatic
 # MAGIC feature engineering, the same registry, the same `has_no_row_anomalies` check, the same
@@ -390,7 +390,7 @@ trained = anomaly_engine.train(
     registry_table=registry_table,
     columns=METRICS,
     baseline_by=[],
-    profile="timeseries",
+    profile="correlation",
     # Whole table rather than the default sample: 4,000 readings is small enough that sampling only makes
     # the numbers printed below vary between runs, because the sample is drawn per partition.
     params=AnomalyParams(sample_fraction=1.0),
@@ -719,7 +719,7 @@ display(
 # MAGIC - Some failures are **broken relationships**, not extreme values. Every gauge reads normal and the
 # MAGIC   machine is still in trouble.
 # MAGIC - Per-metric alerts cannot see those, however well tuned — verified above, not asserted.
-# MAGIC - `profile="timeseries"` switches to a detector that models how metrics move together. One word;
+# MAGIC - `profile="correlation"` switches to a detector that models how metrics move together. One word;
 # MAGIC   everything else is unchanged.
 # MAGIC - It needs no timestamp column and trains a single model rather than an ensemble.
 # MAGIC
@@ -729,7 +729,7 @@ display(
 # MAGIC     df=spark.table("your_catalog.your_schema.your_metrics"),
 # MAGIC     model_name="your_catalog.your_schema.your_model",
 # MAGIC     registry_table="your_catalog.your_schema.dqx_anomaly_models",
-# MAGIC     profile="timeseries",
+# MAGIC     profile="correlation",
 # MAGIC )
 # MAGIC
 # MAGIC # Then score straight from one table into another.
@@ -767,7 +767,7 @@ display(
 # MAGIC
 # MAGIC You now understand:
 # MAGIC - ✅ The difference between an extreme value and a broken relationship
-# MAGIC - ✅ When to reach for `profile="timeseries"` instead of the default
+# MAGIC - ✅ When to reach for `profile="correlation"` instead of the default
 # MAGIC - ✅ Why it needs no timestamp column
 # MAGIC - ✅ How to read contributions and AI explanations for a correlation break
 # MAGIC

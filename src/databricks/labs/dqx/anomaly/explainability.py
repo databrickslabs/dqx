@@ -260,7 +260,7 @@ def _attribute(
     quietly attributed per feature. Summing leave-one-out drops would reinstate the error blocking exists to
     remove -- each view of a shared source measures almost nothing on its own -- and returning per-feature
     values under source-column keys silently pairs numbers with the wrong names. This is reachable because
-    :mod:`databricks.labs.dqx.anomaly.timeseries_detector` is registered with cloudpickle *by value*, so an
+    :mod:`databricks.labs.dqx.anomaly.correlation_detector` is registered with cloudpickle *by value*, so an
     older class definition travels inside a persisted model and can be restored without the method. A
     version string cannot substitute for the check: the capability is a property of the restored object.
 

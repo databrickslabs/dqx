@@ -225,8 +225,8 @@ def _score_and_record(benchmark, model_name: str, registry_table: str, test_df: 
 
 
 @pytest.mark.benchmark(group=BENCHMARK_GROUP)
-def test_benchmark_anomaly_score_timeseries_profile(benchmark, request, spark, ws, make_schema, make_random):
-    """Score with ``profile="timeseries"`` on metrics that move together, and record the quality.
+def test_benchmark_anomaly_score_correlation_profile(benchmark, request, spark, ws, make_schema, make_random):
+    """Score with ``profile="correlation"`` on metrics that move together, and record the quality.
 
     The fixture is the case this detector exists for: metrics driven by shared latent factors, where
     the anomaly is the correlation between them breaking rather than any single value leaving its
@@ -244,7 +244,7 @@ def test_benchmark_anomaly_score_timeseries_profile(benchmark, request, spark, w
         registry_table=registry_table,
         columns=feature_cols,
         baseline_by=[],
-        profile="timeseries",
+        profile="correlation",
     )
 
     scored = _score_and_record(benchmark, model_name, registry_table, test_df)
@@ -253,7 +253,7 @@ def test_benchmark_anomaly_score_timeseries_profile(benchmark, request, spark, w
         benchmark,
         train_df.count(),
         test_df.count(),
-        dataset='synthetic: correlated multivariate metrics, profile="timeseries"',
+        dataset='synthetic: correlated multivariate metrics, profile="correlation"',
         n_features=len(feature_cols),
         anomaly_frac=_anomaly_rate(test_df),
     )

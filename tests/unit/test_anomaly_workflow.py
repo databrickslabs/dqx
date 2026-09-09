@@ -191,7 +191,7 @@ def test_anomaly_workflow_passes_the_configured_profile(monkeypatch):
             model_name="catalog.schema.my_model",
             registry_table="catalog.schema.my_registry",
             baseline_by=["machine_id"],
-            profile="timeseries",
+            profile="correlation",
             baseline_over_time="reading_ts",
         ),
     )
@@ -199,7 +199,7 @@ def test_anomaly_workflow_passes_the_configured_profile(monkeypatch):
 
     anomaly_workflow.AnomalyTrainerWorkflow().train_model(ctx)
 
-    assert train_called["kwargs"]["profile"] == "timeseries"
+    assert train_called["kwargs"]["profile"] == "correlation"
     assert train_called["kwargs"]["baseline_by"] == ["machine_id"]
     # All three comparison bases, because a scheduled retrain that silently drops one produces a different
     # model from the YAML it was given, and nothing downstream would report the discrepancy.

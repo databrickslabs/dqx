@@ -83,7 +83,7 @@ if anomaly_benchmarks:
     lines.append(
         "* Each row states the fixture it was measured on. They are deliberately different problems: "
         "one blends overlapping and heavy-tailed distributions, one breaks the correlation between "
-        "metrics that normally move together (`profile=\"timeseries\"`), and one collapses a single "
+        "metrics that normally move together (`profile=\"correlation\"`), and one collapses a single "
         "group's volume while the overall total stays flat (`baseline_by`). Comparing quality numbers "
         "*across* rows is meaningless."
     )

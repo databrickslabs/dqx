@@ -24,7 +24,7 @@ from databricks.labs.dqx.anomaly.core import (
 )
 from databricks.labs.dqx.anomaly.ensemble_training import EnsembleTrainer
 from databricks.labs.dqx.anomaly.mlflow_registry import ModelRegistryBase, get_default_registry
-from databricks.labs.dqx.anomaly.timeseries_detector import fit_mahalanobis_model
+from databricks.labs.dqx.anomaly.correlation_detector import fit_mahalanobis_model
 from databricks.labs.dqx.anomaly.types import TrainingResult
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -35,7 +35,11 @@ logger = logging.getLogger(__name__)
 # changing it would orphan every model already trained with this algorithm.
 MAHALANOBIS_ALGORITHM = "Mahalanobis"
 
-# The public profile vocabulary. It describes the *data a user has*, not the algorithm DQX picks for it.
+# The public profile vocabulary. Each value names *how a row is judged unusual*, not what kind of data the
+# caller has: both profiles accept the same tables, and either composes with baseline_by and
+# baseline_over_time. The earlier "timeseries" spelling implied a data shape and a time dependence it never
+# had -- the detector needs no timestamp and models cross-metric structure -- which is why it was renamed
+# before release.
 #
 # There is deliberately no "auto": DQX never selects the algorithm on a user's behalf. Choosing
 # correctly cannot be verified without labels, which an unsupervised tool does not have, and the one
@@ -44,8 +48,8 @@ MAHALANOBIS_ALGORITHM = "Mahalanobis"
 # routinely -- three of ten classical tabular benchmarks scored above the weakest genuine time-series
 # entity. A value named "auto" would therefore have promised a selection that never happens.
 PROFILE_TABULAR = "tabular"
-PROFILE_TIMESERIES = "timeseries"
-SUPPORTED_PROFILES = (PROFILE_TABULAR, PROFILE_TIMESERIES)
+PROFILE_CORRELATION = "correlation"
+SUPPORTED_PROFILES = (PROFILE_TABULAR, PROFILE_CORRELATION)
 # Unset means the tabular detector: exactly the behaviour that predates this option.
 DEFAULT_PROFILE = PROFILE_TABULAR
 
@@ -159,7 +163,7 @@ class MahalanobisTrainingStrategy(AnomalyTrainingStrategy):
     """Correlation-aware training strategy, for multivariate metrics such as time series.
 
     Same feature engineering, same registry, same metrics as the IsolationForest strategy — only the
-    estimator differs. See ``timeseries_detector`` for why: IsolationForest splits one feature at a
+    estimator differs. See ``correlation_detector`` for why: IsolationForest splits one feature at a
     time, so anomalies that are broken *correlations* rather than extreme single values are close to
     invisible to it. Measured on SMD, incident coverage inside a 1%-of-rows alert budget is 0.359 for
     IsolationForest and 0.821 here on a clean training split, and 0.333 against 0.795 when the training
@@ -235,11 +239,11 @@ def resolve_training_profile(
     Pure: it returns parameters rather than mutating the caller's. For the tabular profiles it returns
     the **same object**, so choosing a profile explicitly cannot perturb an existing configuration.
 
-    The profiles describe the data a user has, not the algorithm DQX picks for it:
+    Each profile names how a row is judged unusual, not the kind of data the caller has:
 
     * ``tabular`` (the default, and what an unset profile means) — IsolationForest, exactly the
       behaviour that predates this option.
-    * ``timeseries`` — the correlation-aware detector, with the ensemble collapsed to a single model.
+    * ``correlation`` — the correlation-aware detector, with the ensemble collapsed to a single model.
       Needs no time column: it models cross-metric correlation, not time.
 
     There is no automatic option. DQX will not switch algorithms on a user's behalf: the choice cannot
@@ -252,7 +256,7 @@ def resolve_training_profile(
     if requested == PROFILE_TABULAR:
         strategy: AnomalyTrainingStrategy = IsolationForestTrainingStrategy()
         resolved_params = params
-    elif requested == PROFILE_TIMESERIES:
+    elif requested == PROFILE_CORRELATION:
         strategy = MahalanobisTrainingStrategy()
         resolved_params = dataclasses.replace(params, ensemble_size=1)
     else:

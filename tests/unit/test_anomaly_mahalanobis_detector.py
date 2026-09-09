@@ -15,7 +15,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.anomaly.mlflow_registry import SKLEARN_SERIALIZATION_FORMAT
-from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
+from databricks.labs.dqx.anomaly.correlation_detector import MahalanobisDetector
 
 # The correlated 2x2 case used throughout: rho = 0.9, so the off-diagonal precision terms are large
 # enough that the signed decomposition goes negative.
@@ -272,7 +272,7 @@ def test_the_detector_round_trips_through_mlflow_in_the_format_dqx_declares():
     """MLflow 3 refuses to save an sklearn model referencing types skops does not trust.
 
     ``IsolationForest`` is trusted; :class:`MahalanobisDetector` is DQX's own class, so raising the
-    mlflow floor to 3.x broke ``profile="timeseries"`` at registration with "The saved sklearn model
+    mlflow floor to 3.x broke ``profile="correlation"`` at registration with "The saved sklearn model
     references untrusted types", after every unit test still passed. Naming cloudpickle restores what
     MLflow 2 did by default.
 

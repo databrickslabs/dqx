@@ -212,8 +212,8 @@ def test_anomaly_config_carries_the_profile():
     Without it the choice is reachable only from the Python API, so a scheduled retrain silently falls
     back to the tabular default and produces a different model from the one the user trained by hand.
     """
-    cfg = AnomalyConfig(columns=["a"], profile="timeseries")
-    assert cfg.profile == "timeseries"
+    cfg = AnomalyConfig(columns=["a"], profile="correlation")
+    assert cfg.profile == "correlation"
 
 
 def test_anomaly_config_omitting_profile_keeps_the_tabular_default():
@@ -364,7 +364,7 @@ def test_anomaly_config_survives_a_real_yaml_round_trip():
                         model_name="catalog.schema.fleet_monitor",
                         registry_table="catalog.schema.dqx_anomaly_models",
                         baseline_by=["machine_id"],
-                        profile="timeseries",
+                        profile="correlation",
                         baseline_over_time="reading_ts",
                     ),
                 )
@@ -377,7 +377,7 @@ def test_anomaly_config_survives_a_real_yaml_round_trip():
     assert loaded is not None
     assert loaded.columns == ["spindle_load", "motor_current"]
     assert loaded.baseline_by == ["machine_id"]
-    assert loaded.profile == "timeseries"
+    assert loaded.profile == "correlation"
     assert loaded.baseline_over_time == "reading_ts"
 
 

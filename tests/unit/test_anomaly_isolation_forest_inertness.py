@@ -157,13 +157,13 @@ def test_tabular_profiles_select_isolation_forest_and_leave_params_untouched(pro
     assert resolved is params
 
 
-def test_timeseries_profile_collapses_the_ensemble_without_mutating_the_caller():
+def test_correlation_profile_collapses_the_ensemble_without_mutating_the_caller():
     """The detector is deterministic, so an ensemble would be N identical models. The caller's params
     must survive unchanged even so -- the resolver returns a new object rather than editing theirs."""
     params = _reference_params()
     assert params.ensemble_size == 3
 
-    strategy, resolved = resolve_training_profile("timeseries", params)
+    strategy, resolved = resolve_training_profile("correlation", params)
 
     assert strategy.name == "mahalanobis"
     assert resolved.ensemble_size == 1
@@ -172,10 +172,27 @@ def test_timeseries_profile_collapses_the_ensemble_without_mutating_the_caller()
 
 def test_an_unknown_profile_is_rejected_by_name():
     with pytest.raises(InvalidParameterError, match="Unknown profile"):
-        resolve_training_profile("timeseries-ish", _reference_params())
+        resolve_training_profile("correlation-ish", _reference_params())
 
 
-@pytest.mark.parametrize("profile", [None, "tabular", "timeseries"])
+def test_the_pre_release_timeseries_spelling_is_rejected_and_names_what_to_use():
+    """``timeseries`` was renamed to ``correlation`` before release, with no alias on purpose.
+
+    The old spelling implied a data shape and a time dependence the detector never had. A silent alias
+    would have kept that reading alive; falling back to the default would be worse still, since the
+    caller would get IsolationForest while believing they had asked for the correlation-aware detector
+    -- every score different, no error. So it must raise, and the message must name the replacement.
+
+    Renaming the value is safe precisely because it is never persisted: a trained model records its
+    algorithm and scoring resolves the detector from that, so no existing model depends on this string.
+    """
+    with pytest.raises(InvalidParameterError, match="Unknown profile") as raised:
+        resolve_training_profile("timeseries", _reference_params())
+
+    assert "correlation" in str(raised.value), "the error must point at the value that replaced it"
+
+
+@pytest.mark.parametrize("profile", [None, "tabular", "correlation"])
 def test_an_injected_strategy_wins_over_every_profile(profile: str | None):
     """``AnomalyTrainingService(spark, strategy=...)`` is how a caller substitutes a strategy, and how
     existing tests substitute a double. If profile resolution overrode it, those tests would keep
@@ -193,6 +210,6 @@ def test_an_injected_strategy_wins_over_every_profile(profile: str | None):
 
 def test_parameter_defaults_still_follow_the_profile_when_a_strategy_is_injected():
     """An override replaces the strategy, not the profile's declared parameter defaults."""
-    _, resolved = resolve_training_profile("timeseries", _reference_params(), IsolationForestTrainingStrategy())
+    _, resolved = resolve_training_profile("correlation", _reference_params(), IsolationForestTrainingStrategy())
 
     assert resolved.ensemble_size == 1

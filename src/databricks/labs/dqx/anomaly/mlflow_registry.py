@@ -168,7 +168,7 @@ def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
 #:
 #: MLflow 3 validates a saved sklearn model against skops' set of trusted types and refuses anything it
 #: does not recognise. ``IsolationForest`` is recognised; :class:`MahalanobisDetector` is DQX's own class,
-#: so ``profile="timeseries"`` failed outright at registration with "The saved sklearn model references
+#: so ``profile="correlation"`` failed outright at registration with "The saved sklearn model references
 #: untrusted types". MLflow 2 defaulted to cloudpickle and never ran that check, so naming cloudpickle
 #: here restores the behaviour every DQX model has always been written with rather than introducing new
 #: behaviour, and it works identically on both major versions -- unlike ``skops_trusted_types``, which

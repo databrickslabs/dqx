@@ -6,7 +6,7 @@ import pytest
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
-from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
+from databricks.labs.dqx.anomaly.correlation_detector import MahalanobisDetector
 from databricks.labs.dqx.anomaly.explainability import (
     compute_gated_shap_contributions,
     severity_from_scores,

@@ -500,7 +500,7 @@ def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatur
     produce -- the group key among them, because the group-relative transform needs it at scoring time --
     so the engineered frame is wider than the feature list. Handing that frame to ``model.predict`` for
     signature inference passes the estimator a string column it was never fitted on, which fails for any
-    grouped model on the single-model path (``profile="timeseries"``, or ``ensemble_size=1``). The default
+    grouped model on the single-model path (``profile="correlation"``, or ``ensemble_size=1``). The default
     three-model ensemble registers by URI and never comes through here, which is why this was invisible.
 
     Args:

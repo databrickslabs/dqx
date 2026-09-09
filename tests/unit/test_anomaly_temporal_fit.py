@@ -27,7 +27,7 @@ from databricks.labs.dqx.anomaly.temporal import (
     select_basis,
     trend_strength,
 )
-from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
+from databricks.labs.dqx.anomaly.correlation_detector import MahalanobisDetector
 
 HOUR = 3600.0
 DAY = 86400.0

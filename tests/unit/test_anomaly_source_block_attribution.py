@@ -17,7 +17,7 @@ import pytest
 from sklearn.ensemble import IsolationForest
 
 from databricks.labs.dqx.anomaly.explainability import compute_row_attributions, format_shap_contributions
-from databricks.labs.dqx.anomaly.timeseries_detector import MahalanobisDetector
+from databricks.labs.dqx.anomaly.correlation_detector import MahalanobisDetector
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -144,7 +144,7 @@ def test_a_block_sums_signed_values_so_a_normalising_view_cancels():
 class _PerFeatureOnly:
     """An estimator that can attribute per feature but cannot group by source column.
 
-    Reachable for two reasons, neither hypothetical. ``timeseries_detector`` is registered with cloudpickle
+    Reachable for two reasons, neither hypothetical. ``correlation_detector`` is registered with cloudpickle
     *by value*, so an older class definition travels inside a persisted model and is restored without
     methods added since; and the config hash covers only columns and the comparison bases, so such a model
     passes scoring-time validation unchanged. A third-party estimator supplied through the documented

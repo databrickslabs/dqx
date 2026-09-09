@@ -55,7 +55,7 @@ def test_log_model_uses_name_when_supported(monkeypatch):
     assert captured["kwargs"]["registered_model_name"] == "catalog.schema.model"
     # Named rather than defaulted, and asserted on both branches: MLflow 3 validates a saved sklearn
     # model against skops' trusted types and refuses MahalanobisDetector, which is DQX's own class, so
-    # omitting this breaks profile="timeseries" at registration while every other test still passes.
+    # omitting this breaks profile="correlation" at registration while every other test still passes.
     assert captured["kwargs"]["serialization_format"] == SKLEARN_SERIALIZATION_FORMAT
 
 

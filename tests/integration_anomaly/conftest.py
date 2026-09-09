@@ -878,7 +878,7 @@ def quick_model_factory(ws, make_random, make_schema):
             params (AnomalyParams | None): Internal training params (test-only)
             baseline_by (list[str] | None): Group columns for baseline-conditioned models
             baseline_over_time (str | None): Time column each metric's expected level is fitted along
-            profile (str | None): Which detector to train ("tabular" / "timeseries"); None means
+            profile (str | None): Which detector to train ("tabular" / "correlation"); None means
                 the default, so existing callers keep the IsolationForest path untouched.
             train_schema (str | None): Explicit DDL for train_data (needed when group columns
                 are not doubles)

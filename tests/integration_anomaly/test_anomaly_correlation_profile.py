@@ -1,4 +1,4 @@
-"""``profile="timeseries"`` end to end: registry, contributions, AI explanation, detection quality.
+"""``profile="correlation"`` end to end: registry, contributions, AI explanation, detection quality.
 
 This is the only place the correlation-aware detector is exercised through the real pipeline. Everything
 before it is unit-level (numpy) or offline (the SMD bake-off), and neither can answer the two questions
@@ -6,7 +6,7 @@ that only a workspace can:
 
 1. **Does MLflow round-trip a DQX-defined estimator class at all?** ``log_sklearn_model_compatible``
    passes no *code_paths* and no *pip_requirements* (``mlflow_registry.py:167``). The sklearn flavour
-   defaults to cloudpickle, and ``timeseries_detector`` registers itself for pickle-by-value, so the
+   defaults to cloudpickle, and ``correlation_detector`` registers itself for pickle-by-value, so the
    class should travel inside the artifact -- but "should" is the word this test exists to remove.
    Scoring calls ``mlflow.sklearn.load_model`` (``model_loader.py:34``), so a failure here surfaces as a
    load error rather than as a wrong number.
@@ -101,7 +101,7 @@ def _train_both_profiles(spark, quick_model_factory, columns, train_rows):
     """Train one model per profile on identical data, returning ``{profile: (model, registry)}``."""
     train_schema = ", ".join(f"{col} double" for col in columns) + ", is_anomaly double"
     models = {}
-    for profile in ("timeseries", "tabular"):
+    for profile in ("correlation", "tabular"):
         model, registry, _ = quick_model_factory(
             spark,
             columns=columns,
@@ -176,26 +176,26 @@ def _assert_registry_records_profile(spark: SparkSession, registry_table: str, m
     )
 
 
-def _assert_beats_tabular_and_baselines(timeseries, tabular, columns: list[str]) -> None:
+def _assert_beats_tabular_and_baselines(correlation, tabular, columns: list[str]) -> None:
     """The detector beats the default profile, and beats doing almost nothing."""
-    timeseries_pr_auc = pr_auc(timeseries["label"], timeseries["score"])
+    correlation_pr_auc = pr_auc(correlation["label"], correlation["score"])
     tabular_pr_auc = pr_auc(tabular["label"], tabular["score"])
 
     # The design claim: a broken correlation is close to invisible to a per-feature splitter.
-    assert timeseries_pr_auc > tabular_pr_auc + MIN_PR_AUC_GAIN, (
-        f"the timeseries profile should beat the tabular one on anomalies that are purely joint "
-        f"(tabular PR-AUC {tabular_pr_auc:.4f}, timeseries {timeseries_pr_auc:.4f})"
+    assert correlation_pr_auc > tabular_pr_auc + MIN_PR_AUC_GAIN, (
+        f"the correlation profile should beat the tabular one on anomalies that are purely joint "
+        f"(tabular PR-AUC {tabular_pr_auc:.4f}, correlation {correlation_pr_auc:.4f})"
     )
 
     # And it must beat doing almost nothing. max_abs_z is the honest floor here: the fixture preserves
     # every marginal exactly, so a univariate statistic cannot separate these positives -- which also
     # means failing this assertion would say the fixture broke rather than that the model did.
-    baselines = trivial_baselines(timeseries, columns)
+    baselines = trivial_baselines(correlation, columns)
     assert (
-        timeseries_pr_auc > baselines["random"]
-    ), f"timeseries {timeseries_pr_auc:.4f} did not beat random {baselines['random']:.4f}"
-    assert timeseries_pr_auc > baselines["max_abs_z"], (
-        f"timeseries {timeseries_pr_auc:.4f} did not beat a max-abs-z baseline {baselines['max_abs_z']:.4f}; "
+        correlation_pr_auc > baselines["random"]
+    ), f"correlation {correlation_pr_auc:.4f} did not beat random {baselines['random']:.4f}"
+    assert correlation_pr_auc > baselines["max_abs_z"], (
+        f"correlation {correlation_pr_auc:.4f} did not beat a max-abs-z baseline {baselines['max_abs_z']:.4f}; "
         f"the fixture's anomalies may have stopped being purely joint"
     )
 
@@ -212,13 +212,13 @@ def _assert_ai_explanation_present(flagged) -> None:
     assert isinstance(narrative, str) and narrative.strip(), "ai_explanation.narrative was empty"
 
 
-def test_timeseries_profile_end_to_end(
+def test_correlation_profile_end_to_end(
     spark: SparkSession,
     quick_model_factory,
     anomaly_scorer,
     ai_query_endpoint,
 ):
-    """The timeseries profile trains, registers, scores, attributes, explains, and beats the default.
+    """The correlation profile trains, registers, scores, attributes, explains, and beats the default.
 
     Trains two models on identical data -- one per profile -- and compares them on the same rows.
     """
@@ -230,20 +230,20 @@ def test_timeseries_profile_end_to_end(
     train_rows = [tuple(r) for r in train_df.collect()]
 
     models = _train_both_profiles(spark, quick_model_factory, columns, train_rows)
-    timeseries_model, timeseries_registry = models["timeseries"]
+    correlation_model, correlation_registry = models["correlation"]
     tabular_model, tabular_registry = models["tabular"]
 
     # 1. The profile's choice is persisted and readable back.
-    _assert_registry_records_profile(spark, timeseries_registry, timeseries_model)
+    _assert_registry_records_profile(spark, correlation_registry, correlation_model)
 
     # Contributions and the AI explanation are only produced when asked for, and the explanation
     # depends on the contributions map — _resolve_ai_explanation_flag disables it silently when
     # contributions are off, so assertion 4 is load-bearing for assertion 5.
-    timeseries = _scored_frame(
+    correlation = _scored_frame(
         anomaly_scorer,
         test_df,
-        timeseries_model,
-        timeseries_registry,
+        correlation_model,
+        correlation_registry,
         columns,
         threshold=DEFAULT_SCORE_THRESHOLD,
         enable_contributions=True,
@@ -253,12 +253,12 @@ def test_timeseries_profile_end_to_end(
     tabular = _scored_frame(anomaly_scorer, test_df, tabular_model, tabular_registry, columns)
 
     # 2. Detection quality: better than the default profile, and better than a one-liner.
-    _assert_beats_tabular_and_baselines(timeseries, tabular, columns)
+    _assert_beats_tabular_and_baselines(correlation, tabular, columns)
 
     # 3. Contributions honour the persisted feature contract on every flagged row.
-    engineered_names = set(_engineered_feature_names(spark, timeseries_registry, timeseries_model))
+    engineered_names = set(_engineered_feature_names(spark, correlation_registry, correlation_model))
     assert engineered_names, "the persisted feature contract should be readable back from the registry"
-    flagged = timeseries[timeseries["flagged"] == 1.0]
+    flagged = correlation[correlation["flagged"] == 1.0]
     assert not flagged.empty, "no row was flagged, so the contributions assertions would pass vacuously"
 
     _assert_contribution_contract(flagged["contributions"], set(columns))
@@ -268,15 +268,15 @@ def test_timeseries_profile_end_to_end(
     # "not all rows" rather than "exactly the flagged rows" because the UDF-side gate is deliberately
     # over-inclusive by a small epsilon, so drift between the numpy and Spark severity computations can
     # never leave a flagged row without a map.
-    with_contributions = int(timeseries["contributions"].notna().sum())
-    assert with_contributions < len(timeseries), (
-        f"all {len(timeseries)} rows received contributions, so severity gating did not run; "
+    with_contributions = int(correlation["contributions"].notna().sum())
+    assert with_contributions < len(correlation), (
+        f"all {len(correlation)} rows received contributions, so severity gating did not run; "
         f"attribution is far more expensive than scoring, so this is a cost regression"
     )
 
     # 4. The attribution points at the columns whose correlation was actually severed. Without this the
     #    map could be uniform noise and every assertion above would still pass.
-    positives = timeseries[(timeseries["label"] == 1.0) & timeseries["contributions"].notna()]
+    positives = correlation[(correlation["label"] == 1.0) & correlation["contributions"].notna()]
     assert not positives.empty, "no labelled anomaly received contributions"
     hits = _top_contributor_hits(positives["contributions"], broken_columns)
     hit_rate = hits / len(positives)
@@ -290,16 +290,16 @@ def test_timeseries_profile_end_to_end(
 
     # 6. Scores must be finite everywhere. A singular covariance would surface as NaN or inf rather
     #    than as an exception, and every metric above would silently degrade instead of failing.
-    assert np.isfinite(timeseries["score"]).all(), "the timeseries model produced non-finite scores"
+    assert np.isfinite(correlation["score"]).all(), "the correlation model produced non-finite scores"
 
 
-def test_a_grouped_timeseries_model_trains_and_scores(ws, spark: SparkSession, make_schema, make_random):
+def test_a_grouped_correlation_model_trains_and_scores(ws, spark: SparkSession, make_schema, make_random):
     """The combination that failed: the correlation-aware profile together with a grouping.
 
     Feature engineering deliberately preserves the group key, so the engineered frame is wider than the
     feature list. Signature inference passed that whole frame to ``model.predict``, handing the estimator a
     string column it was never fitted on. Every grouped model on the single-model path hit it --
-    ``profile="timeseries"`` always, and the tabular profile at ``ensemble_size=1`` -- while the default
+    ``profile="correlation"`` always, and the tabular profile at ``ensemble_size=1`` -- while the default
     three-model ensemble registers by URI and never comes through that code, which is why the existing
     coverage passed: it uses ``baseline_by=[]``.
     """
@@ -323,7 +323,7 @@ def test_a_grouped_timeseries_model_trains_and_scores(ws, spark: SparkSession, m
         model_name=model_name,
         registry_table=registry_table,
         baseline_by=["region"],
-        profile="timeseries",
+        profile="correlation",
         params=AnomalyParams(sample_fraction=1.0),
     )
 

@@ -264,7 +264,7 @@ def generate_correlated_multivariate_data(
     anomaly_frac: float = 0.05,
     n_broken_features: int = 3,
 ) -> tuple[list[str], DataFrame, DataFrame, list[str]]:
-    """Generate the *correlation-break* anomaly that motivates ``profile="timeseries"``.
+    """Generate the *correlation-break* anomaly that motivates ``profile="correlation"``.
 
     Metrics are driven by a small number of shared latent factors, so they move together the way
     machine telemetry does -- CPU, memory and queue depth all rising when load rises. An anomaly here

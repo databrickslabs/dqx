@@ -537,11 +537,11 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     "demo_notebook",
     [
         "dqx_demo_anomaly_tabular_transactions.py",
-        "dqx_demo_anomaly_timeseries_fleet.py",
+        "dqx_demo_anomaly_correlation_fleet.py",
     ],
 )
 def test_run_dqx_anomaly_demo(ws, make_notebook, make_schema, make_job, library_ref, demo_notebook):
-    """Run the row anomaly detection demos: the tabular profile and the timeseries profile."""
+    """Run the row anomaly detection demos: the tabular profile and the correlation profile."""
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     path = Path(__file__).parent.parent.parent / "demos" / demo_notebook

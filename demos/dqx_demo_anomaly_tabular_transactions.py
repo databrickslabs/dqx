@@ -299,7 +299,7 @@ print("   Widening the rules cannot help; tightening them would reject legitimat
 # MAGIC electronics and extreme for coffee".
 # MAGIC
 # MAGIC `profile="tabular"` is the default and is right for independent records like these. Use
-# MAGIC `profile="timeseries"` for repeated multivariate measurements such as machine telemetry — see the
+# MAGIC `profile="correlation"` for repeated multivariate measurements such as machine telemetry — see the
 # MAGIC companion notebook.
 # MAGIC
 # MAGIC **Why `transaction_time` is not in `columns`.** A datetime column becomes seven features (cyclical

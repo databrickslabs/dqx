@@ -186,7 +186,7 @@ def has_no_row_anomalies(
             above the threshold; other rows get a null map), so the attribution cost scales with the
             number of anomalies rather than the table size. How they are computed depends on the
             detector: SHAP for the default tabular one (installed with the anomaly extra), an exact
-            leave-one-out decomposition for the timeseries one, which needs no SHAP at all. The emitted
+            leave-one-out decomposition for the correlation one, which needs no SHAP at all. The emitted
             map is identical either way. Set False to skip the cost entirely (this also disables AI
             explanations, since they use contributions as input).
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
@@ -223,13 +223,13 @@ def has_no_row_anomalies(
             at 100% can be a small part of what the model measured. This governs what reaches the
             serving endpoint: *_dq_info[].anomaly.contributions* is unchanged and still lists every
             column, so this is not an access control over the scored table.
-        max_groups: Maximum number of distinct (segment, pattern) groups the LLM is called for
-            per scoring run (default 500). Groups beyond this cap — ranked by
-            group_size * group_avg_severity — get a null ai_explanation; a warning is logged.
-            Note: for segmented models the cap is split across eligible segments with a floor of
-            one call each, so when ``max_groups`` is smaller than the number of eligible segments
-            the effective call count is the segment count (a warning is logged). Size
-            ``max_groups`` at or above your expected eligible-segment count to keep cost bounded.
+        max_groups: Maximum number of distinct contribution-pattern groups the LLM is called for per
+            scoring run (default 500). Anomalous rows are bucketed by their top-2 contributing
+            columns and the model is called once per bucket, so this is a direct cap on cost.
+            Groups beyond it — ranked by group_size * group_avg_severity — get a null
+            ai_explanation; a warning is logged. The per-segment budget split that used to apply
+            here went with the ``segment_by`` path: one model is trained now, so the cap is simply
+            the number of calls.
         driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
             worker UDF dependencies are not available. Default False for production.
 

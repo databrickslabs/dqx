@@ -739,7 +739,7 @@ button {
   text-align: center;
 }
 
-/* ── Correlation break: the inspection line (`profile="timeseries"`) ─ */
+/* ── Correlation break: the inspection line (`profile="correlation"`) ─ */
 .bv-line { position: relative; height: 10.6rem; margin: 0.75rem 0.25rem 0; overflow: hidden; }
 
 /* One pill carries the verdict. An earlier multi-row readout grew until it was more complicated than the
