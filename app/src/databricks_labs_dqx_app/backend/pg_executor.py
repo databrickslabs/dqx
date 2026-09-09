@@ -979,6 +979,28 @@ def build_pg_executor(
     )
 
 
+def _resolve_endpoint_for_host(ws: WorkspaceClient, host: str) -> str:
+    """Resolve an Apps-injected Postgres host to its Lakebase endpoint."""
+    normalized_host = host.strip().lower()
+    for project in ws.postgres.list_projects():
+        if not project.name:
+            continue
+        for branch in ws.postgres.list_branches(parent=project.name):
+            if not branch.name:
+                continue
+            for endpoint in ws.postgres.list_endpoints(parent=branch.name):
+                status = endpoint.status
+                hosts = status.hosts if status else None
+                if hosts is None:
+                    continue
+                endpoint_hosts = {
+                    candidate.strip().lower() for candidate in (hosts.host, hosts.read_only_host) if candidate
+                }
+                if normalized_host in endpoint_hosts and endpoint.name:
+                    return endpoint.name
+    raise RuntimeError("Could not resolve the bound Lakebase host to an accessible endpoint")
+
+
 def build_pg_executor_from_connection(
     ws: WorkspaceClient,
     connection: LakebaseConnection,
@@ -1011,9 +1033,13 @@ def build_pg_executor_from_connection(
         host = connection.host
         username = connection.username
         password = connection.password
-        if not host or not username or password is None:
-            raise RuntimeError("Platform-bound Lakebase host, username, and password are required")
-        credential_provider = StaticCredentialProvider(password)
+        if not host or not username:
+            raise RuntimeError("Platform-bound Lakebase host and username are required")
+        if password is None:
+            endpoint = _resolve_endpoint_for_host(ws, host)
+            credential_provider = WorkspaceCredentialProvider(ws, endpoint)
+        else:
+            credential_provider = StaticCredentialProvider(password)
 
     return PgExecutor(
         ws=ws,
