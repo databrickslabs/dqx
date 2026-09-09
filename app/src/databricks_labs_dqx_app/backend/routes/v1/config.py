@@ -10,15 +10,14 @@ from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
-from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_ai_bootstrap,
     get_app_settings_service,
-    get_conf,
     get_sp_ws,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from pydantic import BaseModel, Field, field_validator
 
 from databricks_labs_dqx_app.backend.models import (
@@ -830,14 +829,15 @@ class WorkspaceHostOut(BaseModel):
     response_model=WorkspaceHostOut,
     operation_id="getWorkspaceHost",
 )
-def get_workspace_host(conf: Annotated[AppConfig, Depends(get_conf)]) -> WorkspaceHostOut:
+def get_workspace_host() -> WorkspaceHostOut:
     """Return the workspace host + task-runner job id (accessible by all authenticated users).
 
     Neither value grants data access on its own — links built from them (e.g.
     Unity Catalog explorer, job-run pages) still enforce the caller's own
     workspace/UC permissions on arrival.
     """
-    return WorkspaceHostOut(workspace_host=_workspace_host(), job_id=conf.job_id)
+    job_id = str(setup_runtime.job_id) if setup_runtime.job_id is not None else ""
+    return WorkspaceHostOut(workspace_host=_workspace_host(), job_id=job_id)
 
 
 # ----------------------------------------------------------------------

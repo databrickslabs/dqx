@@ -58,6 +58,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_pass_threshold,
     resolve_pass_threshold,
 )
+from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.models import (
     DimensionOut,
     EntityResultsOut,
@@ -147,23 +148,23 @@ def _validate_run_id(run_id: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _app_object_fqn(app_conf: AppConfig, name: str) -> str:
+def _app_object_fqn(sql: SqlExecutor, name: str) -> str:
     """Backtick-quoted FQN of a main-schema object (*name* is a trusted constant).
 
     Use this for base tables only (``dq_metrics``, ``dq_quarantine_records``, …).
     For the seven derived Genie objects that live in the genie schema, use
     :func:`_genie_object_fqn` instead.
     """
-    return quote_object_fqn(app_conf.catalog, app_conf.schema_name, name)
+    return quote_object_fqn(sql.catalog, sql.schema, name)
 
 
-def _genie_object_fqn(app_conf: AppConfig, name: str) -> str:
+def _genie_object_fqn(sql: SqlExecutor, name: str) -> str:
     """Backtick-quoted FQN of a genie-schema derived object (*name* is a trusted constant)."""
-    return quote_object_fqn(app_conf.catalog, app_conf.genie_schema_name, name)
+    return quote_object_fqn(sql.catalog, rt.require_resources().genie_schema, name)
 
 
-def _shaping_view_fqn(app_conf: AppConfig) -> str:
-    return _genie_object_fqn(app_conf, SHAPING_VIEW_NAME)
+def _shaping_view_fqn(sql: SqlExecutor) -> str:
+    return _genie_object_fqn(sql, SHAPING_VIEW_NAME)
 
 
 def _is_valid_fqn(table_fqn: str, source: str) -> bool:
@@ -204,7 +205,7 @@ def _fetch_check_rows(
     """
     if table_fqns is not None and not table_fqns:
         return []
-    view = _shaping_view_fqn(app_conf)
+    view = _shaping_view_fqn(sql)
     conds: list[str] = []
     if table_fqns is not None:
         conds.append(f"input_location IN ({_in_list(table_fqns)})")
@@ -251,7 +252,7 @@ def _fetch_asof_check_rows(
     """
     if table_fqns is not None and not table_fqns:
         return []
-    view = _genie_object_fqn(app_conf, ASOF_VIEW_NAME)
+    view = _genie_object_fqn(sql, ASOF_VIEW_NAME)
     conds = [f"include_drafts = {'true' if include_drafts else 'false'}"]
     if table_fqns is not None:
         conds.append(f"input_location IN ({_in_list(table_fqns)})")
@@ -295,7 +296,7 @@ def _fetch_failed_records_by_run(
     """
     if table_fqns is not None and not table_fqns:
         return {}
-    metrics_table = _app_object_fqn(app_conf, "dq_metrics")
+    metrics_table = _app_object_fqn(sql, "dq_metrics")
     where = f"WHERE input_location IN ({_in_list(table_fqns)}) " if table_fqns is not None else ""
     stmt = (
         f"SELECT input_location, run_id, "
@@ -434,7 +435,7 @@ def _run_set_map(run_sets: RunSetService, run_ids: list[str]) -> dict[str, str]:
 
     Degrades to an empty map on any OLTP hiccup — a missing join simply
     leaves runs unconsolidated (each its own batch via COALESCE), never a
-    500. The run-set tables are OLTP (Lakebase/Delta-fallback) while the
+    500. The run-set tables are OLTP (Lakebase) while the
     results views are Delta/UC, so this is a query-time Python join rather
     than a view-side one.
     """
@@ -659,7 +660,7 @@ def _runs_from_metric_view(
     if not table_fqns:
         return RunsOut()
     breaches = breach_by_run or {}
-    mv = metric_view_fqn(app_conf.catalog, app_conf.genie_schema_name)
+    mv = metric_view_fqn(sql.catalog, rt.require_resources().genie_schema)
     conds = [f"input_location IN ({_in_list(table_fqns)})"]
     if not include_drafts:
         conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
@@ -1273,7 +1274,7 @@ def get_dq_results_failed_rows(
     # the TRUE filtered total in the SAME pass — no separate 100k count-scan,
     # no app-side parse-and-filter over a wide window. The predicate mirrors
     # row_matches_filters exactly (see _facet_pushdown_predicate).
-    quarantine_table = _app_object_fqn(app_conf, "dq_quarantine_records")
+    quarantine_table = _app_object_fqn(sp_sql, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
     if run_id:
         # A pinned run: exactly that run's rows (run_id is charset-validated
@@ -1287,7 +1288,7 @@ def get_dq_results_failed_rows(
         # response is always a single run's rows.
         mode_cond = "" if include_drafts else f"AND run_mode = '{RUN_MODE_PUBLISHED}' "
         run_cond = (
-            f"AND run_id = (SELECT run_id FROM {_shaping_view_fqn(app_conf)} "
+            f"AND run_id = (SELECT run_id FROM {_shaping_view_fqn(sp_sql)} "
             f"WHERE input_location = '{e_fqn}' {mode_cond}"
             f"ORDER BY run_time DESC LIMIT 1) "
         )

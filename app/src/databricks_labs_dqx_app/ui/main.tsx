@@ -12,6 +12,7 @@ import { routeTree } from "@/types/routeTree.gen";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthGuard } from "@/components/AuthGuard";
+import { SetupGate } from "@/components/SetupGate";
 import { toast } from "sonner";
 import { errorToast } from "@/lib/toast";
 import { getCurrentUserQueryKey } from "@/lib/api";
@@ -91,7 +92,9 @@ if (!rootElement.innerHTML) {
       <StrictMode>
         <AuthGuard>
           <QueryClientProvider client={queryClient}>
-            <RouterProvider router={router} />
+            <SetupGate>
+              <RouterProvider router={router} />
+            </SetupGate>
           </QueryClientProvider>
         </AuthGuard>
       </StrictMode>,

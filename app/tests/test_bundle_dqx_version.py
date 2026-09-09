@@ -54,3 +54,9 @@ def test_dev_wheel_filename_derives_from_the_version() -> None:
     ``uv build`` produces for ``dqx_version`` (and what the app's _find_wheels glob matches)."""
     text = _BUNDLE.read_text(encoding="utf-8")
     assert 'default: "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl"' in text
+
+
+def test_bundle_artifact_build_uses_the_frozen_app_lock() -> None:
+    """Bundle builds must not re-resolve dependencies against a workspace package proxy."""
+    text = _BUNDLE.read_text(encoding="utf-8")
+    assert "uv run --frozen python scripts/build_app.py" in text

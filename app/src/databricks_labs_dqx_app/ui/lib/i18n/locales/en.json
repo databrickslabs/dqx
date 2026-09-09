@@ -2929,5 +2929,55 @@
     "contribute": "Contribute on GitHub",
     "added": "Added",
     "alreadyImported": "This rule is already imported"
+  },
+  "setup": {
+    "title": "Set up DQX Studio",
+    "description": "Complete the required steps below to make DQX Studio available.",
+    "checkingTitle": "Checking Studio readiness",
+    "checkingDescription": "DQX Studio is checking the capabilities required to start safely.",
+    "waitingTitle": "Studio setup needs an administrator",
+    "waitingDescription": "Contact a member of {{adminGroup}} to complete the remaining setup steps.",
+    "statusUnavailableTitle": "Setup status is unavailable",
+    "statusUnavailableDescription": "Refresh the page to check Studio readiness again.",
+    "reconcileFailed": "Setup could not be completed. Review the reported steps and try again.",
+    "whyNeeded": "Why this is needed",
+    "purposes": {
+      "identity": "A service principal used by DQX Studio to manage application resources and perform setup operations.",
+      "volume": "Stores the DQX Core library and task-runner application used by profiling and data-quality jobs.",
+      "unity_catalog": "Lets Studio create and query its schemas, tables, temporary views, and run results.",
+      "schemas": "Separates application state, temporary views, and Genie-facing objects in Unity Catalog.",
+      "lakebase": "Stores transactional Studio state such as rules, roles, settings, and schedules.",
+      "warehouse": "Runs Studio's SQL queries for setup, metadata, results, and interactive checks.",
+      "task_runner": "Runs Spark-based profiling and data-quality workloads outside the web application.",
+      "wheels": "Keeps the task runner on the same DQX and Studio code versions as the application.",
+      "migrations": "Creates and upgrades the Delta and Lakebase tables required by this Studio version.",
+      "activation": "Starts Studio APIs and background services only after every dependency is ready."
+    },
+    "steps": {
+      "identity": "Application identity",
+      "volume": "Wheels volume",
+      "unity_catalog": "Unity Catalog access",
+      "schemas": "Application schemas",
+      "lakebase": "Lakebase database",
+      "warehouse": "SQL warehouse",
+      "task_runner": "Task-runner job",
+      "wheels": "Application wheels",
+      "migrations": "Database migrations",
+      "activation": "Activate Studio"
+    },
+    "states": {
+      "pending": "Pending",
+      "running": "In progress",
+      "passed": "Ready",
+      "action_required": "Action required",
+      "failed": "Needs attention"
+    },
+    "actions": {
+      "reconcile": "Run setup",
+      "verify_again": "Verify again",
+      "openJobs": "Open Jobs"
+    },
+    "instructions": "How to resolve this",
+    "diagnosticCode": "Code: {{code}}"
   }
 }
