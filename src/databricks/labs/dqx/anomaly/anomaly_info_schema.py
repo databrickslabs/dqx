@@ -25,6 +25,14 @@ ai_explanation_struct_schema = StructType(
         StructField("action", StringType(), True),
         StructField("group_size", LongType(), True),
         StructField("group_avg_severity", DoubleType(), True),
+        # Appended last, and it must stay last: add_info_column casts this struct positionally, so schema
+        # order and construction order have to match. _dq_info therefore grows wider, and appending to a
+        # Delta table that already holds the narrower shape needs mergeSchema.
+        #
+        # How much of the contributing evidence the explanation was allowed to show, as a coarse state
+        # rather than a share -- a share would disclose by proportion what a redacted name discloses by
+        # identity. Machine-readable so a consumer can filter or escalate on it instead of parsing prose.
+        StructField("evidence_scope", StringType(), True),
     ]
 )
 

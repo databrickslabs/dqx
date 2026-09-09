@@ -24,6 +24,7 @@ from pyspark.sql.types import DoubleType, LongType, StringType, StructField, Str
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
 from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_label
+from databricks.labs.dqx.anomaly.scoring_utils import displayed_severity_expr
 from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -105,11 +106,18 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "supports saying a feature's own value was unusual, the other does not.",
     ),
     (
+        "evidence_disclosure",
+        "Whether you are being shown all of the evidence. Read this BEFORE feature_contributions, because "
+        "it decides what the shares below mean and what you may say about them.",
+    ),
+    (
         "feature_contributions",
         "Mean share across the group of the evidence the model acted on, per column the caller named, "
         "e.g. 'amount (82%), quantity (11%), discount (5%)'. One entry per column however many ways that "
         "column was compared, so a share says the column was involved and not which comparison objected. "
-        "These are aggregated relative importances — not raw data values, and not percentages of the score.",
+        "These are aggregated relative importances — not raw data values, and not percentages of the score. "
+        "The shares are normalised across the entries listed here only, so when evidence_disclosure says "
+        "any was withheld they are shares of what is disclosed and not of the whole decision.",
     ),
     ("group_size", "Number of rows in this group, e.g. '312 rows'."),
     ("severity_range", "Severity percentile range across the group, e.g. 'mean 97.4, min 95.1, max 99.8'."),
@@ -185,6 +193,8 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 _PROMPT_EXAMPLES = (
     "Example (relationship basis, no drift):\n"
     "attribution_basis: each metric's position once the others are accounted for\n"
+    "evidence_disclosure: every contributing metric is shown to you, so the shares below cover all of "
+    "the evidence the model used.\n"
     "feature_contributions: amount (61%), quantity (22%)\n"
     "group_size: 312 rows\n"
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
@@ -199,6 +209,8 @@ _PROMPT_EXAMPLES = (
     '"action":"Reconcile amount against source orders for the affected regions."}\n\n'
     "Example (value basis, judged against time, with drift):\n"
     "attribution_basis: each feature's own value compared against the rows it was scored against\n"
+    "evidence_disclosure: MOST of the contributing evidence cannot be disclosed and is absent from the "
+    "shares below, so what remains is a minority of what the model used.\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
     "group_size: 88 rows\n"
     "severity_range: mean 98.9, min 97.0, max 99.9\n"
@@ -207,11 +219,19 @@ _PROMPT_EXAMPLES = (
     "temporal_baseline: event_ts\n"
     "threshold: 95.0\n"
     "drift_summary: drift detected: latency_ms=4.12\n"
-    'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which has also drifted from its '
-    'training baseline; retries contribute modestly (12%). These rows are judged against expected levels '
-    'over time as well as overall.","business_impact":"If latency_ms is genuinely off on these rows, '
-    'downstream consumers with SLAs would be the first to notice.","action":"Compare latency_ms against '
-    'its expected level for that period as well as against its overall range."}'
+    # This exemplar declares that most of the contributing evidence is withheld, so its response has to
+    # demonstrate the limited-band rule rather than contradict it. The earlier wording called the rows
+    # "dominated by latency_ms" and sent the reader straight there -- the precise redirect the limited
+    # instruction forbids, and a worked example outweighs an instruction. It still names both shares; what
+    # it drops is the claim that they settle the matter. It also does not restate the disclosure limit: the
+    # deterministic clause is appended to every withheld narrative, and an exemplar that stated it too would
+    # model saying it twice.
+    'Response: {"narrative":"Of what can be shown across these 88 rows, latency_ms carries most (74%) '
+    'and retries a small part (12%); latency_ms has also moved from its training baseline. These rows are '
+    'judged against expected levels over time as well as overall.","business_impact":"If these rows are '
+    'wrong, downstream consumers with SLAs would be the first to notice.","action":"Start with the rows '
+    'themselves rather than one field: compare latency_ms against its expected level for that period, and '
+    'take account of the evidence this explanation could not include."}'
 )
 
 if TYPE_CHECKING:
@@ -403,6 +423,111 @@ def _baseline_grouping_str(metadata: SparkFeatureMetadata | None) -> str:
     return ", ".join(metadata.baseline_by)
 
 
+# Coarse disclosure states. Deliberately three, and deliberately unlabelled by any number: a reader who
+# knows the boundaries must not be able to read a proportion back out of the state. "Most" versus "some"
+# is the distinction that changes what a narrative may claim, and finer bands would buy nothing while
+# leaking more about a column the caller asked to keep out of the prompt.
+DISCLOSURE_COMPLETE = "complete"
+DISCLOSURE_PARTIAL = "partial"
+DISCLOSURE_LIMITED = "limited"
+
+# Above this share of the evidence being withheld, what remains cannot carry the explanation on its own.
+_LIMITED_DISCLOSURE_SHARE = 0.5
+
+DISCLOSURE_PROMPT_TEXT: dict[str, str] = {
+    DISCLOSURE_COMPLETE: "every contributing metric is shown to you, so the shares below cover all of the "
+    "evidence the model used.",
+    DISCLOSURE_PARTIAL: "SOME contributing evidence cannot be disclosed and is absent from the shares below, "
+    "which therefore cover only what is shown. Do not present a share as a portion of the whole decision, "
+    "and do not describe the metrics you can see as the reason the row was flagged.",
+    DISCLOSURE_LIMITED: "MOST of the contributing evidence cannot be disclosed and is absent from the shares "
+    "below, so what remains is a minority of what the model used. Name what you can see, say plainly that "
+    "the explanation is limited by evidence that cannot be shown, and do not direct the reader to "
+    "investigate a metric on the strength of a share this small. Never guess what the withheld evidence was.",
+}
+
+# Appended verbatim to the narrative, after sanitisation, whenever evidence was withheld. Deterministic
+# because the advisory that raised this is explicit that a prompt instruction is not a control: the
+# qualification has to survive a model that ignores it.
+DISCLOSURE_NARRATIVE_CLAUSE: dict[str, str] = {
+    DISCLOSURE_PARTIAL: " Some contributing evidence could not be disclosed, so these shares cover only "
+    "what is shown here.",
+    DISCLOSURE_LIMITED: " Most of the contributing evidence could not be disclosed, so this explanation "
+    "covers a minority of what the model used.",
+}
+
+# Phrasings that claim the listed metrics are the whole of what the model measured. Appending a
+# "some evidence was withheld" clause to one of these produces a narrative that contradicts itself, so the
+# claim is replaced rather than qualified. Deliberately narrow: these are the shapes actually observed, and a
+# broad pattern would swallow legitimate prose. It cannot catch a narrative that merely *implies*
+# completeness -- what limits that is the model no longer being shown a bare "100%".
+TOTALISING_CLAIM_PATTERN = (
+    r"(?i)(all of what the model measured"
+    r"|accounts? for all|accounted for all|account for all"  # every conjugation seen; "accounts"/"account"
+    r"|the whole (decision|picture)"
+    r"|100% of"
+    r"|fully explains?)"
+)
+
+# Used when a totalising claim has to be replaced. Built from the group's own facts, so it is useful rather
+# than merely safe -- the advisory is explicit that a fallback must not be a bare refusal, and equally must
+# not be a raw unreviewed model response.
+# Replaces a narrative that claimed completeness. Deliberately flat: it states the group size and the
+# disclosed shares and nothing else -- no direction, no cause, no adjective the inputs cannot support. It
+# asserts no limit of its own either, because the clause appended straight after it says that once, with
+# the band's precision.
+DISCLOSURE_FALLBACK_TEMPLATE = "Across %s rows, the shares that can be shown are %s."
+
+
+def _disclosure_state_expr(withheld_evidence: Column, total_evidence: Column) -> Column:
+    """Bucket how much of a group's evidence was withheld into a coarse state.
+
+    Redaction keeps a column out of the prompt, which it does correctly -- no name has ever leaked. What it
+    also did was remove that column's share from the map the narrative is built from, after which the
+    remaining shares were renormalised to sum to 100 with nothing saying so. A column holding 7% of a
+    group's evidence was consequently described as accounting for "all of what the model measured (100%)".
+
+    A state rather than the share itself, because the share would disclose by proportion roughly what the
+    name discloses by identity. Three states are enough to change what a narrative may claim and coarse
+    enough that the boundaries cannot be inverted into a measurement.
+
+    Args:
+        withheld_evidence: Summed absolute contribution of the redacted keys in the group.
+        total_evidence: Summed absolute contribution of every key in the group.
+
+    Returns:
+        One of *DISCLOSURE_COMPLETE*, *DISCLOSURE_PARTIAL* or *DISCLOSURE_LIMITED*. A group with no
+        measurable evidence at all counts as complete: there is nothing withheld to qualify.
+    """
+    return (
+        F.when((total_evidence.isNull()) | (total_evidence <= F.lit(0.0)), F.lit(DISCLOSURE_COMPLETE))
+        .when(withheld_evidence <= F.lit(0.0), F.lit(DISCLOSURE_COMPLETE))
+        .when(withheld_evidence / total_evidence > F.lit(_LIMITED_DISCLOSURE_SHARE), F.lit(DISCLOSURE_LIMITED))
+        .otherwise(F.lit(DISCLOSURE_PARTIAL))
+    )
+
+
+def _disclosure_prompt_expr(state: Column) -> Column:
+    """The sentence the model reads for a group's disclosure state."""
+    expr = F.lit(DISCLOSURE_PROMPT_TEXT[DISCLOSURE_COMPLETE])
+    for name in (DISCLOSURE_PARTIAL, DISCLOSURE_LIMITED):
+        expr = F.when(state == F.lit(name), F.lit(DISCLOSURE_PROMPT_TEXT[name])).otherwise(expr)
+    return expr
+
+
+def _disclosure_clause_expr(state: Column) -> Column:
+    """The qualification appended to a narrative, or an empty string when nothing was withheld.
+
+    Appended after sanitisation so it cannot be dropped, reworded or truncated away by the model. The
+    prompt asks for the same qualification in the model's own words; this is what makes it a guarantee
+    rather than a request, which is what the advisory that raised this defect requires.
+    """
+    expr = F.lit("")
+    for name, clause in DISCLOSURE_NARRATIVE_CLAUSE.items():
+        expr = F.when(state == F.lit(name), F.lit(clause)).otherwise(expr)
+    return expr
+
+
 def _temporal_baseline_str(metadata: SparkFeatureMetadata | None) -> str:
     """The time column each metric is judged along, e.g. 'event_ts', or 'none'.
 
@@ -468,7 +593,7 @@ def _render_ai_query_prompt_header() -> str:
     return "\n".join(lines)
 
 
-_AI_QUERY_PROMPT_HEADER = _render_ai_query_prompt_header()
+AI_QUERY_PROMPT_HEADER = _render_ai_query_prompt_header()
 
 # Databricks Model Serving endpoint name rules: 1–63 chars, must start with a letter, then any
 # of [letter, digit, hyphen, underscore]. This is the *platform's own* naming constraint — any
@@ -513,9 +638,16 @@ def _resolve_ai_query_endpoint(model_name: str) -> str:
 def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) -> Column:
     """Spark expression producing 'feat_a (82%), feat_b (11%)' from a ``mean_contributions`` map.
 
-    Mirrors *format_contributions_map* but stays inside Spark so per-group prompts can be
-    assembled without a driver-side loop. Null/empty maps yield 'unknown'; entries are sorted by
-    value descending and percentages are normalised against their sum.
+    Stays inside Spark so per-group prompts can be assembled without a driver-side loop. Null/empty maps
+    yield 'unknown'; entries are sorted by value descending and percentages are normalised against their sum.
+
+    It is **not** a mirror of *format_contributions_map*, and the difference is the point: that function
+    prints the stored 0-100 values as they are, so a map missing entries renders shares that sum to less
+    than 100 and understates. This one renormalises across what it is given, so a map missing entries
+    renders shares that still total 100 and therefore overstates. The two agree only on a complete map.
+    Renormalising is deliberate here -- publishing the true shares of a redacted map would disclose the
+    withheld proportion exactly -- and it is why the caller appends a scope qualifier when anything was
+    withheld, rather than leaving the numbers to speak for themselves.
 
     Null *and zero* entries are dropped, matching *format_contributions_map*: a feature that earned no
     share contributed nothing, and listing it as 'quantity (0%)' hands the model a driver to explain that
@@ -561,7 +693,7 @@ def _build_ai_query_prompt_column(
     """Assemble the per-row prompt string sent to ``ai_query``.
 
     Per-group fields come from columns added by *_aggregate_groups_spark*; per-run fields are
-    constants for the whole call. The shared header (*_AI_QUERY_PROMPT_HEADER*) holds the
+    constants for the whole call. The shared header (*AI_QUERY_PROMPT_HEADER*) holds the
     instructions and field semantics.
     """
     baseline_grouping = _baseline_grouping_str(ctx.feature_metadata)
@@ -580,9 +712,12 @@ def _build_ai_query_prompt_column(
     )
     group_size_expr = F.concat(F.col("group_size").cast(StringType()), F.lit(" rows"))
     return F.concat(
-        F.lit(_AI_QUERY_PROMPT_HEADER),
+        F.lit(AI_QUERY_PROMPT_HEADER),
         F.lit("attribution_basis: "),
         F.lit(attribution_semantics(ctx.algorithm)),
+        F.lit("\n"),
+        F.lit("evidence_disclosure: "),
+        _disclosure_prompt_expr(F.col("__disclosure")),
         F.lit("\n"),
         F.lit("feature_contributions: "),
         F.col("feature_contributions"),
@@ -633,12 +768,25 @@ def _aggregate_groups_spark(
         F.max(severity_col).alias("severity_max"),
         F.avg(score_std_col).alias("mean_std"),
     )
+    # Withheld keys are aggregated alongside the disclosed ones rather than filtered away first, because
+    # how much was withheld is itself needed downstream. Filtering here is what made the explanation
+    # misleading: the shares were renormalised over whatever survived, with nothing recording that anything
+    # had gone. Measured on one group, a visible column holding 7% of the evidence was rendered as 100%.
     exploded = anomalous.select(F.col(pattern_col), F.explode(F.col(contributions_col)).alias("__k", "__v"))
-    if redact_set:
-        exploded = exploded.filter(~F.col("__k").isin(list(redact_set)))
     per_key_mean = exploded.groupBy(pattern_col, "__k").agg(F.avg("__v").alias("__mean"))
-    per_pattern_contrib = per_key_mean.groupBy(pattern_col).agg(
-        F.map_from_entries(F.collect_list(F.struct(F.col("__k"), F.col("__mean")))).alias("mean_contributions")
+    withheld = F.col("__k").isin(list(redact_set)) if redact_set else F.lit(False)
+    per_pattern_contrib = (
+        per_key_mean.groupBy(pattern_col)
+        .agg(
+            # collect_list drops nulls, so the `when` keeps only disclosed keys out of the emitted map. The
+            # redacted names never reach it, which is the property redaction exists for and is unchanged.
+            F.map_from_entries(F.collect_list(F.when(~withheld, F.struct(F.col("__k"), F.col("__mean"))))).alias(
+                "mean_contributions"
+            ),
+            F.sum(F.when(withheld, F.abs(F.col("__mean"))).otherwise(F.lit(0.0))).alias("__withheld_evidence"),
+            F.sum(F.abs(F.col("__mean"))).alias("__total_evidence"),
+        )
+        .withColumn("__disclosure", _disclosure_state_expr(F.col("__withheld_evidence"), F.col("__total_evidence")))
     )
 
     # Single-action total/kept accounting: window aggregates over ``primary`` carry run-level
@@ -707,7 +855,16 @@ def _call_llm_for_groups_ai_query(
     # prompt and the struct's top_drivers, so a reader sees the same human phrasing the LLM did.
     enriched = kept_groups_sdf.withColumn(
         "feature_contributions",
-        _format_contributions_sql(_TOP_N, _human_labels(ctx.feature_metadata)),
+        # Labelled at the point of rendering, not left to the prompt field alone. This string is what the
+        # model reads *and* what the struct publishes as top_drivers, so the qualification travels with the
+        # numbers instead of depending on a separate field being honoured.
+        F.concat(
+            _format_contributions_sql(_TOP_N, _human_labels(ctx.feature_metadata)),
+            F.when(
+                F.col("__disclosure") != F.lit(DISCLOSURE_COMPLETE),
+                F.lit(" — shares of disclosed evidence only"),
+            ).otherwise(F.lit("")),
+        ),
     ).withColumn(
         "__prompt",
         _build_ai_query_prompt_column(ctx, is_ensemble, drift_summary),
@@ -760,16 +917,46 @@ def _call_llm_for_groups_ai_query(
             f"then regexp_replace({capped}, '\\\\s\\\\S*$', '') else {cleaned} end"
         )
 
+    # The disclosure clause is appended *after* sanitisation, so the length cap applies to the model's own
+    # words and the qualification cannot be truncated off the end of a long narrative. A narrative the model
+    # failed to produce stays null: qualifying nothing would publish a clause with no explanation attached.
+    disclosure_clause = _disclosure_clause_expr(F.col("__disclosure"))
+    withheld = F.col("__disclosure") != F.lit(DISCLOSURE_COMPLETE)
+    # A model that asserts completeness cannot be corrected by appending a caveat -- the result contradicts
+    # itself, and a reader believes the first half. Replaced with the group's own facts instead. The clause is
+    # then appended either way, so the qualification is present whichever branch produced the text.
+    model_narrative = _sanitize("narrative")
+    safe_narrative = F.when(
+        withheld & model_narrative.rlike(TOTALISING_CLAIM_PATTERN),
+        F.format_string(
+            DISCLOSURE_FALLBACK_TEMPLATE,
+            F.col("group_size").cast(StringType()),
+            # The source column, not the top_drivers alias: that alias is created in this same select.
+            F.col("feature_contributions"),
+        ),
+    ).otherwise(model_narrative)
     return parsed.select(
         F.col(pattern_col),
-        _sanitize("narrative").alias("narrative"),
+        F.when(model_narrative.isNotNull(), F.concat(safe_narrative, disclosure_clause))
+        .otherwise(F.lit(None).cast(StringType()))
+        .alias("narrative"),
         _sanitize("business_impact").alias("business_impact"),
         _sanitize("action").alias("action"),
         # Human-labelled drivers carried through for the struct's top_drivers. Built by us from the
         # contributions map, not the LLM, so it needs no sanitisation.
         F.col("feature_contributions").alias("top_drivers"),
         F.col("group_size").cast(LongType()).alias("group_size"),
-        F.col("group_avg_severity").cast(DoubleType()).alias("group_avg_severity"),
+        # Floored here, at the boundary where it becomes visible, and deliberately not in
+        # _aggregate_groups_spark: the unfloored mean also drives __rank_score there, so flooring it
+        # upstream would change which groups survive max_groups -- a behaviour change for a presentation
+        # fix, which is the same trap avoided by never flooring the value the flag reads. Published beside
+        # the floored severity_percentile in one struct, so the two must be on the same grid.
+        displayed_severity_expr(F.col("group_avg_severity"), ctx.threshold)
+        .cast(DoubleType())
+        .alias("group_avg_severity"),
+        # Carried through so the struct can publish it as evidence_scope: a consumer should be able to
+        # filter or escalate on limited-evidence explanations without parsing the narrative for a phrase.
+        F.col("__disclosure"),
     )
 
 
@@ -796,6 +983,8 @@ def _attach_explanation_struct(
                 F.col("action").alias("action"),
                 F.col("group_size").alias("group_size"),
                 F.col("group_avg_severity").alias("group_avg_severity"),
+                # Last, matching ai_explanation_struct_schema: add_info_column casts positionally.
+                F.col("__disclosure").alias("evidence_scope"),
             ),
         ).otherwise(_build_empty_explanation_column()),
     ).drop(
@@ -806,6 +995,7 @@ def _attach_explanation_struct(
         "action",
         "group_size",
         "group_avg_severity",
+        "__disclosure",
     )
 
 

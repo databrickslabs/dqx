@@ -216,10 +216,13 @@ def has_no_row_anomalies(
             LLMModelConfig instance is accepted. The simplest dict form sets only *model_name*
             to a Databricks Model Serving endpoint. See the AI Explanations section of the Row
             Anomaly Detection reference docs for a full example.
-        redact_columns: Column names to exclude from the LLM prompt. Filters the contribution
-            map keys, the top-2 pattern key, and — when the scored model is segmented — any
-            matching segment key (emitted as ``key=<redacted>`` so sensitive segmentation values
-            never reach the prompt).
+        redact_columns: Column names to exclude from the LLM prompt. Their contribution entries are
+            dropped from what the model is shown, and they are excluded from the top-2 pattern key.
+            The remaining shares are renormalised across what is left, so the explanation reports
+            shares of the *disclosed* evidence and says when evidence was withheld -- a column shown
+            at 100% can be a small part of what the model measured. This governs what reaches the
+            serving endpoint: *_dq_info[].anomaly.contributions* is unchanged and still lists every
+            column, so this is not an access control over the scored table.
         max_groups: Maximum number of distinct (segment, pattern) groups the LLM is called for
             per scoring run (default 500). Groups beyond this cap — ranked by
             group_size * group_avg_severity — get a null ai_explanation; a warning is logged.
@@ -294,10 +297,15 @@ def has_no_row_anomalies(
     # The published severity is already floored to the precision this threshold needs, so it is quoted as
     # it stands: rounding it again here would undo that and could show a value above the threshold on a row
     # that was not flagged. "Reached" rather than "exceeded", because the comparison is inclusive.
+    #
+    # Coalesced because a row can be flagged with no severity at all: an unseen baseline group has a null
+    # severity, and a caller may choose to treat "cannot judge this row" as a violation. concat_ws drops
+    # nulls silently, so without this the message read "Anomaly severity  reached threshold 95.0" -- a
+    # sentence asserting a number that does not exist.
     message = F.concat_ws(
         "",
         F.lit("Anomaly severity "),
-        F.col(output_columns.info).anomaly.severity_percentile.cast("string"),
+        F.coalesce(F.col(output_columns.info).anomaly.severity_percentile.cast("string"), F.lit("unavailable")),
         F.lit(f" reached threshold {threshold}"),
     )
     condition_expr = F.col(output_columns.info).anomaly.is_anomaly
