@@ -75,7 +75,9 @@ print(f"Selected Schema: {schema}")
 # COMMAND ----------
 
 from pyspark.sql import Row
-from datetime import date
+from datetime import date, timedelta
+
+today = date.today()
 
 customer_360_data = [
     # Valid active customer
@@ -85,8 +87,8 @@ customer_360_data = [
         email="aarav.mehta@example.com",
         customer_status="ACTIVE",
         total_revenue=1250.75,
-        last_purchase_date=date(2026, 7, 10),
-        last_campaign_engagement_date=date(2026, 7, 15),
+        last_purchase_date=today - timedelta(days=30),
+        last_campaign_engagement_date=today - timedelta(days=25),
         open_ticket_count=1,
         active_customer_flag=True
     ),
@@ -98,8 +100,8 @@ customer_360_data = [
         email="maya.sharma@example.com",
         customer_status="INACTIVE",
         total_revenue=0.00,
-        last_purchase_date=date(2024, 1, 20),
-        last_campaign_engagement_date=date(2024, 2, 1),
+        last_purchase_date=today - timedelta(days=730),
+        last_campaign_engagement_date=today - timedelta(days=718),
         open_ticket_count=0,
         active_customer_flag=False
     ),
@@ -111,22 +113,23 @@ customer_360_data = [
         email="missing.id@example.com",
         customer_status="ACTIVE",
         total_revenue=500.00,
-        last_purchase_date=date(2026, 6, 5),
-        last_campaign_engagement_date=date(2026, 6, 8),
+        last_purchase_date=today - timedelta(days=96),
+        last_campaign_engagement_date=today - timedelta(days=93),
         open_ticket_count=0,
         active_customer_flag=True
     ),
 
     # Warning-level issue: bad email format.
-    # Warning-level violations remain in valid_df and are not quarantined.
+    # Warning-only records remain eligible for valid_df, but also appear in
+    # invalid_df with warning metadata and are included in the quarantine output.
     Row(
         customer_id="CUST-003",
         customer_name="Invalid Email Customer",
         email="invalid-email",
         customer_status="ACTIVE",
         total_revenue=900.00,
-        last_purchase_date=date(2026, 5, 12),
-        last_campaign_engagement_date=date(2026, 5, 14),
+        last_purchase_date=today - timedelta(days=120),
+        last_campaign_engagement_date=today - timedelta(days=118),
         open_ticket_count=2,
         active_customer_flag=True
     ),
@@ -138,8 +141,8 @@ customer_360_data = [
         email="negative.revenue@example.com",
         customer_status="ACTIVE",
         total_revenue=-25.00,
-        last_purchase_date=date(2026, 4, 10),
-        last_campaign_engagement_date=date(2026, 4, 12),
+        last_purchase_date=today - timedelta(days=150),
+        last_campaign_engagement_date=today - timedelta(days=148),
         open_ticket_count=0,
         active_customer_flag=True
     ),
@@ -152,21 +155,22 @@ customer_360_data = [
         customer_status="ACTIVE",
         total_revenue=300.00,
         last_purchase_date=date(2099, 1, 1),
-        last_campaign_engagement_date=date(2026, 3, 10),
+        last_campaign_engagement_date=today - timedelta(days=180),
         open_ticket_count=0,
         active_customer_flag=True
     ),
 
-    # Warning-level issue: active flag is false even though recent activity exists.
-    # Warning-level violations remain in valid_df and are not quarantined.
+    # Warning-level issue: ACTIVE status conflicts with active_customer_flag=False.
+    # Warning-only records remain eligible for valid_df, but also appear in
+    # invalid_df with warning metadata and are included in the quarantine output.
     Row(
         customer_id="CUST-006",
         customer_name="Flag Mismatch Customer",
         email="flag.mismatch@example.com",
         customer_status="ACTIVE",
         total_revenue=750.00,
-        last_purchase_date=date(2026, 7, 1),
-        last_campaign_engagement_date=date(2026, 7, 2),
+        last_purchase_date=today - timedelta(days=60),
+        last_campaign_engagement_date=today - timedelta(days=59),
         open_ticket_count=0,
         active_customer_flag=False
     ),
@@ -178,8 +182,8 @@ customer_360_data = [
         email="missing.name@example.com",
         customer_status="ACTIVE",
         total_revenue=425.00,
-        last_purchase_date=date(2026, 6, 20),
-        last_campaign_engagement_date=date(2026, 6, 22),
+        last_purchase_date=today - timedelta(days=80),
+        last_campaign_engagement_date=today - timedelta(days=78),
         open_ticket_count=0,
         active_customer_flag=True
     ),
@@ -191,8 +195,8 @@ customer_360_data = [
         email=None,
         customer_status="ACTIVE",
         total_revenue=610.00,
-        last_purchase_date=date(2026, 6, 18),
-        last_campaign_engagement_date=date(2026, 6, 21),
+        last_purchase_date=today - timedelta(days=82),
+        last_campaign_engagement_date=today - timedelta(days=79),
         open_ticket_count=0,
         active_customer_flag=True
     ),
@@ -204,8 +208,8 @@ customer_360_data = [
         email="invalid.status@example.com",
         customer_status="UNKNOWN",
         total_revenue=275.00,
-        last_purchase_date=date(2026, 5, 25),
-        last_campaign_engagement_date=date(2026, 5, 28),
+        last_purchase_date=today - timedelta(days=100),
+        last_campaign_engagement_date=today - timedelta(days=97),
         open_ticket_count=0,
         active_customer_flag=False
     ),
@@ -217,21 +221,22 @@ customer_360_data = [
         email="negative.ticket@example.com",
         customer_status="ACTIVE",
         total_revenue=825.00,
-        last_purchase_date=date(2026, 6, 15),
-        last_campaign_engagement_date=date(2026, 6, 17),
+        last_purchase_date=today - timedelta(days=85),
+        last_campaign_engagement_date=today - timedelta(days=83),
         open_ticket_count=-1,
         active_customer_flag=True
     ),
 
     # Warning-level issue: future campaign engagement date.
-    # Warning-level violations remain in valid_df and are not quarantined.
+    # Warning-only records remain eligible for valid_df, but also appear in
+    # invalid_df with warning metadata and are included in the quarantine output.
     Row(
         customer_id="CUST-011",
         customer_name="Future Engagement Customer",
         email="future.engagement@example.com",
         customer_status="ACTIVE",
         total_revenue=530.00,
-        last_purchase_date=date(2026, 6, 12),
+        last_purchase_date=today - timedelta(days=90),
         last_campaign_engagement_date=date(2099, 1, 1),
         open_ticket_count=0,
         active_customer_flag=True
@@ -244,8 +249,8 @@ customer_360_data = [
         email="duplicate.customer@example.com",
         customer_status="ACTIVE",
         total_revenue=100.00,
-        last_purchase_date=date(2026, 7, 11),
-        last_campaign_engagement_date=date(2026, 7, 12),
+        last_purchase_date=today - timedelta(days=55),
+        last_campaign_engagement_date=today - timedelta(days=54),
         open_ticket_count=0,
         active_customer_flag=True
     ),
@@ -257,8 +262,8 @@ customer_360_data = [
         email="duplicate.customer.two@example.com",
         customer_status="ACTIVE",
         total_revenue=200.00,
-        last_purchase_date=date(2026, 7, 12),
-        last_campaign_engagement_date=date(2026, 7, 13),
+        last_purchase_date=today - timedelta(days=54),
+        last_campaign_engagement_date=today - timedelta(days=53),
         open_ticket_count=0,
         active_customer_flag=True
     ),
@@ -441,7 +446,7 @@ assert not status.has_errors
 # MAGIC %md
 # MAGIC ### Apply Checks and Split Valid vs Invalid Records
 # MAGIC
-# MAGIC DQX can split records into valid and invalid DataFrames. Error-level violations are quarantined in `invalid_df`. Warning-level violations remain in `valid_df` with warning metadata so they can be monitored without quarantining the record.
+# MAGIC DQX returns error-level and warning-level violations in `invalid_df`. Warning-only records also remain eligible for `valid_df`, but `get_valid()` removes the warning and error metadata columns. In this example, `invalid_df` is persisted as the quarantine output so reviewers can inspect both errors and warnings.
 
 # COMMAND ----------
 
