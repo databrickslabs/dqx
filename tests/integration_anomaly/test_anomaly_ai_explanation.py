@@ -85,10 +85,14 @@ def test_ai_query_explanation_populated_for_anomalous_row(
     for feat in explanation["top_features"].split("+"):
         assert feat in explanation["top_drivers"]
     assert explanation["group_size"] == 1
-    # Single-row group: group_avg_severity is the row's severity. The struct's
-    # severity_percentile is rounded to 1 decimal while group_avg_severity is full precision,
-    # so compare with a tolerance that absorbs that rounding rather than exact equality.
-    assert explanation["group_avg_severity"] == pytest.approx(anomaly_info["severity_percentile"], abs=0.1)
+    # Single-row group, so group_avg_severity is this row's own severity at full precision. The struct's
+    # severity_percentile is *floored* to the threshold's precision so that comparing it against the
+    # threshold agrees with is_anomaly, which means it can sit up to one whole display step below the true
+    # value -- a wider gap than the half-step the previous rounding allowed. The tolerance is one step plus
+    # a margin, rather than exactly one step, so a value floored by almost the full step does not fail on a
+    # boundary. Direction is asserted separately: the published value never reads high.
+    assert explanation["group_avg_severity"] == pytest.approx(anomaly_info["severity_percentile"], abs=0.15)
+    assert anomaly_info["severity_percentile"] <= explanation["group_avg_severity"] + 1e-9
 
 
 def test_ai_query_explanation_null_for_non_anomalous_row(

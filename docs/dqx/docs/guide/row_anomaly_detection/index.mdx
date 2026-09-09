@@ -664,8 +664,8 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 |--------|------|-------------|
 | `check_name` | string | Always `"has_no_row_anomalies"` for this check. |
 | `score` | double | Raw model score (0–1). Use for diagnostics only. |
-| `severity_percentile` | double | Normalized score 0–100. **Use this for thresholds and ordering.** |
-| `is_anomaly` | boolean | `true` if `severity_percentile` ≥ threshold. |
+| `severity_percentile` | double | Normalized score 0–100. **Use this for thresholds and ordering.** Published so that `severity_percentile >= threshold` gives the same answer as `is_anomaly`: it is floored to the threshold's own precision rather than rounded, so it never reads higher than the value the flag was decided on. |
+| `is_anomaly` | boolean | `true` if `severity_percentile` ≥ threshold, and the authoritative decision. |
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
 | `contributions` | map&lt;string, double&gt; | Each column's share (0–100) of the evidence that made the row look unusual, keyed by **the columns you passed** under either profile — see step 4 of [How it works](#how-it-works-under-the-hood). A column that argued the row was normal shows `0`. On by default (`enable_contributions=True`); populated only for anomalous rows (`null` for non-anomalous rows or if you set it `False`), and all-null on a flagged row where nothing pointed towards an anomaly. |

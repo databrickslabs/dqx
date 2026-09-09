@@ -140,8 +140,11 @@ def has_no_row_anomalies(
     Output columns:
     - _dq_info: Array of structs (one element per dataset-level check). For example:
       - _dq_info[0].anomaly.score: Raw anomaly score (model-relative)
-      - _dq_info[0].anomaly.severity_percentile: Severity percentile (0–100)
-      - _dq_info[0].anomaly.is_anomaly: Boolean flag
+      - _dq_info[0].anomaly.severity_percentile: Severity percentile (0–100), published so that
+        comparing it against *threshold* gives the same verdict as *is_anomaly*. It is floored to the
+        threshold's own precision rather than rounded, so it never reads higher than the value the flag
+        was decided on
+      - _dq_info[0].anomaly.is_anomaly: Boolean flag, and the authoritative decision
       - _dq_info[0].anomaly.threshold: Severity percentile threshold used (0–100)
       - _dq_info[0].anomaly.model: Model name
       - _dq_info[0].anomaly.contributions: feature contributions as percentages (0–100); populated
@@ -288,11 +291,14 @@ def has_no_row_anomalies(
         result = run_anomaly_scoring(df_to_score, config, registry_table, model_name)
         return result.drop(row_id_col)
 
+    # The published severity is already floored to the precision this threshold needs, so it is quoted as
+    # it stands: rounding it again here would undo that and could show a value above the threshold on a row
+    # that was not flagged. "Reached" rather than "exceeded", because the comparison is inclusive.
     message = F.concat_ws(
         "",
         F.lit("Anomaly severity "),
-        F.round(F.col(output_columns.info).anomaly.severity_percentile, 1).cast("string"),
-        F.lit(f" exceeded threshold {threshold}"),
+        F.col(output_columns.info).anomaly.severity_percentile.cast("string"),
+        F.lit(f" reached threshold {threshold}"),
     )
     condition_expr = F.col(output_columns.info).anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_row_anomalies"), apply, output_columns.info
