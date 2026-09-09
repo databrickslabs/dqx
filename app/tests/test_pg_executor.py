@@ -30,6 +30,7 @@ import datetime as dt
 import logging
 import threading
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -1509,6 +1510,42 @@ class TestBuildPgExecutorFromConnection:
         ws.postgres.get_endpoint.assert_not_called()
         ws.postgres.generate_database_credential.assert_not_called()
         ws.current_user.me.assert_not_called()
+
+    def test_marketplace_binding_resolves_endpoint_and_uses_workspace_credentials(self) -> None:
+        ws = self._workspace()
+        ws.postgres.list_projects.return_value = iter([SimpleNamespace(name="projects/p")])
+        ws.postgres.list_branches.return_value = iter([SimpleNamespace(name="projects/p/branches/b")])
+        ws.postgres.list_endpoints.return_value = iter(
+            [
+                SimpleNamespace(
+                    name="projects/p/branches/b/endpoints/e",
+                    status=SimpleNamespace(hosts=SimpleNamespace(host="db.example", read_only_host=None)),
+                )
+            ]
+        )
+        ws.postgres.generate_database_credential.return_value = MagicMock(token="oauth-token")
+        connection = LakebaseConnection(
+            endpoint=None,
+            host="db.example",
+            port=5432,
+            database="databricks_postgres",
+            username="app-client-id",
+            password=None,
+            schema="dqx_studio",
+        )
+
+        with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
+            patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
+        ):
+            pool.check_connection = MagicMock()
+            executor = build_pg_executor_from_connection(ws, connection, pool_min_size=1, pool_max_size=1)
+
+        assert executor.username == "app-client-id"
+        assert pool.call_args.kwargs["kwargs"]["password"] == "oauth-token"
+        ws.postgres.list_branches.assert_called_once_with(parent="projects/p")
+        ws.postgres.list_endpoints.assert_called_once_with(parent="projects/p/branches/b")
+        ws.postgres.generate_database_credential.assert_called_once_with(endpoint="projects/p/branches/b/endpoints/e")
 
 
 # ===========================================================================
