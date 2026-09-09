@@ -21,6 +21,16 @@ interface Props {
   blockedTables: SchedulePreflightTableOut[];
 }
 
+/** Label for a MANAGE holder's principal type.
+ *  Service principals hold grants under a bare application id, so they are
+ *  labelled as such rather than lumped in with groups — the card asks the user
+ *  to contact a holder, and an SP cannot act on that request. */
+function holderTypeLabel(type: string, t: (key: string) => string): string {
+  if (type === "service_principal") return t("schedule.grantWarning.typeServicePrincipal");
+  if (type === "group") return t("schedule.grantWarning.typeGroup");
+  return t("schedule.grantWarning.typeUser");
+}
+
 function Holders({ holders }: { holders: SchedulePreflightTableOut["manage_holders"] }) {
   const { t } = useTranslation();
   const list = holders ?? [];
@@ -37,7 +47,7 @@ function Holders({ holders }: { holders: SchedulePreflightTableOut["manage_holde
         >
           {h.principal}
           <span className="ml-1 text-[10px] uppercase tracking-wide text-amber-600/80 dark:text-amber-300/70">
-            {h.type === "group" ? t("schedule.grantWarning.typeGroup") : t("schedule.grantWarning.typeUser")}
+            {holderTypeLabel(h.type, t)}
           </span>
         </Badge>
       ))}

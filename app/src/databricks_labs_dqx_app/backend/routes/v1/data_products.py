@@ -254,6 +254,9 @@ def update_data_product(
     # collection — a non-empty cron. Clearing or unrelated partial updates skip.
     if (updates.get("schedule_cron") or "").strip():
         member_fqns = svc.member_table_fqns(product_id)
+        # Resolve the caller identity once so the per-table MANAGE gate below
+        # reads it from cache instead of re-issuing current_user.me() each time.
+        grant_svc.prime_caller_identity()
         blocked: list[tuple[str, list[dict[str, str]]]] = []
         for fqn in member_fqns:
             if not grant_svc.user_can_manage(fqn):
@@ -261,8 +264,12 @@ def update_data_product(
         if blocked:
             raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
         try:
+            # Every member is MANAGE-gated above, so grant with the precleared
+            # call — grant_select_to_schedulers would re-run the same ownership +
+            # effective-privilege round-trips, doubling the UC calls per table.
+            grant_svc.prime_scheduler_sp_identities()
             for fqn in member_fqns:
-                grant_svc.grant_select_to_schedulers(fqn)
+                grant_svc.grant_select_precleared(fqn)
         except CannotManageError as e:
             raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
         except Exception as e:

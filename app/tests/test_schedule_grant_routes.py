@@ -135,9 +135,66 @@ class TestDataProductScheduleGate:
             )
             result = update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
-        assert grant_svc.grant_select_to_schedulers.call_count == 2
+        # Precleared grant: every member is MANAGE-gated once above, so the grant
+        # must NOT re-run the ownership + effective-privilege round-trips.
+        assert grant_svc.grant_select_precleared.call_count == 2
+        grant_svc.grant_select_to_schedulers.assert_not_called()
         svc.update.assert_called_once()
         assert result == "out"
+
+    def test_checks_manage_exactly_once_per_member_table(self, obo_ws, perms, grant_svc):
+        """The gate and the grant together must cost ONE MANAGE check per table.
+
+        Regression guard for the 2xN Unity Catalog round-trips this path used to
+        make (``user_can_manage`` in the gate, then again inside
+        ``grant_select_to_schedulers``).
+        """
+        svc = create_autospec(DataProductService, instance=True)
+        svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]
+        svc.get.return_value = MagicMock()
+        grant_svc.user_can_manage.return_value = True
+        body = UpdateDataProductIn(schedule_cron="0 0 * * *")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "databricks_labs_dqx_app.backend.routes.v1.data_products.DataProductOut",
+                SimpleNamespace(from_domain=lambda d: "out"),
+            )
+            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert grant_svc.user_can_manage.call_count == 3
+        assert grant_svc.grant_select_precleared.call_count == 3
+
+    def test_primes_identities_once_for_the_whole_save(self, obo_ws, perms, grant_svc):
+        """Caller + scheduler identities are resolved once, not per table."""
+        svc = create_autospec(DataProductService, instance=True)
+        svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
+        svc.get.return_value = MagicMock()
+        grant_svc.user_can_manage.return_value = True
+        body = UpdateDataProductIn(schedule_cron="0 0 * * *")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "databricks_labs_dqx_app.backend.routes.v1.data_products.DataProductOut",
+                SimpleNamespace(from_domain=lambda d: "out"),
+            )
+            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        grant_svc.prime_caller_identity.assert_called_once()
+        grant_svc.prime_scheduler_sp_identities.assert_called_once()
+
+    def test_does_not_grant_when_blocked(self, obo_ws, perms, grant_svc):
+        """A blocked member must stop the save before any grant is attempted."""
+        svc = create_autospec(DataProductService, instance=True)
+        svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
+        grant_svc.user_can_manage.return_value = False
+        grant_svc.manage_holders.return_value = [{"principal": "bob@example.com", "type": "user"}]
+        body = UpdateDataProductIn(schedule_cron="0 0 * * *")
+
+        with pytest.raises(HTTPException):
+            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        grant_svc.grant_select_precleared.assert_not_called()
 
     def test_skips_gate_when_no_schedule_field(self, obo_ws, perms, grant_svc):
         svc = create_autospec(DataProductService, instance=True)
@@ -153,6 +210,7 @@ class TestDataProductScheduleGate:
 
         grant_svc.user_can_manage.assert_not_called()
         grant_svc.grant_select_to_schedulers.assert_not_called()
+        grant_svc.grant_select_precleared.assert_not_called()
 
 
 def _me(user_name="alice@example.com", emails=("alice@example.com",), groups=()):

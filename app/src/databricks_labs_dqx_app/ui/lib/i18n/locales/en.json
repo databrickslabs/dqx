@@ -35,7 +35,8 @@
       "holdersLabelForTable": "Who can grant access to {{fqn}}:",
       "noHolders": "No users or groups with the required permission were found. Contact your workspace administrator or the table's owner.",
       "typeUser": "user",
-      "typeGroup": "group"
+      "typeGroup": "group",
+      "typeServicePrincipal": "service principal"
     }
   },
   "lifecycle": {

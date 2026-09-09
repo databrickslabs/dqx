@@ -173,6 +173,46 @@ class TestManageHolders:
     def test_empty_for_synthetic_fqn(self, service):
         assert service.manage_holders("__sql_check__/x") == []
 
+    def test_service_principal_holder_is_not_labelled_a_group(self, service, obo):
+        """A service principal holds UC grants under its bare application id.
+
+        Classifying it as a "group" made the warning card tell the blocked user
+        to go ask a group that cannot act on the request.
+        """
+        obo.tables.get.return_value = SimpleNamespace(owner="37f263d6-1794-4873-8347-1f919b834fff")
+        obo.grants.get_effective.return_value = _eff([])
+
+        holders = service.manage_holders(FQN)
+
+        by_p = {h["principal"]: h["type"] for h in holders}
+        assert by_p["37f263d6-1794-4873-8347-1f919b834fff"] == "service_principal"
+
+    def test_mixed_holders_are_each_classified(self, service, obo):
+        obo.tables.get.return_value = SimpleNamespace(owner="data-engineers")
+        obo.grants.get_effective.return_value = _eff(
+            [
+                _assignment("bob@example.com", [Privilege.MANAGE]),
+                _assignment("37f263d6-1794-4873-8347-1f919b834fff", [Privilege.MANAGE]),
+            ]
+        )
+
+        by_p = {h["principal"]: h["type"] for h in service.manage_holders(FQN)}
+
+        assert by_p == {
+            "data-engineers": "group",
+            "bob@example.com": "user",
+            "37f263d6-1794-4873-8347-1f919b834fff": "service_principal",
+        }
+
+    def test_uuid_shaped_substring_in_a_group_name_stays_a_group(self, service, obo):
+        """Only a principal that IS a UUID counts — not one that merely contains one."""
+        obo.tables.get.return_value = SimpleNamespace(owner="sp-37f263d6-1794-4873-8347-1f919b834fff-admins")
+        obo.grants.get_effective.return_value = _eff([])
+
+        holders = service.manage_holders(FQN)
+
+        assert holders[0]["type"] == "group"
+
 
 class TestGrant:
     def test_grants_select_to_app_and_task_runner(self, service, obo):

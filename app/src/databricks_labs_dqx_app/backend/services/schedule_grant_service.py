@@ -31,6 +31,7 @@ the UI can ask one of them to set the schedule up instead.
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass
 
 from databricks.sdk import WorkspaceClient
@@ -93,6 +94,10 @@ def _is_real_three_part_fqn(fqn: str) -> bool:
     if not fqn or fqn.startswith("__sql_check__/"):
         return False
     return len(fqn.split(".")) == 3
+
+
+# A service principal appears in UC grants as its application id: a bare UUID.
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 
 class ScheduleGrantService:
@@ -287,7 +292,16 @@ class ScheduleGrantService:
 
     @staticmethod
     def _classify_principal(principal: str) -> str:
-        """Best-effort user/group classification for display in the warning card."""
+        """Best-effort principal classification for display in the warning card.
+
+        A service principal holds UC grants under its **application id** — a
+        bare UUID with no ``@`` — so an "@"/else split mislabels it as a group
+        and the warning card then tells the blocked user to go ask a "group"
+        that cannot act on the request. UUID-shaped principals are therefore
+        reported as service principals.
+        """
+        if _UUID_RE.fullmatch(principal.strip()):
+            return "service_principal"
         return "user" if "@" in principal else "group"
 
     # ------------------------------------------------------------------
@@ -339,8 +353,8 @@ class ScheduleGrantService:
 
         Best-effort — reading the full grant list requires elevated privileges,
         so a caller who lacks them may only see the owners we can read. Each
-        entry is ``{"principal": <name>, "type": "user"|"group"}`` (type is a
-        display heuristic).
+        entry is ``{"principal": <name>, "type": "user"|"group"|"service_principal"}``
+        (type is a display heuristic).
         """
         validate_fqn(fqn)
         holders: dict[str, str] = {}
@@ -409,6 +423,22 @@ class ScheduleGrantService:
 
         return self._grant_to_schedulers_unchecked(fqn)
 
+    def grant_select_precleared(self, fqn: str) -> list[str]:
+        """Grant ``SELECT`` to the scheduler SPs for an already MANAGE-gated *fqn*.
+
+        Public counterpart to :meth:`grant_select_to_schedulers` for callers that
+        have *already* established the caller can grant on *fqn* (via
+        :meth:`user_can_manage` or :meth:`preflight`). Skipping the redundant
+        re-check halves the Unity Catalog round-trips on a multi-table save.
+
+        Args:
+            fqn: Fully qualified table name, already MANAGE-gated.
+
+        Returns:
+            The principals granted (empty for a synthetic cross-table key).
+        """
+        return self._grant_to_schedulers_unchecked(fqn)
+
     def _grant_to_schedulers_unchecked(self, fqn: str) -> list[str]:
         """Grant SELECT to the scheduler SPs **without** re-checking MANAGE.
 
@@ -453,5 +483,5 @@ class ScheduleGrantService:
         return await asyncio.to_thread(self.manage_holders, fqn)
 
     async def grant_select_precleared_async(self, fqn: str) -> list[str]:
-        """Async wrapper for :meth:`_grant_to_schedulers_unchecked` (MANAGE pre-gated)."""
-        return await asyncio.to_thread(self._grant_to_schedulers_unchecked, fqn)
+        """Async wrapper for :meth:`grant_select_precleared` (MANAGE pre-gated)."""
+        return await asyncio.to_thread(self.grant_select_precleared, fqn)

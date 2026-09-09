@@ -35,7 +35,8 @@
       "holdersLabelForTable": "Quién puede conceder acceso a {{fqn}}:",
       "noHolders": "No se encontraron usuarios ni grupos con el permiso necesario. Contacta con el administrador de tu área de trabajo o con el propietario de la tabla.",
       "typeUser": "usuario",
-      "typeGroup": "grupo"
+      "typeGroup": "grupo",
+      "typeServicePrincipal": "principal de servicio"
     }
   },
   "lifecycle": {

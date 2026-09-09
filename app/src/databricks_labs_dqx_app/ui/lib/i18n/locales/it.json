@@ -35,7 +35,8 @@
       "holdersLabelForTable": "Chi può concedere l'accesso a {{fqn}}:",
       "noHolders": "Nessun utente o gruppo con l'autorizzazione necessaria è stato trovato. Contatta l'amministratore dell'area di lavoro o il proprietario della tabella.",
       "typeUser": "utente",
-      "typeGroup": "gruppo"
+      "typeGroup": "gruppo",
+      "typeServicePrincipal": "service principal"
     }
   },
   "lifecycle": {
