@@ -6,7 +6,7 @@ sidebar_position: 308
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
-import Deck, { Slide } from '@site/src/components/Deck';
+import Deck from '@site/src/components/Deck';
 import { AvailableSinceVersion, FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Row Anomaly Detection
@@ -18,47 +18,7 @@ import { AvailableSinceVersion, FeatureLifecycleStage, FeatureTags } from '@site
 
 Use row anomaly detection to find unusual rows in your data using ML (per‑record anomalies with explanations) without writing a rule or a numeric bound per column, so you can catch issues that rule-based checks miss. There is still one number to choose — a sensitivity, which DQX supplies a default for and which you should size against your own data. You provide recent good data; DQX trains a model and flags rows that don't fit typical patterns. No ML expertise required. Each flagged row includes an explainable breakdown of which columns drove the score, so you can see why it was flagged.
 
-<Deck>
-  <Slide title="Spot the odd banana." visual="title">
-    Row anomaly detection in data quality, in a few minutes.
-  </Slide>
-  <Slide title="Known unknowns vs unknown unknowns." visual="known-unknowns">
-    **Rules** catch things we already expect, like "bananas should be yellow" or "a batch must have at least 100 rows". But what about surprises we never thought to check for? That's where **anomaly detection** comes in.
-  </Slide>
-  <Slide title="DQX handles rules really well." visual="dqx-rules">
-    For a single banana, we can write rules: check size, colour, flavour. These rules live in code: clear, testable, versioned.
-  </Slide>
-  <Slide title="DQM built-in anomaly detection" visual="trucks-dqm">
-    Databricks Data Quality Monitoring (DQM) watches the big picture: did the data arrive? Is it fresh? Are the row counts about right? Think of it as checking the delivery trucks.
-  </Slide>
-  <Slide title="But who checks inside the boxes?" visual="gap">
-    The truck arrived on time and the count looks right. Great. But are the bananas inside actually good? DQM watches the delivery; nobody's inspecting the contents. That's the gap.
-  </Slide>
-  <Slide title="DQX fills that gap." visual="row-level">
-    DQX learns what "normal" looks like from your good data, then checks every single row. No labels needed; it figures out what's unusual on its own. *"Is this banana weird?"*
-  </Slide>
-  <Slide title="How does it work? Numbers, then a forest." visual="features">
-    Each banana becomes a set of numbers: size, colour, spots, bend. An Isolation Forest then tries to separate each point from the rest. If a banana is easy to isolate, it's probably odd.
-  </Slide>
-  <Slide title="The odd banana stands alone." visual="isolation-forest">
-    An unusual banana gets separated in just a few steps, so it sticks out. A normal banana is buried in the crowd and takes many steps to single out.
-  </Slide>
-  <Slide title="Normal for whom? Compare like with like." visual="baseline-groups">
-    A 30cm plantain is perfectly normal; a 30cm lady finger does not exist. `baseline_by` judges each row against **its own group's** normal instead of the whole table's, so a value that is unremarkable overall can still be flagged where it does not belong.
-  </Slide>
-  <Slide title="It went past looking completely normal." visual="correlation">
-    A banana packing line. Every piece of fruit passes the same gate and DQX scores it as it goes by. On this one, length and weight are each perfectly ordinary — and impossible together, because a banana that long has never weighed that little. Splitting one feature at a time never sees it, since neither value is out of range. `profile="correlation"` reads the two **as a pair**, which is why it gets pulled while every single-column check waves it through. It needs no timestamp: it models how metrics relate to each other, not how they change over time.
-  </Slide>
-  <Slide title="Why was this banana flagged? Contributions explain." visual="shap">
-    A score alone isn't enough. You want to know *why*. DQX breaks the score down per column: "too brown", "wrong size". So you can act on the insight straight away.
-  </Slide>
-  <Slide title="Why DQX row anomaly detection?" visual="summary">
-    Everything you need to catch unusual rows, no ML expertise required.
-  </Slide>
-  <Slide title="Get started" visual="coming-soon">
-    Install DQX and start catching unusual rows in minutes.
-  </Slide>
-</Deck>
+<Deck />
 
 ## What it is and why it helps
 
