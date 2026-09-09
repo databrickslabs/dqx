@@ -323,26 +323,35 @@ rows than you have time for, raise it.
 
 ### What the number means
 
-`threshold=95` means "flag rows above the 95th percentile of the severity DQX saw **while training**". It
-does not mean "flag 5% of the rows I am scoring", and the difference matters in three separate ways.
+`threshold=95` flags rows above the 95th percentile of the severity DQX saw **while training**. It does
+*not* mean "flag 5% of the rows I am scoring" — and that one distinction explains most surprises:
 
-**A batch containing real problems produces more alerts than the budget, and should.** This is the design
-working, not drift and not miscalibration. Measured on a fixture of correlated machine telemetry where 4.0%
-of rows were genuinely faulty, `threshold=95` flagged 8.4% of the batch: 5.2% of the genuinely normal rows,
-which is the budget delivered almost exactly, plus most of the faults on top. The alert count grows with the
-size of the problem rather than being capped at a fixed share, which is what you want from a data quality
-check. So long as the batch resembles the data the model was trained on, a batch with nothing wrong with it gives you roughly your budget and no more.
+| You see | Most likely because | Do this |
+|---|---|---|
+| A few more alerts than your budget | The batch contains real problems. Alert counts grow with the size of the problem instead of being capped at a fixed share | Nothing. This is the design working |
+| Far more alerts than your budget | The input distribution moved away from what the model trained on | Find out *why* before retraining — see below |
+| Low precision | The alert count itself caps it | Compare against that ceiling, not against 100% |
 
-**A batch whose distribution has moved produces many more, and that is a retraining signal.** On real
-server telemetry, scoring a later time period with a model fitted on an earlier one, `threshold=95` flagged
-9.8% to 21.7% of rows depending on the detector, while the same model on same-period held-out data flagged
-4.9% to 5.0%. Calibration itself is sound; the input moved. Set `drift_threshold=3.0` to be told when the input distribution has moved, rather than inferring it from the alert volume. Retraining is not the first thing to reach for: a jump in alerts is also what a changed unit or schema, a mis-set `baseline_by` or `baseline_over_time`, an upstream incident, or a genuine business change looks like. Rule those out first — retraining on data that contains a real problem teaches the model to accept it.
+Each row above, with the measurement behind it:
 
-**Precision is capped by the alert count, so read it against that ceiling.** If a budget produces 65 alerts
-and only 24 rows are genuinely wrong, no model can exceed 24/65 = 37% precision however well it ranks. On
-one measured fixture observed precision equalled that ceiling exactly, with a perfect ranking underneath:
-the 24 highest-severity rows were exactly the 24 faults. Comparing precision to 100% would have called that
-a poor detector.
+- **Real problems add alerts on top of the budget.** On correlated machine telemetry where 4.0% of rows were
+  genuinely faulty, `threshold=95` flagged 8.4% of the batch — 5.2% of the *normal* rows, which is the budget
+  delivered almost exactly, plus most of the faults on top. A batch with nothing wrong with it gives you
+  roughly your budget and no more, provided it resembles the training data.
+
+- **A moved distribution can multiply alerts several times over.** Scoring a later time period with a model
+  fitted on an earlier one flagged 9.8%–21.7% of rows depending on the detector, where the same model on
+  same-period held-out data flagged 4.9%–5.0%. The calibration was sound; the input had moved. Set
+  `drift_threshold=3.0` to be told this rather than inferring it from alert volume.
+
+  **Retraining is the last step, not the first.** A jump in alerts looks identical to a changed unit or
+  schema, a mis-set `baseline_by` / `baseline_over_time`, an upstream incident, or a real business change.
+  Rule those out first: retraining on data that contains a real problem teaches the model to accept it.
+
+- **Precision cannot exceed the true-fault share of your alerts.** With 65 alerts of which 24 rows are
+  genuinely wrong, no model beats 24/65 = 37%, however well it ranks. On one fixture precision hit that
+  ceiling exactly, with a perfect ranking underneath — the 24 highest-severity rows *were* the 24 faults.
+  Measured against 100%, that would have looked like a poor detector.
 
 ### Calibrating on your own data
 
@@ -377,27 +386,33 @@ a batch and applying to the other cut the median error against the requested bud
 the spread across machines from 28 to 7.5 percentage points, but only 20-30% of machines landed within
 double their budget. Treat a tuned number as a much better starting point than a guess, not as a guarantee.
 
-:::note[Fixed in 0.16.0]
-Thresholds between the persisted quantile knots used to be silently stricter than requested, because
-severity was interpolated linearly in score space and the grid has knots at 95, 99 and 100 with nothing
-between. Measured against a training distribution scored with itself, `threshold=98` flagged 1.4% to 1.6% of
-rows rather than 2%, and `threshold=99.9` flagged nothing at all. That range is now interpolated in tail
-probability, which is what a percentile is. Severity at 90, 95 and 99 is unchanged, so the default
-configuration behaves exactly as before; 96 to 98 become slightly less strict, toward the budget you asked
-for, and 99.5 and above now fire on roughly what you asked for instead of on nothing.
+:::note[Very high thresholds are directional, not calibrated]
+Severity is calibrated on a persisted grid of quantile knots, and above roughly 99 the value between knots
+is interpolated in tail probability. That interpolation assumes the score distribution's tail decays
+exponentially — which held on four synthetic distributions and on real telemetry, but a heavier tail
+overshoots: on a lognormal score distribution `threshold=99.9` flagged 0.21% of rows against the 0.10%
+requested, a factor of 2.1.
 
-**Above roughly 99 the interpolation is directional rather than calibrated.** It assumes the score
-distribution's tail decays exponentially, which held on four synthetic distributions and on real telemetry,
-but a heavier tail overshoots: on a lognormal score distribution `threshold=99.9` flagged 0.21% of rows
-against the 0.10% requested, a factor of 2.1. Treat 99.5 and above as "much stricter than 99" rather than as
-a number you can budget against.
+So treat 99.5 and above as "much stricter than 99" rather than as a share you can budget against. At 99 and
+below the calibration sits on the knots themselves and the budget holds as described above.
 :::
 
 ## Group-aware anomaly detection
 
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX" version="0.17.0" heading={false} />
+</FeatureTags>
+
 Some values are only wrong *in context*. If one country's daily order volume drops 80% while the overall total holds steady (because other countries absorbed the difference), the collapsed number still sits comfortably inside the range other countries occupy normally. A model that compares every row against the whole table cannot see it.
 
 Pass `baseline_by` to give DQX the right basis for comparison:
+
+<Admonition type="note" title="Why these examples omit `profile`">
+Grouping and time are **independent of the detector**. The examples in this section and the next leave
+`profile` unset, so they use the default `"tabular"` detector and each shows one new argument at a time —
+but every one of them works the same way with `profile="correlation"`. See
+[Choosing a profile](#choosing-a-profile).
+</Admonition>
 
 ```python
 anomaly_engine.train(
@@ -466,12 +481,12 @@ It is the third of three independent questions, and they compose. The column you
 **axis**, never as a feature, which is the distinction most worth holding on to: listing a timestamp in
 `columns` instead expands it into seven calendar features and answers a completely different question.
 
-| Question | Argument | The timestamp becomes |
+| Question | Argument | What it changes |
 |---|---|---|
-| Is this value unusual on its own, or in combination? | `profile` | nothing |
-| Is it unusual for its own group? | `baseline_by` | nothing |
-| Is it unusual for the time of day or day of week? | list it in `columns` | seven calendar features |
-| Is it unusual for its own point in time? | `baseline_over_time` | the axis, never a feature |
+| Is this value unusual on its own, or in combination? | `profile` | Which detector scores the row |
+| Is it unusual for its own group? | `baseline_by` | Each metric is compared against its own group's level |
+| Is it unusual for the time of day or day of week? | list it in `columns` | A timestamp is expanded into seven calendar features |
+| Is it unusual for its own point in time? | `baseline_over_time` | A timestamp becomes the comparison **axis**, never a feature |
 
 Pass no `columns` at all and auto-discovery includes any timestamp it finds, so the third row is what you get
 by default. DQX warns at training time when that happens and names both ways out.
@@ -528,7 +543,7 @@ difference. Treat it as a signal to retrain rather than as a violation.
 ## Choosing a profile
 
 <FeatureTags>
-  <AvailableSinceVersion productName="DQX" version="0.16.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.17.0" heading={false} />
 </FeatureTags>
 
 `profile` selects **how DQX decides a row is unusual**. It is the one modelling decision DQX asks you to
@@ -564,10 +579,19 @@ off the model, so you never repeat it.
 
 ### Why the choice matters
 
-The default detector, Isolation Forest, splits on one feature at a time. That is why it is strong on
-tabular data and weak when the anomaly *is* a broken relationship: if CPU is normal and memory is
-normal, no single-feature split separates the row, even though "high CPU with idle memory" never happens
-on a healthy machine.
+**The default checks one column at a time. The other reads the whole row at once.** That single difference
+decides which anomalies each one can see, so pick on the **shape of the anomaly you expect** rather than on an
+expected accuracy gap.
+
+| If a bad row looks like this | Use | Why |
+|---|---|---|
+| An order of 8,000 units where the largest ever was 500 — one value, plainly out of range | `"tabular"` (default) | Checking columns one at a time is enough to catch it, and this is the only profile that reports `confidence_std` |
+| An order of 500 units for £2 — each number is ordinary, the pair is impossible | `"correlation"` | Only a detector reading the values together can see that the *combination* never occurs |
+| A server at 95% CPU with idle memory — normal apart, never seen together on a healthy machine | `"correlation"` | The same reason: no single-column check separates this row |
+| You genuinely do not know yet | `"tabular"` | It is the default, and on ordinary tabular data the two are closer than the telemetry figures below suggest. Switching later costs one retrain |
+
+<details>
+<summary><strong>The measured difference, and what it does and does not tell you</strong></summary>
 
 Measured on the Server Machine Dataset: real machine telemetry, 28 machines, 38 metrics, 327 labelled
 incidents. Trained on an earlier period and scored on a later one, which is what you do when you train once
@@ -579,37 +603,51 @@ and check new data:
 | `"correlation"` | **65.3%** | **0.423** |
 
 An incident counts as surfaced if the detector flags at least one of its rows, so the first column measures
-whether you would have been paged. The comparison is between detectors on raw metric matrices; DQX's own
-feature engineering is not part of it.
+whether you would have been paged.
 
-That is telemetry, which is what `"correlation"` is for. On ordinary tabular data the two are closer than
-this table suggests, so **choose on the shape of the anomaly you expect, not on an expected accuracy gap.**
-One thing independent of accuracy favours the default: `"tabular"` trains an ensemble, so it can report
-`confidence_std`. Its contributions come from SHAP rather than an exact decomposition, but both profiles
-report them the same way — one entry per column you passed, and on an ensemble the mean across members: the
-same members, in the same proportions, that produced the score. Read the result as a **ranking of columns**
-rather than a breakdown of the score's magnitude. Averaging decomposes the members' mean isolation depth
-exactly, while the score is the mean of a strictly monotone but *nonlinear* function of that depth, so the
-two order rows almost identically without being the same quantity. Detection quality on DQX's own synthetic
-fixtures is published in [Benchmarks](/docs/reference/benchmarks).
+Two limits on reading across from this. It is telemetry, which is exactly what `"correlation"` is for, and
+the comparison is between detectors on raw metric matrices — DQX's own feature engineering is not part of it.
+Detection quality on DQX's own synthetic fixtures is published separately in
+[Benchmarks](/docs/reference/benchmarks).
 
-One capability difference is worth knowing because no accuracy number shows it, and it is narrower than it
-first looks. A **category that never appeared in training** — a new payment type, an unrecognised status
-code — is caught by `"correlation"` and generally not by `"tabular"`, **but only where the column is one-hot
-encoded**, which is when its cardinality is at or below the categorical threshold (20 by default). There
-every category keeps its own indicator, the indicators sum to one on every training row, and an unseen value
-sets none of them: a detector reading features jointly sees a row off the surface all its training data lay
-on, while Isolation Forest splits one feature at a time, so an all-zero row sits inside every indicator's own
-range and scores as ordinary.
+</details>
+
+<details>
+<summary><strong>How to read contributions on either profile</strong></summary>
+
+Both profiles report contributions the same way: one entry per column you passed, and on an ensemble the mean
+across members — the same members, in the same proportions, that produced the score. Only the method differs
+(SHAP for `"tabular"`, an exact decomposition for `"correlation"`).
+
+Read the result as a **ranking of columns**, not as a breakdown of the score's magnitude. Averaging
+decomposes the members' mean isolation depth exactly, while the score is the mean of a strictly monotone but
+*nonlinear* function of that depth. The two order rows almost identically without being the same quantity.
+
+</details>
+
+<details>
+<summary><strong>Unseen categories: a real difference, but narrower than it looks</strong></summary>
+
+No accuracy number shows this one. A **category that never appeared in training** — a new payment type, an
+unrecognised status code — is caught by `"correlation"` and generally not by `"tabular"`, **but only where
+the column is one-hot encoded**, meaning its cardinality is at or below the categorical threshold (20 by
+default).
+
+There, every category keeps its own indicator and the indicators sum to one on every training row, so an
+unseen value sets none of them. A detector reading features jointly sees a row off the surface all its
+training data lay on; Isolation Forest splits one feature at a time, so an all-zero row sits inside every
+indicator's own range and scores as ordinary.
 
 Above that threshold the column is frequency-encoded into a single number and an unseen value becomes `0.0`,
-which carries much less. If the training frequencies were near-uniform that coordinate barely varies, the
+which carries much less. If the training frequencies were near-uniform, that coordinate barely varies, the
 correlation-aware detector drops it from the distance as constant, and an unseen value does not move the
-score at all — measured with 21 equally frequent categories, a known and an unseen value both score 0.1837.
+score at all — measured with 21 equally frequent categories, a known and an unseen value both scored 0.1837.
 
-So neither profile is a substitute for a vocabulary check. If unrecognised values are something you need to
+**So neither profile substitutes for a vocabulary check.** If unrecognised values are something you need to
 fail on, that is a membership question rather than an anomaly one — use `is_in_list` or `foreign_key` on the
 column, under either profile.
+
+</details>
 
 <Admonition type="info" title="Why not choose for you?">
 DQX does not detect which profile you need. Getting it right cannot be verified without labelled
@@ -659,6 +697,41 @@ Both profiles get the same feature engineering, so these need no configuration:
   [Group-aware anomaly detection](#group-aware-anomaly-detection) above.
 - **Categoricals, booleans and nulls.** One-hot or frequency encoding by cardinality, 0/1 mapping, and an
   explicit indicator for columns that contain nulls.
+
+## AI explanations
+
+AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do*, without anyone reading raw contribution percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the contributions as input). The explanation is AI-generated from the anomaly signal (feature names + contributions + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
+
+The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra setup and scales with the cluster. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together and the model is called **once per group** rather than once per row, so cost stays predictable on large datasets.
+
+Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional: it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
+
+```python
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+
+# Contributions + AI explanations are on by default. This is all you need:
+checks = [
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",
+      "registry_table": "catalog.schema.dqx_anomaly_models",
+      "threshold": 95.0,
+      # Optional: override the serving endpoint (defaults to databricks-claude-sonnet-4-5)
+      # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+      # Optional: turn explanations off -> "enable_ai_explanation": False
+    },
+  )
+]
+```
+
+<Admonition type="note" title="Cost and privacy">
+* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many anomaly groups the model is called for per run. Set `enable_ai_explanation=False` to turn explanations off.
+* No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes, so nothing breaks.
+* `redact_columns` keeps the listed feature names out of the prompt. Their contribution entries are **dropped** from what the model is shown, not relabelled, and they are excluded from the group's pattern key too. The remaining shares are renormalised across what is left, so the explanation says how much of the *disclosed* evidence each column carried and states plainly when evidence was withheld — a column shown at 100% can be a small part of what the model actually measured. Note the scope: this governs what is sent to the serving endpoint. Your own `_dq_info[0].anomaly.contributions` map is unchanged and still lists every column, so anyone who can read the scored table can see the full picture; `redact_columns` is not an access control.
+</Admonition>
 
 ## Upgrading and breaking changes
 
@@ -735,41 +808,6 @@ The nested `ai_explanation` struct (populated when AI explanations are on, which
 | `evidence_scope` | string | How much of the contributing evidence the explanation was allowed to show: `complete` when nothing was withheld, `partial` when redacted columns held a minority of the group's evidence, `limited` when they held the majority. Deliberately coarse — a share would disclose by proportion what a redacted name discloses by identity. Filter or escalate on this rather than parsing the narrative. Only `redact_columns` produces anything other than `complete`. |
 
 **Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect friendly patterns).
-
-### AI explanations
-
-AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do*, without anyone reading raw contribution percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the contributions as input). The explanation is AI-generated from the anomaly signal (feature names + contributions + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
-
-The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra setup and scales with the cluster. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together and the model is called **once per group** rather than once per row, so cost stays predictable on large datasets.
-
-Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional: it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
-
-```python
-from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-
-# Contributions + AI explanations are on by default. This is all you need:
-checks = [
-  DQDatasetRule(
-    criticality="error",
-    check_func=has_no_row_anomalies,
-    check_func_kwargs={
-      "model_name": "catalog.schema.orders_monitor",
-      "registry_table": "catalog.schema.dqx_anomaly_models",
-      "threshold": 95.0,
-      # Optional: override the serving endpoint (defaults to databricks-claude-sonnet-4-5)
-      # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
-      # Optional: turn explanations off -> "enable_ai_explanation": False
-    },
-  )
-]
-```
-
-<Admonition type="note" title="Cost and privacy">
-* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many anomaly groups the model is called for per run. Set `enable_ai_explanation=False` to turn explanations off.
-* No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes, so nothing breaks.
-* `redact_columns` keeps the listed feature names out of the prompt. Their contribution entries are **dropped** from what the model is shown, not relabelled, and they are excluded from the group's pattern key too. The remaining shares are renormalised across what is left, so the explanation says how much of the *disclosed* evidence each column carried and states plainly when evidence was withheld — a column shown at 100% can be a small part of what the model actually measured. Note the scope: this governs what is sent to the serving endpoint. Your own `_dq_info[0].anomaly.contributions` map is unchanged and still lists every column, so anyone who can read the scored table can see the full picture; `redact_columns` is not an access control.
-</Admonition>
 
 ## Practical examples (non-technical)
 
