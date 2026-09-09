@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.lowcode_compile import (
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments
+from databricks_labs_dqx_app.backend.text_case import to_title_case
 
 logger = logging.getLogger(__name__)
 
@@ -195,11 +196,56 @@ _DQX_NATIVE_COVERAGE_GUIDANCE = (
 # Sentinel key the native pass returns to decline (see above).
 _DECLINE_KEY = "decline"
 
+# The one rule field whose suggestions are normalised to Title Case.
+_NAME_FIELD = "name"
+
 _FIELD_SUGGESTION_SYSTEM_TEMPLATE = """\
 You are helping a data owner fill in one field of a data quality rule definition. Given the \
 rule's context, suggest a concise value for the field "{field}".
-
+{guidance}
 Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
+
+# Per-field additions to the suggestion prompt. The rule context carries
+# snake_case identifiers (the DQX check-function name, column/slot names), which
+# primes the model to answer in snake_case too — so the name field states the
+# expected casing explicitly. The server also enforces it after parsing (see
+# ``suggest_field``), because a prompt is guidance and not a guarantee.
+_FIELD_SUGGESTION_GUIDANCE: dict[str, str] = {
+    _NAME_FIELD: (
+        "\nWrite the name as a short Title Case phrase using spaces — NOT snake_case, "
+        "camelCase, or the check-function identifier. Capitalise each word. Do not end "
+        'with a full stop. For example "Order Amount Must Be Positive", not '
+        '"order_amount_must_be_positive".\n'
+    ),
+}
+
+
+def _repair_name_casing(value: str) -> str:
+    """Title-case a suggested rule name, but only when it is clearly mis-cased.
+
+    The prompt asks for Title Case and usually gets it. This repairs the two
+    failure modes the snake_case-heavy rule context actually provokes:
+
+    * an identifier-style suggestion (``order_amount_must_be_positive``)
+    * an all-lower-case phrase (``order amount must be positive``)
+
+    A suggestion that already carries capitals is returned untouched, so
+    acronyms and proper nouns the model got right survive — blanket re-casing
+    would flatten "PostgreSQL" to "Postgresql" and "SKU" to "Sku".
+
+    Args:
+        value: The model's raw suggestion.
+
+    Returns:
+        The suggestion, title-cased only if it needed it.
+    """
+    stripped = value.strip()
+    looks_like_identifier = "_" in stripped
+    has_no_capitals = stripped == stripped.lower()
+    if looks_like_identifier or has_no_capitals:
+        return to_title_case(stripped)
+    return stripped
+
 
 # --- SQL predicate authoring assistants (write / improve / explain) -------------
 # Ported from dqlake's AiAssistMenu backend (backend/routers/ai.py). Predicates are
@@ -1216,7 +1262,9 @@ class AiRulesService:
             AIRateLimitExceededError: caller is over their hourly quota.
             AIResponseParseError: the model's response did not contain a usable suggestion.
         """
-        system = _FIELD_SUGGESTION_SYSTEM_TEMPLATE.format(field=field)
+        system = _FIELD_SUGGESTION_SYSTEM_TEMPLATE.format(
+            field=field, guidance=_FIELD_SUGGESTION_GUIDANCE.get(field, "")
+        )
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": context},
@@ -1232,6 +1280,8 @@ class AiRulesService:
         value = parsed.get("value")
         if not isinstance(value, str) or not value.strip():
             raise AIResponseParseError(f"AI did not return a usable suggestion for field '{field}'.")
+        if field == _NAME_FIELD:
+            return _repair_name_casing(value)
         return value.strip()
 
     # ------------------------------------------------------------------
