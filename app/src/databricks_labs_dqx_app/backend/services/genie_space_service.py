@@ -63,6 +63,7 @@ import secrets
 from collections.abc import Callable
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
@@ -81,12 +82,18 @@ from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn, validate
 logger = logging.getLogger(__name__)
 
 SPACE_TITLE = "DQX Studio — DQ Results"
+SPACE_PARENT_PATH = "/Shared/dqx-studio"
 SPACE_DESCRIPTION = "Ask about data-quality scores, pass rates, and failing rules."
 
 # Settings keys (dq_app_settings) — same keys as dqlake so the semantics port 1:1.
 SETTING_SPACE_ID = "dq_genie_space_id"
 SETTING_CONFIG_HASH = "dq_genie_space_config_hash"
 SETTING_STATUS = "dq_genie_space_status"
+
+
+class _SpaceLookupError(RuntimeError):
+    """Raised when existing spaces cannot be safely classified."""
+
 
 # Status values surfaced to the UI.
 STATUS_PROVISIONING = "provisioning"
@@ -1637,7 +1644,7 @@ def config_hash(catalog: str, schema: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _find_space_id_by_title(ws: WorkspaceClient, title: str) -> str | None:
+def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -> str | None:
     """Find an existing space to REUSE (so we don't recreate one per boot).
 
     Databricks appends a timestamp to the space title on create — e.g.
@@ -1664,14 +1671,23 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str) -> str | None:
             page_token = resp.get("next_page_token") if isinstance(resp, dict) else None
             if not page_token:
                 break
-        if matches:
-            matches.sort(key=lambda sp: sp.get("title") or "", reverse=True)
-            return matches[0].get("space_id")
-    except Exception as e:
-        # Best-effort resilience contract: listing spaces is an optimisation
-        # (reuse instead of create). Any workspace API failure here must
-        # degrade to "not found" so provisioning can still proceed/skip.
-        logger.info(f"Genie space list skipped: {e}")
+        if page_token:
+            raise _SpaceLookupError
+        matches.sort(key=lambda sp: sp.get("title") or "", reverse=True)
+        for match in matches:
+            space_id = match.get("space_id")
+            if not space_id:
+                continue
+            try:
+                detail = ws.api_client.do("GET", f"/api/2.0/genie/spaces/{space_id}")
+            except Exception as error:
+                raise _SpaceLookupError from error
+            if isinstance(detail, dict) and detail.get("parent_path") == parent_path:
+                return space_id
+    except _SpaceLookupError:
+        raise
+    except Exception as error:
+        raise _SpaceLookupError from error
     return None
 
 
@@ -1699,7 +1715,6 @@ def ensure_dq_genie_space(
     settings: AppSettingsService,
     ws: WorkspaceClient,
     warehouse_id: str,
-    parent_path: str,
     catalog: str,
     schema: str,
 ) -> str | None:
@@ -1708,6 +1723,7 @@ def ensure_dq_genie_space(
     Behaviour, keyed on the ``dq_genie_space_id`` +
     ``dq_genie_space_config_hash`` settings:
 
+    - stored id missing remotely -> find-or-create a replacement
     - no space id              -> find-or-create (POST), store id + hash, status ready
     - id present, hash same    -> no-op (return id, leave status as-is)
     - id present, hash changed -> update the space (PATCH serialized_space);
@@ -1731,7 +1747,17 @@ def ensure_dq_genie_space(
         stored_hash = settings.get_setting(SETTING_CONFIG_HASH)
         desired_hash = config_hash(catalog, schema)
 
-        # Already-provisioned and unchanged: cheap no-op.
+        if existing:
+            try:
+                ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
+            except NotFound:
+                existing = None
+            except Exception:
+                # A full parent-scoped list below can still safely recover an
+                # inaccessible or differently-owned stale setting.
+                existing = None
+
+        # Already-provisioned and unchanged: no configuration update needed.
         if existing and stored_hash == desired_hash:
             return existing
 
@@ -1756,9 +1782,20 @@ def ensure_dq_genie_space(
 
         # No id stored: find-or-create.
         settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
-        space_id = _find_space_id_by_title(ws, SPACE_TITLE)
+        try:
+            space_id = _find_space_id_by_title(ws, SPACE_TITLE, SPACE_PARENT_PATH)
+        except _SpaceLookupError:
+            logger.info("Genie space lookup skipped; provisioning will retry on next startup")
+            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+            return None
         if space_id is None:
-            payload = build_create_payload(catalog, schema, warehouse_id=warehouse_id, parent_path=parent_path)
+            ws.workspace.mkdirs(SPACE_PARENT_PATH)
+            payload = build_create_payload(
+                catalog,
+                schema,
+                warehouse_id=warehouse_id,
+                parent_path=SPACE_PARENT_PATH,
+            )
             try:
                 resp = ws.api_client.do("POST", "/api/2.0/genie/spaces", body=payload)
                 space_id = resp.get("space_id") if isinstance(resp, dict) else None

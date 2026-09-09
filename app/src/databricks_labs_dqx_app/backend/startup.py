@@ -499,15 +499,10 @@ def _ensure_genie_space(
     try:
         from databricks_labs_dqx_app.backend.services.genie_space_service import ensure_dq_genie_space
 
-        try:
-            parent_path = f"/Users/{workspace.current_user.me().user_name}"
-        except Exception:
-            parent_path = "/Shared"
         ensure_dq_genie_space(
             settings=AppSettingsService(sql=oltp),
             ws=workspace,
             warehouse_id=resources.warehouse_id,
-            parent_path=parent_path,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
         )

@@ -115,6 +115,7 @@ import {
 import { ChevronDown, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
+import { extractApiError } from "@/lib/api-error";
 
 export const Route = createFileRoute("/_sidebar/settings")({
   component: () => <ConfigPage />,
@@ -2240,8 +2241,7 @@ function ComputeSettingsCard() {
           toast.success(t("config.computeSaved"));
         },
         onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.computeSaveFailed"));
+          toast.error(extractApiError(err, t("config.computeSaveFailed")));
         },
       },
     );
@@ -2295,8 +2295,7 @@ function ComputeSettingsCard() {
           toast.success(t("config.computeGrantSucceeded"));
         },
         onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.computeGrantFailed"));
+          toast.error(extractApiError(err, t("config.computeGrantFailed")));
         },
       },
     );

@@ -285,10 +285,9 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     """Build the zero-arg Genie re-provision callable, or None when unavailable.
 
     Mirrors ``backend.app._ensure_genie_space``: requires a bound SQL warehouse
-    to attach a freshly-created space to, and resolves the SP's parent folder
-    (falling back to ``/Shared``). ``ensure_dq_genie_space`` is itself idempotent
-    and never raises out of its own body; the callable is invoked best-effort by
-    the reset service, which records (never re-raises) any failure.
+    to attach a freshly-created space to. ``ensure_dq_genie_space`` is itself
+    idempotent and never raises out of its own body; the callable is invoked
+    best-effort by the reset service, which records (never re-raises) any failure.
     """
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
@@ -298,17 +297,10 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     from .services.genie_space_service import ensure_dq_genie_space
 
     def _reprovision() -> object:
-        try:
-            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
-        except Exception:
-            # Best-effort: the parent folder is cosmetic — fall back to a
-            # location every workspace has rather than skip provisioning.
-            parent_path = "/Shared"
         return ensure_dq_genie_space(
             settings=app_settings,
             ws=sp_ws,
             warehouse_id=warehouse_id,
-            parent_path=parent_path,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
         )
