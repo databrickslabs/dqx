@@ -207,6 +207,7 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
             pool_max_size=conf.lakebase_pool_max_size,
         )
     except Exception:
+        logger.exception("Lakebase connection initialization failed")
         if pg_executor is not None:
             await asyncio.to_thread(pg_executor.close)
         _publish_unavailable(
