@@ -292,8 +292,8 @@ customer_360_checks_yaml = """
   name: customer_id_not_null
   check:
     function: is_not_null_and_not_empty
-    for_each_column:
-    - customer_id
+    arguments:
+      column: customer_id
   user_metadata:
     domain: customer_360
     rule_type: identity
@@ -421,8 +421,8 @@ customer_360_checks_yaml = """
     function: sql_expression
     arguments:
       expression: >-
-        (customer_status = 'ACTIVE' AND active_customer_flag = true)
-        OR (customer_status = 'INACTIVE' AND active_customer_flag = false)
+        NOT (customer_status = 'ACTIVE' AND active_customer_flag = false)
+        AND NOT (customer_status = 'INACTIVE' AND active_customer_flag = true)
   user_metadata:
     domain: customer_360
     rule_type: business_logic
@@ -446,7 +446,7 @@ assert not status.has_errors
 # MAGIC %md
 # MAGIC ### Apply Checks and Split Valid vs Invalid Records
 # MAGIC
-# MAGIC DQX returns error-level and warning-level violations in `invalid_df`. Warning-only records also remain eligible for `valid_df`, but `get_valid()` removes the warning and error metadata columns. In this example, `invalid_df` is persisted as the quarantine output so reviewers can inspect both errors and warnings.
+# MAGIC DQX returns any row with an error- or warning-level violation in `invalid_df`, and every row that passes all *error*-level checks in `valid_df` (without the `_errors`/`_warnings` columns). Warning-only records therefore appear in **both**: they stay eligible for `valid_df`, and they also show up in `invalid_df` carrying their warning metadata. In this example, `invalid_df` is persisted as the quarantine output so reviewers can inspect both errors and warnings.
 
 # COMMAND ----------
 
