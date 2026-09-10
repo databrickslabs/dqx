@@ -65,7 +65,10 @@ export function MonitoredTableSchedulingTab({
   const preflightQuery = useQuery({
     queryKey: ["scheduleGrantPreflight", table.table_fqn],
     queryFn: async () => (await preflightScheduleGrants({ table_fqns: [table.table_fqn] })).data,
-    enabled: canEdit,
+    // Gated on scheduling intent, not merely on edit rights: this issues
+    // ownership reads plus fully-paginated grants.get_effective per table, and
+    // the result only matters once a cron is actually set.
+    enabled: canEdit && cron !== null,
     staleTime: 60_000,
   });
   const preflightTable = preflightQuery.data?.tables?.[0];
@@ -74,7 +77,11 @@ export function MonitoredTableSchedulingTab({
   // cron) needs no grant, matching the backend gate.
   const blockForSchedule = cannotManage && cron !== null;
 
-  const canSave = dirty && !cronInvalid && !blockForSchedule;
+  // While the preflight for a newly-set cron is still in flight we do not yet
+  // know whether to block, so hold the save rather than let it through to a
+  // backend 403.
+  const preflightPending = cron !== null && preflightQuery.isFetching;
+  const canSave = dirty && !cronInvalid && !blockForSchedule && !preflightPending;
 
   const updateMut = useUpdateMonitoredTableSchedule({ mutation: { onError: () => {} } });
 
@@ -137,7 +144,11 @@ export function MonitoredTableSchedulingTab({
         onRemove={() => setCron(null)}
         onValidityChange={(valid) => setCronInvalid(!valid)}
         banner={
-          cannotManage ? (
+          // Gated on the same condition as the save block, not on cannotManage
+          // alone: the warning describes a schedule the user cannot set up, so
+          // showing it on an unscheduled table alarms people about something
+          // they are not doing.
+          blockForSchedule ? (
             <ScheduleGrantWarning entity="table" blockedTables={preflightTable ? [preflightTable] : []} />
           ) : undefined
         }

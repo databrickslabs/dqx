@@ -310,7 +310,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const canApprove = perms.canApproveRules;
 
   const runMut = useRunDataProduct({ mutation: { onError: () => {} } });
-  // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
+  // Draft runs scan the admin-configured sample (default 0 = whole
   // table). "Run now" (approved) always scans the full table (sample_size 0).
   // While the limit query has not resolved (loading OR error) this is
   // `undefined`, NOT 0 — so the draft run OMITS sample_size and the backend

@@ -252,7 +252,7 @@ class BindingRunService:
 
         # Approved runs honour the caller's scope and fall back to a full
         # table; draft runs fall back to the admin-configured draft-run sample
-        # limit (compiled-in default of 1000 when unset). 0 = unlimited
+        # limit (compiled-in default of 0 = whole table when unset)
         # everywhere. Resolving from the setting here is belt-and-suspenders:
         # the UI now sends the configured size on draft runs, but a caller that
         # omits it (or a scheduled/programmatic path) still honours the admin

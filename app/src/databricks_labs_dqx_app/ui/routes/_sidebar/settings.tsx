@@ -103,6 +103,7 @@ import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
+import { sampleValueForKind } from "@/lib/sampling";
 import { Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -2316,9 +2317,9 @@ function ProfilerSampleSettings() {
 
   const handleKindChange = (k: SampleKind) => {
     setSampleKind(k);
-    // Switching records → percent would send a row count as a percentage, so
-    // clamp into the new unit's range before saving.
-    const next = k === "percent" ? Math.min(100, Math.max(1, sampleValue)) : sampleValue;
+    // Switching records → percent cannot reuse a row count; clamping it would
+    // save 100% (the whole table) without the admin choosing that.
+    const next = sampleValueForKind(k, sampleValue);
     setSampleValue(next);
     handleSave(k, next);
   };

@@ -130,6 +130,7 @@ import { ExportDialog } from "@/components/ExportDialog";
 import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import { LifecycleDecisionNote } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
+import { sampleValueForKind } from "@/lib/sampling";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -1766,8 +1767,9 @@ function ProfileTab({
 
   const handleSampleKind = useCallback((k: SampleKind) => {
     setSampleKind(k);
-    // records → percent would reinterpret a row count as a percentage.
-    if (k === "percent") setSampleValue((v) => Math.min(100, Math.max(1, v)));
+    // records → percent cannot reinterpret a row count; clamping would select
+    // 100% (the whole table).
+    setSampleValue((v) => sampleValueForKind(k, v));
   }, []);
 
   /** Opens the sampling modal. Every one-off profile entry point goes through

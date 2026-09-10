@@ -83,6 +83,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     set_reserved_tag,
     set_slot_tags,
 )
+from databricks_labs_dqx_app.backend.profiler_options import sample_profile_options
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
     PROFILER_SAMPLE_KIND_RECORDS,
     ProfilerSample,
@@ -450,9 +451,10 @@ class DemoSeedService:
                 "sample_value": _PROFILE_SAMPLE.value,
                 "source_table_fqn": table_fqn,
                 "columns": None,
-                # Pin the profiler's own sampling off — the view already carries
-                # the sample. See ``routes/v1/profiler._sample_profile_options``.
-                "profile_options": {"sample_fraction": None, "limit": 0},
+                # Pin the profiler's own sampling off via the shared helper —
+                # copying its output would let the demo drift back to DQX core
+                # defaults (~300 rows) if the convention changes.
+                "profile_options": sample_profile_options(_PROFILE_SAMPLE, None),
             }
             job_run_id = job_service.submit_run(
                 task_type="profile",

@@ -462,6 +462,7 @@
     "tablesSelected_one": "{{count}} tabella selezionata",
     "tablesSelected_other": "{{count}} tabelle selezionate",
     "sampleLimit": "Limite Campione (righe)",
+    "samplingLabel": "Campionamento",
     "maxSampleLimit": "Massimo 100.000 righe per tabella",
     "sampleLimitHint": "Per impostazione predefinita usa l'impostazione amministratore in Impostazioni → Calcolo → Profilazione. La modifica si applica solo a questa esecuzione.",
     "stopRun": "Ferma Esecuzione",

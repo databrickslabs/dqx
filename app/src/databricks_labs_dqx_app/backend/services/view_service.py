@@ -6,6 +6,7 @@ inherits the user's table permissions.
 
 import logging
 import math
+import secrets
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
@@ -39,6 +40,9 @@ def reset_tmp_schema_ready() -> None:
 # capping with LIMIT keeps the result at n rows whenever the table is big enough.
 ROW_SAMPLE_MARGIN = 1.5
 
+# Upper bound for a generated TABLESAMPLE seed; well inside Spark's INT range.
+_MAX_SAMPLE_SEED = 2_000_000_000
+
 
 def needs_row_count(sample: ProfilerSample | None) -> bool:
     """Whether resolving *sample* into SQL requires the table's row count.
@@ -49,11 +53,12 @@ def needs_row_count(sample: ProfilerSample | None) -> bool:
     return sample is not None and sample.kind == PROFILER_SAMPLE_KIND_RECORDS
 
 
-def build_sample_select(quoted_source: str, sample: ProfilerSample | None, total_rows: int | None) -> str:
+def build_sample_select(quoted_source: str, sample: ProfilerSample | None, total_rows: int | None, seed: int) -> str:
     """Build the SELECT body that applies *sample* to *quoted_source*.
 
     Pure: given the same arguments it always returns the same SQL and performs
-    no I/O. The caller supplies *total_rows* (see :func:`needs_row_count`).
+    no I/O. The caller supplies *total_rows* (see :func:`needs_row_count`) and a
+    *seed*.
 
     ``percent`` maps straight onto ``TABLESAMPLE (p PERCENT)``, a genuine
     Bernoulli sample. ``records`` deliberately does NOT use
@@ -63,10 +68,20 @@ def build_sample_select(quoted_source: str, sample: ProfilerSample | None, total
     *total_rows*. When that is unavailable it falls back to a bare ``LIMIT``,
     because a non-random sample beats a failed profile run.
 
+    Every ``TABLESAMPLE`` carries ``REPEATABLE (seed)``. The sample lives in a
+    plain (non-materialized) view, so the query re-executes on every scan — and
+    the profiler scans it more than once (a ``count()`` for the row total, then
+    the profiling passes themselves). Without a fixed seed each scan draws a
+    *different* sample, which would make the reported row count disagree with
+    the rows actually profiled and leave per-column statistics computed over
+    different row sets.
+
     Args:
         quoted_source: Already-quoted source table FQN.
         sample: Sampling policy, or ``None`` for the whole table.
         total_rows: Row count of the source, or ``None`` if unknown.
+        seed: Sampling seed, fixed per view so repeated scans agree. Vary it
+            per run so successive profiles still see different rows.
 
     Returns:
         A ``SELECT ...`` string. Never interpolates untrusted text: the source
@@ -76,7 +91,7 @@ def build_sample_select(quoted_source: str, sample: ProfilerSample | None, total
         return f"SELECT * FROM {quoted_source}"
 
     if sample.kind == PROFILER_SAMPLE_KIND_PERCENT:
-        return f"SELECT * FROM {quoted_source} TABLESAMPLE ({int(sample.value)} PERCENT)"
+        return f"SELECT * FROM {quoted_source} TABLESAMPLE ({int(sample.value)} PERCENT) REPEATABLE ({int(seed)})"
 
     if sample.kind != PROFILER_SAMPLE_KIND_RECORDS:
         # Unknown kind — profile the whole table rather than guessing.
@@ -96,7 +111,7 @@ def build_sample_select(quoted_source: str, sample: ProfilerSample | None, total
         return f"SELECT * FROM {quoted_source} LIMIT {rows}"
 
     percent = min(100, max(1, math.ceil(rows / total_rows * 100 * ROW_SAMPLE_MARGIN)))
-    return f"SELECT * FROM {quoted_source} TABLESAMPLE ({percent} PERCENT) LIMIT {rows}"
+    return f"SELECT * FROM {quoted_source} TABLESAMPLE ({percent} PERCENT) REPEATABLE ({int(seed)}) LIMIT {rows}"
 
 
 class ViewService:
@@ -126,14 +141,14 @@ class ViewService:
                 f"Cannot create tmp schema `{cat}`.`{schema}` via service principal. " f"Original error: {e}"
             ) from e
 
-    def _sample_select(self, quoted_source: str, sample: ProfilerSample | None) -> str:
+    def _sample_select(self, quoted_source: str, sample: ProfilerSample | None, seed: int) -> str:
         """Resolve *sample* into a SELECT body, fetching a row count if needed.
 
         Keeps the I/O (the row count) at this boundary so the SQL-shaping
         decision itself stays a pure function — see :func:`build_sample_select`.
         """
         total = self._row_count(quoted_source) if needs_row_count(sample) else None
-        return build_sample_select(quoted_source, sample, total)
+        return build_sample_select(quoted_source, sample, total, seed)
 
     def _row_count(self, quoted_source: str) -> int | None:
         """Return the source row count, or ``None`` when it cannot be determined.
@@ -177,7 +192,10 @@ class ViewService:
         view_name = f"{self._sql.catalog}.{self._sql.schema}.tmp_view_{view_id}"
         quoted_source = quote_fqn(source_table_fqn)
         quoted_view = quote_fqn(view_name)
-        sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {self._sample_select(quoted_source, sample)}"
+        # One seed per view: baked into the view SQL so every scan of it draws
+        # the same rows, while a later run gets a new view and a new seed.
+        seed = secrets.randbelow(_MAX_SAMPLE_SEED)
+        sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {self._sample_select(quoted_source, sample, seed)}"
 
         logger.info("Creating view %s from %s", view_name, source_table_fqn)
         self._sql.execute(sql)

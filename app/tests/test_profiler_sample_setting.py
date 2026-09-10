@@ -48,6 +48,10 @@ from databricks_labs_dqx_app.backend.services.view_service import (
     needs_row_count,
 )
 
+# Fixed seed for the SQL-shape assertions below.
+_SEED = 42
+
+
 # ---------------------------------------------------------------------------
 # AppSettingsService — storage layer
 # ---------------------------------------------------------------------------
@@ -158,16 +162,16 @@ class TestBuildSampleSelect:
     SOURCE = "`c`.`s`.`t`"
 
     def test_none_selects_whole_table(self):
-        assert build_sample_select(self.SOURCE, None, None) == f"SELECT * FROM {self.SOURCE}"
+        assert build_sample_select(self.SOURCE, None, None, _SEED) == f"SELECT * FROM {self.SOURCE}"
 
     def test_full_selects_whole_table(self):
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="full", value=0), 1_000_000)
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="full", value=0), 1_000_000, _SEED)
         assert body == f"SELECT * FROM {self.SOURCE}"
         assert "TABLESAMPLE" not in body and "LIMIT" not in body
 
     def test_percent_uses_tablesample_percent(self):
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="percent", value=10), None)
-        assert body == f"SELECT * FROM {self.SOURCE} TABLESAMPLE (10 PERCENT)"
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="percent", value=10), None, _SEED)
+        assert body == f"SELECT * FROM {self.SOURCE} TABLESAMPLE (10 PERCENT) REPEATABLE ({_SEED})"
 
     def test_records_over_samples_by_percent_then_caps(self):
         """A row cap must be a RANDOM n, so it samples by percentage first.
@@ -175,36 +179,61 @@ class TestBuildSampleSelect:
         50k of 1M rows is 5%, over-sampled by the 1.5 margin to 8% (ceil), then
         capped with LIMIT so the result is exactly 50k rows.
         """
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=50_000), 1_000_000)
-        assert body == f"SELECT * FROM {self.SOURCE} TABLESAMPLE (8 PERCENT) LIMIT 50000"
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=50_000), 1_000_000, _SEED)
+        assert body == f"SELECT * FROM {self.SOURCE} TABLESAMPLE (8 PERCENT) REPEATABLE ({_SEED}) LIMIT 50000"
 
     def test_records_never_uses_tablesample_rows(self):
         """Spark implements TABLESAMPLE (n ROWS) as LIMIT — never random."""
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=10), 1_000_000)
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=10), 1_000_000, _SEED)
         assert "ROWS" not in body
 
     def test_records_uses_plain_limit_when_table_fits(self):
         """No sampling needed when the table is already inside the cap."""
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=50_000), 100)
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=50_000), 100, _SEED)
         assert body == f"SELECT * FROM {self.SOURCE} LIMIT 50000"
 
     def test_records_falls_back_to_limit_without_a_row_count(self):
         """An unavailable count must degrade to a bounded scan, not a failure."""
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=1000), None)
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=1000), None, _SEED)
         assert body == f"SELECT * FROM {self.SOURCE} LIMIT 1000"
 
     def test_tiny_fraction_still_samples_at_least_one_percent(self):
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=1), 1_000_000_000)
-        assert body == f"SELECT * FROM {self.SOURCE} TABLESAMPLE (1 PERCENT) LIMIT 1"
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=1), 1_000_000_000, _SEED)
+        assert body == f"SELECT * FROM {self.SOURCE} TABLESAMPLE (1 PERCENT) REPEATABLE ({_SEED}) LIMIT 1"
 
     def test_unknown_kind_degrades_to_whole_table(self):
-        body = build_sample_select(self.SOURCE, ProfilerSample(kind="somehow", value=5), 100)
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="somehow", value=5), 100, _SEED)
         assert body == f"SELECT * FROM {self.SOURCE}"
+
+    def test_percent_sample_carries_a_repeatable_seed(self):
+        """The sample lives in a non-materialized view, so the query re-runs on
+        every scan. Without REPEATABLE each scan draws a different sample and the
+        reported row count stops describing the rows actually profiled."""
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="percent", value=10), None, 42)
+
+        assert "REPEATABLE (42)" in body
+
+    def test_records_sample_carries_a_repeatable_seed(self):
+        body = build_sample_select(self.SOURCE, ProfilerSample(kind="records", value=50_000), 1_000_000, 7)
+
+        assert "REPEATABLE (7)" in body
+        assert body.index("REPEATABLE") < body.index("LIMIT"), "REPEATABLE must precede LIMIT"
+
+    def test_different_seeds_give_different_sql(self):
+        """A new run gets a new seed, so successive profiles still see new rows."""
+        a = build_sample_select(self.SOURCE, ProfilerSample(kind="percent", value=10), None, 1)
+        b = build_sample_select(self.SOURCE, ProfilerSample(kind="percent", value=10), None, 2)
+
+        assert a != b
+
+    def test_unsampled_paths_carry_no_seed(self):
+        for sample in (None, ProfilerSample(kind="full", value=0)):
+            assert "REPEATABLE" not in build_sample_select(self.SOURCE, sample, None, 42)
 
     def test_is_pure_and_repeatable(self):
         sample = ProfilerSample(kind="records", value=5000)
-        first = build_sample_select(self.SOURCE, sample, 100_000)
-        assert build_sample_select(self.SOURCE, sample, 100_000) == first
+        first = build_sample_select(self.SOURCE, sample, 100_000, _SEED)
+        assert build_sample_select(self.SOURCE, sample, 100_000, _SEED) == first
 
 
 class TestNeedsRowCount:
@@ -421,6 +450,6 @@ class TestDqRunsAreUnsampled:
         """Dry runs, binding runs and scheduled runs all create their view with
         no sample, so the view must scan the whole table — their pass rates
         describe the table rather than a subset."""
-        body = build_sample_select("`c`.`s`.`t`", None, 1_000_000)
+        body = build_sample_select("`c`.`s`.`t`", None, 1_000_000, _SEED)
         assert "LIMIT" not in body
         assert "TABLESAMPLE" not in body

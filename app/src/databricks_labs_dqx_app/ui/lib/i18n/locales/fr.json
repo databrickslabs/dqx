@@ -462,6 +462,7 @@
     "tablesSelected_one": "{{count}} table sélectionnée",
     "tablesSelected_other": "{{count}} tables sélectionnées",
     "sampleLimit": "Limite d'échantillon (lignes)",
+    "samplingLabel": "Échantillonnage",
     "maxSampleLimit": "Max 100 000 lignes par table",
     "sampleLimitHint": "Utilise par défaut le paramètre administrateur sous Paramètres → Calcul → Profilage. Toute modification s'applique uniquement à cette exécution.",
     "stopRun": "Arrêter l'exécution",

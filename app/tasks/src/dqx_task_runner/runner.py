@@ -373,9 +373,12 @@ def _run_profile(
 
     df = _read_view_with_retry(spark, view_fqn)
 
-    # ``rows_profiled`` must reflect what the profiler actually saw, so count
-    # the view once here and reuse it — the profiler's own sampling options are
-    # pinned off by the route, so the view row count IS the profiled row count.
+    # ``rows_profiled`` must reflect what the profiler actually saw. Two things
+    # make that true: the route pins the profiler's own sampling options off, and
+    # the view's TABLESAMPLE carries a REPEATABLE seed. The seed matters — the
+    # view is not materialized, so this count and the profiling passes below are
+    # separate scans that would each draw a different sample without it. See
+    # ``view_service.build_sample_select``.
     rows_profiled = df.count()
 
     profiler = DQProfiler(ws, spark)

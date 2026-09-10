@@ -310,9 +310,10 @@ class AppSettingsService:
         return int(days)
 
     # ------------------------------------------------------------------
-    # Draft-run sampling (legacy admin setting) — kept for API compatibility.
-    # The UI no longer exposes this; draft runs take an optional per-request
-    # ``sample_size`` (default 1000) on the run endpoints. See
+    # Draft-run sampling. Surfaced to admins under Settings -> Compute ->
+    # Draft runs, and honoured by the run endpoints when the request omits
+    # ``sample_size``. The compiled-in fallback is
+    # :data:`DRAFT_RUN_SAMPLE_LIMIT_DEFAULT` (0 = whole table). See
     # ``BindingRunService.run_binding``.
     # ------------------------------------------------------------------
 

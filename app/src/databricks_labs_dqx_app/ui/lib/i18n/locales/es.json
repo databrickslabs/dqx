@@ -462,6 +462,7 @@
     "tablesSelected_one": "{{count}} tabla seleccionada",
     "tablesSelected_other": "{{count}} tablas seleccionadas",
     "sampleLimit": "Límite de Muestra (filas)",
+    "samplingLabel": "Muestreo",
     "maxSampleLimit": "Máximo 100,000 filas por tabla",
     "sampleLimitHint": "Toma por defecto la configuración de administrador en Configuración → Cómputo → Perfilado. El cambio se aplica solo a esta ejecución.",
     "stopRun": "Detener Ejecución",

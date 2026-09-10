@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.models import (
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
+from databricks_labs_dqx_app.backend.profiler_options import sample_profile_options
 from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
     PROFILER_SAMPLE_KIND_FULL,
@@ -95,23 +96,6 @@ def recorded_sample_limit(sample: ProfilerSample) -> int:
     if sample.is_full_table or sample.kind == PROFILER_SAMPLE_KIND_PERCENT:
         return 0
     return int(sample.value)
-
-
-def sample_profile_options(sample: ProfilerSample, requested: dict[str, object] | None) -> dict[str, object]:
-    """Merge *sample* into the DQProfiler options for a run.
-
-    The profiler applies its own ``DEFAULT_PROFILE_OPTIONS`` for anything we
-    omit — including ``sample_fraction: 0.3`` and ``limit: 1000``. Those
-    defaults would silently shrink every profile run to ~300 rows, so we
-    always send both keys explicitly and let the view carry the sampling
-    instead. ``limit: 0`` and ``sample_fraction: None`` together mean
-    "profile whatever the view returns".
-    """
-    options: dict[str, object] = dict(requested or {})
-    options["sample_fraction"] = None
-    options["limit"] = 0
-    # A caller-supplied filter is still honoured; it runs before sampling.
-    return options
 
 
 def _run_table_fqn() -> str:

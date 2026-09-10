@@ -462,6 +462,7 @@
     "tablesSelected_one": "{{count}} table selected",
     "tablesSelected_other": "{{count}} tables selected",
     "sampleLimit": "Sample Limit (rows)",
+    "samplingLabel": "Sampling",
     "maxSampleLimit": "Max 100,000 rows per table",
     "sampleLimitHint": "Defaults to the admin setting under Settings → Compute → Profiling. Changing it applies to this run only.",
     "stopRun": "Stop Run",

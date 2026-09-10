@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePermissions } from "@/hooks/use-permissions";
+import { sampleValueForKind } from "@/lib/sampling";
 import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
@@ -808,8 +809,9 @@ function ProfilerPageInner() {
 
   const handleSampleKind = (k: SampleKind) => {
     setSampleKind(k);
-    // records → percent would reinterpret a row count as a percentage.
-    if (k === "percent") setSampleValue((v) => Math.min(100, Math.max(1, v)));
+    // records → percent cannot reinterpret a row count; clamping would select
+    // 100% (the whole table).
+    setSampleValue((v) => sampleValueForKind(k, v));
   };
 
   /** Request payload for the sampling override.
@@ -970,7 +972,7 @@ function ProfilerPageInner() {
 
           <div className="flex items-end gap-4">
             <div className="grid gap-2">
-              <Label>{t("profiler.sampleLimit")}</Label>
+              <Label>{t("profiler.samplingLabel")}</Label>
               <SampleSelector
                 kind={sampleKind}
                 value={sampleValue}
@@ -1003,7 +1005,15 @@ function ProfilerPageInner() {
                     <span className={!canRunRules ? "cursor-not-allowed" : undefined}>
                       <Button
                         onClick={handleProfileRun}
-                        disabled={selectedTables.length === 0 || !canRunRules}
+                        // Also blocked while the sampling setting loads: the
+                        // selector shows a placeholder until then, so running
+                        // would use a policy the user never saw. Gated on
+                        // isLoading (not on hydration) so a failed query cannot
+                        // disable the button indefinitely — in that case the
+                        // override is omitted and the backend resolves it.
+                        disabled={
+                          selectedTables.length === 0 || !canRunRules || profilerSampleQuery.isLoading
+                        }
                         className="gap-2 mb-6"
                       >
                         <Play className="h-4 w-4" />

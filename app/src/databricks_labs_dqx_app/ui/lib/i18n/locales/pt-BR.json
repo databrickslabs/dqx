@@ -462,6 +462,7 @@
     "tablesSelected_one": "{{count}} tabela selecionada",
     "tablesSelected_other": "{{count}} tabelas selecionadas",
     "sampleLimit": "Limite de Amostra (linhas)",
+    "samplingLabel": "Amostragem",
     "maxSampleLimit": "Máximo de 100.000 linhas por tabela",
     "sampleLimitHint": "Usa por padrão a configuração de administrador em Configurações → Computação → Perfilamento. A alteração se aplica somente a esta execução.",
     "stopRun": "Parar Execução",
