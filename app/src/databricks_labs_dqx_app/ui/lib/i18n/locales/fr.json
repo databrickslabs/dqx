@@ -2867,7 +2867,7 @@
     "invalidSamplesUnavailable": "Impossible d'afficher les échantillons non valides pour cette table.",
     "breachWarnTooltip": "Taux de réussite inférieur au seuil",
     "breachErrorTooltip": "Taux de réussite inférieur au seuil",
-    "thresholdUsed": "seuil utilisé : {{pct}} %"
+    "breachTooltipWithThreshold": "Taux de réussite inférieur au seuil ({{pct}} %)"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

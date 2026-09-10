@@ -2867,7 +2867,7 @@
     "invalidSamplesUnavailable": "Invalid samples can't be shown for this table.",
     "breachWarnTooltip": "Pass rate below threshold",
     "breachErrorTooltip": "Pass rate below threshold",
-    "thresholdUsed": "threshold used: {{pct}}%"
+    "breachTooltipWithThreshold": "Pass rate below threshold ({{pct}}%)"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

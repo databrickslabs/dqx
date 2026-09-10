@@ -84,7 +84,8 @@ export type BreakdownRow = {
   breach_criticality?: string | null;
   /** Frozen per-run pass threshold (%) in effect for the group — the value
    *  stamped on the newest run pooled into it. Null for legacy runs with no
-   *  frozen threshold. Rendered as "threshold used: N%" when `showThreshold`. */
+   *  frozen threshold. Surfaced only in the breach icon's tooltip, so it costs
+   *  no row height until someone asks why the ⚠ is there. */
   pass_threshold?: number | null;
 };
 
@@ -138,7 +139,6 @@ export function DimensionBreakdown({
   rowLink,
   renderLabel,
   breachEnabled = true,
-  showThreshold = false,
 }: {
   title: string;
   rows: Array<BreakdownRow>;
@@ -194,11 +194,6 @@ export function DimensionBreakdown({
   /** When false, breach warning icons are hidden (pass-threshold feature is
    *  disabled globally). Defaults to true (fail-open). */
   breachEnabled?: boolean;
-  /** When true, each row surfaces its frozen per-run pass threshold as a small
-   *  "threshold used: N%" line under the label (only where a value is present).
-   *  Used by the By rule box so authors see the threshold each run was judged
-   *  against. Defaults to false. */
-  showThreshold?: boolean;
 }) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<SortState>(null);
@@ -364,15 +359,13 @@ export function DimensionBreakdown({
                               <TruncatedText text={r.label} className="min-w-0" />
                             )}
                             {breachEnabled && r.breached && (
-                              <BreachIcon criticality={r.breach_criticality} />
+                              <BreachIcon
+                                criticality={r.breach_criticality}
+                                threshold={r.pass_threshold}
+                              />
                             )}
                             {rowLink?.(r.label)}
                           </span>
-                          {showThreshold && breachEnabled && r.pass_threshold != null && (
-                            <span className="mt-0.5 block truncate text-[10px] normal-case tracking-normal text-muted-foreground">
-                              {t("resultsUi.thresholdUsed", { pct: r.pass_threshold })}
-                            </span>
-                          )}
                         </div>
                       )}
                     </td>

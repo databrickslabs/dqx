@@ -605,10 +605,14 @@ export function MultiTableResultsSection({
   // Keyed by the by_rule row label (what failures carry as rule_name); only
   // breached rows contribute; suppressed when the threshold feature is off.
   const breachedRuleCriticality: Record<string, string> = {};
+  // Same keying, carrying the frozen threshold so the ⚠ tooltip can name the
+  // percentage the rule was judged against.
+  const breachedRuleThreshold: Record<string, number> = {};
   if (thresholdEnabled) {
     for (const r of [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])]) {
       if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
         breachedRuleCriticality[r.label] = r.breach_criticality;
+        if (r.pass_threshold != null) breachedRuleThreshold[r.label] = r.pass_threshold;
       }
     }
   }
@@ -1044,10 +1048,6 @@ export function MultiTableResultsSection({
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
                   pageSize={8}
                   breachEnabled={thresholdEnabled}
-                  // Surface the frozen per-run threshold each rule's run was
-                  // judged against (only when the feature is on and a value
-                  // is stamped on the run).
-                  showThreshold={thresholdEnabled}
                   // The rule NAME navigates to that registry rule's detail
                   // (only for rows with a genuine registry rule_id); clicking
                   // elsewhere on the row still toggles the rule facet — the
@@ -1182,6 +1182,7 @@ export function MultiTableResultsSection({
                     severityRanks={sevRanks}
                     dimensionColors={dimColors}
                     breachedRuleCriticality={breachedRuleCriticality}
+                    breachedRuleThreshold={breachedRuleThreshold}
                   />
                 )}
               </CollapseRegion>

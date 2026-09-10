@@ -2867,7 +2867,7 @@
     "invalidSamplesUnavailable": "I campioni non validi non possono essere mostrati per questa tabella.",
     "breachWarnTooltip": "Tasso di superamento sotto la soglia",
     "breachErrorTooltip": "Tasso di superamento sotto la soglia",
-    "thresholdUsed": "soglia utilizzata: {{pct}}%"
+    "breachTooltipWithThreshold": "Tasso di superamento sotto la soglia ({{pct}}%)"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

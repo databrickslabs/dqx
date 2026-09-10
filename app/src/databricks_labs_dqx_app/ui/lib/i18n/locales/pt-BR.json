@@ -2867,7 +2867,7 @@
     "invalidSamplesUnavailable": "As amostras inválidas não podem ser exibidas para esta tabela.",
     "breachWarnTooltip": "Taxa de aprovação abaixo do limite",
     "breachErrorTooltip": "Taxa de aprovação abaixo do limite",
-    "thresholdUsed": "limite usado: {{pct}}%"
+    "breachTooltipWithThreshold": "Taxa de aprovação abaixo do limite ({{pct}}%)"
   },
   "genie": {
     "iconTitle": "Databricks Genie",
