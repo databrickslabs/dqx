@@ -645,7 +645,7 @@ def is_in_distribution(
     this case, the function creates an internal *residual* bucket in the expected distribution to hold the missing
     mass (1 - sum), and the actual distribution is computed with the same bucketing: all non-null column values not
     listed as explicit keys in the given distribution are aggregated into the *residual* bucket. For example, given a
-    distribution of {A: 0.5, B: 0.3}, an internal *residual* bucket holds the remaining 0.2; the actual distribution
+    distribution of `{A: 0.5, B: 0.3}`, an internal *residual* bucket holds the remaining 0.2; the actual distribution
     is then calculated over *A*, *B*, and *residual*, where *residual* counts every non-null column value other than
     *A* and *B*. When the sum equals 1, the expected *residual* mass is 0 and any actual values not listed in the
     given distribution will contribute to the distance.
