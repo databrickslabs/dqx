@@ -4773,6 +4773,45 @@ def test_is_in_distribution_unsupported_column_types(
     )
 
 
+@pytest.mark.parametrize(
+    "spark_type, values, distribution, expected_key_type_display, expected_python_type_display",
+    [
+        # str keys against a non-string column
+        ("int", [1, 2, 3], {"A": 0.5, "B": 0.5}, "str", "int"),
+        ("boolean", [True, False], {"A": 0.5, "B": 0.5}, "str", "bool"),
+        ("date", [date(2024, 1, 1), date(2024, 2, 1)], {"A": 0.5, "B": 0.5}, "str", "date"),
+        # int keys against a non-integer column
+        ("string", ["x", "y"], {1: 0.5, 2: 0.5}, "int", "str"),
+        ("boolean", [True, False], {1: 0.5, 2: 0.5}, "int", "bool"),
+        ("date", [date(2024, 1, 1), date(2024, 2, 1)], {1: 0.5, 2: 0.5}, "int", "date"),
+        # bool keys against non-boolean column (bool must not silently match integer columns)
+        ("int", [1, 0], {True: 0.5, False: 0.5}, "bool", "int"),
+        ("string", ["x", "y"], {True: 0.5, False: 0.5}, "bool", "str"),
+        # date keys against a non-date column
+        ("int", [1, 2], {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "int"),
+        ("string", ["x", "y"], {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "str"),
+    ],
+)
+def test_is_in_distribution_column_key_type_mismatch(
+    spark: SparkSession,
+    spark_type: str,
+    values: list,
+    distribution: dict,
+    expected_key_type_display: str,
+    expected_python_type_display: str,
+):
+    """Column type must be compatible with the distribution key type; a mismatch must fail loudly
+    at apply time rather than silently producing zero matches via cast-driven type coercion."""
+    df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
+    _, apply_method = is_in_distribution("value", distribution, distance=0.5)
+    with pytest.raises(InvalidParameterError) as exc_info:
+        apply_method(df)
+    assert str(exc_info.value) == (
+        f"Column 'value' type '{spark_type}' is not compatible with 'distribution' key type "
+        f"'{expected_key_type_display}'; expected '{expected_python_type_display}'."
+    )
+
+
 def test_is_in_distribution_treats_missing_expected_key_as_zero(spark: SparkSession):
     """A key present in the expected distribution but absent from the actual data is treated as a
     zero-probability observation and folded into the TVD calculation."""

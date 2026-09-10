@@ -107,16 +107,20 @@ WINDOW_INCOMPATIBLE_AGGREGATES = {
 }
 
 _IS_IN_DISTRIBUTION_SUPPORTED_KEY_TYPES: tuple[type, ...] = (bool, str, int, datetime.date)
-_IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES: tuple[type, ...] = (
-    types.BooleanType,
-    types.StringType,
-    types.CharType,
-    types.ByteType,
-    types.ShortType,
-    types.IntegerType,
-    types.LongType,
-    types.DateType,
-)
+# Compatibility mapping: each supported Spark column type maps to the single Python type that
+# distribution keys must have to be compared against it. Note bool is intentionally distinct
+# from int here — Spark BooleanType and integer types are not interchangeable.
+_IS_IN_DISTRIBUTION_SPARK_TO_PYTHON_TYPE: dict[type, type] = {
+    types.BooleanType: bool,
+    types.StringType: str,
+    types.CharType: str,
+    types.ByteType: int,
+    types.ShortType: int,
+    types.IntegerType: int,
+    types.LongType: int,
+    types.DateType: datetime.date,
+}
+_IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES: tuple[type, ...] = tuple(_IS_IN_DISTRIBUTION_SPARK_TO_PYTHON_TYPE.keys())
 
 
 class DQPattern(Enum):
@@ -682,8 +686,10 @@ def is_in_distribution(
             contains a *None* key or *None* value; if the distribution values contain *inf*, *-inf*, or *nan*; if any distribution
             value is negative; if the sum of the distribution values is greater than 1; if the distance parameter
             value is not between 0 and 1 (inclusive); if the column type is not one of the supported primitive
-            types; if the distribution dict is not homogeneous (contains keys of more than one type); or if two keys
-            in the given distribution collide after case normalisation when *case_sensitive* is *False*.
+            types; if the distribution dict is not homogeneous (contains keys of more than one type); if the
+            distribution key type is not compatible with the column type (e.g. *str* keys against an integer
+            column); or if two keys in the given distribution collide after case normalisation when
+            *case_sensitive* is *False*.
     """
     _is_in_distribution_validate_distribution(distribution, case_sensitive)
     _is_in_distribution_validate_distance(distance)
@@ -697,6 +703,7 @@ def is_in_distribution(
     def apply(df: DataFrame) -> DataFrame:
         # Resolve the type off the expression itself
         column_type = _is_in_distribution_get_data_type(df, col_expr, col_expr_str)
+        _is_in_distribution_validate_column_key_compatibility(column_type, distribution, col_expr_str)
 
         filtered = df.filter(safe_filter_expr(row_filter)) if row_filter else df
 
@@ -743,12 +750,9 @@ def is_in_distribution(
         )
         tvd_col = F.lit(0.5) * reduce(py_operator.add, deviation_terms)
 
-        # math.isclose (rel_tol=1e-09, abs_tol=0.0) as a Column expression: neutralises IEEE-754
-        # noise at the boundary so a "supposed to pass" case with tvd mathematically equal to
-        # distance can't trip when float rounding nudges the computed tvd just above distance
-        # (e.g. abs(0.15-0.2) == 0.05000000000000002). The docstring's "less than or equal to the
-        # given distance" already promises the boundary passes, so equality-within-precision must
-        # not fire the check.
+        # Absolute-tolerance boundary check: treat tvd within 1e-9 of distance as equal, so
+        # IEEE-754 rounding (e.g. abs(0.15-0.2) == 0.05000000000000002) can't push a boundary
+        # case above distance and fire the check, honoring the docstring's "less than or equal".
         distance_lit = F.lit(distance)
         is_close_col = F.abs(tvd_col - distance_lit) <= F.lit(_FLOAT_NOISE_THRESHOLD)
         tvd_violation_col = (tvd_col > distance_lit) & ~is_close_col
@@ -783,6 +787,37 @@ def _is_in_distribution_get_data_type(df: DataFrame, column: Column, column_expr
             f"long, date."
         )
     return column_type
+
+
+def _is_in_distribution_validate_column_key_compatibility(
+    column_type: types.DataType,
+    distribution: _VALUES_DISTRIBUTION,
+    column_expression: str,
+) -> None:
+    # Look up the Python type compatible with the resolved Spark type via isinstance, mirroring
+    # the tolerance of _is_in_distribution_get_data_type.
+    expected_python_type = next(
+        python_type
+        for spark_type_cls, python_type in _IS_IN_DISTRIBUTION_SPARK_TO_PYTHON_TYPE.items()
+        if isinstance(column_type, spark_type_cls)
+    )
+    # Distribution keys are already validated as homogeneous, so a single sample fixes the family.
+    # Compatible subclasses (e.g. IntEnum against an integer column) must be accepted, but bool
+    # is kept distinct from int in both directions because Spark BooleanType and integer types
+    # are not interchangeable even though bool subclasses int in Python.
+    sample_key = next(iter(distribution))
+    if expected_python_type is int:
+        is_compatible = isinstance(sample_key, int) and not isinstance(sample_key, bool)
+    elif expected_python_type is bool:
+        is_compatible = isinstance(sample_key, bool)
+    else:
+        is_compatible = isinstance(sample_key, expected_python_type)
+    if not is_compatible:
+        key_type = type(sample_key)
+        raise InvalidParameterError(
+            f"Column '{column_expression}' type '{column_type.simpleString()}' is not compatible "
+            f"with 'distribution' key type '{key_type.__name__}'; expected '{expected_python_type.__name__}'."
+        )
 
 
 def _is_in_distribution_get_deviation_terms(

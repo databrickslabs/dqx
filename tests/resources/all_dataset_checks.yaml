@@ -269,8 +269,9 @@
 # is_in_distribution check — validates that the actual value distribution of a categorical
 # column stays within a Total Variation Distance of an expected distribution.
 # Uses col10 (int) which is constant (all 2s) in the integration fixture — matches {2: 1.0}
-# exactly (TVD=0). distance=1.0 keeps the check safely passing on the perf fixture too,
-# where col10 carries arbitrary integer values.
+# exactly (TVD=0) so the integration fixture passes at distance=0.0. The performance fixture
+# populates col10 with arbitrary integer values, so the same check can legitimately produce
+# violations there.
 - criticality: error
   check:
     function: is_in_distribution
@@ -283,7 +284,7 @@
 # Second entry exercises non-trivial TVD math with a residual bucket (sum<1) and a listed key
 # not present in the actual data (counted as 0). For col10 all 2s in the integration fixture:
 # actual 2=1.0, residual=0, expected 2=0.5, 3=0.3, residual=0.2 → TVD = 0.5*(0.5+0.3+0.2) = 0.5.
-# distance=0.1 exceeds that TVD, so every row is flagged — this verifies the YAML/metadata path
+# TVD=0.5 exceeds distance=0.1, so every row is flagged — this verifies the YAML/metadata path
 # catches a real distribution mismatch end-to-end, not just that the check runs.
 - criticality: error
   check:

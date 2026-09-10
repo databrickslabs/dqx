@@ -1,9 +1,12 @@
 import math
+from datetime import date, datetime
+from enum import IntEnum
 from unittest.mock import create_autospec
 
 import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import types
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.check_funcs import (
@@ -589,6 +592,105 @@ def test_is_in_distribution_case_sensitive_keys_do_not_collide():
         _call(distribution={"US": 0.5, "us": 0.5}, case_sensitive=True)
     except InvalidParameterError:
         pytest.fail("case_sensitive=True must not treat 'US' and 'us' as colliding keys")
+
+
+# ---------------------------------------------------------------------------
+# is_in_distribution — column/key type compatibility (mocked DataFrame)
+# ---------------------------------------------------------------------------
+# These exercise the compatibility check that runs inside the returned closure via a
+# create_autospec(DataFrame) whose select().schema advertises the desired column type.
+# This keeps the coverage fast and Spark-free while still going through the public API.
+
+
+class _Grade(IntEnum):
+    A = 1
+    B = 2
+
+
+class _MyStr(str):
+    pass
+
+
+def _mock_df_with_column_type(column_type: types.DataType, column_name: str = "col1") -> DataFrame:
+    """Return a DataFrame mock whose select().schema[0].dataType is *column_type*."""
+    selected = create_autospec(DataFrame, instance=True)
+    selected.schema = types.StructType([types.StructField(column_name, column_type, True)])
+    df = create_autospec(DataFrame, instance=True)
+    df.select.return_value = selected
+    return df
+
+
+@pytest.mark.parametrize(
+    "column_type, distribution, key_type_display, expected_python_type_display",
+    [
+        # str keys against a non-string column
+        (types.IntegerType(), {"A": 0.5, "B": 0.5}, "str", "int"),
+        (types.BooleanType(), {"A": 0.5, "B": 0.5}, "str", "bool"),
+        (types.DateType(), {"A": 0.5, "B": 0.5}, "str", "date"),
+        # int keys against a non-integer column
+        (types.StringType(), {1: 0.5, 2: 0.5}, "int", "str"),
+        (types.BooleanType(), {1: 0.5, 2: 0.5}, "int", "bool"),
+        (types.DateType(), {1: 0.5, 2: 0.5}, "int", "date"),
+        # bool keys must not silently match integer columns even though bool subclasses int
+        (types.IntegerType(), {True: 0.5, False: 0.5}, "bool", "int"),
+        (types.LongType(), {True: 0.5, False: 0.5}, "bool", "int"),
+        (types.StringType(), {True: 0.5, False: 0.5}, "bool", "str"),
+        # date keys against a non-date column
+        (types.IntegerType(), {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "int"),
+        (types.StringType(), {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "str"),
+    ],
+)
+def test_is_in_distribution_column_key_type_mismatch(
+    column_type: types.DataType,
+    distribution: dict,
+    key_type_display: str,
+    expected_python_type_display: str,
+):
+    """The compatibility check must reject mismatched key/column type families with a clear error."""
+    _, apply = is_in_distribution("col1", distribution, distance=_VALID_DISTANCE)
+    df = _mock_df_with_column_type(column_type)
+    with pytest.raises(InvalidParameterError) as excinfo:
+        apply(df)
+    assert str(excinfo.value) == (
+        f"Column 'col1' type '{column_type.simpleString()}' is not compatible with "
+        f"'distribution' key type '{key_type_display}'; expected '{expected_python_type_display}'."
+    )
+
+
+@pytest.mark.parametrize(
+    "column_type, distribution",
+    [
+        # Compatible subclasses: IntEnum values must be accepted against every integer-family column
+        (types.ByteType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        (types.ShortType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        (types.IntegerType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        (types.LongType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        # Compatible subclasses: str subclass against string/char columns
+        (types.StringType(), {_MyStr("A"): 0.5, _MyStr("B"): 0.5}),
+        (types.CharType(3), {_MyStr("A"): 0.5, _MyStr("B"): 0.5}),
+        # datetime is a subclass of date — accepted against DateType
+        (types.DateType(), {datetime(2024, 1, 1): 0.5, datetime(2024, 2, 1): 0.5}),
+        # Exact matches
+        (types.BooleanType(), {True: 0.5, False: 0.5}),
+        (types.IntegerType(), {1: 0.5, 2: 0.5}),
+        (types.StringType(), {"A": 0.5, "B": 0.5}),
+        (types.DateType(), {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}),
+    ],
+)
+def test_is_in_distribution_column_key_type_compatible(
+    column_type: types.DataType,
+    distribution: dict,
+):
+    """Compatible key/column combinations — including subclasses like IntEnum — must pass the compat
+    check without raising an InvalidParameterError."""
+    _, apply = is_in_distribution("col1", distribution, distance=_VALID_DISTANCE)
+    df = _mock_df_with_column_type(column_type)
+    # apply() proceeds past the compat check and interacts with the mocked DataFrame; the only
+    # thing under test here is that the compat check itself does not reject the input.
+    try:
+        apply(df)
+    except InvalidParameterError as exc:
+        pytest.fail(f"compat check unexpectedly rejected {distribution!r} for {column_type}: {exc}")
 
 
 @pytest.mark.parametrize("column", ["*", F.expr("*"), F.col("*")])
