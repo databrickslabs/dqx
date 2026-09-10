@@ -346,6 +346,9 @@ class TestProfileOptionPinning:
 
 
 class TestRecordedSampleLimit:
+    """``sample_limit`` alone is ambiguous, which is why the run row also stores
+    ``sample_kind`` — a 10%-of-1M run and a whole-table run both record 0."""
+
     def test_records_reports_its_row_cap(self):
         assert recorded_sample_limit(ProfilerSample(kind="records", value=2500)) == 2500
 
@@ -356,6 +359,15 @@ class TestRecordedSampleLimit:
     def test_no_exact_cap_reports_zero(self, sample):
         """0 is the table's existing 'unlimited' convention."""
         assert recorded_sample_limit(sample) == 0
+
+    def test_kind_is_what_disambiguates_a_zero(self):
+        """Two runs record sample_limit=0 for entirely different reasons, so the
+        kind has to be persisted alongside it."""
+        full = ProfilerSample(kind="full", value=0)
+        percent = ProfilerSample(kind="percent", value=10)
+
+        assert recorded_sample_limit(full) == recorded_sample_limit(percent) == 0
+        assert full.kind != percent.kind
 
 
 # ---------------------------------------------------------------------------

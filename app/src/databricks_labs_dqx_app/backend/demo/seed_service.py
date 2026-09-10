@@ -470,6 +470,7 @@ class DemoSeedService:
                 source_table_fqn=table_fqn,
                 view_fqn=view_fqn,
                 sample_limit=_PROFILE_SAMPLE_LIMIT,
+                sample_kind=_PROFILE_SAMPLE.kind,
                 job_run_id=job_run_id,
             )
             status = self._wait_for_profile(run_id)

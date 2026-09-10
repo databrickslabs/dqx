@@ -1529,6 +1529,13 @@ class ProfileRunSummaryOut(BaseModel):
     run_id: str
     source_table_fqn: str
     status: str | None = None
+    # Row cap for a ``records`` run; 0 for ``full`` and ``percent``, which have
+    # no exact cap. Read WITH ``sample_kind`` — alone it cannot distinguish a
+    # percentage sample from a whole-table scan.
+    sample_limit: int | None = None
+    # Which unit ``sample_limit`` speaks: full / records / percent. None for
+    # runs recorded before the column existed.
+    sample_kind: str | None = None
     rows_profiled: int | None = None
     columns_profiled: int | None = None
     duration_seconds: float | None = None

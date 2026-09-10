@@ -408,6 +408,7 @@ def _run_profile(
                 source_table_fqn,
                 view_fqn,
                 sample_limit,
+                sample_kind,
                 rows_profiled,
                 columns_profiled,
                 duration,
@@ -420,7 +421,7 @@ def _run_profile(
         ],
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
-            "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
+            "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled INT, columns_profiled INT, "
             "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
             "status STRING, error_message STRING, "
             "rule_set_fingerprint STRING"
@@ -1250,12 +1251,13 @@ def _write_error(
                     requesting_user,
                     source_table_fqn,
                     view_fqn,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                    None,  # sample_limit
+                    None,  # sample_kind
+                    None,  # rows_profiled
+                    None,  # columns_profiled
+                    None,  # duration_seconds
+                    None,  # summary_json
+                    None,  # generated_rules_json
                     "FAILED",
                     error_message,
                     fingerprint,
@@ -1263,7 +1265,7 @@ def _write_error(
             ],
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
-                "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
+                "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled INT, columns_profiled INT, "
                 "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
                 "status STRING, error_message STRING, "
                 "rule_set_fingerprint STRING"

@@ -2777,6 +2777,10 @@ export interface ProfileRunOut {
 
 export type ProfileRunSummaryOutStatus = string | null;
 
+export type ProfileRunSummaryOutSampleLimit = number | null;
+
+export type ProfileRunSummaryOutSampleKind = string | null;
+
 export type ProfileRunSummaryOutRowsProfiled = number | null;
 
 export type ProfileRunSummaryOutColumnsProfiled = number | null;
@@ -2799,6 +2803,8 @@ export interface ProfileRunSummaryOut {
   run_id: string;
   source_table_fqn: string;
   status?: ProfileRunSummaryOutStatus;
+  sample_limit?: ProfileRunSummaryOutSampleLimit;
+  sample_kind?: ProfileRunSummaryOutSampleKind;
   rows_profiled?: ProfileRunSummaryOutRowsProfiled;
   columns_profiled?: ProfileRunSummaryOutColumnsProfiled;
   duration_seconds?: ProfileRunSummaryOutDurationSeconds;

@@ -337,6 +337,7 @@ def submit_profile_run(
                 source_table_fqn=body.table_fqn,
                 view_fqn=view_fqn,
                 sample_limit=recorded_sample_limit(sample),
+                sample_kind=sample.kind,
                 job_run_id=job_run_id,
             )
         except Exception:
@@ -424,6 +425,7 @@ def submit_batch_profile_run(
                         source_table_fqn=table_fqn,
                         view_fqn=view_fqn,
                         sample_limit=recorded_sample_limit(sample),
+                        sample_kind=sample.kind,
                         job_run_id=job_run_id,
                     )
                 except Exception:
