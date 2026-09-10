@@ -482,3 +482,5 @@ quarantine_table = f"{catalog}.{schema}.customer_360_quarantine"
 invalid_df.write.mode("overwrite").saveAsTable(quarantine_table)
 
 print(f"Customer 360 invalid records saved to {quarantine_table}")
+
+display(spark.table(quarantine_table))
