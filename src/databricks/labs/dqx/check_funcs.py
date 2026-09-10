@@ -3124,6 +3124,8 @@ def compare_datasets(
         *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
         by compared values using per-group row-number windows; this is robust to duplicates but sorts both
         datasets on the compared columns.
+        When *row_filter* is set, uniqueness is validated only over the rows that pass the filter; duplicate
+        matching keys among filtered-out rows do not raise, because those rows never participate in pairing.
 
 
     Returns:
@@ -3242,6 +3244,10 @@ def compare_datasets(
             df = df.withColumn(row_number_col, F.lit(1))
             ref_df = ref_df.withColumn(row_number_col, F.lit(1))
 
+        # Both signals ride in the join keys. pairing_scope_col (source = filter result, reference = true)
+        # keeps an out-of-filter source row from ever matching a reference row, so it cannot consume a
+        # reference's pairing slot; row_number_col then pairs surviving duplicate keys positionally. The
+        # source and reference key lists stay symmetric so the join keys line up.
         join_columns = [*pk_column_names, pairing_scope_col, row_number_col]
         ref_join_columns = [*ref_pk_column_names, pairing_scope_col, row_number_col]
 
