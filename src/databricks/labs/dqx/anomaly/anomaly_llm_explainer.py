@@ -1,10 +1,10 @@
 """LLM-based group explanation for row anomaly detection.
 
 The algorithm is group-based: anomalous rows are grouped by a deterministic
-(segment, pattern) key — pattern being the sorted top-2 contributing features —
-and the LLM is invoked once per group. Every row in a
-group shares the same narrative/business_impact/action; group_size and
-group_avg_severity signal that the explanation describes a pattern, not a row.
+pattern key — the sorted top-2 contributing features — and the LLM is invoked
+once per group. Every row in a group shares the same
+narrative/business_impact/action; group_size and group_avg_severity signal that
+the explanation describes a pattern, not a row.
 
 The LLM call runs entirely inside Spark via the SQL ``ai_query`` function against a
 Databricks Model Serving endpoint — no driver collect of LLM output, scales with the
@@ -23,6 +23,9 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
+from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_label
+from databricks.labs.dqx.anomaly.scoring_utils import displayed_severity_expr
+from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -32,30 +35,117 @@ from databricks.labs.dqx.errors import InvalidParameterError
 # these tables — the rendered header and the structured-output schema both derive from them.
 _PROMPT_INSTRUCTIONS = (
     "You are a data quality analyst. Given aggregate metadata for a GROUP of anomalous rows "
-    "sharing the same root-cause pattern, explain in plain business language why this group was "
-    "flagged. Your explanation will be shown for every row in the group — describe the pattern, "
-    "not a specific row.\n"
-    "Be direct and concrete. Avoid hedging phrases like 'The data shows', 'It appears that', or "
-    "'might indicate'. Do not restate the input field names back to the user, and do not invent "
-    "feature names, values, or segments that are not present in the input."
+    "sharing the same contribution pattern, explain in plain business language why the model "
+    "flagged this group. Your explanation will be shown for every row in the group — describe the "
+    "pattern, not a specific row. You are describing what the model measured, not diagnosing a "
+    "root cause: the inputs cannot establish one.\n"
+    "The inputs carry NO DIRECTION. A contribution says how much a metric mattered to the score, "
+    "never whether it was high or low: a metric far above its norm and one equally far below "
+    "produce the identical number. So never say a value was high, low, above, below, elevated, "
+    "inflated, dropped, spiked, or missing. Say it departed from its expected pattern, and leave "
+    "which way unsaid. The same applies to drift magnitudes, which are also unsigned.\n"
+    "baseline_grouping and temporal_baseline tell you which comparisons were AVAILABLE to the model, not "
+    "which one objected. A metric may be compared against the table, against its own group and against "
+    "its expected level at that time all at once, and the contribution you are given is the total across "
+    "those, so it cannot say which comparison drove it. Treat these fields as context that widens what "
+    "the number is consistent with: when either is set, a metric can be entirely ordinary for the table "
+    "and still have departed from a narrower comparison, so do not call it unusual outright. State that "
+    "the metric contributed and name the comparisons that were in use; do not assign the departure to "
+    "one of them.\n"
+    "Be direct and concrete: name the metrics, their shares and the group size without hedging "
+    "phrases like 'The data shows', 'It appears that', or 'might indicate'. Being direct means "
+    "stating plainly what the inputs contain — it does not license asserting a direction, a cause, "
+    "or a value they do not contain. Do not restate the input field names back to the user, and do "
+    "not invent feature names, values, or baseline groups that are not present in the input."
 )
+# What a contribution means, per detector family. Keyed by the ``ModelIdentity.algorithm`` prefix that is
+# persisted in the registry, so a model trained by any version resolves as long as that string is stable.
+# The fallback is the value-based reading, which is what every algorithm before the correlation-aware one
+# meant and is the safer default: it claims less about relationships than the other way round would.
+_ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
+    (
+        "Mahalanobis",
+        "each metric's position once every other metric is accounted for. A high contribution means this "
+        "metric does not fit the pattern the others imply, which can happen either because its own value "
+        "moved a long way or because it stopped tracking the others while staying inside its normal range. "
+        "The input does not distinguish those two cases, so do not assert either: say the metric does not "
+        "fit the pattern. Contributions spread across several metrics mean each of them contributed, and "
+        "nothing more -- that happens when metrics stop agreeing with each other, and equally when several "
+        "unrelated metrics are each unusual at the same time. Name the metrics that contributed; do not "
+        "claim a relationship between them broke.",
+    ),
+    (
+        "IsolationForest",
+        "how far each metric's own value sits from the values the model was trained on. A high contribution "
+        "means this metric was unusual for the rows it was compared against. Where a metric is compared "
+        "several ways at once -- against the whole table, against its own group, against its expected level "
+        "at that time -- the share covers all of those together, so it says the metric was involved, not "
+        "which comparison objected.",
+    ),
+)
+_DEFAULT_ATTRIBUTION_SEMANTICS = _ATTRIBUTION_SEMANTICS[-1][1]
+
+
+def attribution_semantics(algorithm: str | None) -> str:
+    """What a high contribution means for *algorithm*, as a sentence for the prompt.
+
+    Falls back to the value-based reading when the algorithm is unknown or absent, which is both the
+    historical behaviour and the more conservative claim.
+    """
+    for prefix, meaning in _ATTRIBUTION_SEMANTICS:
+        if algorithm and algorithm.startswith(prefix):
+            return meaning
+    return _DEFAULT_ATTRIBUTION_SEMANTICS
+
+
 _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
+        "attribution_basis",
+        "What the feature_contributions below are measuring, which differs by detector and decides how "
+        "you may describe the pattern. Follow this field rather than assuming a reading: one basis "
+        "supports saying a feature's own value was unusual, the other does not.",
+    ),
+    (
+        "evidence_disclosure",
+        "Whether you are being shown all of the evidence. Read this BEFORE feature_contributions, because "
+        "it decides what the shares below mean and what you may say about them.",
+    ),
+    (
         "feature_contributions",
-        "Mean SHAP contributions across the group, e.g. 'amount (82%), quantity (11%), "
-        "discount (5%)'. These are aggregated relative importances — not raw data values.",
+        "Mean share across the group of the evidence the model acted on, per column the caller named, "
+        "e.g. 'amount (82%), quantity (11%), discount (5%)'. One entry per column however many ways that "
+        "column was compared, so a share says the column was involved and not which comparison objected. "
+        "These are aggregated relative importances — not raw data values, and not percentages of the score. "
+        "The shares are normalised across the entries listed here only, so when evidence_disclosure says "
+        "any was withheld they are shares of what is disclosed and not of the whole decision.",
     ),
     ("group_size", "Number of rows in this group, e.g. '312 rows'."),
     ("severity_range", "Severity percentile range across the group, e.g. 'mean 97.4, min 95.1, max 99.8'."),
     (
         "confidence",
-        "Model confidence label across the group. 'high' / 'mixed' / 'low' for ensemble, 'n/a' "
-        "for single-model scoring.",
+        "How closely the ensemble's members agreed on the score: 'high' / 'mixed' / 'low', or 'n/a' "
+        "when one model did the scoring. Members differ only by random seed on the same training "
+        "data, so this measures the stability of the score, NOT how reliable the flag is or whether "
+        "the data has since changed. Do not present it to the reader as confidence in the finding.",
     ),
     (
-        "segment",
-        "Data segment this group belongs to, e.g. 'region=US, product=electronics'. Empty string "
-        "if no segmentation was used.",
+        "baseline_grouping",
+        "The columns whose values define each row's baseline group, e.g. 'region' or "
+        "'region, product'. Anomalies are judged relative to the row's own group baseline; "
+        "'none' when the model is not grouped. When set, a value can be ordinary for the table as a "
+        "whole and still be wrong for its own group, so say the metric departed from what its group "
+        "normally looks like rather than that it was unusual outright.",
+    ),
+    (
+        "temporal_baseline",
+        "The time column the model was allowed to judge metrics along, e.g. 'event_ts', or 'none'. When "
+        "set, a metric MAY have been compared against the level expected of it at that point in time as "
+        "well as against its overall range -- but not every metric is: where no expectation could be "
+        "fitted for one, that comparison contributes nothing for it. So this widens what a contribution "
+        "is consistent with rather than explaining it: a metric can sit well inside the range the data "
+        "has always covered and still have departed from what was expected when it arrived. Do not call a "
+        "metric unusual, high or low overall on the strength of this field, and do not state that it "
+        "departed from its expected level -- say the comparison was available.",
     ),
     ("threshold", "The severity percentile threshold configured by the user (0–100)."),
     (
@@ -84,31 +174,64 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 )
 # Two few-shot exemplars (one without drift, one with) pin the desired style and JSON shape for
 # smaller serving models. Kept short so the prompt stays well within token budgets.
+#
+# Every clause in both responses is checkable against that exemplar's own inputs, because a few-shot
+# example is an instruction: a smaller model copies its *shape*, and a response that asserts more than
+# its input supports teaches the model to do the same. The previous pair said "sits far above the norm"
+# and "Inflated amount fields overstate revenue" from inputs carrying no sign at all -- a row at (8, 0.5)
+# and its mirror at (-8, -0.5) score identically (65.387) with identical contribution maps, so half of
+# those explanations were backwards, stated confidently, in business language.
+#
+# The pair also differs in every field that changes how a contribution may be described, and differs
+# deliberately: *attribution_basis*, which decides whether a share can be read as a feature's own value
+# being unusual, and *temporal_baseline*, which decides whether "unusual" is against the metric's whole
+# range or against the level expected of it at one moment. A field the header tells the model to follow
+# has to appear in the demonstrations, and in both states, or the model learns to treat whichever state
+# it saw as the default and stops reading the field. The *attribution_basis* values here are abbreviated
+# forms of what *attribution_semantics* emits, since the exemplars pin shape rather than restate the
+# header.
 _PROMPT_EXAMPLES = (
-    "Example (no drift):\n"
+    "Example (relationship basis, no drift):\n"
+    "attribution_basis: each metric's position once the others are accounted for\n"
+    "evidence_disclosure: every contributing metric is shown to you, so the shares below cover all of "
+    "the evidence the model used.\n"
     "feature_contributions: amount (61%), quantity (22%)\n"
     "group_size: 312 rows\n"
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
     "confidence: high\n"
-    "segment: region=US\n"
+    "baseline_grouping: region\n"
+    "temporal_baseline: none\n"
     "threshold: 95.0\n"
     "drift_summary: none\n"
-    'Response: {"narrative":"312 rows are driven mainly by amount (61%) with quantity secondary '
-    '(22%); values sit far above the US-segment norm.","business_impact":"Inflated amount fields '
-    'overstate revenue if these rows are processed unchanged.","action":"Reconcile amount against '
-    'source orders for this US group."}\n\n'
-    "Example (with drift):\n"
+    'Response: {"narrative":"Across 312 rows, amount accounts for most of what the model measured (61%), '
+    'with quantity next (22%); these rows are judged against their own region.","business_impact":"If '
+    "amount is wrong on these rows, revenue reporting for the affected regions would be affected too.\","
+    '"action":"Reconcile amount against source orders for the affected regions."}\n\n'
+    "Example (value basis, judged against time, with drift):\n"
+    "attribution_basis: each feature's own value compared against the rows it was scored against\n"
+    "evidence_disclosure: MOST of the contributing evidence cannot be disclosed and is absent from the "
+    "shares below, so what remains is a minority of what the model used.\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
     "group_size: 88 rows\n"
     "severity_range: mean 98.9, min 97.0, max 99.9\n"
     "confidence: mixed\n"
-    "segment: \n"
+    "baseline_grouping: none\n"
+    "temporal_baseline: event_ts\n"
     "threshold: 95.0\n"
     "drift_summary: drift detected: latency_ms=4.12\n"
-    'Response: {"narrative":"88 rows are dominated by latency_ms (74%), which has also drifted from '
-    'baseline; retries contribute modestly (12%).","business_impact":"Elevated latency risks SLA '
-    'breaches for downstream consumers.","action":"Investigate latency_ms regressions against the '
-    'training baseline."}'
+    # This exemplar declares that most of the contributing evidence is withheld, so its response has to
+    # demonstrate the limited-band rule rather than contradict it. The earlier wording called the rows
+    # "dominated by latency_ms" and sent the reader straight there -- the precise redirect the limited
+    # instruction forbids, and a worked example outweighs an instruction. It still names both shares; what
+    # it drops is the claim that they settle the matter. It also does not restate the disclosure limit: the
+    # deterministic clause is appended to every withheld narrative, and an exemplar that stated it too would
+    # model saying it twice.
+    'Response: {"narrative":"Of what can be shown across these 88 rows, latency_ms carries most (74%) '
+    'and retries a small part (12%); latency_ms has also moved from its training baseline. These rows are '
+    'judged against expected levels over time as well as overall.","business_impact":"If these rows are '
+    'wrong, downstream consumers with SLAs would be the first to notice.","action":"Start with the rows '
+    'themselves rather than one field: compare latency_ms against its expected level for that period, and '
+    'take account of the evidence this explanation could not include."}'
 )
 
 if TYPE_CHECKING:
@@ -117,7 +240,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TOP_N = 5
-# Default working-column name for the (segment, pattern) group key. Production scoring overrides
+# Default working-column name for the pattern group key. Production scoring overrides
 # this with a UUID-suffixed name via *ScoringConfig.pattern_col* (threaded through
 # *ExplanationContext.pattern_col*) so it can never collide with a user column; the constant is
 # only the fallback for direct *ExplanationContext* construction.
@@ -193,13 +316,28 @@ class ExplanationContext:
     # the absolute cap on LLM calls for that one call.
     max_groups: int = 500
     redact_columns: tuple[str, ...] = ()
-    # Internal working-column name for the (segment, pattern) group key. Defaults to a fixed
+    # Internal working-column name for the (baseline group, pattern) group key. Defaults to a fixed
     # name for direct construction; production scoring passes a UUID-suffixed name so it can
     # never collide with a user-supplied column.
     pattern_col: str = _DEFAULT_PATTERN_COL
+    # The model's feature metadata, threaded through so redaction can drop every feature derived
+    # from a redacted column (not just the column itself) and so contribution keys can be rendered
+    # as human labels. Optional: a caller that builds the context directly without it falls back to
+    # best-effort redaction of the baseline-relative feature only, and to raw engineered keys.
+    feature_metadata: SparkFeatureMetadata | None = None
+    # The trained model's algorithm, from ``ModelIdentity.algorithm``. Decides how the prompt tells the
+    # model to read a contribution -- as an extreme value or as a broken relationship between metrics.
+    # Optional, and absent means the value-based reading, which is what every algorithm before the
+    # correlation-aware one meant.
+    algorithm: str | None = None
 
     @classmethod
-    def from_scoring_config(cls, config: "ScoringConfig") -> "ExplanationContext":
+    def from_scoring_config(
+        cls,
+        config: "ScoringConfig",
+        feature_metadata: SparkFeatureMetadata | None = None,
+        algorithm: str | None = None,
+    ) -> "ExplanationContext":
         return cls(
             severity_col=config.severity_col,
             contributions_col=config.contributions_col,
@@ -211,26 +349,58 @@ class ExplanationContext:
             max_groups=config.max_groups,
             redact_columns=tuple(config.redact_columns or ()),
             pattern_col=config.pattern_col,
+            feature_metadata=feature_metadata,
+            algorithm=algorithm,
         )
+
+
+def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadata | None = None) -> frozenset[str]:
+    """Columns to redact, plus every engineered feature derived from them.
+
+    Redaction matches contribution keys exactly, and both detectors now key by source column, which
+    :func:`compute_row_attributions` enforces rather than leaves to chance. The set still covers the
+    engineered names as well, deliberately: a redaction that silently under-covers is a privacy failure, so
+    it costs nothing to keep both vocabularies while attribution shape is a runtime property. So
+    redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of the same
+    column -- and redacting ``country`` must stop ``country_US``, ``country_DE``, ``country_freq`` and
+    ``country_is_null``. A caller naming a column sensitive means every feature derived from it is
+    sensitive too.
+
+    With *metadata*, the derived features are enumerated exactly via *engineered_from*, which closes
+    the one-hot and frequency gap that the source column alone could not. Without it (a caller who
+    built the context directly and did not thread metadata through), only the baseline-relative
+    feature is reconstructable from the column name, so that alone is covered -- best effort.
+    """
+    expanded = set(redact_columns)
+    if metadata is not None:
+        for column in redact_columns:
+            expanded.update(engineered_from(column, metadata))
+    else:
+        expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
+    return frozenset(expanded)
 
 
 def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
     """Pattern key as a pure-Spark-SQL expression (no Python UDFs shipped to executors).
 
-    Drops null and redacted entries, takes the top-2 features by |value| desc,
+    Drops null, zero and redacted entries, takes the top-2 features by value desc,
     sorts their names asc, and joins with '+'. Empty or null maps yield 'unknown'.
-    Ranking uses absolute value so signed SHAP contributions pick the same top-2
-    as `format_contributions_map`. Implemented in SQL so Databricks Connect /
-    serverless workers don't need the dqx package installed.
+    Zero entries are dropped because a feature that earned no share did not contribute,
+    and pairing it into the key would group rows by a feature neither of them was flagged
+    for. Values are non-negative shares, so ordering by value and by |value| agree; the
+    abs() is kept only so the comparator matches `format_contributions_map`'s.
+    Implemented in SQL so Databricks Connect / serverless workers don't need the dqx
+    package installed.
     """
     col = f"`{contributions_col}`"
     if redact_set:
         redact_arr = "array(" + ", ".join(f"'{_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
         entries = (
-            f"filter(map_entries({col}), e -> e.value is not null " f"and not array_contains({redact_arr}, e.key))"
+            f"filter(map_entries({col}), e -> e.value is not null and e.value > 0 "
+            f"and not array_contains({redact_arr}, e.key))"
         )
     else:
-        entries = f"filter(map_entries({col}), e -> e.value is not null)"
+        entries = f"filter(map_entries({col}), e -> e.value is not null and e.value > 0)"
     sql = (
         f"case when {col} is null or size({entries}) = 0 then 'unknown' "
         f"else concat_ws('+', array_sort(transform(slice(array_sort({entries}, "
@@ -240,17 +410,164 @@ def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> C
     return F.expr(sql)
 
 
-def _format_segment(segment_values: dict[str, str] | None, redact_set: frozenset[str]) -> str:
-    """Format segment values as 'k1=v1, k2=v2' or empty string.
+def _baseline_grouping_str(metadata: SparkFeatureMetadata | None) -> str:
+    """The baseline grouping columns as a prompt string, e.g. 'region, product' or 'none'.
 
-    Segment ``key=value`` pairs are sent verbatim to the LLM prompt, so any key listed in
-    *redact_set* is emitted as ``key=<redacted>`` to keep sensitive segmentation values out of
-    the prompt (the value, not just the contribution, can be PII).
+    A per-run constant: the anomalies in this run are all judged against a group baseline defined by
+    these columns (or against a global baseline when the model is not grouped). The column *names*
+    are structural, not row values, so unlike the old segment values they carry no PII and need no
+    redaction.
     """
-    if not segment_values:
-        return ""
-    parts = [f"{k}=<redacted>" if k in redact_set else f"{k}={v}" for k, v in segment_values.items()]
-    return ", ".join(parts)
+    if metadata is None or not metadata.baseline_by:
+        return "none"
+    return ", ".join(metadata.baseline_by)
+
+
+# Coarse disclosure states. Deliberately three, and deliberately unlabelled by any number: a reader who
+# knows the boundaries must not be able to read a proportion back out of the state. "Most" versus "some"
+# is the distinction that changes what a narrative may claim, and finer bands would buy nothing while
+# leaking more about a column the caller asked to keep out of the prompt.
+DISCLOSURE_COMPLETE = "complete"
+DISCLOSURE_PARTIAL = "partial"
+DISCLOSURE_LIMITED = "limited"
+
+# Above this share of the evidence being withheld, what remains cannot carry the explanation on its own.
+_LIMITED_DISCLOSURE_SHARE = 0.5
+
+DISCLOSURE_PROMPT_TEXT: dict[str, str] = {
+    DISCLOSURE_COMPLETE: "every contributing metric is shown to you, so the shares below cover all of the "
+    "evidence the model used.",
+    DISCLOSURE_PARTIAL: "SOME contributing evidence cannot be disclosed and is absent from the shares below, "
+    "which therefore cover only what is shown. Do not present a share as a portion of the whole decision, "
+    "and do not describe the metrics you can see as the reason the row was flagged.",
+    DISCLOSURE_LIMITED: "MOST of the contributing evidence cannot be disclosed and is absent from the shares "
+    "below, so what remains is a minority of what the model used. Name what you can see, say plainly that "
+    "the explanation is limited by evidence that cannot be shown, and do not direct the reader to "
+    "investigate a metric on the strength of a share this small. Never guess what the withheld evidence was.",
+}
+
+# Appended verbatim to the narrative, after sanitisation, whenever evidence was withheld. Deterministic
+# because the advisory that raised this is explicit that a prompt instruction is not a control: the
+# qualification has to survive a model that ignores it.
+DISCLOSURE_NARRATIVE_CLAUSE: dict[str, str] = {
+    DISCLOSURE_PARTIAL: " Some contributing evidence could not be disclosed, so these shares cover only "
+    "what is shown here.",
+    DISCLOSURE_LIMITED: " Most of the contributing evidence could not be disclosed, so this explanation "
+    "covers a minority of what the model used.",
+}
+
+# Phrasings that claim the listed metrics are the whole of what the model measured. Appending a
+# "some evidence was withheld" clause to one of these produces a narrative that contradicts itself, so the
+# claim is replaced rather than qualified. Deliberately narrow: these are the shapes actually observed, and a
+# broad pattern would swallow legitimate prose. It cannot catch a narrative that merely *implies*
+# completeness -- what limits that is the model no longer being shown a bare "100%".
+TOTALISING_CLAIM_PATTERN = (
+    r"(?i)(all of what the model measured"
+    r"|accounts? for all|accounted for all|account for all"  # every conjugation seen; "accounts"/"account"
+    r"|the whole (decision|picture)"
+    r"|100% of"
+    r"|fully explains?)"
+)
+
+# Used when a totalising claim has to be replaced. Built from the group's own facts, so it is useful rather
+# than merely safe -- the advisory is explicit that a fallback must not be a bare refusal, and equally must
+# not be a raw unreviewed model response.
+# Replaces a narrative that claimed completeness. Deliberately flat: it states the group size and the
+# disclosed shares and nothing else -- no direction, no cause, no adjective the inputs cannot support. It
+# asserts no limit of its own either, because the clause appended straight after it says that once, with
+# the band's precision.
+DISCLOSURE_FALLBACK_TEMPLATE = "Across %s rows, the shares that can be shown are %s."
+
+
+def _disclosure_state_expr(withheld_evidence: Column, total_evidence: Column) -> Column:
+    """Bucket how much of a group's evidence was withheld into a coarse state.
+
+    Redaction keeps a column out of the prompt, which it does correctly -- no name has ever leaked. What it
+    also did was remove that column's share from the map the narrative is built from, after which the
+    remaining shares were renormalised to sum to 100 with nothing saying so. A column holding 7% of a
+    group's evidence was consequently described as accounting for "all of what the model measured (100%)".
+
+    A state rather than the share itself, because the share would disclose by proportion roughly what the
+    name discloses by identity. Three states are enough to change what a narrative may claim and coarse
+    enough that the boundaries cannot be inverted into a measurement.
+
+    Args:
+        withheld_evidence: Summed absolute contribution of the redacted keys in the group.
+        total_evidence: Summed absolute contribution of every key in the group.
+
+    Returns:
+        One of *DISCLOSURE_COMPLETE*, *DISCLOSURE_PARTIAL* or *DISCLOSURE_LIMITED*. A group with no
+        measurable evidence at all counts as complete: there is nothing withheld to qualify.
+    """
+    return (
+        F.when((total_evidence.isNull()) | (total_evidence <= F.lit(0.0)), F.lit(DISCLOSURE_COMPLETE))
+        .when(withheld_evidence <= F.lit(0.0), F.lit(DISCLOSURE_COMPLETE))
+        .when(withheld_evidence / total_evidence > F.lit(_LIMITED_DISCLOSURE_SHARE), F.lit(DISCLOSURE_LIMITED))
+        .otherwise(F.lit(DISCLOSURE_PARTIAL))
+    )
+
+
+def _disclosure_prompt_expr(state: Column) -> Column:
+    """The sentence the model reads for a group's disclosure state."""
+    expr = F.lit(DISCLOSURE_PROMPT_TEXT[DISCLOSURE_COMPLETE])
+    for name in (DISCLOSURE_PARTIAL, DISCLOSURE_LIMITED):
+        expr = F.when(state == F.lit(name), F.lit(DISCLOSURE_PROMPT_TEXT[name])).otherwise(expr)
+    return expr
+
+
+def _disclosure_clause_expr(state: Column) -> Column:
+    """The qualification appended to a narrative, or an empty string when nothing was withheld.
+
+    Appended after sanitisation so it cannot be dropped, reworded or truncated away by the model. The
+    prompt asks for the same qualification in the model's own words; this is what makes it a guarantee
+    rather than a request, which is what the advisory that raised this defect requires.
+    """
+    expr = F.lit("")
+    for name, clause in DISCLOSURE_NARRATIVE_CLAUSE.items():
+        expr = F.when(state == F.lit(name), F.lit(clause)).otherwise(expr)
+    return expr
+
+
+def _temporal_baseline_str(metadata: SparkFeatureMetadata | None) -> str:
+    """The time column each metric is judged along, e.g. 'event_ts', or 'none'.
+
+    The sibling of :func:`_baseline_grouping_str`, and it exists for the same reason: how a row was judged
+    is a per-run fact the model cannot infer from the contributions. Grouping has always been told to the
+    model; temporal conditioning never was. It used to leak through by accident, because contributions were
+    keyed by engineered feature and one of those keys rendered as "X vs its expected level at that time".
+    Attribution is now keyed by source column -- so one column reports once however many ways it was
+    compared -- and that accidental channel closed with it.
+
+    This matters for more than completeness. When a metric is judged against its own history, its value can
+    sit comfortably inside the range the table has ever held and still be wrong for *when* it arrived. A
+    model told only that the metric mattered will reach for "unusually high", which is the one thing the
+    evidence does not say. Like the grouping columns, this is a column *name* and carries no row values.
+    """
+    if metadata is None or not metadata.baseline_over_time:
+        return "none"
+    return metadata.baseline_over_time
+
+
+def _human_labels(metadata: SparkFeatureMetadata | None) -> dict[str, str]:
+    """Engineered-name -> human-label map for the model's features, omitting identity labels.
+
+    Used to render contribution keys for a reader (``amount_rel_baseline`` ->
+    ``amount vs its group baseline``). Only entries whose label differs from the raw name are
+    included, so the SQL lookup stays small; anything not in the map falls back to its raw name.
+    Empty when no metadata was threaded through, in which case raw engineered names are shown.
+
+    A map keyed by *source column* needs no entries at all: every key is already a column the reader
+    named, and identity labels are excluded here, so each falls through to itself. That is the intended
+    outcome rather than a gap -- there is nothing to translate.
+    """
+    if metadata is None:
+        return {}
+    labels: dict[str, str] = {}
+    for name in metadata.engineered_feature_names:
+        label = human_label(name, metadata)
+        if label != name:
+            labels[name] = label
+    return labels
 
 
 def _build_empty_explanation_column() -> Column:
@@ -276,7 +593,7 @@ def _render_ai_query_prompt_header() -> str:
     return "\n".join(lines)
 
 
-_AI_QUERY_PROMPT_HEADER = _render_ai_query_prompt_header()
+AI_QUERY_PROMPT_HEADER = _render_ai_query_prompt_header()
 
 # Databricks Model Serving endpoint name rules: 1–63 chars, must start with a letter, then any
 # of [letter, digit, hyphen, underscore]. This is the *platform's own* naming constraint — any
@@ -318,14 +635,33 @@ def _resolve_ai_query_endpoint(model_name: str) -> str:
     return endpoint
 
 
-def _format_contributions_sql(top_n: int) -> Column:
+def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) -> Column:
     """Spark expression producing 'feat_a (82%), feat_b (11%)' from a ``mean_contributions`` map.
 
-    Mirrors *format_contributions_map* but stays inside Spark so per-group prompts can be
-    assembled without a driver-side loop. Null/empty maps yield 'unknown'; entries are sorted by
-    absolute value descending and percentages are normalised against the L1 sum of |value|.
+    Stays inside Spark so per-group prompts can be assembled without a driver-side loop. Null/empty maps
+    yield 'unknown'; entries are sorted by value descending and percentages are normalised against their sum.
+
+    It is **not** a mirror of *format_contributions_map*, and the difference is the point: that function
+    prints the stored 0-100 values as they are, so a map missing entries renders shares that sum to less
+    than 100 and understates. This one renormalises across what it is given, so a map missing entries
+    renders shares that still total 100 and therefore overstates. The two agree only on a complete map.
+    Renormalising is deliberate here -- publishing the true shares of a redacted map would disclose the
+    withheld proportion exactly -- and it is why the caller appends a scope qualifier when anything was
+    withheld, rather than leaving the numbers to speak for themselves.
+
+    Null *and zero* entries are dropped, matching *format_contributions_map*: a feature that earned no
+    share contributed nothing, and listing it as 'quantity (0%)' hands the model a driver to explain that
+    the attribution says nothing about. Values are non-negative shares, so ordering by value and by
+    |value| agree; the abs() is kept only to keep the two implementations' comparators identical.
+
+    *labels* maps an engineered feature name to its human label; when supplied, each key is
+    rendered as its label ('amount_rel_baseline' -> 'amount vs its group baseline'), falling back
+    to the raw key for anything unmapped. The map keys and values are user-derived (column names),
+    so both are escaped before interpolation. Rendering happens here, after redaction has already
+    dropped sensitive keys upstream in *_aggregate_groups_spark*, so labelling never re-exposes a
+    redacted feature.
     """
-    entries = "filter(map_entries(`mean_contributions`), e -> e.value is not null)"
+    entries = "filter(map_entries(`mean_contributions`), e -> e.value is not null and e.value > 0)"
     sorted_entries = (
         f"array_sort({entries}, (a, b) -> "
         f"case when abs(b.value) > abs(a.value) then 1 "
@@ -333,8 +669,13 @@ def _format_contributions_sql(top_n: int) -> Column:
     )
     top = f"slice({sorted_entries}, 1, {int(top_n)})"
     abs_sum = f"aggregate({sorted_entries}, 0.0D, (acc, e) -> acc + abs(e.value))"
+    if labels:
+        pairs = ", ".join(f"'{_sql_string_literal(k)}', '{_sql_string_literal(v)}'" for k, v in labels.items())
+        key_expr = f"coalesce(element_at(map({pairs}), e.key), e.key)"
+    else:
+        key_expr = "e.key"
     formatted = (
-        f"transform({top}, e -> concat(e.key, ' (', "
+        f"transform({top}, e -> concat({key_expr}, ' (', "
         f"cast(round((abs(e.value) / case when {abs_sum} = 0 then 1 else {abs_sum} end) * 100) as int), '%)'))"
     )
     sql = (
@@ -346,16 +687,17 @@ def _format_contributions_sql(top_n: int) -> Column:
 
 def _build_ai_query_prompt_column(
     ctx: ExplanationContext,
-    segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
 ) -> Column:
     """Assemble the per-row prompt string sent to ``ai_query``.
 
     Per-group fields come from columns added by *_aggregate_groups_spark*; per-run fields are
-    constants for the whole call. The shared header (*_AI_QUERY_PROMPT_HEADER*) holds the
+    constants for the whole call. The shared header (*AI_QUERY_PROMPT_HEADER*) holds the
     instructions and field semantics.
     """
+    baseline_grouping = _baseline_grouping_str(ctx.feature_metadata)
+    temporal_baseline = _temporal_baseline_str(ctx.feature_metadata)
     confidence_expr = (
         F.when((F.col("mean_std").isNull()) | F.lit(not is_ensemble), F.lit("n/a"))
         .when(F.col("mean_std") < F.lit(_CONFIDENCE_HIGH_BELOW), F.lit("high"))
@@ -370,7 +712,13 @@ def _build_ai_query_prompt_column(
     )
     group_size_expr = F.concat(F.col("group_size").cast(StringType()), F.lit(" rows"))
     return F.concat(
-        F.lit(_AI_QUERY_PROMPT_HEADER),
+        F.lit(AI_QUERY_PROMPT_HEADER),
+        F.lit("attribution_basis: "),
+        F.lit(attribution_semantics(ctx.algorithm)),
+        F.lit("\n"),
+        F.lit("evidence_disclosure: "),
+        _disclosure_prompt_expr(F.col("__disclosure")),
+        F.lit("\n"),
         F.lit("feature_contributions: "),
         F.col("feature_contributions"),
         F.lit("\n"),
@@ -383,8 +731,11 @@ def _build_ai_query_prompt_column(
         F.lit("confidence: "),
         confidence_expr,
         F.lit("\n"),
-        F.lit("segment: "),
-        F.lit(segment_str),
+        F.lit("baseline_grouping: "),
+        F.lit(baseline_grouping),
+        F.lit("\n"),
+        F.lit("temporal_baseline: "),
+        F.lit(temporal_baseline),
         F.lit("\n"),
         F.lit("threshold: "),
         F.lit(str(ctx.threshold)),
@@ -417,12 +768,25 @@ def _aggregate_groups_spark(
         F.max(severity_col).alias("severity_max"),
         F.avg(score_std_col).alias("mean_std"),
     )
+    # Withheld keys are aggregated alongside the disclosed ones rather than filtered away first, because
+    # how much was withheld is itself needed downstream. Filtering here is what made the explanation
+    # misleading: the shares were renormalised over whatever survived, with nothing recording that anything
+    # had gone. Measured on one group, a visible column holding 7% of the evidence was rendered as 100%.
     exploded = anomalous.select(F.col(pattern_col), F.explode(F.col(contributions_col)).alias("__k", "__v"))
-    if redact_set:
-        exploded = exploded.filter(~F.col("__k").isin(list(redact_set)))
     per_key_mean = exploded.groupBy(pattern_col, "__k").agg(F.avg("__v").alias("__mean"))
-    per_pattern_contrib = per_key_mean.groupBy(pattern_col).agg(
-        F.map_from_entries(F.collect_list(F.struct(F.col("__k"), F.col("__mean")))).alias("mean_contributions")
+    withheld = F.col("__k").isin(list(redact_set)) if redact_set else F.lit(False)
+    per_pattern_contrib = (
+        per_key_mean.groupBy(pattern_col)
+        .agg(
+            # collect_list drops nulls, so the `when` keeps only disclosed keys out of the emitted map. The
+            # redacted names never reach it, which is the property redaction exists for and is unchanged.
+            F.map_from_entries(F.collect_list(F.when(~withheld, F.struct(F.col("__k"), F.col("__mean"))))).alias(
+                "mean_contributions"
+            ),
+            F.sum(F.when(withheld, F.abs(F.col("__mean"))).otherwise(F.lit(0.0))).alias("__withheld_evidence"),
+            F.sum(F.abs(F.col("__mean"))).alias("__total_evidence"),
+        )
+        .withColumn("__disclosure", _disclosure_state_expr(F.col("__withheld_evidence"), F.col("__total_evidence")))
     )
 
     # Single-action total/kept accounting: window aggregates over ``primary`` carry run-level
@@ -474,7 +838,6 @@ def _aggregate_groups_spark(
 def _call_llm_for_groups_ai_query(
     kept_groups_sdf: DataFrame,
     ctx: ExplanationContext,
-    segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
 ) -> DataFrame:
@@ -488,12 +851,23 @@ def _call_llm_for_groups_ai_query(
     llm_cfg = ctx.llm_model_config or LLMModelConfig()
     endpoint = _resolve_ai_query_endpoint(llm_cfg.model_name)
     pattern_col = ctx.pattern_col
+    # feature_contributions is rendered with human labels (empty map -> raw keys); it feeds both the
+    # prompt and the struct's top_drivers, so a reader sees the same human phrasing the LLM did.
     enriched = kept_groups_sdf.withColumn(
         "feature_contributions",
-        _format_contributions_sql(_TOP_N),
+        # Labelled at the point of rendering, not left to the prompt field alone. This string is what the
+        # model reads *and* what the struct publishes as top_drivers, so the qualification travels with the
+        # numbers instead of depending on a separate field being honoured.
+        F.concat(
+            _format_contributions_sql(_TOP_N, _human_labels(ctx.feature_metadata)),
+            F.when(
+                F.col("__disclosure") != F.lit(DISCLOSURE_COMPLETE),
+                F.lit(" — shares of disclosed evidence only"),
+            ).otherwise(F.lit("")),
+        ),
     ).withColumn(
         "__prompt",
-        _build_ai_query_prompt_column(ctx, segment_str, is_ensemble, drift_summary),
+        _build_ai_query_prompt_column(ctx, is_ensemble, drift_summary),
     )
 
     # ai_query is parameterised through the SQL string. *endpoint* is matched against the strict
@@ -543,13 +917,46 @@ def _call_llm_for_groups_ai_query(
             f"then regexp_replace({capped}, '\\\\s\\\\S*$', '') else {cleaned} end"
         )
 
+    # The disclosure clause is appended *after* sanitisation, so the length cap applies to the model's own
+    # words and the qualification cannot be truncated off the end of a long narrative. A narrative the model
+    # failed to produce stays null: qualifying nothing would publish a clause with no explanation attached.
+    disclosure_clause = _disclosure_clause_expr(F.col("__disclosure"))
+    withheld = F.col("__disclosure") != F.lit(DISCLOSURE_COMPLETE)
+    # A model that asserts completeness cannot be corrected by appending a caveat -- the result contradicts
+    # itself, and a reader believes the first half. Replaced with the group's own facts instead. The clause is
+    # then appended either way, so the qualification is present whichever branch produced the text.
+    model_narrative = _sanitize("narrative")
+    safe_narrative = F.when(
+        withheld & model_narrative.rlike(TOTALISING_CLAIM_PATTERN),
+        F.format_string(
+            DISCLOSURE_FALLBACK_TEMPLATE,
+            F.col("group_size").cast(StringType()),
+            # The source column, not the top_drivers alias: that alias is created in this same select.
+            F.col("feature_contributions"),
+        ),
+    ).otherwise(model_narrative)
     return parsed.select(
         F.col(pattern_col),
-        _sanitize("narrative").alias("narrative"),
+        F.when(model_narrative.isNotNull(), F.concat(safe_narrative, disclosure_clause))
+        .otherwise(F.lit(None).cast(StringType()))
+        .alias("narrative"),
         _sanitize("business_impact").alias("business_impact"),
         _sanitize("action").alias("action"),
+        # Human-labelled drivers carried through for the struct's top_drivers. Built by us from the
+        # contributions map, not the LLM, so it needs no sanitisation.
+        F.col("feature_contributions").alias("top_drivers"),
         F.col("group_size").cast(LongType()).alias("group_size"),
-        F.col("group_avg_severity").cast(DoubleType()).alias("group_avg_severity"),
+        # Floored here, at the boundary where it becomes visible, and deliberately not in
+        # _aggregate_groups_spark: the unfloored mean also drives __rank_score there, so flooring it
+        # upstream would change which groups survive max_groups -- a behaviour change for a presentation
+        # fix, which is the same trap avoided by never flooring the value the flag reads. Published beside
+        # the floored severity_percentile in one struct, so the two must be on the same grid.
+        displayed_severity_expr(F.col("group_avg_severity"), ctx.threshold)
+        .cast(DoubleType())
+        .alias("group_avg_severity"),
+        # Carried through so the struct can publish it as evidence_scope: a consumer should be able to
+        # filter or escalate on limited-evidence explanations without parsing the narrative for a phrase.
+        F.col("__disclosure"),
     )
 
 
@@ -572,18 +979,23 @@ def _attach_explanation_struct(
                 F.col("narrative").alias("narrative"),
                 F.col("business_impact").alias("business_impact"),
                 F.col(pattern_col).alias("top_features"),
+                F.col("top_drivers").alias("top_drivers"),
                 F.col("action").alias("action"),
                 F.col("group_size").alias("group_size"),
                 F.col("group_avg_severity").alias("group_avg_severity"),
+                # Last, matching ai_explanation_struct_schema: add_info_column casts positionally.
+                F.col("__disclosure").alias("evidence_scope"),
             ),
         ).otherwise(_build_empty_explanation_column()),
     ).drop(
         pattern_col,
         "narrative",
         "business_impact",
+        "top_drivers",
         "action",
         "group_size",
         "group_avg_severity",
+        "__disclosure",
     )
 
 
@@ -634,7 +1046,6 @@ def probe_endpoint_reachable(spark: object, llm_model_config: LLMModelConfig | N
 def _add_explanation_column_ai_query(
     df_with_pattern: DataFrame,
     ctx: ExplanationContext,
-    segment_str: str,
     is_ensemble: bool,
     drift_summary: str,
     endpoint_reachable: bool | None = None,
@@ -648,7 +1059,7 @@ def _add_explanation_column_ai_query(
     the documented "one call per group per scoring run" cost model. The collected payload is
     small and bounded: at most ``max_groups`` rows, each holding three length-capped text fields.
     """
-    redact_set = frozenset(ctx.redact_columns)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
     kept_sdf, dropped_groups_count, dropped_rows_count, total_groups = _aggregate_groups_spark(
         anomalous,
@@ -677,7 +1088,7 @@ def _add_explanation_column_ai_query(
             ctx.pattern_col
         )
     _log_dropped_groups(dropped_groups_count, dropped_rows_count, ctx.max_groups)
-    result_sdf = _call_llm_for_groups_ai_query(kept_sdf, ctx, segment_str, is_ensemble, drift_summary)
+    result_sdf = _call_llm_for_groups_ai_query(kept_sdf, ctx, is_ensemble, drift_summary)
     # Pin the LLM responses: one ai_query execution per scoring run, regardless of how many
     # actions the caller takes on the returned DataFrame afterwards.
     result_rows = result_sdf.collect()
@@ -688,18 +1099,17 @@ def _add_explanation_column_ai_query(
 def add_explanation_column(
     df: DataFrame,
     ctx: ExplanationContext,
-    segment_values: dict[str, str] | None,
     is_ensemble: bool,
     drift_summary: str = "none",
     endpoint_reachable: bool | None = None,
 ) -> DataFrame:
     """Add the AI explanation column to df using the group-based algorithm.
 
-    Anomalous rows are bucketed by a deterministic (segment, pattern) key — pattern =
-    sorted top-2 contributing SHAP features. The LLM is called once per group via the Spark SQL
-    ``ai_query`` function against a Databricks Model Serving endpoint, and every row in that group
-    receives the same narrative/business_impact/action, plus the group's size and mean severity.
-    Rows below threshold or in groups exceeding ``ctx.max_groups`` receive a null struct.
+    Anomalous rows are bucketed by a deterministic pattern key — the sorted top-2 contributing SHAP
+    features. The LLM is called once per group via the Spark SQL ``ai_query`` function against a
+    Databricks Model Serving endpoint, and every row in that group receives the same
+    narrative/business_impact/action, plus the group's size and mean severity. Rows below threshold
+    or in groups exceeding ``ctx.max_groups`` receive a null struct.
 
     Preconditions (caller's responsibility):
       - df has ctx.score_std_col, ctx.severity_col, and ctx.contributions_col.
@@ -707,20 +1117,16 @@ def add_explanation_column(
     Args:
         df: Scored DataFrame to annotate with the explanation column.
         ctx: Explanation inputs (columns, threshold, model, redaction, budget).
-        segment_values: Segment key/value pairs for this run, or None for a global model.
         is_ensemble: Whether the scoring model is an ensemble (drives the confidence label).
         drift_summary: Baseline-drift summary string for the prompt, or "none".
         endpoint_reachable: Pre-computed serving-endpoint reachability. When None (default) the
-            endpoint is probed here with a single 1-token ai_query call. Callers that invoke this
-            repeatedly in one scoring run (e.g. once per segment) should probe once via
-            probe_endpoint_reachable and pass the result to avoid one billable probe per call.
+            endpoint is probed here with a single 1-token ai_query call.
 
     Raises:
       InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
     """
-    redact_set = frozenset(ctx.redact_columns)
-    segment_str = _format_segment(segment_values, redact_set)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(
-        df_with_pattern, ctx, segment_str, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
+        df_with_pattern, ctx, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
     )

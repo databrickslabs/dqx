@@ -233,7 +233,7 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
 
     # Verify table has expected schema (nested structs)
     registry_df = spark.table(registry_table)
-    expected_top_level_columns = ["identity", "training", "features", "segmentation"]
+    expected_top_level_columns = ["identity", "training", "features", "grouping"]
 
     for col in expected_top_level_columns:
         assert col in registry_df.columns

@@ -148,23 +148,3 @@ class EnsembleTrainer:
             )
             model_uris.append(model_uri)
         return model_uris
-
-
-def train_ensemble(
-    train_df: DataFrame,
-    val_df: DataFrame,
-    columns: list[str],
-    params: AnomalyParams,
-    ensemble_size: int,
-    model_name: str,
-) -> tuple[list[str], dict[str, Any], dict[str, float], dict[str, float], SparkFeatureMetadata]:
-    """Train ensemble of models with different random seeds."""
-    trainer = EnsembleTrainer()
-    result = trainer.train(train_df, val_df, columns, params, ensemble_size, model_name)
-    return (
-        result.model_uris,
-        result.hyperparams,
-        result.aggregated_metrics,
-        result.score_quantiles,
-        result.feature_metadata,
-    )

@@ -12,7 +12,7 @@ from typing import Any
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
-from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns_and_segments
+from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import check_reserved_row_id_columns
 from databricks.labs.dqx.anomaly.scoring_orchestrator import run_anomaly_scoring
@@ -73,20 +73,20 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> Non
 def _validate_explanation_flags(enable_contributions: bool) -> None:
     if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
-            "enable_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+            "enable_contributions=True requires the 'shap' dependency for the default tabular "
+            "detector. Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
         )
 
 
 def _resolve_ai_explanation_flag(enable_contributions: bool, enable_ai_explanation: bool) -> bool:
-    """AI explanations use SHAP contributions as their input, so they require
+    """AI explanations use the feature contributions as their input, so they require
     *enable_contributions*. Both default to True; if a caller turns contributions off (e.g. to
-    skip the SHAP cost) we disable explanations with a warning rather than raising, so the cheap
+    skip the attribution cost) we disable explanations with a warning rather than raising, so the cheap
     opt-out stays frictionless.
     """
     if enable_ai_explanation and not enable_contributions:
         logger.warning(
-            "AI explanations require SHAP contributions; disabling enable_ai_explanation because "
+            "AI explanations require feature contributions; disabling enable_ai_explanation because "
             "enable_contributions=False."
         )
         return False
@@ -135,24 +135,37 @@ def has_no_row_anomalies(
 
     Auto-discovery:
     - columns: Inferred from model registry
-    - segmentation: Inferred from model registry (checks if model is segmented)
+    - baseline grouping: Inferred from the model's persisted metadata
 
     Output columns:
     - _dq_info: Array of structs (one element per dataset-level check). For example:
       - _dq_info[0].anomaly.score: Raw anomaly score (model-relative)
-      - _dq_info[0].anomaly.severity_percentile: Severity percentile (0–100)
-      - _dq_info[0].anomaly.is_anomaly: Boolean flag
+      - _dq_info[0].anomaly.severity_percentile: Severity percentile (0–100), published so that
+        comparing it against *threshold* gives the same verdict as *is_anomaly*. It is floored to the
+        threshold's own precision rather than rounded, so it never reads higher than the value the flag
+        was decided on
+      - _dq_info[0].anomaly.is_anomaly: Boolean flag, and the authoritative decision
       - _dq_info[0].anomaly.threshold: Severity percentile threshold used (0–100)
       - _dq_info[0].anomaly.model: Model name
-      - _dq_info[0].anomaly.segment: Segment values (if segmented)
-      - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100); populated
+      - _dq_info[0].anomaly.contributions: feature contributions as percentages (0–100); populated
         only for anomalous rows, null otherwise
       - _dq_info[0].anomaly.confidence_std: Ensemble std (if requested)
+      - _dq_info[0].anomaly.is_new_baseline: True when the row's group was absent from training,
+        in which case score and severity_percentile are null
+      - _dq_info[0].anomaly.new_baseline_key: The unrecognised group key, for unseen rows
 
     Notes:
         DQX always scores using the columns the model was trained on.
         DQX aligns scored rows back to the input using an internal row id and removes it before returning.
-        Segmentation is inferred from the trained model configuration.
+        Baseline conditioning is inferred from the trained model's metadata.
+
+        Rows whose group was never seen in training are reported (*is_new_baseline*) but are **not**
+        flagged as violations: neither categorical encoder can represent an unseen value honestly
+        — one-hot makes it look maximally normal, frequency encoding maximally extreme — so DQX
+        cannot judge the row, and "could not judge" is not the same claim as "is anomalous". If an
+        unrecognised group value is itself a problem worth failing on, that is a membership
+        question rather than an anomaly one: use *foreign_key* or *is_in_list* on the group column
+        against your set of known values, which is the check built for it.
 
     Args:
         model_name: Model name (REQUIRED). Provide the fully qualified model name
@@ -165,12 +178,16 @@ def has_no_row_anomalies(
         row_filter: Optional SQL expression (e.g. \"region = 'US'\"). Only rows matching
             this expression are scored; others are left in the output with null anomaly
             result. Auto-injected from the check filter.
-        drift_threshold: Drift detection threshold (default 3.0, None to disable).
-        enable_contributions: Include SHAP feature contributions for explainability (default True).
+        drift_threshold: Drift detection threshold, in standard deviations of the training
+            baseline (default None, which disables drift detection). Set a positive value
+            such as 3.0 to enable it.
+        enable_contributions: Include per-feature contributions for explainability (default True).
             Per-feature contributions are added to _dq_info for anomalous rows only (severity at or
-            above the threshold; other rows get a null map), so the SHAP cost scales with the number
-            of anomalies rather than the table size. Requires the SHAP library (installed with the
-            anomaly extra). Set False to skip the SHAP cost entirely (this also disables AI
+            above the threshold; other rows get a null map), so the attribution cost scales with the
+            number of anomalies rather than the table size. How they are computed depends on the
+            detector: SHAP for the default tabular one (installed with the anomaly extra), an exact
+            leave-one-out decomposition for the correlation one, which needs no SHAP at all. The emitted
+            map is identical either way. Set False to skip the cost entirely (this also disables AI
             explanations, since they use contributions as input).
         enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
@@ -181,7 +198,7 @@ def has_no_row_anomalies(
             endpoint is unreachable (e.g. no Foundation Model APIs in the workspace), explanations are
             skipped with a warning and scoring still completes. Output is in
             _dq_info[0].anomaly.ai_explanation, and is AI-generated from the anomaly signal (feature
-            names + SHAP + severity), not grounded in catalog metadata.
+            names + contributions + severity), not grounded in catalog metadata.
         ai_explanation_llm_model_config: LLM model configuration for AI explanations (named
             distinctly from the check's *model_name* to avoid confusion). Defaults to
             LLMModelConfig() (model_name='databricks/databricks-claude-sonnet-4-5'). Its *model_name*
@@ -199,17 +216,20 @@ def has_no_row_anomalies(
             LLMModelConfig instance is accepted. The simplest dict form sets only *model_name*
             to a Databricks Model Serving endpoint. See the AI Explanations section of the Row
             Anomaly Detection reference docs for a full example.
-        redact_columns: Column names to exclude from the LLM prompt. Filters SHAP contribution
-            map keys, the top-2 pattern key, and — when the scored model is segmented — any
-            matching segment key (emitted as ``key=<redacted>`` so sensitive segmentation values
-            never reach the prompt).
-        max_groups: Maximum number of distinct (segment, pattern) groups the LLM is called for
-            per scoring run (default 500). Groups beyond this cap — ranked by
-            group_size * group_avg_severity — get a null ai_explanation; a warning is logged.
-            Note: for segmented models the cap is split across eligible segments with a floor of
-            one call each, so when ``max_groups`` is smaller than the number of eligible segments
-            the effective call count is the segment count (a warning is logged). Size
-            ``max_groups`` at or above your expected eligible-segment count to keep cost bounded.
+        redact_columns: Column names to exclude from the LLM prompt. Their contribution entries are
+            dropped from what the model is shown, and they are excluded from the top-2 pattern key.
+            The remaining shares are renormalised across what is left, so the explanation reports
+            shares of the *disclosed* evidence and says when evidence was withheld -- a column shown
+            at 100% can be a small part of what the model measured. This governs what reaches the
+            serving endpoint: *_dq_info[].anomaly.contributions* is unchanged and still lists every
+            column, so this is not an access control over the scored table.
+        max_groups: Maximum number of distinct contribution-pattern groups the LLM is called for per
+            scoring run (default 500). Anomalous rows are bucketed by their top-2 contributing
+            columns and the model is called once per bucket, so this is a direct cap on cost.
+            Groups beyond it — ranked by group_size * group_avg_severity — get a null
+            ai_explanation; a warning is logged. The per-segment budget split that used to apply
+            here went with the ``segment_by`` path: one model is trained now, so the cap is simply
+            the number of calls.
         driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
             worker UDF dependencies are not available. Default False for production.
 
@@ -222,7 +242,7 @@ def has_no_row_anomalies(
         >>> df_scored.filter(col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly"))
     """
     llm_model_config = _coerce_llm_model_config(ai_explanation_llm_model_config)
-    # AI explanations need SHAP contributions; if contributions are off, disable explanations
+    # AI explanations need the contributions map; if contributions are off, disable explanations
     # (with a warning) rather than failing — both default on, so this only triggers when a caller
     # explicitly opts out of contributions.
     enable_ai_explanation = _resolve_ai_explanation_flag(enable_contributions, enable_ai_explanation)
@@ -251,7 +271,7 @@ def has_no_row_anomalies(
     def apply(df: DataFrame) -> DataFrame:
         check_reserved_row_id_columns(df)
         df_to_score = df.withColumn(row_id_col, F.monotonically_increasing_id())
-        columns, segment_by = fetch_model_columns_and_segments(df_to_score, model_name, registry_table)
+        columns = fetch_model_columns(df_to_score, model_name, registry_table)
 
         config = ScoringConfig(
             columns=columns,
@@ -267,7 +287,6 @@ def has_no_row_anomalies(
             llm_model_config=llm_model_config,
             redact_columns=redact_columns or [],
             max_groups=max_groups,
-            segment_by=segment_by,
             driver_only=driver_only,
             output_columns=output_columns,
         )
@@ -275,11 +294,19 @@ def has_no_row_anomalies(
         result = run_anomaly_scoring(df_to_score, config, registry_table, model_name)
         return result.drop(row_id_col)
 
+    # The published severity is already floored to the precision this threshold needs, so it is quoted as
+    # it stands: rounding it again here would undo that and could show a value above the threshold on a row
+    # that was not flagged. "Reached" rather than "exceeded", because the comparison is inclusive.
+    #
+    # Coalesced because a row can be flagged with no severity at all: an unseen baseline group has a null
+    # severity, and a caller may choose to treat "cannot judge this row" as a violation. concat_ws drops
+    # nulls silently, so without this the message read "Anomaly severity  reached threshold 95.0" -- a
+    # sentence asserting a number that does not exist.
     message = F.concat_ws(
         "",
         F.lit("Anomaly severity "),
-        F.round(F.col(output_columns.info).anomaly.severity_percentile, 1).cast("string"),
-        F.lit(f" exceeded threshold {threshold}"),
+        F.coalesce(F.col(output_columns.info).anomaly.severity_percentile.cast("string"), F.lit("unavailable")),
+        F.lit(f" reached threshold {threshold}"),
     )
     condition_expr = F.col(output_columns.info).anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_row_anomalies"), apply, output_columns.info

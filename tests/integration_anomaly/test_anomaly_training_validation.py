@@ -28,21 +28,6 @@ def test_train_rejects_invalid_sample_fraction(anomaly_engine, spark, make_schem
         )
 
 
-def test_train_rejects_invalid_expected_anomaly_rate(anomaly_engine, spark, make_schema, make_random):
-    schema = make_schema(catalog_name=TEST_CATALOG).name
-    model_name = f"{TEST_CATALOG}.{schema}.invalid_expected_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema}.invalid_expected_reg_{make_random(4).lower()}"
-
-    with pytest.raises(InvalidParameterError, match="expected_anomaly_rate"):
-        anomaly_engine.train(
-            df=_build_training_df(spark),
-            model_name=model_name,
-            registry_table=registry_table,
-            columns=["amount", "quantity"],
-            expected_anomaly_rate=0.9,
-        )
-
-
 def test_train_rejects_invalid_contamination(anomaly_engine, spark, make_schema, make_random):
     schema = make_schema(catalog_name=TEST_CATALOG).name
     model_name = f"{TEST_CATALOG}.{schema}.invalid_contam_{make_random(4).lower()}"
@@ -71,10 +56,8 @@ def test_build_context_raises_for_empty_model_name(spark, make_schema, make_rand
             model_name="",
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            segment_by=None,
             params=None,
             exclude_columns=None,
-            expected_anomaly_rate=0.02,
         )
 
 
@@ -91,10 +74,8 @@ def test_build_context_raises_for_empty_registry_table(spark, make_schema, make_
             model_name=model_name,
             registry_table="",
             columns=["amount", "quantity"],
-            segment_by=None,
             params=None,
             exclude_columns=None,
-            expected_anomaly_rate=0.02,
         )
 
 
@@ -114,10 +95,8 @@ def test_build_context_raises_for_empty_columns(spark, make_schema, make_random)
             model_name=model_name,
             registry_table=registry_table,
             columns=[],
-            segment_by=None,
             params=None,
             exclude_columns=None,
-            expected_anomaly_rate=0.02,
         )
 
 
@@ -169,10 +148,8 @@ def test_build_context_logs_validation_warnings(spark, make_schema, make_random,
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            segment_by=None,
             params=params,
             exclude_columns=None,
-            expected_anomaly_rate=0.02,
         )
 
     assert "Training with 2 columns" in caplog.text
@@ -193,10 +170,8 @@ def test_build_context_excludes_columns_from_auto_discovery(spark, make_schema, 
         model_name=model_name,
         registry_table=registry_table,
         columns=None,
-        segment_by=None,
         params=None,
         exclude_columns=["b"],
-        expected_anomaly_rate=0.02,
     )
     assert ctx.df_filtered.columns == ["a", "c"]
     assert ctx.auto_discovery_used is True
@@ -217,8 +192,6 @@ def test_build_context_raises_when_exclude_columns_not_in_dataframe(spark, make_
             model_name=model_name,
             registry_table=registry_table,
             columns=["a", "b"],
-            segment_by=None,
             params=None,
             exclude_columns=["c"],
-            expected_anomaly_rate=0.02,
         )
