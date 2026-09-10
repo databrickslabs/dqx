@@ -58,7 +58,7 @@ class JobService:
         Returns the Databricks job ``run_id`` (not the app-level run_id).
         """
         if not self._job_id:
-            raise RuntimeError("DQX_JOB_ID is not configured — cannot submit job runs")
+            raise RuntimeError("Task-runner job is not resolved — cannot submit job runs")
 
         base_params = {
             "task_type": task_type,

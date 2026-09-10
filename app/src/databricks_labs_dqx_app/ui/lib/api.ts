@@ -4112,6 +4112,84 @@ export interface SetStatusIn {
 }
 
 /**
+ * Retry-safe actions advertised by setup reports.
+ */
+export type SetupActionId = typeof SetupActionId[keyof typeof SetupActionId];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupActionId = {
+  reconcile: 'reconcile',
+  verify_again: 'verify_again',
+} as const;
+
+export type SetupReportCurrentStep = SetupStepId | null;
+
+/**
+ * Current ordered setup state published to request handlers.
+ */
+export interface SetupReport {
+  state: SetupState;
+  steps: SetupStep[];
+  current_step?: SetupReportCurrentStep;
+}
+
+/**
+ * Process-wide setup lifecycle states.
+ */
+export type SetupState = typeof SetupState[keyof typeof SetupState];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupState = {
+  checking: 'checking',
+  setup_required: 'setup_required',
+  initializing: 'initializing',
+  ready: 'ready',
+} as const;
+
+/**
+ * Setup report projected with caller-specific management access.
+ */
+export interface SetupStatusResponse {
+  report: SetupReport;
+  can_manage: boolean;
+  admin_group: string;
+}
+
+/**
+ * Sanitized status for one setup step.
+ */
+export interface SetupStep {
+  id: SetupStepId;
+  state: StepState;
+  code?: string;
+  summary?: string;
+  instructions?: string[];
+  actions?: SetupActionId[];
+}
+
+/**
+ * Stable identifiers for the ordered setup workflow.
+ */
+export type SetupStepId = typeof SetupStepId[keyof typeof SetupStepId];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupStepId = {
+  identity: 'identity',
+  volume: 'volume',
+  unity_catalog: 'unity_catalog',
+  schemas: 'schemas',
+  lakebase: 'lakebase',
+  warehouse: 'warehouse',
+  task_runner: 'task_runner',
+  wheels: 'wheels',
+  migrations: 'migrations',
+  activation: 'activation',
+} as const;
+
+/**
  * One severity registry entry derived from the reserved label definition.
  */
 export interface SeverityOut {
@@ -4139,6 +4217,21 @@ export interface SlotIn {
   name: string;
   family?: string;
 }
+
+/**
+ * State of one ordered setup capability or action.
+ */
+export type StepState = typeof StepState[keyof typeof StepState];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepState = {
+  pending: 'pending',
+  running: 'running',
+  passed: 'passed',
+  action_required: 'action_required',
+  failed: 'failed',
+} as const;
 
 /**
  * Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
@@ -5703,6 +5796,215 @@ export function useCurrentUserRoleSuspense<TData = Awaited<ReturnType<typeof cur
 
 
 
+
+/**
+ * Return readiness and the caller's bootstrap setup-management access.
+ * @summary Get Setup Status
+ */
+export const getSetupStatus = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupStatusResponse>> => {
+
+
+    return axios.default.get(
+      `/api/v1/setup/status`,options
+    );
+  }
+
+
+
+
+export const getGetSetupStatusQueryKey = () => {
+    return [
+    `/api/v1/setup/status`
+    ] as const;
+    }
+
+
+export const getGetSetupStatusQueryOptions = <TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetupStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupStatus>>> = ({ signal }) => getSetupStatus({ signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSetupStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getSetupStatus>>>
+export type GetSetupStatusQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Setup Status
+ */
+
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSetupStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetSetupStatusSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetupStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupStatus>>> = ({ signal }) => getSetupStatus({ signal, ...axiosOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSetupStatusSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getSetupStatus>>>
+export type GetSetupStatusSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Setup Status
+ */
+
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSetupStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Run the serialized setup workflow as a bootstrap administrator.
+ * @summary Reconcile Setup
+ */
+export const reconcileSetup = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+
+
+    return axios.default.post(
+      `/api/v1/setup/reconcile`,undefined,options
+    );
+  }
+
+
+
+export const getReconcileSetupMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileSetup>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof reconcileSetup>>, TError,void, TContext> => {
+
+const mutationKey = ['reconcileSetup'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reconcileSetup>>, void> = () => {
+
+
+          return  reconcileSetup(axiosOptions)
+        }
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReconcileSetupMutationResult = NonNullable<Awaited<ReturnType<typeof reconcileSetup>>>
+
+    export type ReconcileSetupMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Reconcile Setup
+ */
+export const useReconcileSetup = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileSetup>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof reconcileSetup>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getReconcileSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
 
 /**
  * Load workspace config from application state (admin only).
