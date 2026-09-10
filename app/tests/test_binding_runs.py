@@ -15,7 +15,10 @@ from unittest.mock import create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingNotFoundError,
     BindingRunError,
@@ -360,16 +363,19 @@ class TestSubmission:
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 0
 
-    def test_draft_defaults_to_1000_when_sample_size_omitted(
+    def test_draft_defaults_to_the_whole_table_when_sample_size_omitted(
         self, service, monitored_tables, materializer, job_service
     ):
+        """With no caller sample_size and no admin setting, a draft run scans the
+        whole table (0 = unlimited) so its pass rate describes the table."""
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=0)
         materializer.render_binding_checks.return_value = _CHECKS
 
         service.run_binding("b1", source="draft", version=None, user_email="alice@x")
 
         _, submit_kwargs = job_service.submit_run.call_args
-        assert submit_kwargs["config"]["sample_size"] == 1000
+        assert submit_kwargs["config"]["sample_size"] == DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+        assert submit_kwargs["config"]["sample_size"] == 0
 
     def test_draft_uses_configured_limit_when_admin_set_it(
         self, service, monitored_tables, materializer, job_service, settings_service

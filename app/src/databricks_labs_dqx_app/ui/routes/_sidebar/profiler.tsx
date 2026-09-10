@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePermissions } from "@/hooks/use-permissions";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import {
@@ -71,6 +72,7 @@ import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import {
   useSubmitProfileRun,
+  useGetProfilerSample,
   useSubmitBatchProfileRun,
   useListProfileRuns,
   useGetProfileRunResults,
@@ -222,9 +224,12 @@ function formatDuration(seconds: number | null | undefined): string {
 
 function estimateEtaSeconds(
   tableFqn: string,
-  sampleLimit: number,
+  /** Target row count, or null when the run has no fixed row cap
+   *  (full table / percentage sample) and an ETA cannot be extrapolated. */
+  sampleLimit: number | null,
   runs: ProfileRunSummaryOut[],
 ): number | null {
+  if (sampleLimit === null) return null;
   const priorRuns = runs.filter(
     (r) =>
       r.source_table_fqn === tableFqn &&
@@ -670,7 +675,7 @@ function ProfilerPageInner() {
       const resp = await submitMutation.mutateAsync({
         data: {
           table_fqn: tableFqn,
-          sample_limit: sampleLimit,
+          ...sampleOverride,
           columns: selectedColumns.length > 0 ? selectedColumns : undefined,
           profile_options: buildProfileOptions(),
         },
@@ -718,7 +723,7 @@ function ProfilerPageInner() {
       const resp = await batchSubmitMutation.mutateAsync({
         data: {
           table_fqns: selectedTables,
-          sample_limit: sampleLimit,
+          ...sampleOverride,
           profile_options: buildProfileOptions(),
         },
       });
@@ -784,7 +789,36 @@ function ProfilerPageInner() {
     }
   };
 
-  const [sampleLimit, setSampleLimit] = useState(50_000);
+  // Sampling for this run. Defaults come from the admin setting under
+  // Settings → Compute → Profiling; changing them here overrides that setting
+  // for this run only.
+  const [sampleKind, setSampleKind] = useState<SampleKind>("percent");
+  const [sampleValue, setSampleValue] = useState(10);
+  const [sampleHydrated, setSampleHydrated] = useState(false);
+  const profilerSampleQuery = useGetProfilerSample();
+
+  useEffect(() => {
+    const cfg = profilerSampleQuery.data?.data;
+    if (cfg && !sampleHydrated) {
+      setSampleKind(cfg.sample_kind);
+      setSampleValue(cfg.sample_value || cfg.default_value || 10);
+      setSampleHydrated(true);
+    }
+  }, [profilerSampleQuery.data, sampleHydrated]);
+
+  const handleSampleKind = (k: SampleKind) => {
+    setSampleKind(k);
+    // records → percent would reinterpret a row count as a percentage.
+    if (k === "percent") setSampleValue((v) => Math.min(100, Math.max(1, v)));
+  };
+
+  /** Request payload for the sampling override.
+   *  Empty until the admin default has loaded — posting the pre-hydration
+   *  placeholder would override the configured policy with a value nobody
+   *  chose, so the backend is left to resolve the setting itself. */
+  const sampleOverride = sampleHydrated
+    ? { sample_kind: sampleKind, sample_value: sampleKind === "full" ? null : sampleValue }
+    : {};
 
   const [isCancellingSingle, setIsCancellingSingle] = useState(false);
   const [cancellingBatchRunIds, setCancellingBatchRunIds] = useState<Set<string>>(new Set());
@@ -850,7 +884,7 @@ function ProfilerPageInner() {
 
   const etaSeconds =
     isSingleRunning && selectedTables.length === 1 && selectedTables[0]
-      ? estimateEtaSeconds(selectedTables[0], sampleLimit, runs)
+      ? estimateEtaSeconds(selectedTables[0], sampleKind === "records" ? sampleValue : null, runs)
       : null;
 
   const batchCompleted = batchRuns.filter((r) => r.state !== "running").length;
@@ -935,20 +969,15 @@ function ProfilerPageInner() {
           )}
 
           <div className="flex items-end gap-4">
-            <div className="grid gap-2 max-w-xs">
-              <Label htmlFor="sample-limit">{t("profiler.sampleLimit")}</Label>
-              <Input
-                id="sample-limit"
-                type="number"
-                value={sampleLimit}
-                onChange={(e) =>
-                  setSampleLimit(Math.min(100_000, Math.max(1, Number(e.target.value))))
-                }
-                disabled={isBusy}
-                min={1}
-                max={100_000}
+            <div className="grid gap-2">
+              <Label>{t("profiler.sampleLimit")}</Label>
+              <SampleSelector
+                kind={sampleKind}
+                value={sampleValue}
+                onKind={handleSampleKind}
+                onValue={setSampleValue}
               />
-              <p className="text-xs text-muted-foreground">{t("profiler.maxSampleLimit")}</p>
+              <p className="text-xs text-muted-foreground">{t("profiler.sampleLimitHint")}</p>
             </div>
 
             {isBusy ? (

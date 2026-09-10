@@ -76,6 +76,7 @@ import {
   getGetMonitoredTableQueryKey,
   getListMonitoredTablesQueryKey,
   useSubmitProfileRun,
+  useGetProfilerSample,
   getProfileRunStatus,
   useListProfileRuns,
   useGetProfileRunResults,
@@ -126,6 +127,7 @@ import {
   type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import { LifecycleDecisionNote } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
@@ -1058,8 +1060,8 @@ function VersionBadge({ table }: { table: MonitoredTableOut }) {
 /** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
  *  checked by the caller). "Run now" (approved) scans the whole table
  *  (sample_size 0); "Run draft" scans the admin-configured draft sample
- *  (default 1000 rows; 0 = whole table) fetched from `useGetDraftRunSampleLimit`
- *  so exploratory runs on large tables stay cheap. Primary click runs
+ *  (default 0 = whole table) fetched from `useGetDraftRunSampleLimit`,
+ *  which an admin can narrow to a row cap. Primary click runs
  *  the latest approved snapshot ("Run now (vN)"), disabled with a tooltip at
  *  v0. The attached dropdown
  *  offers "Run draft" at the TOP (item 15) followed by each approved version.
@@ -1106,12 +1108,13 @@ function RunTableAction({
   const versionsQuery = useListMonitoredTableVersions(bindingId);
   const versions = versionsQuery.data?.data ?? [];
   const runMutation = useRunMonitoredTable();
-  // Draft runs scan the admin-configured sample (default 1000 rows; 0 = whole
-  // table) so exploratory runs on large tables stay cheap. "Run now" (approved)
-  // always scans the full table (sample_size 0). While the limit query has not
-  // resolved (loading OR error) this is `undefined`, NOT 0 — so the draft run
-  // OMITS sample_size and the backend resolves the configured draft default.
-  // Never fall back to 0 here: 0 = full table and the backend can't rescue it.
+  // Draft runs scan the admin-configured sample, which defaults to the whole
+  // table (0 = unlimited) so a draft's pass rate describes the table; an admin
+  // can set a row cap to keep exploratory runs on large tables cheap. "Run now"
+  // (approved) always scans the full table (sample_size 0). While the limit
+  // query has not resolved (loading OR error) this is `undefined`, NOT 0 — so
+  // the draft run OMITS sample_size and the backend resolves the configured
+  // default itself.
   const draftSampleQuery = useGetDraftRunSampleLimit();
   const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit;
   const hasApproved = (table.version ?? 0) > 0;
@@ -1743,9 +1746,52 @@ function ProfileTab({
 
   const running = submitMutation.isPending || runId !== null;
 
-  const handleRunProfile = useCallback(() => {
+  // One-off profile runs ask for their sampling in a modal, pre-filled from the
+  // admin default (Settings → Compute → Profiling). Confirming overrides that
+  // default for this run only; it never writes the setting back.
+  const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
+  const [sampleKind, setSampleKind] = useState<SampleKind>("percent");
+  const [sampleValue, setSampleValue] = useState(10);
+  const [sampleHydrated, setSampleHydrated] = useState(false);
+  const profilerSampleQuery = useGetProfilerSample();
+
+  useEffect(() => {
+    const cfg = profilerSampleQuery.data?.data;
+    if (cfg && !sampleHydrated) {
+      setSampleKind(cfg.sample_kind);
+      setSampleValue(cfg.sample_value || cfg.default_value || 10);
+      setSampleHydrated(true);
+    }
+  }, [profilerSampleQuery.data, sampleHydrated]);
+
+  const handleSampleKind = useCallback((k: SampleKind) => {
+    setSampleKind(k);
+    // records → percent would reinterpret a row count as a percentage.
+    if (k === "percent") setSampleValue((v) => Math.min(100, Math.max(1, v)));
+  }, []);
+
+  /** Opens the sampling modal. Every one-off profile entry point goes through
+   *  this so none of them can submit a run without asking for its sample. */
+  const openSampleDialog = useCallback(() => setSampleDialogOpen(true), []);
+
+  /** Submits the run with the sampling chosen in the modal. Only the modal's
+   *  confirm action calls this. */
+  const submitProfileWithSample = useCallback(() => {
+    setSampleDialogOpen(false);
     submitMutation.mutate(
-      { data: { table_fqn: tableFqn } },
+      {
+        // Send an override only once the admin default has loaded. Before that
+        // the selector still shows its placeholder, and posting it would
+        // override the configured policy with a value the admin never chose;
+        // omitting the fields makes the backend resolve the setting itself.
+        data: sampleHydrated
+          ? {
+              table_fqn: tableFqn,
+              sample_kind: sampleKind,
+              sample_value: sampleKind === "full" ? null : sampleValue,
+            }
+          : { table_fqn: tableFqn },
+      },
       {
         onSuccess: (resp) => {
           setRunId(resp.data.run_id);
@@ -1757,7 +1803,7 @@ function ProfileTab({
         },
       },
     );
-  }, [submitMutation, tableFqn, t, queryClient]);
+  }, [submitMutation, tableFqn, sampleHydrated, sampleKind, sampleValue, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
 
@@ -1847,10 +1893,40 @@ function ProfileTab({
             </div>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={handleRunProfile} disabled={running}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={openSampleDialog}
+          disabled={running}
+        >
           <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", running && "animate-spin")} />
           {running ? t("monitoredTables.profileRunningButton") : t("monitoredTables.profileRefreshButton")}
         </Button>
+        <AlertDialog open={sampleDialogOpen} onOpenChange={setSampleDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("monitoredTables.profileSampleDialogTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("monitoredTables.profileSampleDialogDescription")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="flex items-center rounded-md border p-3">
+              <SampleSelector
+                kind={sampleKind}
+                value={sampleValue}
+                onKind={handleSampleKind}
+                onValue={setSampleValue}
+                compact
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction onClick={submitProfileWithSample} disabled={!sampleHydrated}>
+                {t("monitoredTables.profileSampleDialogConfirm")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {initialLoading ? (
@@ -1869,7 +1945,7 @@ function ProfileTab({
             {t("monitoredTables.profileEmptyHint")}
           </p>
           {!running && (
-            <Button size="sm" className="gap-2" onClick={handleRunProfile}>
+            <Button size="sm" className="gap-2" onClick={openSampleDialog}>
               <RefreshCw className="h-3.5 w-3.5" />
               {t("monitoredTables.profileRunButton")}
             </Button>

@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -63,8 +63,11 @@ import {
   useSaveRequireDraftRunSettings,
   getGetRequireDraftRunSettingsQueryKey,
   useGetDraftRunSampleLimit,
+  useGetProfilerSample,
+  useSaveProfilerSample,
   useSaveDraftRunSampleLimit,
   getGetDraftRunSampleLimitQueryKey,
+  getGetProfilerSampleQueryKey,
   useGetShareTablesWithWorkspaceUsers,
   useSaveShareTablesWithWorkspaceUsers,
   getGetShareTablesWithWorkspaceUsersQueryKey,
@@ -2180,7 +2183,9 @@ function DraftRunSampleLimitSettings() {
   const saveMutation = useSaveDraftRunSampleLimit();
   const { isAdmin } = usePermissions();
 
-  const [sampleKind, setSampleKind] = useState<SampleKind>("records");
+  // Pre-hydration state matches the compiled-in default (whole table) so the
+  // row does not flash "Random sample / 1000" before the query resolves.
+  const [sampleKind, setSampleKind] = useState<SampleKind>("full");
   const [sampleValue, setSampleValue] = useState(1000);
   const [hydrated, setHydrated] = useState(false);
 
@@ -2249,6 +2254,105 @@ function DraftRunSampleLimitSettings() {
         </div>
         {!isAdmin && (
           <span className="text-xs text-muted-foreground">{t("config.draftSampleAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profiler sampling — admin knob controlling how much of a source table the
+// profiler reads. Unlike the draft-run knob above this one allows a PERCENT
+// unit as well as a row count, so `disablePercent` is deliberately NOT set.
+// The two units are mutually exclusive: `kind` decides which one `value` means.
+//
+// This is the DEFAULT for both profiling entry points (the Profiler page and
+// the Profile tab on a monitored table); the Profiler page can still override
+// it for a single run. DQ runs are unaffected — scheduled runs always scan the
+// full table so their pass rates stay meaningful.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProfilerSampleSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetProfilerSample();
+  const settings = resp?.data;
+  const saveMutation = useSaveProfilerSample();
+  const { isAdmin } = usePermissions();
+
+  const [sampleKind, setSampleKind] = useState<SampleKind>("percent");
+  const [sampleValue, setSampleValue] = useState(10);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setSampleKind(settings.sample_kind);
+      // `full` stores 0, which is not a valid selector value — keep the
+      // compiled-in default visible so switching back to a sample shows a
+      // sensible number rather than 0.
+      setSampleValue(settings.sample_value || settings.default_value || 10);
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const handleSave = useCallback(
+    (kind: SampleKind, value: number) => {
+      saveMutation.mutate(
+        { data: { sample_kind: kind, sample_value: kind === "full" ? null : value } },
+        {
+          onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: getGetProfilerSampleQueryKey() });
+            toast.success(t("config.profilerSampleSaved"));
+          },
+          onError: (err: unknown) => {
+            const axErr = err as AxiosError<{ detail?: string }>;
+            toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveProfilerSample"));
+          },
+        },
+      );
+    },
+    [saveMutation, queryClient, t],
+  );
+
+  const handleKindChange = (k: SampleKind) => {
+    setSampleKind(k);
+    // Switching records → percent would send a row count as a percentage, so
+    // clamp into the new unit's range before saving.
+    const next = k === "percent" ? Math.min(100, Math.max(1, sampleValue)) : sampleValue;
+    setSampleValue(next);
+    handleSave(k, next);
+  };
+
+  const handleValueChange = (n: number) => {
+    setSampleValue(n);
+    handleSave(sampleKind, n);
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5" />
+          {t("config.profilerSampleTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label className="text-sm">{t("config.profilerSampleLabel")}</Label>
+          </div>
+          <SampleSelector
+            kind={sampleKind}
+            value={sampleValue}
+            onKind={handleKindChange}
+            onValue={handleValueChange}
+            compact
+          />
+        </div>
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.profilerSampleAdminOnlyHint")}</span>
         )}
       </CardContent>
     </Card>
@@ -2765,6 +2869,7 @@ function ConfigPage() {
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
+      { id: "profilerSample", tab: "compute", title: t("config.profilerSampleTitle"), keywords: t("config.kwProfilerSample"), render: () => <ProfilerSampleSettings /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],

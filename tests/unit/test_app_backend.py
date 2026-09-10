@@ -50,7 +50,7 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
     save_rules,
     submit_for_approval,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService, ProfilerSample
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.draft_run_gate_service import DraftRunGateService
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
@@ -1416,15 +1416,41 @@ class TestViewService:
         sql_stmts = [c.kwargs["statement"] for c in calls]
         assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
 
-    def test_create_view_adds_limit_clause_when_sample_limit_given(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view with sample_limit should append LIMIT to the SQL."""
+    def test_create_view_adds_limit_clause_for_a_row_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A records sample should cap the view with LIMIT.
+
+        The row count query returns no usable value against this mock, so the
+        builder takes its documented non-random fallback — a bare LIMIT.
+        """
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
-        svc.create_view("cat.sch.src_table", sample_limit=5000)
+        svc.create_view("cat.sch.src_table", sample=ProfilerSample(kind="records", value=5000))
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         assert any("LIMIT 5000" in s for s in sql_stmts)
+
+    def test_create_view_uses_tablesample_for_a_percent_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A percent sample should use TABLESAMPLE and never a LIMIT."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table", sample=ProfilerSample(kind="percent", value=10))
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        create = [c.kwargs["statement"] for c in calls if "CREATE OR REPLACE VIEW" in c.kwargs["statement"]]
+        assert any("TABLESAMPLE (10 PERCENT)" in s for s in create)
+        assert not any("LIMIT" in s for s in create)
+
+    def test_create_view_without_a_sample_scans_the_whole_table(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """DQ runs pass no sample, so their view must not narrow the table."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table")
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        create = [c.kwargs["statement"] for c in calls if "CREATE OR REPLACE VIEW" in c.kwargs["statement"]]
+        assert create
+        assert not any("LIMIT" in s or "TABLESAMPLE" in s for s in create)
 
     def test_create_view_raises_on_sql_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """_ensure_schema should raise RuntimeError when the statement fails."""
@@ -1804,21 +1830,25 @@ class TestProfilerRoutes:
         """submit_profile_run should create a view and submit a job, returning run ids."""
         mock_view_svc.create_view.return_value = "cat.sch.tmp_view_xyz"  # type: ignore[attr-defined]
         mock_job_svc.submit_run.return_value = 77777  # type: ignore[attr-defined]
-        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_limit=5000)
+        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_kind="records", sample_value=5000)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_app_settings = create_autospec(AppSettingsService, instance=True)
         result = submit_profile_run(
             body=body,
             obo_ws=mock_obo_ws,
             view_svc=mock_view_svc,
             job_svc=mock_job_svc,
             app_conf=app_conf,
+            app_settings=mock_app_settings,
         )
 
         assert isinstance(result, ProfileRunOut)
         assert result.job_run_id == 77777
         assert len(result.run_id) > 0
-        mock_view_svc.create_view.assert_called_once_with("cat.sch.src_table", sample_limit=5000)  # type: ignore[attr-defined]
+        mock_view_svc.create_view.assert_called_once_with(  # type: ignore[attr-defined]
+            "cat.sch.src_table", sample=ProfilerSample(kind="records", value=5000)
+        )
 
     def test_submit_profile_run_raises_500_on_error(
         self,
@@ -1831,6 +1861,7 @@ class TestProfilerRoutes:
         body = ProfileRunIn(table_fqn="cat.sch.src_table")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_app_settings = create_autospec(AppSettingsService, instance=True)
         with pytest.raises(HTTPException) as exc:
             submit_profile_run(
                 body=body,
@@ -1838,6 +1869,7 @@ class TestProfilerRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 app_conf=app_conf,
+                app_settings=mock_app_settings,
             )
 
         assert exc.value.status_code == 500

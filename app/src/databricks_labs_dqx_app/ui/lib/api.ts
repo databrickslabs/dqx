@@ -558,6 +558,16 @@ export interface BatchProfileRunFailure {
   error_code?: BatchProfileRunFailureErrorCode;
 }
 
+/**
+ * Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.
+ */
+export type BatchProfileRunInSampleKind = 'full' | 'records' | 'percent' | null;
+
+/**
+ * Row count when sample_kind is records, 1-100 when percent. Ignored for full.
+ */
+export type BatchProfileRunInSampleValue = number | null;
+
 export type BatchProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 
 /**
@@ -566,13 +576,12 @@ export type BatchProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 export type BatchProfileRunInProfileOptions = BatchProfileRunInProfileOptionsAnyOf | null;
 
 export interface BatchProfileRunIn {
+  /** Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting. */
+  sample_kind?: BatchProfileRunInSampleKind;
+  /** Row count when sample_kind is records, 1-100 when percent. Ignored for full. */
+  sample_value?: BatchProfileRunInSampleValue;
   /** List of fully qualified table names to profile */
   table_fqns: string[];
-  /**
-   * Max rows to sample per table
-   * @maximum 100000
-   */
-  sample_limit?: number;
   /** Advanced profiler options applied to all tables */
   profile_options?: BatchProfileRunInProfileOptions;
 }
@@ -2725,6 +2734,16 @@ export interface ProfileResultsOut {
 }
 
 /**
+ * Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.
+ */
+export type ProfileRunInSampleKind = 'full' | 'records' | 'percent' | null;
+
+/**
+ * Row count when sample_kind is records, 1-100 when percent. Ignored for full.
+ */
+export type ProfileRunInSampleValue = number | null;
+
+/**
  * Specific columns to profile (all if None)
  */
 export type ProfileRunInColumns = string[] | null;
@@ -2737,13 +2756,12 @@ export type ProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 export type ProfileRunInProfileOptions = ProfileRunInProfileOptionsAnyOf | null;
 
 export interface ProfileRunIn {
+  /** Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting. */
+  sample_kind?: ProfileRunInSampleKind;
+  /** Row count when sample_kind is records, 1-100 when percent. Ignored for full. */
+  sample_value?: ProfileRunInSampleValue;
   /** Fully qualified table name to profile */
   table_fqn: string;
-  /**
-   * Max rows to sample
-   * @maximum 100000
-   */
-  sample_limit?: number;
   /** Specific columns to profile (all if None) */
   columns?: ProfileRunInColumns;
   /** Advanced profiler options: filter (SQL WHERE), max_null_ratio, max_empty_ratio, max_in_count, distinct_ratio, remove_outliers, num_sigmas, llm_primary_key_detection */
@@ -2824,6 +2842,61 @@ export interface ProfilerConfig {
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
   outliers_ratio?: ProfilerConfigOutliersRatio;
+}
+
+export type ProfilerSampleInSampleKind = typeof ProfilerSampleInSampleKind[keyof typeof ProfilerSampleInSampleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilerSampleInSampleKind = {
+  full: 'full',
+  records: 'records',
+  percent: 'percent',
+} as const;
+
+export type ProfilerSampleInSampleValue = number | null;
+
+/**
+ * New profiler sampling policy.
+
+*sample_value* is required for ``records`` and ``percent`` and ignored for
+``full``. The kind decides which unit the value carries, so a row cap and a
+percentage can never both be active.
+ */
+export interface ProfilerSampleIn {
+  sample_kind: ProfilerSampleInSampleKind;
+  sample_value?: ProfilerSampleInSampleValue;
+}
+
+export type ProfilerSampleOutSampleKind = typeof ProfilerSampleOutSampleKind[keyof typeof ProfilerSampleOutSampleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilerSampleOutSampleKind = {
+  full: 'full',
+  records: 'records',
+  percent: 'percent',
+} as const;
+
+export type ProfilerSampleOutDefaultKind = typeof ProfilerSampleOutDefaultKind[keyof typeof ProfilerSampleOutDefaultKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilerSampleOutDefaultKind = {
+  full: 'full',
+  records: 'records',
+  percent: 'percent',
+} as const;
+
+/**
+ * Current profiler sampling policy plus the bounds the UI needs.
+ */
+export interface ProfilerSampleOut {
+  sample_kind: ProfilerSampleOutSampleKind;
+  sample_value: number;
+  records_max?: number;
+  default_kind?: ProfilerSampleOutDefaultKind;
+  default_value?: number;
 }
 
 /**
@@ -26274,6 +26347,216 @@ export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof
 
 
 
+/**
+ * Return how much of a source table the profiler reads (Admin or Author).
+ * @summary Get Profiler Sample
+ */
+export const getProfilerSample = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ProfilerSampleOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/compute/profiler-sample`,options
+    );
+  }
+
+
+
+
+export const getGetProfilerSampleQueryKey = () => {
+    return [
+    `/api/v1/compute/profiler-sample`
+    ] as const;
+    }
+
+    
+export const getGetProfilerSampleQueryOptions = <TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProfilerSampleQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProfilerSample>>> = ({ signal }) => getProfilerSample({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProfilerSampleQueryResult = NonNullable<Awaited<ReturnType<typeof getProfilerSample>>>
+export type GetProfilerSampleQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfilerSample>>,
+          TError,
+          Awaited<ReturnType<typeof getProfilerSample>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfilerSample>>,
+          TError,
+          Awaited<ReturnType<typeof getProfilerSample>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Profiler Sample
+ */
+
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProfilerSampleQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetProfilerSampleSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProfilerSampleQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProfilerSample>>> = ({ signal }) => getProfilerSample({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProfilerSampleSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getProfilerSample>>>
+export type GetProfilerSampleSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Profiler Sample
+ */
+
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProfilerSampleSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Set how much of a source table the profiler reads (admin only).
+ * @summary Save Profiler Sample
+ */
+export const saveProfilerSample = (
+    profilerSampleIn: ProfilerSampleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ProfilerSampleOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/compute/profiler-sample`,
+      profilerSampleIn,options
+    );
+  }
+
+
+
+export const getSaveProfilerSampleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveProfilerSample>>, TError,{data: ProfilerSampleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveProfilerSample>>, TError,{data: ProfilerSampleIn}, TContext> => {
+
+const mutationKey = ['saveProfilerSample'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveProfilerSample>>, {data: ProfilerSampleIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveProfilerSample(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveProfilerSampleMutationResult = NonNullable<Awaited<ReturnType<typeof saveProfilerSample>>>
+    export type SaveProfilerSampleMutationBody = ProfilerSampleIn
+    export type SaveProfilerSampleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Profiler Sample
+ */
+export const useSaveProfilerSample = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveProfilerSample>>, TError,{data: ProfilerSampleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveProfilerSample>>,
+        TError,
+        {data: ProfilerSampleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveProfilerSampleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Return the current compute settings + the effective warehouse (admin only).
  * @summary Get Compute Settings

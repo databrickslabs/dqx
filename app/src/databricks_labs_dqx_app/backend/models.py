@@ -2,7 +2,7 @@ import functools
 from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .. import __version__
 from .config import AI_SAMPLE_ROW_LIMIT
@@ -1455,9 +1455,42 @@ class DryRunOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ProfileRunIn(BaseModel):
+class ProfilerSampleOverride(BaseModel):
+    """Optional per-run override of the admin profiler sampling setting.
+
+    Both fields default to ``None``, meaning "use the configured admin
+    setting". *sample_kind* picks which form *sample_value* takes, so the
+    two forms are mutually exclusive by construction — there is no way to
+    request a row cap and a percentage at the same time.
+    """
+
+    sample_kind: Literal["full", "records", "percent"] | None = Field(
+        default=None,
+        description="Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.",
+    )
+    sample_value: int | None = Field(
+        default=None,
+        ge=1,
+        description="Row count when sample_kind is records, 1-100 when percent. Ignored for full.",
+    )
+
+    @model_validator(mode="after")
+    def _percent_within_range(self) -> "ProfilerSampleOverride":
+        """Reject a percentage above 100.
+
+        *sample_value* carries two different units, so the bound depends on
+        *sample_kind* and cannot be expressed as a plain ``le``. A percentage
+        over 100 is rejected rather than clamped: any value at or above 100 is
+        the whole table, so silently accepting it would turn a request for a cap
+        into a full scan. Mirrors the 400 the admin PUT returns.
+        """
+        if self.sample_kind == "percent" and self.sample_value is not None and self.sample_value > 100:
+            raise ValueError("sample_value must be between 1 and 100 when sample_kind is 'percent'.")
+        return self
+
+
+class ProfileRunIn(ProfilerSampleOverride):
     table_fqn: str = Field(description="Fully qualified table name to profile")
-    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample")
     columns: list[str] | None = Field(default=None, description="Specific columns to profile (all if None)")
     profile_options: dict[str, Any] | None = Field(
         default=None,
@@ -1517,9 +1550,8 @@ class ProfileRunSummaryOut(BaseModel):
     job_run_id: int | None = None
 
 
-class BatchProfileRunIn(BaseModel):
+class BatchProfileRunIn(ProfilerSampleOverride):
     table_fqns: list[str] = Field(description="List of fully qualified table names to profile")
-    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample per table")
     profile_options: dict[str, Any] | None = Field(
         default=None,
         description="Advanced profiler options applied to all tables",
