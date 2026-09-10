@@ -93,6 +93,7 @@ class DataContractRulesGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        process_library_rules: bool = True,
         generate_schema_validation: bool = True,
         strict_schema_validation: bool = True,
         default_criticality: str = "error",
@@ -122,6 +123,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
+            process_library_rules: Whether to generate rules from ODCS ``type: library`` quality metric entries (default True). Set to False to skip this mapping entirely, e.g. if a contract's library entries misbehave.
             generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
             strict_schema_validation: Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
             default_criticality: Default criticality level for generated rules (default is "error").
@@ -143,6 +145,7 @@ class DataContractRulesGenerator(DQEngineBase):
             odcs,
             generate_predefined_rules,
             process_text_rules,
+            process_library_rules,
             generate_schema_validation,
             strict_schema_validation,
             default_criticality,
@@ -243,6 +246,7 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
+        process_library_rules: bool,
         generate_schema_validation: bool,
         strict_schema_validation: bool,
         default_criticality: str,
@@ -273,8 +277,11 @@ class DataContractRulesGenerator(DQEngineBase):
             explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
 
-            library_rules = self._process_library_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
-            dq_rules.extend(library_rules)
+            if process_library_rules:
+                library_rules = self._process_library_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality
+                )
+                dq_rules.extend(library_rules)
 
         return dq_rules
 
@@ -1510,8 +1517,15 @@ class DataContractRulesGenerator(DQEngineBase):
     _ALTERNATION_QUANTIFIER_PATTERN = re.compile(r"\([^()]*\|[^()]*\)[+*{]")
 
     def _is_dqx_library_rule(self, quality_rule: DataQuality) -> bool:
-        """Check if a quality rule is an ODCS type: library quality metric entry."""
-        return quality_rule.type == 'library'
+        """Check if a quality rule is an ODCS type: library quality metric entry.
+
+        Per the ODCS spec, ``type`` "can be omitted, if a metric property is defined" -- every
+        library example in the spec omits it. An explicit ``type: library`` is also accepted for
+        contracts that set it anyway.
+        """
+        if quality_rule.type == 'library':
+            return True
+        return quality_rule.type is None and quality_rule.metric is not None
 
     def _process_library_rules_for_schema(
         self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
@@ -1651,9 +1665,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
     # rowCount ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in order.
     # mustBe/mustNotBe/mustBeGreaterOrEqualTo/mustBeLessOrEqualTo map onto exact-fit dataset-level
-    # aggregate checks; strict inequalities and both range forms (both bounds exclusive per ODCS)
-    # have no aggregate equivalent and fall back to the dataset-level sql_query escape hatch. See
-    # .scratch/odcs-library-metrics/issues/01-rowcount-mapping.md for the full mapping and rationale.
+    # aggregate checks; strict inequalities and both range forms have no aggregate equivalent and
+    # fall back to the dataset-level sql_query escape hatch. mustBeBetween/mustNotBeBetween treat
+    # both bounds as inclusive: the ODCS spec text doesn't settle it, and we match
+    # datacontract-cli's reference mapping (SodaCL's plain `between`, which is inclusive on both
+    # ends unless a bound is written with a round bracket) rather than pick our own reading.
 
     def _build_row_count_rules(
         self,
@@ -1720,12 +1736,12 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}"
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustNotBeBetween is not None:
             min_val, max_val = quality_rule.mustNotBeBetween
             return "mustNotBeBetween", self._library_sql_query_check(
-                f"SELECT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}"
+                f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}"
             )
 
         logger.warning(
@@ -1765,8 +1781,10 @@ class DataContractRulesGenerator(DQEngineBase):
     # the duplicate count must be computed via a GROUP BY subquery (see
     # _duplicate_values_count_expr) rather than a window function nested in an is_aggr_* `column`
     # expression: SUM(CASE WHEN ... COUNT(*) OVER (PARTITION BY ...) ...) is rejected by Spark at
-    # apply time (a window function can't be nested inside an aggregate function). See
-    # .scratch/odcs-library-metrics/issues/05-duplicatevalues-mapping.md for the full mapping.
+    # apply time (a window function can't be nested inside an aggregate function). The count itself
+    # matches datacontract-cli's reference mapping (Soda's duplicate_count: distinct recurring
+    # values, not rows-in-group) rather than our own reading of the ODCS spec text, which does not
+    # settle it -- see _duplicate_values_count_expr's own docstring for the full rationale.
 
     def _build_duplicate_values_rules(
         self,
@@ -1871,40 +1889,41 @@ class DataContractRulesGenerator(DQEngineBase):
 
         count_expr = self._duplicate_values_count_expr(key_columns, unit)
 
+        # count_expr is a self-contained scalar subquery (it references {{ input_view }} itself
+        # for its own GROUP BY), so the comparison is selected with no outer FROM at all -- adding
+        # one (e.g. `FROM {{ input_view }}`) would re-introduce a row per input row and trip
+        # sql_query's "dataset-level query must return exactly one row" check.
         if quality_rule.mustBe is not None:
-            return "mustBe", self._library_sql_query_check(
-                f"SELECT {count_expr} <> {quality_rule.mustBe} AS condition FROM {{{{ input_view }}}}"
-            )
+            return "mustBe", self._library_sql_query_check(f"SELECT {count_expr} <> {quality_rule.mustBe} AS condition")
         if quality_rule.mustNotBe is not None:
             return "mustNotBe", self._library_sql_query_check(
-                f"SELECT {count_expr} = {quality_rule.mustNotBe} AS condition FROM {{{{ input_view }}}}"
+                f"SELECT {count_expr} = {quality_rule.mustNotBe} AS condition"
             )
         if quality_rule.mustBeGreaterOrEqualTo is not None:
             return "mustBeGreaterOrEqualTo", self._library_sql_query_check(
-                f"SELECT {count_expr} < {quality_rule.mustBeGreaterOrEqualTo} AS condition FROM {{{{ input_view }}}}"
+                f"SELECT {count_expr} < {quality_rule.mustBeGreaterOrEqualTo} AS condition"
             )
         if quality_rule.mustBeLessOrEqualTo is not None:
             return "mustBeLessOrEqualTo", self._library_sql_query_check(
-                f"SELECT {count_expr} > {quality_rule.mustBeLessOrEqualTo} AS condition FROM {{{{ input_view }}}}"
+                f"SELECT {count_expr} > {quality_rule.mustBeLessOrEqualTo} AS condition"
             )
         if quality_rule.mustBeGreaterThan is not None:
             return "mustBeGreaterThan", self._library_sql_query_check(
-                f"SELECT {count_expr} <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}"
+                f"SELECT {count_expr} <= {quality_rule.mustBeGreaterThan} AS condition"
             )
         if quality_rule.mustBeLessThan is not None:
             return "mustBeLessThan", self._library_sql_query_check(
-                f"SELECT {count_expr} >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}"
+                f"SELECT {count_expr} >= {quality_rule.mustBeLessThan} AS condition"
             )
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT ({count_expr} > {min_val} AND {count_expr} < {max_val}) "
-                "AS condition FROM {{ input_view }}"
+                f"SELECT NOT ({count_expr} >= {min_val} AND {count_expr} <= {max_val}) AS condition"
             )
         if quality_rule.mustNotBeBetween is not None:
             min_val, max_val = quality_rule.mustNotBeBetween
             return "mustNotBeBetween", self._library_sql_query_check(
-                f"SELECT ({count_expr} > {min_val} AND {count_expr} < {max_val}) AS condition FROM {{{{ input_view }}}}"
+                f"SELECT ({count_expr} >= {min_val} AND {count_expr} <= {max_val}) AS condition"
             )
 
         # Unreachable: _has_any_threshold_field guarantees one of the eight fields above is set.
@@ -1951,33 +1970,35 @@ class DataContractRulesGenerator(DQEngineBase):
 
     @classmethod
     def _duplicate_values_count_expr(cls, key_columns: list[str], unit: str) -> str:
-        """Build a scalar SQL expression for the duplicate row count (unit: rows) or percentage
-        (unit: percent) of key_columns, replicating is_unique's nulls_distinct=True.
+        """Build a scalar SQL expression for the duplicate value count (unit: rows) or percentage
+        (unit: percent) of key_columns.
 
-        Computed via a GROUP BY subquery -- a genuine aggregate, not a window function -- so it can
-        be safely nested inside the enclosing sql_query comparison's SUM/division. An earlier
-        version built this indicator with `COUNT(*) OVER (PARTITION BY ...)` passed as an is_aggr_*
-        `column` argument; wrapping that in SUM/AVG produces a window function nested inside an
-        aggregate function, which Spark rejects at apply time for every threshold except mustBe: 0.
-        A row in an all-non-null key group is only "in the group" with rows sharing its identical
-        non-null key, so gating the GROUP BY's source rows on every key column being non-null is
-        sufficient -- no extra NULL-handling in the outer SUM is needed. Every key column is quoted
-        via _safe_sql_identifier before interpolation.
+        Matches datacontract-cli's reference mapping of duplicateValues to Soda's
+        duplicate_count: the number of *distinct values (key combinations) that recur*, not the
+        number of rows sitting in a duplicated group -- for `[A, A, A, B, B, C]` this is 2 (A and
+        B recur), not 5 (rows in a duplicated group). Percent divides that count by the total row
+        count, again matching the reference (`duplicate_count * 100 / row_count`), not by the
+        number of duplicated rows.
+
+        Computed via a GROUP BY ... HAVING subquery -- a genuine aggregate, not a window function
+        -- so it can be safely nested inside the enclosing sql_query comparison. An earlier version
+        built this indicator with `COUNT(*) OVER (PARTITION BY ...)` passed as an is_aggr_* `column`
+        argument; wrapping that in SUM/AVG produces a window function nested inside an aggregate
+        function, which Spark rejects at apply time for every threshold except mustBe: 0. A row in
+        an all-non-null key group is only "in the group" with rows sharing its identical non-null
+        key, so gating the GROUP BY's source rows on every key column being non-null is sufficient.
+        Every key column is quoted via _safe_sql_identifier before interpolation.
         """
         quoted = [cls._safe_sql_identifier(col) for col in key_columns]
         not_null_clause = " AND ".join(f"{col} IS NOT NULL" for col in quoted)
         partition_by = ", ".join(quoted)
-        group_counts = (
-            f"(SELECT COUNT(*) AS dqx_dup_group_count FROM {{{{ input_view }}}} "
-            f"WHERE {not_null_clause} GROUP BY {partition_by})"
-        )
-        duplicate_rows = (
-            f"(SELECT COALESCE(SUM(CASE WHEN dqx_dup_group_count > 1 THEN dqx_dup_group_count ELSE 0 END), 0) "
-            f"FROM {group_counts} AS dqx_dup_groups)"
+        duplicate_values = (
+            f"(SELECT COUNT(*) FROM (SELECT 1 FROM {{{{ input_view }}}} WHERE {not_null_clause} "
+            f"GROUP BY {partition_by} HAVING COUNT(*) > 1) AS dqx_dup_groups)"
         )
         if unit == "rows":
-            return duplicate_rows
-        return f"(100.0 * {duplicate_rows} / NULLIF((SELECT COUNT(*) FROM {{{{ input_view }}}}), 0))"
+            return duplicate_values
+        return f"(100.0 * {duplicate_values} / NULLIF((SELECT COUNT(*) FROM {{{{ input_view }}}}), 0))"
 
     # nullValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in order.
     # mustBe: 0 is a special case mapping onto the row-level is_not_null check (cheaper, pinpoints
@@ -1985,10 +2006,11 @@ class DataContractRulesGenerator(DQEngineBase):
     # other threshold (including mustBe with N > 0) maps onto a dataset-level null-count/percentage
     # aggregate for the entry's unit: rows (the default, count(*) over rows where the column IS
     # NULL) or percent (AVG of a CASE WHEN ... SQL string indicator, since is_aggr_*'s row_filter+"*"
-    # mechanism can only count rows, not express a percentage). Strict inequalities and both range forms (both
-    # bounds exclusive per ODCS) have no aggregate equivalent and fall back to the dataset-level
-    # sql_query escape hatch for both units. See
-    # .scratch/odcs-library-metrics/issues/02-nullvalues-mapping.md for the full mapping and rationale.
+    # mechanism can only count rows, not express a percentage). Strict inequalities and both range
+    # forms have no aggregate equivalent and fall back to the dataset-level sql_query escape hatch
+    # for both units. mustBeBetween/mustNotBeBetween treat both bounds as inclusive, matching
+    # datacontract-cli's reference mapping rather than our own reading of the spec text (see the
+    # rowCount section above for the full reasoning).
 
     def _build_nullvalues_rules(
         self,
@@ -2044,7 +2066,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         mustBe: 0 is checked before consulting unit at all. Every other threshold routes through
         the null-count (unit: rows) or null-percentage (unit: percent) mechanism. Returns None
-        (after logging) when no threshold field is set.
+        (after logging) when no threshold field is set, or when unit is missing/unrecognized.
         """
         if self._is_zero_threshold(quality_rule.mustBe):
             return "mustBe", {"function": "is_not_null", "arguments": {"column": property_name}}
@@ -2058,8 +2080,18 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return None
 
+        unit = quality_rule.unit or "rows"
+        if unit not in ("rows", "percent"):
+            logger.warning(
+                f"Unrecognized unit '{sanitize_for_logging(unit)}' on type: library nullValues entry on "
+                f"property '{sanitize_for_logging(property_name)}' in schema "
+                f"'{sanitize_for_logging(schema_name)}'; expected 'rows' or 'percent'. Skipping this quality "
+                "check."
+            )
+            return None
+
         quoted_column = self._safe_sql_identifier(property_name)
-        if (quality_rule.unit or "rows") == "percent":
+        if unit == "percent":
             return self._nullvalues_percent_check(quality_rule, quoted_column)
         return self._nullvalues_rows_check(quality_rule, quoted_column)
 
@@ -2094,13 +2126,13 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}",
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
                 row_filter=row_filter,
             )
         assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
         min_val, max_val = quality_rule.mustNotBeBetween
         return "mustNotBeBetween", self._library_sql_query_check(
-            f"SELECT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}",
+            f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
             row_filter=row_filter,
         )
 
@@ -2148,13 +2180,13 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT ({percent_expr} > {min_val} AND {percent_expr} < {max_val}) "
+                f"SELECT NOT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
                 f"AS condition FROM {{{{ input_view }}}}"
             )
         assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
         min_val, max_val = quality_rule.mustNotBeBetween
         return "mustNotBeBetween", self._library_sql_query_check(
-            f"SELECT ({percent_expr} > {min_val} AND {percent_expr} < {max_val}) AS condition FROM {{{{ input_view }}}}"
+            f"SELECT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) AS condition FROM {{{{ input_view }}}}"
         )
 
     @staticmethod
@@ -2183,9 +2215,12 @@ class DataContractRulesGenerator(DQEngineBase):
     # row_filter+"*" can't express a percentage -- a raw Column indicator is deliberately avoided,
     # since DQEngine.validate_checks' semantic conflict detection isn't Column-aware and raises on
     # one, the same issue missingValues works around below). Strict inequalities and both range
-    # forms (both bounds exclusive per ODCS) fall back to the dataset-level sql_query escape hatch
-    # for both units. See .scratch/odcs-library-metrics/issues/04-invalidvalues-mapping.md for the
-    # full mapping and rationale.
+    # forms fall back to the dataset-level sql_query escape hatch for both units.
+    # mustBeBetween/mustNotBeBetween treat both bounds as inclusive, matching datacontract-cli's
+    # reference mapping rather than our own reading of the spec text (see the rowCount section
+    # above for the full reasoning). validValues and pattern, when both present, are combined into
+    # a single OR'd "invalid" condition rather than two independent thresholds, so "at most N
+    # invalid" means at most N rows failing either criterion, not N failing each independently.
 
     def _build_invalid_values_rules(
         self,
@@ -2329,13 +2364,18 @@ class DataContractRulesGenerator(DQEngineBase):
         """Render a validValues entry as an is_in_list *allowed* list literal.
 
         is_in_list resolves each *allowed* entry like a comparison-check limit: a bare string is
-        parsed as a **column expression**, not a string literal (see check_funcs.is_in_list's own
-        docstring) -- so a contract-supplied string value must be single-quoted to compare
-        correctly. Non-string values are passed through unchanged; get_limit_expr already resolves
-        them via F.lit().
+        parsed as a **column expression** via F.expr(), not a string literal (see
+        check_funcs.is_in_list's own docstring) -- so a contract-supplied string value must be
+        single-quoted to compare correctly, with embedded backslashes doubled first (then embedded
+        single quotes), matching _sql_scalar_literal: with Spark's default
+        spark.sql.parser.escapedStringLiterals=false, an unescaped backslash in a SQL string
+        literal is not preserved as-is, which would otherwise disagree with the aggregate paths'
+        NOT IN condition for the same sentinel value. Non-string values are passed through
+        unchanged; get_limit_expr already resolves them via F.lit().
         """
         if isinstance(value, str):
-            return "'" + value.replace("'", "''") + "'"
+            escaped = value.replace("\\", "\\\\").replace("'", "''")
+            return f"'{escaped}'"
         return value
 
     def _invalid_values_check(
@@ -2413,13 +2453,13 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}",
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
                 row_filter=invalid_condition,
             )
         if quality_rule.mustNotBeBetween is not None:
             min_val, max_val = quality_rule.mustNotBeBetween
             return "mustNotBeBetween", self._library_sql_query_check(
-                f"SELECT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}",
+                f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
                 row_filter=invalid_condition,
             )
         return None
@@ -2469,13 +2509,13 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT ({percent_expr} > {min_val} AND {percent_expr} < {max_val}) "
+                f"SELECT NOT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
                 f"AS condition FROM {{{{ input_view }}}}"
             )
         if quality_rule.mustNotBeBetween is not None:
             min_val, max_val = quality_rule.mustNotBeBetween
             return "mustNotBeBetween", self._library_sql_query_check(
-                f"SELECT ({percent_expr} > {min_val} AND {percent_expr} < {max_val}) "
+                f"SELECT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
                 f"AS condition FROM {{{{ input_view }}}}"
             )
         return None
@@ -2533,9 +2573,11 @@ class DataContractRulesGenerator(DQEngineBase):
     # `arguments.get("column") or ...`, and Column.__bool__ raises PySparkValueError, which crashes
     # rule generation outright. A string routes through F.expr() at apply time instead, producing
     # the identical Spark expression without tripping that truthiness check. Strict inequalities
-    # and both range forms (both bounds exclusive per ODCS) fall back to the dataset-level
-    # sql_query escape hatch for both units. See
-    # .scratch/odcs-library-metrics/issues/03-missingvalues-mapping.md for the full mapping.
+    # and both range forms fall back to the dataset-level sql_query escape hatch for both units.
+    # mustBeBetween/mustNotBeBetween treat both bounds as inclusive, matching datacontract-cli's
+    # reference mapping rather than our own reading of the spec text (see the rowCount section
+    # above for the full reasoning). NULL is counted unconditionally on every threshold, including
+    # mustBe: 0 -- an explicit `null` entry in arguments.missingValues is redundant, not required.
 
     def _build_missing_values_rules(
         self,
@@ -2560,7 +2602,9 @@ class DataContractRulesGenerator(DQEngineBase):
         if sentinel_list is None:
             return []
 
-        has_null = None in sentinel_list
+        # NULL is always counted as missing regardless of whether `null` appears in the list (it
+        # matches every other threshold's `col IS NULL OR col IN (...)` condition); an explicit
+        # `null` entry is therefore redundant, not required.
         non_null_sentinels = [value for value in sentinel_list if value is not None]
 
         contract_metadata = {
@@ -2578,7 +2622,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         if self._is_zero_threshold(quality_rule.mustBe):
             return self._missing_values_row_level_rules(
-                has_null, non_null_sentinels, property_name, contract_metadata, default_criticality
+                non_null_sentinels, property_name, contract_metadata, default_criticality
             )
 
         resolved = self._missing_values_check(quality_rule, property_name, schema_name, non_null_sentinels)
@@ -2597,30 +2641,29 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _missing_values_row_level_rules(
         self,
-        has_null: bool,
         non_null_sentinels: list,
         property_name: str,
         contract_metadata: dict,
         default_criticality: str,
     ) -> list[dict]:
-        """Build the row-level rule(s) for mustBe: 0 -- one per present sentinel kind (null and/or
-        non-null sentinels). Emitting both as separate rules (sharing identical user_metadata, only
-        `name` differs) reproduces "missing if either criterion fails" via DQX's own per-row
-        _errors/_warnings union: is_not_in_list's `forbidden` list can never itself catch a real
-        SQL NULL (`x IN (...)` is NULL, not TRUE, whenever x IS NULL), so the two conditions cannot
-        be folded into a single check.
+        """Build the row-level rule(s) for mustBe: 0 -- an unconditional NULL check, plus a
+        sentinel check when non-null sentinels are present. Emitting both as separate rules
+        (sharing identical user_metadata, only `name` differs) reproduces "missing if either
+        criterion fails" via DQX's own per-row _errors/_warnings union: is_not_in_list's
+        `forbidden` list can never itself catch a real SQL NULL (`x IN (...)` is NULL, not TRUE,
+        whenever x IS NULL), so the two conditions cannot be folded into a single check. NULL is
+        always checked here, matching every other threshold's unconditional `col IS NULL` --
+        whether `null` was explicitly listed in arguments.missingValues does not matter.
         """
         user_metadata = {**contract_metadata, "threshold_field": "mustBe"}
-        rules = []
-        if has_null:
-            rules.append(
-                {
-                    "check": {"function": "is_not_null", "arguments": {"column": property_name}},
-                    "name": f"{property_name}_missingValues_null",
-                    "criticality": default_criticality,
-                    "user_metadata": dict(user_metadata),
-                }
-            )
+        rules = [
+            {
+                "check": {"function": "is_not_null", "arguments": {"column": property_name}},
+                "name": f"{property_name}_missingValues_null",
+                "criticality": default_criticality,
+                "user_metadata": dict(user_metadata),
+            }
+        ]
         if non_null_sentinels:
             rules.append(
                 {
@@ -2703,13 +2746,13 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}",
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
                 row_filter=missing_condition,
             )
         assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
         min_val, max_val = quality_rule.mustNotBeBetween
         return "mustNotBeBetween", self._library_sql_query_check(
-            f"SELECT (COUNT(*) > {min_val} AND COUNT(*) < {max_val}) AS condition FROM {{{{ input_view }}}}",
+            f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
             row_filter=missing_condition,
         )
 
@@ -2754,13 +2797,13 @@ class DataContractRulesGenerator(DQEngineBase):
         if quality_rule.mustBeBetween is not None:
             min_val, max_val = quality_rule.mustBeBetween
             return "mustBeBetween", self._library_sql_query_check(
-                f"SELECT NOT ({percent_expr} > {min_val} AND {percent_expr} < {max_val}) "
+                f"SELECT NOT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
                 f"AS condition FROM {{{{ input_view }}}}"
             )
         assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
         min_val, max_val = quality_rule.mustNotBeBetween
         return "mustNotBeBetween", self._library_sql_query_check(
-            f"SELECT ({percent_expr} > {min_val} AND {percent_expr} < {max_val}) AS condition FROM {{{{ input_view }}}}"
+            f"SELECT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) AS condition FROM {{{{ input_view }}}}"
         )
 
     @staticmethod

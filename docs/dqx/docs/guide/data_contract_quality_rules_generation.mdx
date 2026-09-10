@@ -541,9 +541,19 @@ If you don't have LLM dependencies installed or want to skip text processing:
   <AvailableSinceVersion version="0.17.0" heading={false} />
 </FeatureTags>
 
-ODCS quality entries with `type: library` reference a named, standard data quality metric instead of a natural-language description or a hand-written DQX check. DQX recognizes five of these metrics — `rowCount`, `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues` — and maps each one onto the DQX check(s) that best express it, so contract authors get precise checks without writing DQX syntax themselves.
+ODCS quality entries with `type: library` (or, per the spec, no `type` at all as long as `metric` is set) reference a named, standard data quality metric instead of a natural-language description or a hand-written DQX check. DQX recognizes five of these metrics — `rowCount`, `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues` — and maps each one onto the DQX check(s) that best express it.
 
-Every `type: library` entry is processed unconditionally whenever `generate_rules_from_contract` runs: unlike predefined and text-based rules, there is no `generate_..._rules`/`process_..._rules` flag to opt out. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
+<Admonition type="note" title="A fallback for simple contracts, not the recommended path">
+Library metrics exist for **portability**: the same five-metric vocabulary is understood by any ODCS-compliant tool, including [datacontract-cli](https://github.com/datacontract/datacontract-cli). They are not a capability DQX otherwise lacks — every one of the five is already expressible directly with `is_aggr_*` checks, `is_unique`, and `column: "*"` — and they cover a narrow slice of what DQX can check (no outlier detection, freshness, foreign keys, schema validation, or dataset comparison). For anything beyond simple row-count/null/duplicate/allowlist checks on a contract that must stay portable across tools, prefer [explicit rules](#explicit-rule-generation) with `type: custom` and `engine: dqx`, which give you the full DQX check surface. Treat `type: library` as the option for the simple, common cases, not the default way to express quality in a contract.
+
+This five-metric surface is intentionally closed: DQX does not plan to grow this mapping into a general ODCS interpreter for arbitrary quality vocabularies.
+</Admonition>
+
+Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
+
+<Admonition type="note" title="Where the ODCS spec is silent, we match the reference implementation">
+Several of the mapping decisions below are not settled by the ODCS spec text. Where that's the case, DQX matches [datacontract-cli](https://github.com/datacontract/datacontract-cli)'s reference mapping (onto [Soda Core](https://github.com/sodadata/soda-core) checks) rather than inventing its own reading, so a contract produces the same verdict regardless of which tool evaluates it. Each judgment call is called out explicitly where it applies: `duplicateValues`'s counting unit, `mustBeBetween`/`mustNotBeBetween`'s bound inclusivity, and `invalidValues`'s combined-condition handling of `validValues` + `pattern`.
+</Admonition>
 
 ### Defining Metric Rules in ODCS v3.x Contracts
 
@@ -578,8 +588,8 @@ Every library metric is evaluated against one of eight ODCS threshold fields, tr
 
 - **`mustBe: 0`** is special-cased for `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`: it maps onto a cheap **row-level** check (`is_not_null`, `is_not_in_list`, `is_in_list`/`regex_match`, or `is_unique`) that pinpoints the offending rows, rather than a dataset-level count.
 - **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage, for `rowCount`, `nullValues`, `missingValues`, and `invalidValues`.
-- **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict/exclusive-bound equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check with `condition_column: "condition"` (`true` means a violation). For `mustBeBetween`/`mustNotBeBetween`, **both bounds are exclusive**, per the ODCS specification — a value exactly equal to either bound does not count as being "between" them.
-- **`duplicateValues` is the one exception**: every non-`mustBe: 0` threshold (not just the four strict/exclusive-bound ones above) falls back to `sql_query`. The duplicate count/percentage is computed via a `GROUP BY` subquery rather than a plain aggregate expression, since Spark rejects a window function (the `PARTITION BY` used to detect duplicates) nested inside an aggregate function (`SUM`/`AVG`).
+- **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict-inequality/range equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check with `condition_column: "condition"` (`true` means a violation). For `mustBeBetween`/`mustNotBeBetween`, **both bounds are inclusive** — a value exactly equal to either bound counts as being "between" them. The ODCS spec text doesn't settle this either way; DQX matches datacontract-cli's reference mapping (SodaCL's plain `between`, which is inclusive on both ends unless a bound is written with a round bracket) rather than picking its own reading.
+- **`duplicateValues` is the one exception**: every non-`mustBe: 0` threshold (not just the four strict-inequality/range ones above) falls back to `sql_query`. The duplicate count/percentage is computed via a `GROUP BY ... HAVING` subquery rather than a plain aggregate expression, since Spark rejects a window function (the `PARTITION BY` used to detect duplicates) nested inside an aggregate function (`SUM`/`AVG`) — see [duplicateValues](#duplicatevalues) below for what it counts.
 
 <Admonition type="note" title="No recognized threshold field">
 An entry with none of the eight fields set is skipped with a warning naming all eight, so a contract author can spot a typo (e.g. `mustbe` instead of `mustBe`) without reading DQX source.
@@ -587,7 +597,7 @@ An entry with none of the eight fields set is skipped with a warning naming all 
 
 ### Rows vs. Percent
 
-The optional `unit` field controls whether a non-`mustBe: 0` threshold is evaluated as a raw row count (`unit: rows`, the default) or a percentage of all rows (`unit: percent`). This applies to `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`; `rowCount` is inherently a count and does not branch on `unit` (whatever value is set is still recorded in `user_metadata`, but does not change the generated check). For `missingValues`, `invalidValues`, and `duplicateValues`, an unrecognized `unit` value (anything other than `rows` or `percent`) causes the entry to be skipped with a warning; for `nullValues`, any value other than `percent` is treated as `rows` without a warning, so a typo there is not currently caught.
+The optional `unit` field controls whether a non-`mustBe: 0` threshold is evaluated as a raw row count (`unit: rows`, the default) or a percentage of all rows (`unit: percent`). This applies to `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`; `rowCount` is inherently a count and does not branch on `unit` (whatever value is set is still recorded in `user_metadata`, but does not change the generated check). For `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`, an unrecognized `unit` value (anything other than `rows` or `percent`) causes the entry to be skipped with a warning.
 
 ### rowCount
 
@@ -656,11 +666,11 @@ A `mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, or `mustNotBeBetween` 
   </TabItem>
 </Tabs>
 
-With `mustBe: 0`, one row-level rule is generated per sentinel kind actually present (a real `null` in the list, and/or one or more non-null sentinels) — both rules share the same `user_metadata` and are OR'd together via DQX's own per-row error/warning union, since `is_not_in_list`'s `forbidden` list can never itself match a real SQL `NULL`. Any other threshold routes through a dataset-level count/percentage of rows matching `column IS NULL OR column IN (...)`.
+`NULL` is always counted as missing, whether or not a literal `null` appears in `arguments.missingValues` — listing it is redundant, not required. With `mustBe: 0`, a row-level `is_not_null` rule is always generated, plus a row-level `is_not_in_list` rule when non-null sentinels are present; both rules share the same `user_metadata` and are OR'd together via DQX's own per-row error/warning union, since `is_not_in_list`'s `forbidden` list can never itself match a real SQL `NULL`. Any other threshold routes through a dataset-level count/percentage of rows matching `column IS NULL OR column IN (...)` — the same unconditional-`NULL` condition, so the metric means the same thing at every threshold.
 
 ### invalidValues
 
-`invalidValues` accepts an allowlist (`arguments.validValues`), a regex (`arguments.pattern`), or both — a row fails if it matches neither:
+`invalidValues` accepts an allowlist (`arguments.validValues`), a regex (`arguments.pattern`), or both — a row fails if it matches neither. When both are present, DQX combines them into a single "invalid" condition (`NOT (in the allowlist) OR NOT (matches the pattern)`) rather than treating them as two independent thresholds, so `mustBeLessOrEqualTo: 5` means at most 5 rows failing *either* criterion, not up to 5 failing each independently. This combination is a DQX judgment call — datacontract-cli's reference mapping ignores `arguments.pattern` for `invalidValues` entirely and only honors `validValues`, so `pattern` support here is a DQX-only extension beyond what the reference implementation covers, even though the spec documents the field:
 
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
@@ -698,7 +708,11 @@ With `mustBe: 0`, one row-level rule is generated per sentinel kind actually pre
 
 ### duplicateValues
 
-The single-column, argument-less form is a property-level entry; the composite-key form is a schema-level entry with `arguments.properties`:
+The single-column, argument-less form is a property-level entry; the composite-key form is a schema-level entry with `arguments.properties`.
+
+<Admonition type="note" title="Counts distinct recurring values, not rows in a duplicated group">
+For a non-`mustBe: 0` threshold, `duplicateValues` counts the number of *distinct values (or key combinations) that recur* — for a column holding `[A, A, A, B, B, C]` that's 2 (`A` and `B` each recur), not 5 (the rows sitting in those two groups). `unit: percent` divides that count by the total row count. This matches datacontract-cli's reference mapping onto Soda's `duplicate_count`; the ODCS spec text ("Counts duplicate values in a column") doesn't settle it either way, so DQX follows the reference rather than counting affected rows. `mustBe: 0` is unaffected by this choice, since both readings agree at zero.
+</Admonition>
 
 <Tabs>
   <TabItem value="YAML" label="Single column (property-level)" default>
@@ -725,7 +739,8 @@ The single-column, argument-less form is a property-level entry; the composite-k
             unit: percent
             arguments:
               properties: [order_id, line_number]
-            # → sql_query over the duplicate-row-percentage, grouped by (order_id, line_number)
+            # → sql_query over the percentage of distinct recurring (order_id, line_number)
+            #   combinations, grouped by (order_id, line_number)
     ```
   </TabItem>
 </Tabs>
@@ -736,12 +751,32 @@ DQX **warns and skips** an individual `type: library` entry — logging the reas
 
 - A missing or unrecognized `metric` name (the warning names all five supported metrics).
 - No recognized threshold field set (none of the eight `mustBe...`/`mustNotBe...` fields).
-- For `missingValues`, `invalidValues`, and `duplicateValues`, an unrecognized `unit` (anything other than `rows` or `percent`) — see [Rows vs. Percent](#rows-vs-percent).
+- An unrecognized `unit` (anything other than `rows` or `percent`) — see [Rows vs. Percent](#rows-vs-percent).
 - A schema-level entry for a property-only metric (`nullValues`, `missingValues`, `invalidValues`).
 - Malformed `arguments` — not a dict, a missing or wrong-typed key (e.g. `arguments.missingValues` not a list), or an empty list where a non-empty one is required.
 - For `invalidValues`, an entry with neither a usable `arguments.validValues` list nor a usable `arguments.pattern` string (after the pattern safety check, described above).
 
-This warn-and-skip mechanism is not gated by any parameter — there is no flag analogous to `generate_predefined_rules` or `process_text_rules` for library metrics; skipping only ever happens per malformed entry, never for the feature as a whole.
+This per-entry warn-and-skip behavior is independent of `process_library_rules`: even with `process_library_rules=True` (the default), an individual malformed entry is skipped rather than failing the whole contract. Set `process_library_rules=False` to skip *all* `type: library` entries instead — e.g. if a contract's library entries need to be ignored altogether.
+
+<Admonition type="note" title="No dedup against predefined rules">
+DQX does not deduplicate library metric rules against predefined rules generated from schema constraints. A property marked `required: true` (which generates a predefined `is_not_null` rule) that also carries a `nullValues`/`mustBe: 0` entry produces two separate `is_not_null` rules under different names. Both are harmless (they agree on every row), but if you want only one, disable one of the two sources — e.g. `generate_predefined_rules=False` or omit the redundant `nullValues` entry.
+</Admonition>
+
+### Disabling Library Metric Processing
+
+If a contract's `type: library` entries misbehave, or you'd rather express quality entirely through [explicit rules](#explicit-rule-generation):
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Skip type: library processing, generate only predefined/explicit/text rules
+    rules = generator.generate_rules_from_contract(
+        contract_file="contract.yaml",
+        process_library_rules=False  # Skip library metric mapping
+    )
+    ```
+  </TabItem>
+</Tabs>
 
 ## Complete Usage Example
 
@@ -1171,4 +1206,6 @@ pip install 'databricks-labs-dqx[datacontract]'
 - Dataset-level quality checks must be defined as explicit DQX rules (custom quality checks).
 - Generated rules quality depends on the completeness and correctness of the contract definition.
 - Complex business logic (text based rules) may still require manual rule definition or refinement.
+- `type: library` covers five metrics only (see [Metric Rule Generation](#metric-rule-generation)) and is not intended to grow into a general ODCS interpreter; use `type: custom` with `engine: dqx` for anything beyond simple row-count/null/duplicate/allowlist checks.
+- `type: library` entries are matched on the current `metric` field only; the deprecated ODCS 3.0.x `rule` key (superseded by `metric` in 3.1+) is not recognized, so a contract still authored against 3.0.x semantics needs its `rule` entries migrated to `metric` before DQX will map them.
 

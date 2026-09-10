@@ -3700,6 +3700,53 @@ class TestDataContractGeneratorLibraryRules(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_omitted_type_with_metric_set_is_still_recognized(self, generator):
+        """Per ODCS, `type` "can be omitted, if a metric property is defined" -- every library
+        example in the spec omits it. An entry with no `type` at all but a recognized `metric`
+        must still be processed as a library rule, not silently dropped."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[{"metric": "nullValues", "mustBe": 0}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+
+            assert len(rules) == 1
+            assert rules[0]["check"] == {"function": "is_not_null", "arguments": {"column": "email"}}
+        finally:
+            os.unlink(temp_path)
+
+    def test_explicit_non_library_type_is_not_treated_as_library_rule(self, generator):
+        """An entry with a `type` set to something other than 'library' (e.g. an explicit DQX
+        implementation entry) is left alone by the library-metric path even if it happens to
+        carry a `metric`-shaped field."""
+        contract_dict = self.create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[{"type": "text", "description": "some text expectation"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+
+            assert rules == []
+        finally:
+            os.unlink(temp_path)
+
     def test_mixed_valid_and_malformed_library_entries_preserve_other_rules(self, generator, caplog):
         """One malformed type: library entry never blocks the rest of the contract's rules."""
         contract_dict = {
@@ -3849,16 +3896,17 @@ class TestDataContractGeneratorLibraryRulesRowCount(DataContractGeneratorTestBas
         assert rule["check"]["arguments"]["condition_column"] == "condition"
         assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
 
-    def test_must_be_between_falls_back_to_sql_query_with_exclusive_bounds(self, generator):
-        """mustBeBetween has no aggregate equivalent (both bounds exclusive per ODCS), so it falls
-        back to sql_query rather than being decomposed into two inclusive-bound checks."""
+    def test_must_be_between_falls_back_to_sql_query_with_inclusive_bounds(self, generator):
+        """mustBeBetween has no aggregate equivalent, so it falls back to sql_query. Both bounds
+        are inclusive, matching datacontract-cli's reference mapping (the ODCS spec text doesn't
+        settle it)."""
         rules = self._generate(generator, self._contract_with_row_count({"mustBeBetween": [10, 20]}))
 
         assert len(rules) == 1
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
         assert rule["check"]["arguments"]["query"] == (
-            "SELECT NOT (COUNT(*) > 10 AND COUNT(*) < 20) AS condition FROM {{ input_view }}"
+            "SELECT NOT (COUNT(*) >= 10 AND COUNT(*) <= 20) AS condition FROM {{ input_view }}"
         )
         assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
 
@@ -4033,6 +4081,15 @@ class TestDataContractGeneratorLibraryRulesNullValues(DataContractGeneratorTestB
         assert "nullValues entry on property 'email'" in caplog.text
         assert "has no recognized threshold field set" in caplog.text
 
+    def test_unrecognized_unit_on_non_zero_threshold_is_skipped_with_warning(self, generator, caplog):
+        """A non-zero threshold with an unrecognized unit is skipped, not silently treated as
+        unit: rows, matching duplicateValues/invalidValues/missingValues's own unit handling."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._contract_with_nullvalues({"mustBe": 5, "unit": "percentage"}))
+
+        assert rules == []
+        assert "Unrecognized unit 'percentage'" in caplog.text
+
     def test_schema_level_entry_is_skipped_with_warning(self, generator, caplog):
         """nullValues is a property-level metric; a schema-level entry (no property) is skipped."""
         contract_dict = self.create_basic_contract(
@@ -4131,6 +4188,21 @@ class TestDataContractGeneratorLibraryRulesMissingValues(DataContractGeneratorTe
         assert rules[0]["name"] == "email_missingValues_null"
         assert rules[0]["check"] == {"function": "is_not_null", "arguments": {"column": "email"}}
 
+    def test_must_be_zero_without_explicit_null_still_checks_null(self, generator):
+        """NULL is always counted as missing, even when `null` is not itself listed in
+        arguments.missingValues -- matching the non-zero-threshold condition
+        (`col IS NULL OR col IN (...)`), which never gated NULL on the list either."""
+        rules = self._generate(
+            generator,
+            self._contract_with_missing_values({"mustBe": 0, "arguments": {"missingValues": ["N/A"]}}),
+        )
+
+        assert len(rules) == 2
+        names = {rule["name"] for rule in rules}
+        assert names == {"email_missingValues_null", "email_missingValues_sentinel"}
+        null_rule = next(rule for rule in rules if rule["name"] == "email_missingValues_null")
+        assert null_rule["check"] == {"function": "is_not_null", "arguments": {"column": "email"}}
+
     def test_nonzero_rows_threshold_generates_missing_count_aggregate(self, generator):
         """A non-zero unit: rows threshold generates a dataset-level count aggregate scoped to
         rows matching either the null condition or the sentinel condition, OR'd in the row_filter,
@@ -4194,9 +4266,10 @@ class TestDataContractGeneratorLibraryRulesMissingValues(DataContractGeneratorTe
         assert rule["check"]["arguments"]["row_filter"] == "email IS NULL"
         assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
 
-    def test_must_be_between_falls_back_to_sql_query_with_exclusive_bounds_and_percent_unit(self, generator):
-        """mustBeBetween has no aggregate equivalent (both bounds exclusive per ODCS), so it falls
-        back to sql_query under unit: percent too, using the AVG(CASE WHEN ...) expression."""
+    def test_must_be_between_falls_back_to_sql_query_with_inclusive_bounds_and_percent_unit(self, generator):
+        """mustBeBetween has no aggregate equivalent, so it falls back to sql_query under unit:
+        percent too, using the AVG(CASE WHEN ...) expression. Both bounds are inclusive, matching
+        datacontract-cli's reference mapping."""
         rules = self._generate(
             generator,
             self._contract_with_missing_values(
@@ -4212,8 +4285,8 @@ class TestDataContractGeneratorLibraryRulesMissingValues(DataContractGeneratorTe
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
         assert rule["check"]["arguments"]["query"] == (
-            "SELECT NOT (AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END) > 1 AND "
-            "AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END) < 5) AS condition FROM {{ input_view }}"
+            "SELECT NOT (AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END) >= 1 AND "
+            "AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END) <= 5) AS condition FROM {{ input_view }}"
         )
         assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
 
@@ -4551,6 +4624,19 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(DataContractGeneratorTe
         assert len(rules) == 1
         assert rules[0]["check"]["arguments"]["row_filter"] == r"NOT (status RLIKE '\\d+')"
 
+    def test_must_be_zero_valid_values_backslash_is_escaped_like_non_zero_path(self, generator):
+        """A validValues string containing a backslash is escaped identically on the mustBe: 0
+        row-level is_in_list path and the non-zero aggregate/sql_query path (both eventually parse
+        the literal as Spark SQL), so a `\\N` sentinel compares the same way regardless of
+        threshold."""
+        rules = self._generate(
+            generator,
+            self._contract_with_invalid_values({"mustBe": 0, "arguments": {"validValues": [r"\N"]}}),
+        )
+
+        assert len(rules) == 1
+        assert rules[0]["check"]["arguments"]["allowed"] == [r"'\\N'"]
+
 
 class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGeneratorTestBase):
     """Tests for the type: library duplicateValues metric mapping onto DQX checks."""
@@ -4648,35 +4734,32 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
 
     @staticmethod
     def _duplicate_count_expr(group_by_clause: str, where_clause: str) -> str:
-        """Build the expected GROUP BY-based duplicate row-count scalar subquery expression."""
-        group_counts = (
-            f"(SELECT COUNT(*) AS dqx_dup_group_count FROM {{{{ input_view }}}} "
-            f"WHERE {where_clause} GROUP BY {group_by_clause})"
-        )
+        """Build the expected GROUP BY ... HAVING-based duplicate value-count scalar subquery
+        expression: the number of distinct recurring values (matching datacontract-cli's
+        reference mapping), not the number of rows sitting in a duplicated group."""
         return (
-            f"(SELECT COALESCE(SUM(CASE WHEN dqx_dup_group_count > 1 THEN dqx_dup_group_count ELSE 0 END), 0) "
-            f"FROM {group_counts} AS dqx_dup_groups)"
+            f"(SELECT COUNT(*) FROM (SELECT 1 FROM {{{{ input_view }}}} WHERE {where_clause} "
+            f"GROUP BY {group_by_clause} HAVING COUNT(*) > 1) AS dqx_dup_groups)"
         )
 
     def test_non_zero_unit_rows_falls_back_to_sql_query(self, generator):
         """A non-zero threshold with unit: rows (or absent) falls back to sql_query, keyed on a
-        GROUP BY-based duplicate row count (not a window function, which Spark rejects when
-        nested inside an aggregate)."""
+        GROUP BY ... HAVING-based duplicate value count (not a window function, which Spark
+        rejects when nested inside an aggregate, and not re-selected FROM the input view, which
+        would return one row per input row instead of the required single result row)."""
         rules = self._generate(generator, self._contract_with_duplicate_values_property({"mustBeLessOrEqualTo": 5}))
 
         assert len(rules) == 1
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
         count_expr = self._duplicate_count_expr("order_id", "order_id IS NOT NULL")
-        assert rule["check"]["arguments"]["query"] == (
-            f"SELECT {count_expr} > 5 AS condition FROM {{{{ input_view }}}}"
-        )
+        assert rule["check"]["arguments"]["query"] == f"SELECT {count_expr} > 5 AS condition"
         assert rule["check"]["arguments"]["condition_column"] == "condition"
         assert rule["user_metadata"]["unit"] == "rows"
         assert rule["user_metadata"]["threshold_field"] == "mustBeLessOrEqualTo"
 
     def test_unit_percent_falls_back_to_sql_query(self, generator):
-        """unit: percent divides the same duplicate row count by the total row count, times 100."""
+        """unit: percent divides the same duplicate value count by the total row count, times 100."""
         rules = self._generate(
             generator, self._contract_with_duplicate_values_property({"mustBe": 10, "unit": "percent"})
         )
@@ -4686,9 +4769,7 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
         assert rule["check"]["function"] == "sql_query"
         count_expr = self._duplicate_count_expr("order_id", "order_id IS NOT NULL")
         percent_expr = f"(100.0 * {count_expr} / NULLIF((SELECT COUNT(*) FROM {{{{ input_view }}}}), 0))"
-        assert rule["check"]["arguments"]["query"] == (
-            f"SELECT {percent_expr} <> 10 AS condition FROM {{{{ input_view }}}}"
-        )
+        assert rule["check"]["arguments"]["query"] == f"SELECT {percent_expr} <> 10 AS condition"
         assert rule["user_metadata"]["unit"] == "percent"
 
     def test_must_be_greater_than_falls_back_to_sql_query(self, generator):
@@ -4700,15 +4781,13 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
         count_expr = self._duplicate_count_expr("order_id", "order_id IS NOT NULL")
-        assert rule["check"]["arguments"]["query"] == (
-            f"SELECT {count_expr} <= 3 AS condition FROM {{{{ input_view }}}}"
-        )
+        assert rule["check"]["arguments"]["query"] == f"SELECT {count_expr} <= 3 AS condition"
         assert rule["check"]["arguments"]["condition_column"] == "condition"
         assert rule["user_metadata"]["threshold_field"] == "mustBeGreaterThan"
 
-    def test_composite_between_falls_back_to_sql_query_with_exclusive_bounds(self, generator):
-        """A composite-key mustBeBetween falls back to sql_query with exclusive bounds, grouped
-        by every listed column."""
+    def test_composite_between_falls_back_to_sql_query_with_inclusive_bounds(self, generator):
+        """A composite-key mustBeBetween falls back to sql_query with inclusive bounds (matching
+        datacontract-cli's reference mapping), grouped by every listed column."""
         rules = self._generate(
             generator,
             self._contract_with_duplicate_values_schema(
@@ -4720,8 +4799,8 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(DataContractGenerator
         rule = rules[0]
         assert rule["check"]["function"] == "sql_query"
         count_expr = self._duplicate_count_expr("tenant_id, order_id", "tenant_id IS NOT NULL AND order_id IS NOT NULL")
-        assert rule["check"]["arguments"]["query"] == (
-            f"SELECT NOT ({count_expr} > 1 AND {count_expr} < 4) AS condition FROM {{{{ input_view }}}}"
+        assert (
+            rule["check"]["arguments"]["query"] == f"SELECT NOT ({count_expr} >= 1 AND {count_expr} <= 4) AS condition"
         )
         assert rule["user_metadata"]["threshold_field"] == "mustBeBetween"
 
