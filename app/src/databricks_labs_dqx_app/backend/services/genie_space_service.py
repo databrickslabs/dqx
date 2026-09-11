@@ -1679,7 +1679,14 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
             if not page_token:
                 break
         if page_token:
-            raise _SpaceLookupError
+            # The listing exceeded the paging cap (a workspace with thousands of
+            # Genie spaces). Do NOT hard-fail: raising here stored no id, so
+            # provisioning would fail identically on every startup and the space
+            # would never be created. Fall through with the candidates gathered
+            # so far — reuse one if it matches this parent, otherwise degrade to
+            # creating the space. Worst case is a single duplicate if a reusable
+            # space sits beyond the cap, a one-time cost that then stabilises.
+            logger.info("Genie space listing exceeded the paging cap; proceeding with candidates gathered so far")
         matches.sort(key=lambda sp: sp.get("title") or "", reverse=True)
         unclassified_match = False
         for match in matches:
@@ -1689,7 +1696,7 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
             try:
                 detail = ws.api_client.do("GET", f"/api/2.0/genie/spaces/{space_id}")
             except Exception as error:
-                logger.info("Genie space detail lookup skipped: %s", type(error).__name__)
+                logger.info(f"Genie space detail lookup skipped: {type(error).__name__}")
                 unclassified_match = True
                 continue
             if isinstance(detail, dict) and detail.get("parent_path") == parent_path:
@@ -1764,10 +1771,15 @@ def ensure_dq_genie_space(
                 ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
             except Exception as error:
                 error_code = getattr(error, "error_code", None)
-                if isinstance(error, NotFound) or error_code in {"NOT_FOUND", "PERMISSION_DENIED"}:
+                if isinstance(error, NotFound) or error_code == "NOT_FOUND":
                     existing = None
                 else:
-                    logger.info("Genie space verification skipped: %s", type(error).__name__)
+                    # Any other failure — including PERMISSION_DENIED — is not
+                    # evidence the space is gone. A transient API blip or an ACL
+                    # hiccup on the verify GET must NOT drop the stored id: doing
+                    # so orphans the original space (the title lookup can't see it
+                    # either) and creates a duplicate. Keep using the stored space.
+                    logger.info(f"Genie space verification skipped: {type(error).__name__}")
                     return existing
 
         # A matching hash needs no update, but only after verifying that the

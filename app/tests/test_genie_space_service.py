@@ -957,20 +957,22 @@ def test_recreates_when_stored_space_response_is_not_found(settings: MagicMock, 
     assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
 
 
-def test_recreates_when_stored_space_is_inaccessible_to_app_identity(settings: MagicMock, ws: MagicMock) -> None:
+def test_permission_denied_on_verify_keeps_stored_space(settings: MagicMock, ws: MagicMock) -> None:
+    # PERMISSION_DENIED on the verify GET is not proof the space is gone (a
+    # transient ACL blip): the stored id must be kept, not dropped and
+    # recreated, which would orphan the original and leave a duplicate.
     class RuntimePermissionDeniedError(RuntimeError):
         error_code = "PERMISSION_DENIED"
 
     settings.store[gs.SETTING_SPACE_ID] = "inaccessible-space"
     settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
-    ws.api_client.do.side_effect = [
-        RuntimePermissionDeniedError("app identity cannot access space"),
-        {"spaces": []},
-        {"space_id": "replacement-space"},
-    ]
+    ws.api_client.do.side_effect = RuntimePermissionDeniedError("app identity cannot access space")
 
-    assert ensure(settings, ws) == "replacement-space"
-    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+    assert ensure(settings, ws) == "inaccessible-space"
+
+    assert settings.store[gs.SETTING_SPACE_ID] == "inaccessible-space"
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/inaccessible-space")
 
 
 def test_recreates_when_stored_space_is_deleted_during_config_update(settings: MagicMock, ws: MagicMock) -> None:
@@ -1077,13 +1079,21 @@ def test_list_failure_does_not_create_duplicate(settings: MagicMock, ws: MagicMo
     assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
 
 
-def test_incomplete_space_listing_does_not_create_duplicate(settings: MagicMock, ws: MagicMock) -> None:
-    ws.api_client.do.side_effect = [{"spaces": [], "next_page_token": f"page-{page + 1}"} for page in range(20)]
+def test_paging_cap_degrades_to_create_rather_than_failing_forever(settings: MagicMock, ws: MagicMock) -> None:
+    # A workspace larger than the paging cap exposes no reusable candidate in
+    # the scanned pages. Degrade to creating the space (and store its id) rather
+    # than hard-failing every startup — a permanent, self-repeating failure that
+    # would never provision the space.
+    ws.api_client.do.side_effect = [{"spaces": [], "next_page_token": f"page-{page + 1}"} for page in range(20)] + [
+        {"space_id": "created-space"}
+    ]
 
-    assert ensure(settings, ws) is None
+    assert ensure(settings, ws) == "created-space"
 
-    assert all(call.args[0] != "POST" for call in do_calls(ws))
-    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert settings.store[gs.SETTING_SPACE_ID] == "created-space"
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
 def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: MagicMock, caplog) -> None:
