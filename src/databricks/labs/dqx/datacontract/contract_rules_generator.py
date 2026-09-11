@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 
@@ -33,6 +33,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
+from databricks.labs.dqx.utils import sanitize_for_logging
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -42,6 +43,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -90,6 +93,7 @@ class DataContractRulesGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        process_library_rules: bool = True,
         generate_schema_validation: bool = True,
         strict_schema_validation: bool = True,
         default_criticality: str = "error",
@@ -119,6 +123,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
+            process_library_rules: Whether to generate rules from ODCS ``type: library`` quality metric entries (default True). Set to False to skip this mapping entirely, e.g. if a contract's library entries misbehave.
             generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
             strict_schema_validation: Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
             default_criticality: Default criticality level for generated rules (default is "error").
@@ -140,6 +145,7 @@ class DataContractRulesGenerator(DQEngineBase):
             odcs,
             generate_predefined_rules,
             process_text_rules,
+            process_library_rules,
             generate_schema_validation,
             strict_schema_validation,
             default_criticality,
@@ -240,6 +246,7 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
+        process_library_rules: bool,
         generate_schema_validation: bool,
         strict_schema_validation: bool,
         default_criticality: str,
@@ -269,6 +276,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
             explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
+
+            if process_library_rules:
+                library_rules = self._process_library_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality
+                )
+                dq_rules.extend(library_rules)
 
         return dq_rules
 
@@ -1459,3 +1472,1464 @@ class DataContractRulesGenerator(DQEngineBase):
         if owner:
             rule["owner"] = owner
         return rule
+
+    # ODCS type: library quality metric support.
+    #
+    # Sibling dispatch to the explicit-rule extractors above: explicit rules fail fast on
+    # malformed structure and dispatch on a single generic `implementation` dict, while library
+    # rules warn-and-skip per-entry and dispatch per-metric to distinct builders. Conflating the
+    # two would mix incompatible error philosophies into one method.
+
+    _SUPPORTED_LIBRARY_METRICS: tuple[str, ...] = (
+        "rowCount",
+        "nullValues",
+        "missingValues",
+        "invalidValues",
+        "duplicateValues",
+    )
+
+    # Per-metric default `user_metadata["dimension"]` when the contract doesn't set its own,
+    # drawn from ODCS's own dimension vocabulary.
+    _LIBRARY_METRIC_DEFAULT_DIMENSIONS: dict[str, str] = {
+        "rowCount": "completeness",
+        "nullValues": "completeness",
+        "missingValues": "completeness",
+        "invalidValues": "conformity",
+        "duplicateValues": "uniqueness",
+    }
+
+    _SAFE_SQL_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+    # The eight ODCS threshold fields shared by every library metric (rowCount, duplicateValues, ...).
+    _THRESHOLD_FIELDS: tuple[str, ...] = (
+        "mustBe",
+        "mustNotBe",
+        "mustBeGreaterThan",
+        "mustBeGreaterOrEqualTo",
+        "mustBeLessThan",
+        "mustBeLessOrEqualTo",
+        "mustBeBetween",
+        "mustNotBeBetween",
+    )
+
+    _MAX_LIBRARY_PATTERN_LENGTH = 200
+    _NESTED_QUANTIFIER_PATTERN = re.compile(r"\([^()]*[+*]\)[+*{]")
+    _ALTERNATION_QUANTIFIER_PATTERN = re.compile(r"\([^()]*\|[^()]*\)[+*{]")
+
+    def _is_dqx_library_rule(self, quality_rule: DataQuality) -> bool:
+        """Check if a quality rule is an ODCS type: library quality metric entry.
+
+        Per the ODCS spec, ``type`` "can be omitted, if a metric property is defined" -- every
+        library example in the spec omits it. An explicit ``type: library`` is also accepted for
+        contracts that set it anyway.
+        """
+        if quality_rule.type == 'library':
+            return True
+        return quality_rule.type is None and quality_rule.metric is not None
+
+    def _process_library_rules_for_schema(
+        self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+    ) -> list[dict]:
+        """Process ODCS type: library quality metric entries from an ODCS schema."""
+        rules: list[dict] = []
+
+        # Process property-level library rules
+        for prop in schema_obj.properties or []:
+            if prop.quality:
+                rules.extend(self._extract_property_library_rules(prop, schema_name, odcs, default_criticality))
+
+        # Process schema-level library rules (e.g. rowCount)
+        if schema_obj.quality:
+            rules.extend(self._extract_schema_library_rules(schema_obj.quality, schema_name, odcs, default_criticality))
+
+        return rules
+
+    def _extract_property_library_rules(
+        self, prop: SchemaProperty, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+    ) -> list[dict]:
+        """Extract DQX rules from property-level type: library quality metric entries."""
+        rules: list[dict] = []
+
+        if prop.quality is None:
+            return rules
+
+        for quality_rule in prop.quality:
+            if not self._is_dqx_library_rule(quality_rule):
+                continue
+            try:
+                metric = self._resolve_library_metric(quality_rule, schema_name, prop.name)
+                if metric is None:
+                    continue
+                rules.extend(
+                    self._build_library_rules_for_metric(
+                        quality_rule, metric, prop.name, schema_name, odcs, default_criticality
+                    )
+                )
+            except (AttributeError, KeyError, TypeError) as e:
+                logger.warning(
+                    f"Skipping malformed type: library quality entry on property "
+                    f"'{sanitize_for_logging(prop.name or 'unknown')}' in schema "
+                    f"'{sanitize_for_logging(schema_name)}': {sanitize_for_logging(str(e))}"
+                )
+        return rules
+
+    def _extract_schema_library_rules(
+        self,
+        quality_list: list[DataQuality],
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Extract DQX rules from schema-level type: library quality metric entries."""
+        rules: list[dict] = []
+        for quality_rule in quality_list:
+            if not self._is_dqx_library_rule(quality_rule):
+                continue
+            try:
+                metric = self._resolve_library_metric(quality_rule, schema_name)
+                if metric is None:
+                    continue
+                rules.extend(
+                    self._build_library_rules_for_metric(
+                        quality_rule, metric, None, schema_name, odcs, default_criticality
+                    )
+                )
+            except (AttributeError, KeyError, TypeError) as e:
+                logger.warning(
+                    f"Skipping malformed type: library quality entry in schema "
+                    f"'{sanitize_for_logging(schema_name)}': {sanitize_for_logging(str(e))}"
+                )
+        return rules
+
+    def _resolve_library_metric(
+        self, quality_rule: DataQuality, schema_name: str, property_name: str | None = None
+    ) -> str | None:
+        """Validate quality_rule.metric against the five supported ODCS library metrics.
+
+        Warns and returns None for a missing or unrecognized metric name so the caller can skip
+        the entry without raising. The five supported metrics are named in the warning so a
+        contract author can self-correct a typo without reading DQX source.
+        """
+        metric = quality_rule.metric
+        supported = ", ".join(self._SUPPORTED_LIBRARY_METRICS)
+        location = (
+            f"property '{sanitize_for_logging(property_name)}' in schema '{sanitize_for_logging(schema_name)}'"
+            if property_name
+            else f"schema '{sanitize_for_logging(schema_name)}'"
+        )
+
+        if not metric:
+            logger.warning(
+                f"Missing 'metric' on type: library quality entry on {location}; skipping this quality check. "
+                f"Supported metrics: {supported}."
+            )
+            return None
+
+        if metric not in self._SUPPORTED_LIBRARY_METRICS:
+            logger.warning(
+                f"Unrecognized library metric '{sanitize_for_logging(metric)}' on {location}; skipping this "
+                f"quality check. Supported metrics: {supported}."
+            )
+            return None
+
+        return metric
+
+    def _build_library_rules_for_metric(
+        self,
+        quality_rule: DataQuality,
+        metric: str,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Dispatch a recognized type: library metric to its rule-building implementation.
+
+        Per-metric builders (rowCount, nullValues, missingValues, invalidValues, duplicateValues)
+        are added incrementally; a recognized metric with no builder yet produces no rules rather
+        than raising or warning.
+        """
+        if metric == "rowCount":
+            return self._build_row_count_rules(quality_rule, schema_name, odcs, default_criticality)
+        if metric == "nullValues":
+            return self._build_nullvalues_rules(quality_rule, property_name, schema_name, odcs, default_criticality)
+        if metric == "missingValues":
+            return self._build_missing_values_rules(quality_rule, property_name, schema_name, odcs, default_criticality)
+        if metric == "invalidValues":
+            return self._build_invalid_values_rules(quality_rule, property_name, schema_name, odcs, default_criticality)
+        if metric == "duplicateValues":
+            return self._build_duplicate_values_rules(
+                quality_rule, property_name, schema_name, odcs, default_criticality
+            )
+        return []
+
+    # rowCount ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in order.
+    # mustBe/mustNotBe/mustBeGreaterOrEqualTo/mustBeLessOrEqualTo map onto exact-fit dataset-level
+    # aggregate checks; strict inequalities and both range forms have no aggregate equivalent and
+    # fall back to the dataset-level sql_query escape hatch. mustBeBetween/mustNotBeBetween treat
+    # both bounds as inclusive: the ODCS spec text doesn't settle it, and we match
+    # datacontract-cli's reference mapping (SodaCL's plain `between`, which is inclusive on both
+    # ends unless a bound is written with a round bracket) rather than pick our own reading.
+
+    def _build_row_count_rules(
+        self,
+        quality_rule: DataQuality,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the single DQX dataset-level row-count rule for an ODCS rowCount library entry."""
+        resolved = self._row_count_check(quality_rule, schema_name)
+        if resolved is None:
+            return []
+        threshold_field, check_dict = resolved
+
+        user_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "metric",
+            "metric": "rowCount",
+            "threshold_field": threshold_field,
+            "unit": quality_rule.unit or "rows",
+            "dimension": self._library_dimension(quality_rule, "rowCount"),
+            **self._library_severity_metadata(quality_rule),
+        }
+
+        return [
+            {
+                "check": check_dict,
+                # threshold_field is included since a schema can carry multiple rowCount entries
+                # (e.g. a lower and an upper bound), which would otherwise collide on rule name.
+                "name": f"{schema_name}_rowCount_{threshold_field}",
+                "criticality": default_criticality,
+                "user_metadata": user_metadata,
+            }
+        ]
+
+    def _row_count_check(self, quality_rule: DataQuality, schema_name: str) -> tuple[str, dict] | None:
+        """Resolve the first set ODCS threshold field on a rowCount entry to (field name, check dict).
+
+        Returns None (after logging) when none of the eight ODCS threshold fields are set.
+        """
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._row_count_aggregate_check("is_aggr_equal", quality_rule.mustBe)
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._row_count_aggregate_check("is_aggr_not_equal", quality_rule.mustNotBe)
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._row_count_aggregate_check(
+                "is_aggr_not_less_than", quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._row_count_aggregate_check(
+                "is_aggr_not_greater_than", quality_rule.mustBeLessOrEqualTo
+            )
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustNotBeBetween is not None:
+            min_val, max_val = quality_rule.mustNotBeBetween
+            return "mustNotBeBetween", self._library_sql_query_check(
+                f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}"
+            )
+
+        logger.warning(
+            f"type: library rowCount entry on schema '{sanitize_for_logging(schema_name)}' has no recognized "
+            "threshold field set (mustBe, mustNotBe, mustBeGreaterOrEqualTo, mustBeLessOrEqualTo, "
+            "mustBeGreaterThan, mustBeLessThan, mustBeBetween, mustNotBeBetween); skipping this quality check."
+        )
+        return None
+
+    @staticmethod
+    def _row_count_aggregate_check(function: str, limit: Any) -> dict:
+        """Build a dataset-level count-aggregate check dict (is_aggr_equal / is_aggr_not_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": "*", "limit": limit, "aggr_type": "count"},
+        }
+
+    @staticmethod
+    def _library_sql_query_check(query: str, *, row_filter: str | None = None) -> dict:
+        """Build a dataset-level sql_query check dict. condition_column semantics: true = violation.
+
+        Shared strict/between fallback across library metrics (rowCount, nullValues,
+        duplicateValues, ...). row_filter, when provided, narrows the view to the rows the query's
+        aggregate should be scoped to (e.g. only the null rows for a nullValues check).
+        """
+        arguments: dict[str, Any] = {"query": query, "condition_column": "condition"}
+        if row_filter is not None:
+            arguments["row_filter"] = row_filter
+        return {
+            "function": "sql_query",
+            "arguments": arguments,
+        }
+
+    # duplicateValues: single-property (argument-less) and composite (arguments.properties) forms
+    # share one mapping, since is_unique's `columns` argument already accepts a list. mustBe: 0 maps
+    # directly to is_unique; every other threshold routes through the sql_query escape hatch, since
+    # the duplicate count must be computed via a GROUP BY subquery (see
+    # _duplicate_values_count_expr) rather than a window function nested in an is_aggr_* `column`
+    # expression: SUM(CASE WHEN ... COUNT(*) OVER (PARTITION BY ...) ...) is rejected by Spark at
+    # apply time (a window function can't be nested inside an aggregate function). The count itself
+    # matches datacontract-cli's reference mapping (Soda's duplicate_count: distinct recurring
+    # values, not rows-in-group) rather than our own reading of the ODCS spec text, which does not
+    # settle it -- see _duplicate_values_count_expr's own docstring for the full rationale.
+
+    def _build_duplicate_values_rules(
+        self,
+        quality_rule: DataQuality,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the DQX dataset-level uniqueness rule for an ODCS duplicateValues library entry.
+
+        property_name is set for the property-level, single-column, argument-less form; None for
+        the schema-level entry, whose composite key is read from arguments.properties.
+        """
+        key_columns = self._duplicate_values_key_columns(quality_rule, property_name, schema_name)
+        if key_columns is None:
+            return []
+
+        resolved = self._duplicate_values_check(quality_rule, key_columns, schema_name)
+        if resolved is None:
+            return []
+        threshold_field, check_dict = resolved
+
+        user_metadata: dict[str, Any] = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "metric",
+            "metric": "duplicateValues",
+            "threshold_field": threshold_field,
+            "unit": quality_rule.unit or "rows",
+            "dimension": self._library_dimension(quality_rule, "duplicateValues"),
+            **self._library_severity_metadata(quality_rule),
+        }
+        if property_name is not None:
+            user_metadata["field"] = property_name
+            rule_name = f"{property_name}_duplicateValues"
+        else:
+            user_metadata["fields"] = key_columns
+            rule_name = f"{schema_name}_duplicateValues"
+
+        return [
+            {
+                "check": check_dict,
+                "name": rule_name,
+                "criticality": default_criticality,
+                "user_metadata": user_metadata,
+            }
+        ]
+
+    def _duplicate_values_key_columns(
+        self, quality_rule: DataQuality, property_name: str | None, schema_name: str
+    ) -> list[str] | None:
+        """Resolve the duplicateValues key columns.
+
+        Returns [property_name] for the property-level form. For the schema-level form
+        (property_name is None), reads the composite key from arguments.properties, warning and
+        returning None if it is missing, not a list, empty, or contains a non-string entry.
+        """
+        if property_name is not None:
+            return [property_name]
+
+        properties = self._read_library_argument(quality_rule.arguments, "properties", list)
+        if properties is None:
+            return None
+        if not all(isinstance(entry, str) for entry in properties):
+            logger.warning(
+                f"'arguments.properties' for type: library duplicateValues entry in schema "
+                f"'{sanitize_for_logging(schema_name)}' must be a list of property name strings; "
+                "skipping this quality check."
+            )
+            return None
+        return properties
+
+    def _duplicate_values_check(
+        self, quality_rule: DataQuality, key_columns: list[str], schema_name: str
+    ) -> tuple[str, dict] | None:
+        """Resolve the first set ODCS threshold field on a duplicateValues entry to (field name, check dict).
+
+        mustBe: 0 maps directly to is_unique (unit-independent: 0 rows = 0% either way). Every other
+        threshold requires a resolved unit (rows/percent) and routes through the sql_query escape
+        hatch, keyed on the GROUP BY-based duplicate count/percentage from
+        _duplicate_values_count_expr (see the class comment above this metric's section for why a
+        plain is_aggr_* aggregate can't be used here). Returns None (after logging) when no
+        threshold field is set, or when unit is missing/unrecognized.
+        """
+        if self._is_zero_threshold(quality_rule.mustBe):
+            return "mustBe", {"function": "is_unique", "arguments": {"columns": key_columns}}
+
+        if not self._has_any_threshold_field(quality_rule):
+            logger.warning(
+                f"type: library duplicateValues entry in schema '{sanitize_for_logging(schema_name)}' has no "
+                "recognized threshold field set (mustBe, mustNotBe, mustBeGreaterOrEqualTo, mustBeLessOrEqualTo, "
+                "mustBeGreaterThan, mustBeLessThan, mustBeBetween, mustNotBeBetween); skipping this quality check."
+            )
+            return None
+
+        unit = self._resolve_duplicate_values_unit(quality_rule, schema_name)
+        if unit is None:
+            return None
+
+        count_expr = self._duplicate_values_count_expr(key_columns, unit)
+
+        # count_expr is a self-contained scalar subquery (it references {{ input_view }} itself
+        # for its own GROUP BY), so the comparison is selected with no outer FROM at all -- adding
+        # one (e.g. `FROM {{ input_view }}`) would re-introduce a row per input row and trip
+        # sql_query's "dataset-level query must return exactly one row" check.
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._library_sql_query_check(f"SELECT {count_expr} <> {quality_rule.mustBe} AS condition")
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._library_sql_query_check(
+                f"SELECT {count_expr} = {quality_rule.mustNotBe} AS condition"
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._library_sql_query_check(
+                f"SELECT {count_expr} < {quality_rule.mustBeGreaterOrEqualTo} AS condition"
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._library_sql_query_check(
+                f"SELECT {count_expr} > {quality_rule.mustBeLessOrEqualTo} AS condition"
+            )
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT {count_expr} <= {quality_rule.mustBeGreaterThan} AS condition"
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT {count_expr} >= {quality_rule.mustBeLessThan} AS condition"
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT ({count_expr} >= {min_val} AND {count_expr} <= {max_val}) AS condition"
+            )
+        if quality_rule.mustNotBeBetween is not None:
+            min_val, max_val = quality_rule.mustNotBeBetween
+            return "mustNotBeBetween", self._library_sql_query_check(
+                f"SELECT ({count_expr} >= {min_val} AND {count_expr} <= {max_val}) AS condition"
+            )
+
+        # Unreachable: _has_any_threshold_field guarantees one of the eight fields above is set.
+        raise AssertionError("Unreachable: no duplicateValues threshold field matched despite a prior check.")
+
+    @classmethod
+    def _has_any_threshold_field(cls, quality_rule: DataQuality) -> bool:
+        """Return True if any of the eight ODCS threshold fields is set on quality_rule."""
+        return any(getattr(quality_rule, field) is not None for field in cls._THRESHOLD_FIELDS)
+
+    @staticmethod
+    def _is_zero_threshold(value: Any) -> bool:  # value: mustBe is Any-typed on the ODCS DataQuality model
+        """Return True only for a genuine numeric zero threshold.
+
+        A plain `value == 0` would also match the boolean `False` (`False == 0` is `True` in
+        Python) and would miss a numeric string like `"0"`. Bool is checked before the numeric
+        branch since `bool` is a subclass of `int`.
+        """
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, (int, float)):
+            return value == 0
+        if isinstance(value, str):
+            try:
+                return float(value) == 0
+            except ValueError:
+                return False
+        return False
+
+    def _resolve_duplicate_values_unit(self, quality_rule: DataQuality, schema_name: str) -> str | None:
+        """Resolve the unit for a non-zero duplicateValues threshold: 'rows' (default) or 'percent'.
+
+        Warns and returns None for any other value (unrecognized unit, general library-metric policy).
+        """
+        unit = quality_rule.unit or "rows"
+        if unit not in ("rows", "percent"):
+            logger.warning(
+                f"Unrecognized unit '{sanitize_for_logging(unit)}' on type: library duplicateValues entry in "
+                f"schema '{sanitize_for_logging(schema_name)}'; expected 'rows' or 'percent'. Skipping this "
+                "quality check."
+            )
+            return None
+        return unit
+
+    @classmethod
+    def _duplicate_values_count_expr(cls, key_columns: list[str], unit: str) -> str:
+        """Build a scalar SQL expression for the duplicate value count (unit: rows) or percentage
+        (unit: percent) of key_columns.
+
+        Matches datacontract-cli's reference mapping of duplicateValues to Soda's
+        duplicate_count: the number of *distinct values (key combinations) that recur*, not the
+        number of rows sitting in a duplicated group -- for `[A, A, A, B, B, C]` this is 2 (A and
+        B recur), not 5 (rows in a duplicated group). Percent divides that count by the total row
+        count, again matching the reference (`duplicate_count * 100 / row_count`), not by the
+        number of duplicated rows.
+
+        Computed via a GROUP BY ... HAVING subquery -- a genuine aggregate, not a window function
+        -- so it can be safely nested inside the enclosing sql_query comparison. An earlier version
+        built this indicator with `COUNT(*) OVER (PARTITION BY ...)` passed as an is_aggr_* `column`
+        argument; wrapping that in SUM/AVG produces a window function nested inside an aggregate
+        function, which Spark rejects at apply time for every threshold except mustBe: 0. A row in
+        an all-non-null key group is only "in the group" with rows sharing its identical non-null
+        key, so gating the GROUP BY's source rows on every key column being non-null is sufficient.
+        Every key column is quoted via _safe_sql_identifier before interpolation.
+        """
+        quoted = [cls._safe_sql_identifier(col) for col in key_columns]
+        not_null_clause = " AND ".join(f"{col} IS NOT NULL" for col in quoted)
+        partition_by = ", ".join(quoted)
+        duplicate_values = (
+            f"(SELECT COUNT(*) FROM (SELECT 1 FROM {{{{ input_view }}}} WHERE {not_null_clause} "
+            f"GROUP BY {partition_by} HAVING COUNT(*) > 1) AS dqx_dup_groups)"
+        )
+        if unit == "rows":
+            return duplicate_values
+        return f"(100.0 * {duplicate_values} / NULLIF((SELECT COUNT(*) FROM {{{{ input_view }}}}), 0))"
+
+    # nullValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in order.
+    # mustBe: 0 is a special case mapping onto the row-level is_not_null check (cheaper, pinpoints
+    # the offending row, and is unit-independent: 0 nulls and 0% nulls are the same fact). Every
+    # other threshold (including mustBe with N > 0) maps onto a dataset-level null-count/percentage
+    # aggregate for the entry's unit: rows (the default, count(*) over rows where the column IS
+    # NULL) or percent (AVG of a CASE WHEN ... SQL string indicator, since is_aggr_*'s row_filter+"*"
+    # mechanism can only count rows, not express a percentage). Strict inequalities and both range
+    # forms have no aggregate equivalent and fall back to the dataset-level sql_query escape hatch
+    # for both units. mustBeBetween/mustNotBeBetween treat both bounds as inclusive, matching
+    # datacontract-cli's reference mapping rather than our own reading of the spec text (see the
+    # rowCount section above for the full reasoning).
+
+    def _build_nullvalues_rules(
+        self,
+        quality_rule: DataQuality,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the single DQX rule for an ODCS nullValues library entry.
+
+        nullValues is a property-level ODCS metric; a schema-level entry (no property) is skipped.
+        """
+        if not property_name:
+            logger.warning(
+                f"type: library nullValues entry in schema '{sanitize_for_logging(schema_name)}' has no "
+                "property; nullValues is a property-level metric. Skipping this quality check."
+            )
+            return []
+
+        resolved = self._nullvalues_check(quality_rule, property_name, schema_name)
+        if resolved is None:
+            return []
+        threshold_field, check_dict = resolved
+
+        user_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "metric",
+            "metric": "nullValues",
+            "threshold_field": threshold_field,
+            "unit": quality_rule.unit or "rows",
+            "dimension": self._library_dimension(quality_rule, "nullValues"),
+            "field": property_name,
+            **self._library_severity_metadata(quality_rule),
+        }
+
+        return [
+            {
+                "check": check_dict,
+                "name": f"{property_name}_nullValues",
+                "criticality": default_criticality,
+                "user_metadata": user_metadata,
+            }
+        ]
+
+    def _nullvalues_check(
+        self, quality_rule: DataQuality, property_name: str, schema_name: str
+    ) -> tuple[str, dict] | None:
+        """Resolve the first set ODCS threshold field on a nullValues entry to (field name, check dict).
+
+        mustBe: 0 is checked before consulting unit at all. Every other threshold routes through
+        the null-count (unit: rows) or null-percentage (unit: percent) mechanism. Returns None
+        (after logging) when no threshold field is set, or when unit is missing/unrecognized.
+        """
+        if self._is_zero_threshold(quality_rule.mustBe):
+            return "mustBe", {"function": "is_not_null", "arguments": {"column": property_name}}
+
+        if not self._has_any_threshold_field(quality_rule):
+            logger.warning(
+                f"type: library nullValues entry on property '{sanitize_for_logging(property_name)}' in schema "
+                f"'{sanitize_for_logging(schema_name)}' has no recognized threshold field set (mustBe, mustNotBe, "
+                "mustBeGreaterOrEqualTo, mustBeLessOrEqualTo, mustBeGreaterThan, mustBeLessThan, mustBeBetween, "
+                "mustNotBeBetween); skipping this quality check."
+            )
+            return None
+
+        unit = quality_rule.unit or "rows"
+        if unit not in ("rows", "percent"):
+            logger.warning(
+                f"Unrecognized unit '{sanitize_for_logging(unit)}' on type: library nullValues entry on "
+                f"property '{sanitize_for_logging(property_name)}' in schema "
+                f"'{sanitize_for_logging(schema_name)}'; expected 'rows' or 'percent'. Skipping this quality "
+                "check."
+            )
+            return None
+
+        quoted_column = self._safe_sql_identifier(property_name)
+        if unit == "percent":
+            return self._nullvalues_percent_check(quality_rule, quoted_column)
+        return self._nullvalues_rows_check(quality_rule, quoted_column)
+
+    def _nullvalues_rows_check(self, quality_rule: DataQuality, quoted_column: str) -> tuple[str, dict]:
+        """Build the unit: rows (default) null-count check: count(*) over rows where column IS NULL."""
+        row_filter = f"{quoted_column} IS NULL"
+
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._nullvalues_aggregate_check("is_aggr_equal", row_filter, quality_rule.mustBe)
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._nullvalues_aggregate_check(
+                "is_aggr_not_equal", row_filter, quality_rule.mustNotBe
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._nullvalues_aggregate_check(
+                "is_aggr_not_less_than", row_filter, quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._nullvalues_aggregate_check(
+                "is_aggr_not_greater_than", row_filter, quality_rule.mustBeLessOrEqualTo
+            )
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}",
+                row_filter=row_filter,
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}",
+                row_filter=row_filter,
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
+                row_filter=row_filter,
+            )
+        assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
+        min_val, max_val = quality_rule.mustNotBeBetween
+        return "mustNotBeBetween", self._library_sql_query_check(
+            f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
+            row_filter=row_filter,
+        )
+
+    def _nullvalues_percent_check(self, quality_rule: DataQuality, quoted_column: str) -> tuple[str, dict]:
+        """Build the unit: percent null-percentage check.
+
+        Uses a CASE WHEN indicator SQL expression (100.0 when null, else 0.0), passed as the
+        *column* argument (resolved via F.expr at check-execution time), with aggr_type="avg" for
+        the exact-fit thresholds -- is_aggr_*'s row_filter+"*" mechanism can only count rows, not
+        express a percentage. A raw Column object is deliberately avoided here: it can't round-trip
+        through YAML/JSON (breaking save_checks()), and ChecksSemanticValidator's conflict-key
+        hashing isn't Column-aware either. A string routes through F.expr() at apply time instead,
+        producing the identical Spark expression without either problem. No row_filter is used for
+        the percentage fallback either, so the denominator stays the full row count rather than
+        shrinking to just the null rows.
+        """
+        indicator_sql = f"CASE WHEN {quoted_column} IS NULL THEN 100.0 ELSE 0.0 END"
+
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._nullvalues_percent_aggregate_check(
+                "is_aggr_equal", indicator_sql, quality_rule.mustBe
+            )
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._nullvalues_percent_aggregate_check(
+                "is_aggr_not_equal", indicator_sql, quality_rule.mustNotBe
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._nullvalues_percent_aggregate_check(
+                "is_aggr_not_less_than", indicator_sql, quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._nullvalues_percent_aggregate_check(
+                "is_aggr_not_greater_than", indicator_sql, quality_rule.mustBeLessOrEqualTo
+            )
+
+        percent_expr = f"AVG(CASE WHEN {quoted_column} IS NULL THEN 100.0 ELSE 0.0 END)"
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT {percent_expr} <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT {percent_expr} >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
+                f"AS condition FROM {{{{ input_view }}}}"
+            )
+        assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
+        min_val, max_val = quality_rule.mustNotBeBetween
+        return "mustNotBeBetween", self._library_sql_query_check(
+            f"SELECT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) AS condition FROM {{{{ input_view }}}}"
+        )
+
+    @staticmethod
+    def _nullvalues_aggregate_check(function: str, row_filter: str, limit: Any) -> dict:
+        """Build a dataset-level null-count aggregate check dict (is_aggr_equal / is_aggr_not_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": "*", "limit": limit, "aggr_type": "count", "row_filter": row_filter},
+        }
+
+    @staticmethod
+    def _nullvalues_percent_aggregate_check(function: str, indicator_sql: str, limit: Any) -> dict:
+        """Build a dataset-level null-percentage aggregate check dict (is_aggr_equal / is_aggr_not_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": indicator_sql, "limit": limit, "aggr_type": "avg"},
+        }
+
+    # invalidValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in
+    # order. mustBe: 0 maps onto row-level is_in_list / regex_match checks -- one per present
+    # mechanism (validValues allowlist and/or pattern), OR'd via DQX's own per-row
+    # _errors/_warnings union when both are present. Every other threshold routes through a
+    # dataset-level aggregate over the OR'd "invalid" SQL condition (NOT IN the allowlist and/or
+    # NOT RLIKE the pattern), for the entry's unit: rows (row_filter+"*"+count, matching
+    # nullValues) or percent (a CASE WHEN indicator SQL string with aggr_type="avg", since
+    # row_filter+"*" can't express a percentage -- a raw Column indicator is deliberately avoided,
+    # since DQEngine.validate_checks' semantic conflict detection isn't Column-aware and raises on
+    # one, the same issue missingValues works around below). Strict inequalities and both range
+    # forms fall back to the dataset-level sql_query escape hatch for both units.
+    # mustBeBetween/mustNotBeBetween treat both bounds as inclusive, matching datacontract-cli's
+    # reference mapping rather than our own reading of the spec text (see the rowCount section
+    # above for the full reasoning). validValues and pattern, when both present, are combined into
+    # a single OR'd "invalid" condition rather than two independent thresholds, so "at most N
+    # invalid" means at most N rows failing either criterion, not N failing each independently.
+
+    def _build_invalid_values_rules(
+        self,
+        quality_rule: DataQuality,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the DQX rule(s) for an ODCS invalidValues library entry.
+
+        invalidValues is a property-level ODCS metric; a schema-level entry (no property) is skipped.
+        """
+        if not property_name:
+            logger.warning(
+                f"type: library invalidValues entry in schema '{sanitize_for_logging(schema_name)}' has no "
+                "property; invalidValues is a property-level metric. Skipping this quality check."
+            )
+            return []
+
+        valid_values, pattern = self._invalid_values_arguments(quality_rule, property_name, schema_name)
+        if valid_values is None and pattern is None:
+            return []
+
+        contract_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "metric",
+            "metric": "invalidValues",
+            "unit": quality_rule.unit or "rows",
+            "dimension": self._library_dimension(quality_rule, "invalidValues"),
+            "field": property_name,
+            **self._library_severity_metadata(quality_rule),
+        }
+
+        if self._is_zero_threshold(quality_rule.mustBe):
+            return self._invalid_values_row_level_rules(
+                valid_values, pattern, property_name, contract_metadata, default_criticality
+            )
+
+        resolved = self._invalid_values_check(quality_rule, valid_values, pattern, property_name, schema_name)
+        if resolved is None:
+            return []
+        threshold_field, check_dict = resolved
+
+        return [
+            {
+                "check": check_dict,
+                "name": f"{property_name}_invalidValues",
+                "criticality": default_criticality,
+                "user_metadata": {**contract_metadata, "threshold_field": threshold_field},
+            }
+        ]
+
+    def _invalid_values_arguments(
+        self, quality_rule: DataQuality, property_name: str, schema_name: str
+    ) -> tuple[list | None, str | None]:
+        """Read arguments.validValues and/or arguments.pattern for an invalidValues library entry.
+
+        Either, neither, or both may be present. A syntactically valid pattern that fails the
+        generation-time ReDoS safety guard is treated as absent (its own warning is logged)
+        rather than as a malformed-arguments error. Warns once more, generically, only when
+        neither mechanism yields a usable value overall.
+        """
+        arguments = quality_rule.arguments
+
+        valid_values: list | None = None
+        if isinstance(arguments, dict) and "validValues" in arguments:
+            valid_values = self._read_library_argument(arguments, "validValues", list)
+
+        pattern: str | None = None
+        if isinstance(arguments, dict) and "pattern" in arguments:
+            raw_pattern = self._read_library_argument(arguments, "pattern", str)
+            if raw_pattern is not None:
+                if self._is_library_pattern_safe(raw_pattern):
+                    pattern = raw_pattern
+                else:
+                    logger.warning(
+                        f"'arguments.pattern' on property '{sanitize_for_logging(property_name)}' in schema "
+                        f"'{sanitize_for_logging(schema_name)}' failed the ReDoS safety guard (200-character "
+                        "cap, nested-quantifier check, alternation-quantifier check, or re.compile); skipping "
+                        "the pattern-based check for this entry."
+                    )
+
+        if valid_values is None and pattern is None:
+            logger.warning(
+                f"type: library invalidValues entry on property '{sanitize_for_logging(property_name)}' in "
+                f"schema '{sanitize_for_logging(schema_name)}' has neither a usable 'arguments.validValues' "
+                "list nor a usable 'arguments.pattern' string; skipping this quality check."
+            )
+
+        return valid_values, pattern
+
+    def _invalid_values_row_level_rules(
+        self,
+        valid_values: list | None,
+        pattern: str | None,
+        property_name: str,
+        contract_metadata: dict,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the row-level rule(s) for mustBe: 0 -- one per present mechanism (validValues
+        allowlist and/or pattern). Emitting both as separate rules (sharing identical
+        user_metadata, only *name* differs) reproduces "invalid if either criterion fails" via
+        DQX's own per-row _errors/_warnings union, the same OR-of-rules treatment missingValues
+        uses for its null/sentinel split.
+        """
+        user_metadata = {**contract_metadata, "threshold_field": "mustBe"}
+        rules = []
+        if valid_values is not None:
+            rules.append(
+                {
+                    "check": {
+                        "function": "is_in_list",
+                        "arguments": {
+                            "column": property_name,
+                            "allowed": [self._is_in_list_literal(value) for value in valid_values],
+                            "case_sensitive": True,
+                        },
+                    },
+                    "name": f"{property_name}_invalidValues_allowed",
+                    "criticality": default_criticality,
+                    "user_metadata": dict(user_metadata),
+                }
+            )
+        if pattern is not None:
+            rules.append(
+                {
+                    "check": {"function": "regex_match", "arguments": {"column": property_name, "regex": pattern}},
+                    "name": f"{property_name}_invalidValues_pattern",
+                    "criticality": default_criticality,
+                    "user_metadata": dict(user_metadata),
+                }
+            )
+        return rules
+
+    @staticmethod
+    def _is_in_list_literal(value: Any) -> Any:  # value/return: any contract-supplied scalar (str, number, bool)
+        """Render a validValues entry as an is_in_list *allowed* list literal.
+
+        is_in_list resolves each *allowed* entry like a comparison-check limit: a bare string is
+        parsed as a **column expression** via F.expr(), not a string literal (see
+        check_funcs.is_in_list's own docstring) -- so a contract-supplied string value must be
+        single-quoted to compare correctly, with embedded backslashes doubled first (then embedded
+        single quotes), matching _sql_scalar_literal: with Spark's default
+        spark.sql.parser.escapedStringLiterals=false, an unescaped backslash in a SQL string
+        literal is not preserved as-is, which would otherwise disagree with the aggregate paths'
+        NOT IN condition for the same sentinel value. Non-string values are passed through
+        unchanged; get_limit_expr already resolves them via F.lit().
+        """
+        if isinstance(value, str):
+            escaped = value.replace("\\", "\\\\").replace("'", "''")
+            return f"'{escaped}'"
+        return value
+
+    def _invalid_values_check(
+        self,
+        quality_rule: DataQuality,
+        valid_values: list | None,
+        pattern: str | None,
+        property_name: str,
+        schema_name: str,
+    ) -> tuple[str, dict] | None:
+        """Resolve a non-zero-threshold invalidValues entry to (threshold_field, check dict).
+
+        Routes through the invalid-row-count (unit: rows) or invalid-row-percentage (unit:
+        percent) mechanism. Returns None (after logging) when no threshold field is set, or when
+        unit is missing/unrecognized.
+        """
+        if not self._has_any_threshold_field(quality_rule):
+            logger.warning(
+                f"type: library invalidValues entry on property '{sanitize_for_logging(property_name)}' in "
+                f"schema '{sanitize_for_logging(schema_name)}' has no recognized threshold field set (mustBe, "
+                "mustNotBe, mustBeGreaterOrEqualTo, mustBeLessOrEqualTo, mustBeGreaterThan, mustBeLessThan, "
+                "mustBeBetween, mustNotBeBetween); skipping this quality check."
+            )
+            return None
+
+        unit = quality_rule.unit or "rows"
+        if unit not in ("rows", "percent"):
+            logger.warning(
+                f"Unrecognized unit '{sanitize_for_logging(unit)}' on type: library invalidValues entry on "
+                f"property '{sanitize_for_logging(property_name)}' in schema "
+                f"'{sanitize_for_logging(schema_name)}'; expected 'rows' or 'percent'. Skipping this quality "
+                "check."
+            )
+            return None
+
+        invalid_condition = self._invalid_values_condition_sql(property_name, valid_values, pattern)
+        if unit == "percent":
+            return self._invalid_values_percent_check(quality_rule, invalid_condition)
+        return self._invalid_values_rows_check(quality_rule, invalid_condition)
+
+    def _invalid_values_rows_check(self, quality_rule: DataQuality, invalid_condition: str) -> tuple[str, dict] | None:
+        """Build the unit: rows (default) invalid-row-count check: count(*) over invalid rows.
+
+        Always returns a check dict in practice -- callers only reach this after
+        _has_any_threshold_field confirms at least one of the eight fields is set -- but the
+        return type stays Optional so mypy can verify the final mustNotBeBetween branch without an
+        unreachable-code assertion.
+        """
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._invalid_values_aggregate_check(
+                "is_aggr_equal", invalid_condition, quality_rule.mustBe
+            )
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._invalid_values_aggregate_check(
+                "is_aggr_not_equal", invalid_condition, quality_rule.mustNotBe
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._invalid_values_aggregate_check(
+                "is_aggr_not_less_than", invalid_condition, quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._invalid_values_aggregate_check(
+                "is_aggr_not_greater_than", invalid_condition, quality_rule.mustBeLessOrEqualTo
+            )
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}",
+                row_filter=invalid_condition,
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}",
+                row_filter=invalid_condition,
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
+                row_filter=invalid_condition,
+            )
+        if quality_rule.mustNotBeBetween is not None:
+            min_val, max_val = quality_rule.mustNotBeBetween
+            return "mustNotBeBetween", self._library_sql_query_check(
+                f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
+                row_filter=invalid_condition,
+            )
+        return None
+
+    def _invalid_values_percent_check(
+        self, quality_rule: DataQuality, invalid_condition: str
+    ) -> tuple[str, dict] | None:
+        """Build the unit: percent invalid-row-percentage check.
+
+        Uses a CASE WHEN indicator SQL expression (100.0 when invalid, else 0.0), passed as the
+        *column* argument (resolved via F.expr at check-execution time), with aggr_type="avg" for
+        the exact-fit thresholds -- is_aggr_*'s row_filter+"*" mechanism can only count rows, not
+        express a percentage. A raw Column object is deliberately avoided here: DQEngine.validate_checks'
+        semantic conflict detection isn't Column-aware and raises when a check argument is one. No
+        row_filter is used for the percentage fallback either, so the denominator stays the full
+        row count rather than shrinking to just the invalid rows. Always returns a check dict in
+        practice, per _invalid_values_rows_check's own docstring note about the Optional return type.
+        """
+        indicator_sql = f"CASE WHEN {invalid_condition} THEN 100.0 ELSE 0.0 END"
+
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._invalid_values_percent_aggregate_check(
+                "is_aggr_equal", indicator_sql, quality_rule.mustBe
+            )
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._invalid_values_percent_aggregate_check(
+                "is_aggr_not_equal", indicator_sql, quality_rule.mustNotBe
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._invalid_values_percent_aggregate_check(
+                "is_aggr_not_less_than", indicator_sql, quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._invalid_values_percent_aggregate_check(
+                "is_aggr_not_greater_than", indicator_sql, quality_rule.mustBeLessOrEqualTo
+            )
+
+        percent_expr = f"AVG({indicator_sql})"
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT {percent_expr} <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT {percent_expr} >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
+                f"AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustNotBeBetween is not None:
+            min_val, max_val = quality_rule.mustNotBeBetween
+            return "mustNotBeBetween", self._library_sql_query_check(
+                f"SELECT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
+                f"AS condition FROM {{{{ input_view }}}}"
+            )
+        return None
+
+    @staticmethod
+    def _invalid_values_aggregate_check(
+        function: str,
+        row_filter: str,
+        limit: Any,  # limit: the contract's own mustBe/mustNotBe/etc. value (int | float)
+    ) -> dict:
+        """Build a dataset-level invalid-row-count aggregate check dict (is_aggr_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": "*", "limit": limit, "aggr_type": "count", "row_filter": row_filter},
+        }
+
+    @staticmethod
+    def _invalid_values_percent_aggregate_check(
+        function: str, indicator_sql: str, limit: Any  # limit: the contract's own threshold value (int | float)
+    ) -> dict:
+        """Build a dataset-level invalid-row-percentage aggregate check dict (is_aggr_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": indicator_sql, "limit": limit, "aggr_type": "avg"},
+        }
+
+    def _invalid_values_condition_sql(self, property_name: str, valid_values: list | None, pattern: str | None) -> str:
+        """Build the SQL boolean condition matching an "invalid" row for property_name.
+
+        NOT IN the allowlist and/or NOT RLIKE the pattern, OR'd together when both mechanisms are
+        present; each is independently null-tolerant (NULL NOT IN (...) and NOT (NULL RLIKE ...)
+        are both NULL, not TRUE), matching the row-level is_in_list/regex_match checks' own
+        null-tolerant semantics.
+        """
+        quoted_column = self._safe_sql_identifier(property_name)
+        clauses = []
+        if valid_values is not None:
+            escaped_values = ", ".join(self._sql_scalar_literal(value) for value in valid_values)
+            clauses.append(f"{quoted_column} NOT IN ({escaped_values})")
+        if pattern is not None:
+            clauses.append(f"NOT ({quoted_column} RLIKE {self._sql_scalar_literal(pattern)})")
+        return " OR ".join(clauses)
+
+    # missingValues ODCS threshold field -> (threshold_field, DQX check dict) builder, tried in
+    # order. missingValues is distinct from nullValues: it combines real NULLs with a
+    # contract-supplied sentinel list (arguments.missingValues, e.g. [null, "", "N/A"]) read via
+    # _read_library_argument. mustBe: 0 splits into up to two independent row-level rules (one
+    # is_not_null, one is_not_in_list) -- present only for the sentinel kinds actually listed --
+    # OR'd via DQX's own per-row _errors/_warnings union, the same treatment invalidValues uses
+    # for its allowed-list/pattern split. Every other threshold routes through a dataset-level
+    # aggregate over the "col IS NULL [OR col IN (...)]" SQL condition, for the entry's unit: rows
+    # (row_filter+"*"+count, matching nullValues/invalidValues) or percent. The percent path uses
+    # an `AVG(CASE WHEN ... THEN 100.0 ELSE 0.0 END)` SQL *string* expression passed as `column`,
+    # deliberately not an F.when(...) Column: ChecksSemanticValidator._conflict_key evaluates
+    # `arguments.get("column") or ...`, and Column.__bool__ raises PySparkValueError, which crashes
+    # rule generation outright. A string routes through F.expr() at apply time instead, producing
+    # the identical Spark expression without tripping that truthiness check. Strict inequalities
+    # and both range forms fall back to the dataset-level sql_query escape hatch for both units.
+    # mustBeBetween/mustNotBeBetween treat both bounds as inclusive, matching datacontract-cli's
+    # reference mapping rather than our own reading of the spec text (see the rowCount section
+    # above for the full reasoning). NULL is counted unconditionally on every threshold, including
+    # mustBe: 0 -- an explicit `null` entry in arguments.missingValues is redundant, not required.
+
+    def _build_missing_values_rules(
+        self,
+        quality_rule: DataQuality,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the DQX rule(s) for an ODCS missingValues library entry.
+
+        missingValues is a property-level ODCS metric; a schema-level entry (no property) is skipped.
+        """
+        if not property_name:
+            logger.warning(
+                f"type: library missingValues entry in schema '{sanitize_for_logging(schema_name)}' has no "
+                "property; missingValues is a property-level metric. Skipping this quality check."
+            )
+            return []
+
+        sentinel_list = self._read_library_argument(quality_rule.arguments, "missingValues", list)
+        if sentinel_list is None:
+            return []
+
+        # NULL is always counted as missing regardless of whether `null` appears in the list (it
+        # matches every other threshold's `col IS NULL OR col IN (...)` condition); an explicit
+        # `null` entry is therefore redundant, not required.
+        non_null_sentinels = [value for value in sentinel_list if value is not None]
+
+        contract_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "metric",
+            "metric": "missingValues",
+            "unit": quality_rule.unit or "rows",
+            "dimension": self._library_dimension(quality_rule, "missingValues"),
+            "field": property_name,
+            **self._library_severity_metadata(quality_rule),
+        }
+
+        if self._is_zero_threshold(quality_rule.mustBe):
+            return self._missing_values_row_level_rules(
+                non_null_sentinels, property_name, contract_metadata, default_criticality
+            )
+
+        resolved = self._missing_values_check(quality_rule, property_name, schema_name, non_null_sentinels)
+        if resolved is None:
+            return []
+        threshold_field, check_dict = resolved
+
+        return [
+            {
+                "check": check_dict,
+                "name": f"{property_name}_missingValues",
+                "criticality": default_criticality,
+                "user_metadata": {**contract_metadata, "threshold_field": threshold_field},
+            }
+        ]
+
+    def _missing_values_row_level_rules(
+        self,
+        non_null_sentinels: list,
+        property_name: str,
+        contract_metadata: dict,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Build the row-level rule(s) for mustBe: 0 -- an unconditional NULL check, plus a
+        sentinel check when non-null sentinels are present. Emitting both as separate rules
+        (sharing identical user_metadata, only `name` differs) reproduces "missing if either
+        criterion fails" via DQX's own per-row _errors/_warnings union: is_not_in_list's
+        `forbidden` list can never itself catch a real SQL NULL (`x IN (...)` is NULL, not TRUE,
+        whenever x IS NULL), so the two conditions cannot be folded into a single check. NULL is
+        always checked here, matching every other threshold's unconditional `col IS NULL` --
+        whether `null` was explicitly listed in arguments.missingValues does not matter.
+        """
+        user_metadata = {**contract_metadata, "threshold_field": "mustBe"}
+        rules = [
+            {
+                "check": {"function": "is_not_null", "arguments": {"column": property_name}},
+                "name": f"{property_name}_missingValues_null",
+                "criticality": default_criticality,
+                "user_metadata": dict(user_metadata),
+            }
+        ]
+        if non_null_sentinels:
+            rules.append(
+                {
+                    "check": {
+                        "function": "is_not_in_list",
+                        "arguments": {
+                            "column": property_name,
+                            "forbidden": [self._is_in_list_literal(value) for value in non_null_sentinels],
+                            "case_sensitive": True,
+                        },
+                    },
+                    "name": f"{property_name}_missingValues_sentinel",
+                    "criticality": default_criticality,
+                    "user_metadata": dict(user_metadata),
+                }
+            )
+        return rules
+
+    def _missing_values_check(
+        self, quality_rule: DataQuality, property_name: str, schema_name: str, non_null_sentinels: list
+    ) -> tuple[str, dict] | None:
+        """Resolve a non-zero-threshold missingValues entry to (threshold_field, check dict).
+
+        Routes through the missing-row-count (unit: rows) or missing-row-percentage (unit:
+        percent) mechanism. Returns None (after logging) when no threshold field is set, or when
+        unit is missing/unrecognized.
+        """
+        if not self._has_any_threshold_field(quality_rule):
+            logger.warning(
+                f"type: library missingValues entry on property '{sanitize_for_logging(property_name)}' in "
+                f"schema '{sanitize_for_logging(schema_name)}' has no recognized threshold field set (mustBe, "
+                "mustNotBe, mustBeGreaterOrEqualTo, mustBeLessOrEqualTo, mustBeGreaterThan, mustBeLessThan, "
+                "mustBeBetween, mustNotBeBetween); skipping this quality check."
+            )
+            return None
+
+        unit = quality_rule.unit or "rows"
+        if unit not in ("rows", "percent"):
+            logger.warning(
+                f"Unrecognized unit '{sanitize_for_logging(unit)}' on type: library missingValues entry on "
+                f"property '{sanitize_for_logging(property_name)}' in schema "
+                f"'{sanitize_for_logging(schema_name)}'; expected 'rows' or 'percent'. Skipping this quality "
+                "check."
+            )
+            return None
+
+        missing_condition = self._missing_values_condition_sql(property_name, non_null_sentinels)
+        if unit == "percent":
+            return self._missing_values_percent_check(quality_rule, missing_condition)
+        return self._missing_values_rows_check(quality_rule, missing_condition)
+
+    def _missing_values_rows_check(self, quality_rule: DataQuality, missing_condition: str) -> tuple[str, dict]:
+        """Build the unit: rows (default) missing-row-count check: count(*) over missing rows."""
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._missing_values_aggregate_check(
+                "is_aggr_equal", missing_condition, quality_rule.mustBe
+            )
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._missing_values_aggregate_check(
+                "is_aggr_not_equal", missing_condition, quality_rule.mustNotBe
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._missing_values_aggregate_check(
+                "is_aggr_not_less_than", missing_condition, quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._missing_values_aggregate_check(
+                "is_aggr_not_greater_than", missing_condition, quality_rule.mustBeLessOrEqualTo
+            )
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}",
+                row_filter=missing_condition,
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT COUNT(*) >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}",
+                row_filter=missing_condition,
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
+                row_filter=missing_condition,
+            )
+        assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
+        min_val, max_val = quality_rule.mustNotBeBetween
+        return "mustNotBeBetween", self._library_sql_query_check(
+            f"SELECT (COUNT(*) >= {min_val} AND COUNT(*) <= {max_val}) AS condition FROM {{{{ input_view }}}}",
+            row_filter=missing_condition,
+        )
+
+    def _missing_values_percent_check(self, quality_rule: DataQuality, missing_condition: str) -> tuple[str, dict]:
+        """Build the unit: percent missing-row-percentage check.
+
+        Uses an `AVG(CASE WHEN ... THEN 100.0 ELSE 0.0 END)` SQL string expression passed as the
+        `column` argument (not an F.when(...) Column -- see the class comment above this metric's
+        section for why) for the exact-fit thresholds, since is_aggr_*'s row_filter+"*" mechanism
+        can only count rows, not express a percentage. No row_filter is used for the percentage
+        fallback either, so the denominator stays the full row count rather than shrinking to just
+        the missing rows.
+        """
+        indicator_expr = f"CASE WHEN {missing_condition} THEN 100.0 ELSE 0.0 END"
+
+        if quality_rule.mustBe is not None:
+            return "mustBe", self._missing_values_percent_aggregate_check(
+                "is_aggr_equal", indicator_expr, quality_rule.mustBe
+            )
+        if quality_rule.mustNotBe is not None:
+            return "mustNotBe", self._missing_values_percent_aggregate_check(
+                "is_aggr_not_equal", indicator_expr, quality_rule.mustNotBe
+            )
+        if quality_rule.mustBeGreaterOrEqualTo is not None:
+            return "mustBeGreaterOrEqualTo", self._missing_values_percent_aggregate_check(
+                "is_aggr_not_less_than", indicator_expr, quality_rule.mustBeGreaterOrEqualTo
+            )
+        if quality_rule.mustBeLessOrEqualTo is not None:
+            return "mustBeLessOrEqualTo", self._missing_values_percent_aggregate_check(
+                "is_aggr_not_greater_than", indicator_expr, quality_rule.mustBeLessOrEqualTo
+            )
+
+        percent_expr = f"AVG({indicator_expr})"
+        if quality_rule.mustBeGreaterThan is not None:
+            return "mustBeGreaterThan", self._library_sql_query_check(
+                f"SELECT {percent_expr} <= {quality_rule.mustBeGreaterThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeLessThan is not None:
+            return "mustBeLessThan", self._library_sql_query_check(
+                f"SELECT {percent_expr} >= {quality_rule.mustBeLessThan} AS condition FROM {{{{ input_view }}}}"
+            )
+        if quality_rule.mustBeBetween is not None:
+            min_val, max_val = quality_rule.mustBeBetween
+            return "mustBeBetween", self._library_sql_query_check(
+                f"SELECT NOT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) "
+                f"AS condition FROM {{{{ input_view }}}}"
+            )
+        assert quality_rule.mustNotBeBetween is not None  # only remaining field per _has_any_threshold_field
+        min_val, max_val = quality_rule.mustNotBeBetween
+        return "mustNotBeBetween", self._library_sql_query_check(
+            f"SELECT ({percent_expr} >= {min_val} AND {percent_expr} <= {max_val}) AS condition FROM {{{{ input_view }}}}"
+        )
+
+    @staticmethod
+    def _missing_values_aggregate_check(
+        function: str, row_filter: str, limit: Any  # limit: the contract's own threshold value (int | float)
+    ) -> dict:
+        """Build a dataset-level missing-row-count aggregate check dict (is_aggr_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": "*", "limit": limit, "aggr_type": "count", "row_filter": row_filter},
+        }
+
+    @staticmethod
+    def _missing_values_percent_aggregate_check(
+        function: str, indicator_expr: str, limit: Any  # limit: the contract's own threshold value (int | float)
+    ) -> dict:
+        """Build a dataset-level missing-row-percentage aggregate check dict (is_aggr_equal / etc.)."""
+        return {
+            "function": function,
+            "arguments": {"column": indicator_expr, "limit": limit, "aggr_type": "avg"},
+        }
+
+    def _missing_values_condition_sql(self, property_name: str, non_null_sentinels: list) -> str:
+        """Build the SQL boolean condition matching a "missing" row for property_name: real NULL,
+        plus an IN (...) match against any contract-supplied non-null sentinel values.
+        """
+        quoted_column = self._safe_sql_identifier(property_name)
+        condition = f"{quoted_column} IS NULL"
+        if non_null_sentinels:
+            escaped_values = ", ".join(self._sql_scalar_literal(value) for value in non_null_sentinels)
+            condition += f" OR {quoted_column} IN ({escaped_values})"
+        return condition
+
+    def _read_library_argument(
+        self, arguments: dict[str, Any] | None, key: str, expected_type: type[_T], *, allow_empty: bool = False
+    ) -> _T | None:
+        """Validate and read arguments[key] from a type: library quality entry's arguments dict.
+
+        Returns None (after logging a targeted warning) if *arguments* isn't a dict, *key* is
+        absent, the value isn't an instance of *expected_type*, or (unless allow_empty) the value
+        is empty. Callers treat None as "skip this quality entry."
+        """
+        if not isinstance(arguments, dict):
+            logger.warning(f"Missing or malformed 'arguments' for library metric argument '{key}'; expected a dict.")
+            return None
+
+        value = arguments.get(key)
+        if not isinstance(value, expected_type):
+            logger.warning(
+                f"Missing or malformed 'arguments.{key}': expected {expected_type.__name__}, "
+                f"got {type(value).__name__}."
+            )
+            return None
+
+        if not allow_empty and hasattr(value, "__len__") and len(value) == 0:
+            logger.warning(f"'arguments.{key}' must not be empty.")
+            return None
+
+        return value
+
+    @classmethod
+    def _safe_sql_identifier(cls, column_path: str) -> str:
+        """Quote column_path for safe interpolation into a row_filter/sql_query/PARTITION BY fragment.
+
+        Splits on '.', backtick-quotes any segment that isn't a bare identifier
+        (`^[a-zA-Z_][a-zA-Z0-9_]*$`), escaping any embedded backtick first, and rejoins. Every
+        input is handled by quoting rather than rejecting, so this never raises.
+        """
+        segments = column_path.split(".")
+        quoted_segments = [
+            segment if cls._SAFE_SQL_IDENTIFIER_PATTERN.match(segment) else f"`{segment.replace('`', '``')}`"
+            for segment in segments
+        ]
+        return ".".join(quoted_segments)
+
+    @staticmethod
+    def _sql_scalar_literal(value: Any) -> str:  # value: any contract-supplied scalar (str, number, bool)
+        """Render a contract-supplied scalar as a SQL literal for safe interpolation into an
+        invalidValues/missingValues NOT IN/IN/RLIKE condition.
+
+        A number passes through unquoted (e.g. `123`, `1.5`) so a numeric column compares
+        numerically, matching the row-level is_in_list/regex_match path's own handling of
+        `arguments.validValues` (see _is_in_list_literal). Bool is checked before the numeric
+        branch since `bool` is a subclass of `int` in Python. Every other value (in practice,
+        always a string) is rendered as a single-quoted SQL string literal: embedded backslashes
+        are doubled first, then embedded single quotes, so a literal backslash in the value (e.g.
+        a RLIKE pattern such as `\\d+`) survives Spark's string-literal escape processing intact --
+        with Spark's default spark.sql.parser.escapedStringLiterals=false, an unescaped backslash
+        in a SQL string literal is not preserved as-is.
+        """
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return str(value)
+        escaped = str(value).replace("\\", "\\\\").replace("'", "''")
+        return f"'{escaped}'"
+
+    @classmethod
+    def _is_library_pattern_safe(cls, pattern: str) -> bool:
+        """Best-effort, generation-time-only ReDoS guard for a contract-supplied arguments.pattern.
+
+        Rejects patterns over 200 characters, nested-quantifier (`(a+)+`-shaped) or
+        alternation-plus-quantifier (`(a|a)*`-shaped) structures, and anything that fails to
+        compile. This is a heuristic, not a formal linear-time guarantee.
+        """
+        if len(pattern) > cls._MAX_LIBRARY_PATTERN_LENGTH:
+            return False
+        if cls._NESTED_QUANTIFIER_PATTERN.search(pattern) or cls._ALTERNATION_QUANTIFIER_PATTERN.search(pattern):
+            return False
+        try:
+            re.compile(pattern)
+        except re.error:
+            return False
+        return True
+
+    def _library_dimension(self, quality_rule: DataQuality, metric: str) -> str:
+        """Return the contract's own dimension when present, else the per-metric ODCS default."""
+        return quality_rule.dimension or self._LIBRARY_METRIC_DEFAULT_DIMENSIONS[metric]
+
+    @staticmethod
+    def _library_severity_metadata(quality_rule: DataQuality) -> dict[str, str]:
+        """Return {"severity": ...} verbatim when the contract sets DataQuality.severity, else {}.
+
+        ODCS defines no vocabulary for severity, so it is recorded as-is for audit purposes and
+        never used to derive Criticality.
+        """
+        if quality_rule.severity:
+            return {"severity": quality_rule.severity}
+        return {}
