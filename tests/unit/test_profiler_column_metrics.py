@@ -35,6 +35,23 @@ def test_register_profile_column_metric_registers_under_explicit_type(restore_pr
     assert PROFILE_COLUMN_METRIC_REGISTRY["custom_metric_key"] is _test_metric
 
 
+def test_register_profile_column_metric_overwrites_and_warns(caplog, restore_profile_column_metric_registry):
+    # Re-registering a non-reserved key replaces the previous function (last-value-wins) and logs a
+    # warning so an accidental shadowing is visible rather than silent.
+    @register_profile_column_metric("custom_metric_key")
+    def _first(_field, _column_label):
+        return None
+
+    with caplog.at_level("WARNING"):
+
+        @register_profile_column_metric("custom_metric_key")
+        def _second(_field, _column_label):
+            return None
+
+    assert PROFILE_COLUMN_METRIC_REGISTRY["custom_metric_key"] is _second
+    assert "custom_metric_key" in caplog.text
+
+
 def test_deregister_profile_column_metric_removes_registered_metric(restore_profile_column_metric_registry):
     @register_profile_column_metric("custom_metric_key")
     def _test_metric(_field, _column_label):

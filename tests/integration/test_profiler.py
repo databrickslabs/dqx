@@ -15,6 +15,10 @@ from databricks.labs.dqx.profiler.profiler_column_metrics import (
     RESERVED_PROFILE_COLUMN_METRIC_KEYS,
     register_profile_column_metric,
 )
+from databricks.labs.dqx.profiler.profile_builder import (
+    PROFILE_BUILDER_REGISTRY,
+    register_profile_builder,
+)
 
 from tests.constants import TEST_CATALOG
 
@@ -27,6 +31,16 @@ def snapshot_profile_column_metric_registry():
     finally:
         PROFILE_COLUMN_METRIC_REGISTRY.clear()
         PROFILE_COLUMN_METRIC_REGISTRY.update(original_registry)
+
+
+@pytest.fixture
+def snapshot_profile_builder_registry():
+    original_registry = dict(PROFILE_BUILDER_REGISTRY)
+    try:
+        yield
+    finally:
+        PROFILE_BUILDER_REGISTRY.clear()
+        PROFILE_BUILDER_REGISTRY.update(original_registry)
 
 
 def test_profiler(spark, ws):
@@ -312,6 +326,54 @@ def test_profiler_rejects_reserved_metric_key_and_keeps_count_derivation_intact(
     assert amount_stats["count_non_null"] == 3
     assert amount_stats["count_null"] == 2
     assert amount_stats["count_non_null"] + amount_stats["count_null"] == amount_stats["count"]
+
+
+def test_profiler_registered_custom_builder_consumes_custom_metric(
+    spark, ws, snapshot_profile_column_metric_registry, snapshot_profile_builder_registry
+):
+    # Verifies the full extension path end-to-end (register_profile_column_metric +
+    # register_profile_builder together): a custom column metric is computed during profiling and
+    # exposed under its key in profiler_metrics, and a custom builder reads that value to emit a
+    # DQProfile through the public profile() API. This is the workflow documented in the profiling
+    # guide, and the composition of the two registries is not covered by any other test.
+    metric_key = "p10"
+
+    @register_profile_column_metric(metric_key)
+    def _p10(_field, column_label):
+        return F.percentile_approx(F.col(column_label), 0.1)
+
+    @register_profile_builder("p10_lower_bound")
+    def _p10_lower_bound(_df, column_name, _column_type, profiler_metrics, _profiler_options):
+        p10 = profiler_metrics.get(metric_key)
+        if p10 is None:
+            return None
+        return DQProfile(
+            name="min_max",
+            column=column_name,
+            description=f"Lower bound set to 10th percentile ({p10})",
+            parameters={"min": p10},
+        )
+
+    schema = T.StructType([T.StructField("amount", T.IntegerType())])
+    input_df = spark.createDataFrame([[10], [20], [30], [40], [50]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    summary_stats, profiles = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+    )
+
+    # The custom metric reached summary_stats, and the built-in count_distinct metric is present too.
+    expected_p10 = summary_stats["amount"][metric_key]
+    assert summary_stats["amount"]["count_distinct"] == 5
+
+    # The custom builder consumed that metric and emitted a profile with the metric's value.
+    custom_profiles = [
+        p for p in profiles if p.description and p.description.startswith("Lower bound set to 10th percentile")
+    ]
+    assert len(custom_profiles) == 1
+    assert custom_profiles[0].column == "amount"
+    assert custom_profiles[0].parameters == {"min": expected_p10}
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):
