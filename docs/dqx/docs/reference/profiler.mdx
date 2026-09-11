@@ -166,7 +166,7 @@ These keys are reserved: calling `register_profile_column_metric("count")` / `"c
 
 Both are registered via `@register_profile_column_metric(...)` at import time and can be deregistered like any custom metric.
 
-Spark's `DataFrame.summary()` additionally contributes `mean`, `stddev`, `min`, `25`, `50`, `75`, and `max` for numeric columns.
+Spark's `DataFrame.summary()` additionally contributes `mean`, `stddev`, `min`, `25%`, `50%`, `75%`, and `max` for numeric columns (the percentile keys carry the literal `%` suffix that `summary()` emits, so a builder reads them as `profiler_metrics.get("50%")`).
 
 See the [Data Profiling Guide](/docs/guide/data_profiling#extending-the-profiler-with-custom-column-metrics) for a complete example including a custom profile builder that consumes a custom metric.
 
