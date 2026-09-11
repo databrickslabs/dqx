@@ -1,0 +1,122 @@
+---
+sidebar_position: 2
+title: Read quarantined records
+---
+
+import Admonition from '@theme/Admonition';
+import { FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Read quarantined records outside the app
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+</FeatureTags>
+
+When a DQX Studio run finds failing rows, it copies a **sample** of them into a
+Delta table called `dq_quarantine_records` so you can inspect what went wrong. The
+app's [Results](/docs/studio/running/#investigate-and-act-on-a-failure) view reads
+this table, but it's a plain Delta table in your own catalog — you can query it
+directly from SQL, a notebook, a dashboard, or an alerting job.
+
+<Admonition type="warning" title="It holds source-row data">
+Each quarantined record includes the **full source row** that failed
+(`row_data`), so the table is a potential PII surface. It lives in your catalog and
+is governed by Unity Catalog — grant access accordingly. Records are a **sample**,
+not every failing row, and are retained for `quarantine_retention_days` (default
+**30 days**) before the app's retention sweep deletes them.
+</Admonition>
+
+## Where it lives
+
+The table is in the Studio schema of the catalog you selected at install:
+
+```
+<catalog>.dqx_studio.dq_quarantine_records
+```
+
+## Schema
+
+| Column | Type | Description |
+| ------ | ---- | ----------- |
+| `quarantine_id` | `STRING` | Primary key for the quarantined row. |
+| `run_id` | `STRING` | The run that captured it — join to `dq_validation_runs`. |
+| `source_table_fqn` | `STRING` | Fully-qualified name of the table the row came from. |
+| `requesting_user` | `STRING` | Who triggered the run. |
+| `row_data` | `VARIANT` | The full source row, as a JSON object. |
+| `errors` | `VARIANT` | Array of the **error**-severity checks the row failed. |
+| `warnings` | `VARIANT` | Array of the **warn**-severity checks the row failed. |
+| `created_at` | `TIMESTAMP` | When the record was written. |
+
+Each element of `errors` / `warnings` is the standard DQX result payload — the
+same shape as the `_errors` / `_warnings` columns in
+[DQX Core](/docs/guide/additional_configuration#customizing-result-columns): `name`, `message`,
+`columns`, `filter`, `function`, `run_time`, `user_metadata`, and the rule
+fingerprints.
+
+## Query it
+
+Replace `<catalog>` with your Studio catalog.
+
+**Recent quarantined rows for a table:**
+
+```sql
+SELECT quarantine_id, run_id, created_at, row_data, errors, warnings
+FROM <catalog>.dqx_studio.dq_quarantine_records
+WHERE source_table_fqn = 'main.sales.orders'
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+**Read fields out of the source row** — `VARIANT` supports path access with `:` and
+casts with `::`:
+
+```sql
+SELECT quarantine_id,
+       row_data:order_id::string   AS order_id,
+       row_data:amount::double     AS amount
+FROM <catalog>.dqx_studio.dq_quarantine_records
+WHERE source_table_fqn = 'main.sales.orders';
+```
+
+**One row per failed check** — explode the `errors` array so each failed check
+becomes its own row:
+
+```sql
+SELECT q.quarantine_id,
+       q.source_table_fqn,
+       e.value:name::string     AS check_name,
+       e.value:message::string  AS message,
+       e.value:columns          AS columns
+FROM <catalog>.dqx_studio.dq_quarantine_records AS q,
+     LATERAL variant_explode(q.errors) AS e
+WHERE q.run_id = '<run_id>';
+```
+
+**Count failures by check across a run** (a quick "what's failing most?"):
+
+```sql
+SELECT e.value:name::string AS check_name, count(*) AS failing_rows
+FROM <catalog>.dqx_studio.dq_quarantine_records AS q,
+     LATERAL variant_explode(q.errors) AS e
+WHERE q.source_table_fqn = 'main.sales.orders'
+GROUP BY e.value:name::string
+ORDER BY failing_rows DESC;
+```
+
+**Join to run metadata** in `dq_validation_runs` (run timing, trigger, status):
+
+```sql
+SELECT q.quarantine_id, q.source_table_fqn, q.created_at, r.*
+FROM <catalog>.dqx_studio.dq_quarantine_records AS q
+JOIN <catalog>.dqx_studio.dq_validation_runs   AS r
+  ON q.run_id = r.run_id
+WHERE q.source_table_fqn = 'main.sales.orders'
+ORDER BY q.created_at DESC;
+```
+
+<Admonition type="tip" title="Reading VARIANT columns">
+`row_data`, `errors`, and `warnings` are Databricks
+[`VARIANT`](https://docs.databricks.com/aws/en/semi-structured/variant) columns.
+Use `col:field` to navigate, `::type` to cast, and `variant_explode()` to turn a
+`VARIANT` array into rows.
+</Admonition>

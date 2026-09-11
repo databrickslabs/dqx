@@ -2436,7 +2436,7 @@ export type MonitoredTableReviewOutNewVersion = number | null;
  * Response for the submit/approve/reject monitored-table lifecycle routes.
 
 ``table`` carries the binding with its new roll-up status; ``affected_check_count``
-is how many materialized ``dq_quality_rules`` rows changed status in this
+is how many materialized ``dq_resolved_rules`` rows changed status in this
 transition (submitted, approved, or rejected respectively).
  */
 export interface MonitoredTableReviewOut {
@@ -3371,12 +3371,12 @@ export interface RuleCatalogEntryOut {
 export type RuleDefinitionBody = { [key: string]: unknown };
 
 /**
- * Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ * Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty.
  */
 export type RuleDefinitionErrorMessage = string | null;
 
 /**
- * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty.
  */
 export type RuleDefinitionFilter = string | null;
 
@@ -3395,9 +3395,9 @@ export interface RuleDefinition {
   body?: RuleDefinitionBody;
   slots?: RuleSlot[];
   parameters?: RuleParameter[];
-  /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
   error_message?: RuleDefinitionErrorMessage;
-  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
   filter?: RuleDefinitionFilter;
 }
 
@@ -3428,7 +3428,7 @@ export type RuleHistoryEntryOutChangedAt = string | null;
 export type RuleHistoryEntryOutRationale = string | null;
 
 /**
- * One recorded change from the ``dq_quality_rules_history`` audit log.
+ * One recorded change from the ``dq_resolved_rules_history`` audit log.
 
 Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
 Review show a previous-vs-proposed diff for a per-table rule draft. Each
@@ -13186,7 +13186,7 @@ export const useSaveRules = <TError = AxiosError<HTTPValidationError>,
  * Return a per-table rule's recorded change history (newest first).
 
 Backs the Drafts & Review change-diff popout: reads the
-``dq_quality_rules_history`` audit trail so the UI can diff the two most
+``dq_resolved_rules_history`` audit trail so the UI can diff the two most
 recent recorded ``check`` payloads (previous vs proposed). Declared BEFORE
 the ``/{table_fqn:path}`` catch-all so the more-specific pattern wins.
 
@@ -14836,14 +14836,14 @@ and swallows call failures internally, so in practice this can never
 turn a successful publish into a 500.
 
 Also re-materializes every FOLLOWING (unpinned) application of this
-rule (design spec §5) so their ``dq_quality_rules`` copies pick up the
+rule (design spec §5) so their ``dq_resolved_rules`` copies pick up the
 new version — see ``Materializer.rematerialize_for_rule``. PINNED
 applications are untouched by a publish; they only change via a
 direct edit.
 
 Data Products Task 2 re-freeze hook (design spec §3.2 (a)): when
 ``auto_upgrade_without_approval`` is ON, a follower's approved
-``dq_quality_rules`` row silently picks up the new content and STAYS
+``dq_resolved_rules`` row silently picks up the new content and STAYS
 approved, changing the binding's approved rule set without a table
 re-approval — so each re-materialized binding's current version snapshot
 is re-frozen in place. When auto-upgrade is OFF the changed rows drop to
@@ -15604,7 +15604,7 @@ Requires ``MODIFY`` on the monitored table (direct/inherited/owner) unless
 the caller is an admin/approver.
 
 TODO(Phase 3C): once the materializer exists, block/handle
-de-materialization of any ``dq_quality_rules`` rows tied to this
+de-materialization of any ``dq_resolved_rules`` rows tied to this
 binding's applications before allowing deletion.
  * @summary Delete Monitored Table
  */
@@ -16790,7 +16790,7 @@ export function useListPendingApplicationsSuspense<TData = Awaited<ReturnType<ty
 
 
 /**
- * Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+ * Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
 Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
  * @summary Remove Applied Rule
@@ -16991,7 +16991,7 @@ export const useSetAppliedRuleSeverityOverride = <TError = AxiosError<HTTPValida
 /**
  * Submit a monitored table for review.
 
-Materializes the binding's applied rules into ``dq_quality_rules`` (the
+Materializes the binding's applied rules into ``dq_resolved_rules`` (the
 UI has already persisted any staged edits via ``saveAppliedRules``), then
 submits every freshly-materialized ``draft`` check for approval — reusing
 the same per-rule transition the Drafts & Review queue uses — and rolls
@@ -17075,7 +17075,7 @@ export const useSubmitMonitoredTable = <TError = AxiosError<HTTPValidationError>
 Reuses the per-rule approve transition so each check's audit trail is
 identical to a hand-approval, then rolls the binding up to ``approved``.
 From here the scheduler picks the checks up (it runs only ``approved``
-``dq_quality_rules`` rows).
+``dq_resolved_rules`` rows).
 
 Table approval is the ONLY event that bumps the monitored-table version:
 after the binding rolls up to ``approved`` the newly-approved rule set is

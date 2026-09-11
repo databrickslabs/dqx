@@ -47,7 +47,7 @@ class ScheduleConfigService:
         self._sql = sql
         self._table = sql.fqn("dq_schedule_configs")
         self._history_table = sql.fqn("dq_schedule_configs_history")
-        self._rules_table = sql.fqn("dq_quality_rules")
+        self._rules_table = sql.fqn("dq_resolved_rules")
 
     def resolve_scope_table_fqns(self, config: dict[str, Any]) -> list[str]:
         """Resolve the real table FQNs a scope-config schedule would run against.

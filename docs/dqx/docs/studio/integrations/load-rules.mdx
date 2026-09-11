@@ -1,0 +1,98 @@
+---
+sidebar_position: 1
+title: Load rules outside the app
+---
+
+import Admonition from '@theme/Admonition';
+import { FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Load Studio rules outside the app
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+</FeatureTags>
+
+Rules you approve in DQX Studio can be loaded and run by any PySpark pipeline
+using the standard [DQX Core](/docs/guide/) API — no export step, no copy-paste.
+Studio publishes a **dqx-core-compatible view**, `dq_rules_core`, over its approved
+rules, and `DQEngine.load_checks` reads it directly.
+
+## The `dq_rules_core` view
+
+Studio stores each authored rule as a row in its internal `dq_resolved_rules`
+table. That table carries Studio-specific columns (lifecycle status, versioning,
+provenance) that dqx-core doesn't understand. The **`dq_rules_core`** view reshapes
+the **approved** rules into exactly the columns dqx-core's Lakebase reader expects:
+
+| View column | Meaning |
+| ----------- | ------- |
+| `name`, `criticality`, `filter` | The check's identity and severity. |
+| `check` | The inner `{function, arguments}` (and `for_each_column` when used). |
+| `run_config_name` | **The fully-qualified table the rule applies to** (`table_fqn`). |
+| `user_metadata` | Any tags/labels attached to the rule. |
+| `rule_fingerprint`, `rule_set_fingerprint` | dqx-core fingerprints (used to select the current rule set). |
+
+Only rules at status **`approved`** appear in the view — drafts and rejected rules
+are never loaded.
+
+<Admonition type="info" title="run_config_name is the table FQN">
+Studio groups rules by the table they apply to, so the view maps
+`run_config_name` to that table's fully-qualified name (for example
+`main.sales.orders`). Cross-table SQL checks, which have no single home table,
+appear under a synthetic `run_config_name` of the form <code>__sql_check__/&lt;name&gt;</code>.
+</Admonition>
+
+## Load approved rules
+
+Point `LakebaseChecksStorageConfig` at the view and pass the table you want the
+rules for as `run_config_name`:
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import LakebaseChecksStorageConfig
+
+engine = DQEngine(WorkspaceClient())
+
+checks = engine.load_checks(
+    LakebaseChecksStorageConfig(
+        # <lakebase-database>.<studio-schema>.dq_rules_core
+        location="databricks_postgres.dqx_studio.dq_rules_core",
+        instance_name="<your-lakebase-instance>",   # Studio's Lakebase instance
+        run_config_name="main.sales.orders",         # the table the rules apply to
+    )
+)
+
+# Run the Studio-authored rules against your own DataFrame
+checked_df = engine.apply_checks_by_metadata(df, checks)
+
+# ...or split valid rows from quarantined ones
+valid_df, quarantined_df = engine.apply_checks_by_metadata_and_split(df, checks)
+```
+
+With no `rule_set_fingerprint` given, the loader returns the **current** approved
+rule set for the table. All approved rules for a table share one
+`rule_set_fingerprint`, so you always get the complete set, not a single rule.
+
+<Admonition type="tip" title="Which tables have approved rules?">
+List the loadable `run_config_name` values with a quick query against the view:
+
+```sql
+SELECT DISTINCT run_config_name
+FROM dqx_studio.dq_rules_core
+ORDER BY run_config_name;
+```
+</Admonition>
+
+## Notes and limits
+
+- **Approved only.** The view excludes drafts and rejected rules by design. Approve
+  a rule in Studio before a pipeline can load it.
+- **Fingerprints.** `rule_fingerprint` is dqx-core's per-rule hash and matches what
+  the library computes. `rule_set_fingerprint` is computed over a table's approved
+  set so the loader can pick the current version; for rule sets that use
+  `for_each_column`, this value may differ from a value core computes by expanding
+  the fan-out — it never affects *which* rules load, only the informational
+  fingerprint.
+- **Read-only.** `dq_rules_core` is a view. Author and manage rules in the app;
+  pipelines only read.

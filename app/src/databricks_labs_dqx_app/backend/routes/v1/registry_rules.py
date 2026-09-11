@@ -538,7 +538,7 @@ def _publish_registry_rule(
     """
     rule = svc.approve(rule_id, approver, rationale=rationale)
     # Activate any Bulk Contract Import pre-staged applications BEFORE
-    # rematerialize so their new dq_quality_rules copies are produced here.
+    # rematerialize so their new dq_resolved_rules copies are produced here.
     _activate_pending_applications(rule_id, approver, apply_rules=apply_rules, pending=pending)
     embeddings.embed_and_store(rule)
     rematerialized = materializer.rematerialize_for_rule(rule_id)
@@ -666,14 +666,14 @@ def approve_registry_rule(
     turn a successful publish into a 500.
 
     Also re-materializes every FOLLOWING (unpinned) application of this
-    rule (design spec §5) so their ``dq_quality_rules`` copies pick up the
+    rule (design spec §5) so their ``dq_resolved_rules`` copies pick up the
     new version — see ``Materializer.rematerialize_for_rule``. PINNED
     applications are untouched by a publish; they only change via a
     direct edit.
 
     Data Products Task 2 re-freeze hook (design spec §3.2 (a)): when
     ``auto_upgrade_without_approval`` is ON, a follower's approved
-    ``dq_quality_rules`` row silently picks up the new content and STAYS
+    ``dq_resolved_rules`` row silently picks up the new content and STAYS
     approved, changing the binding's approved rule set without a table
     re-approval — so each re-materialized binding's current version snapshot
     is re-frozen in place. When auto-upgrade is OFF the changed rows drop to

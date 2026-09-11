@@ -224,7 +224,7 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_metrics", "run_time"),
 )
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
-    ("dq_quality_rules_history", "changed_at"),
+    ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
 )
 
@@ -348,7 +348,7 @@ class SchedulerService:
         self._table = self._oltp_sql.fqn("dq_schedule_runs")
         self._configs_table = self._oltp_sql.fqn("dq_schedule_configs")
         self._settings_table = self._oltp_sql.fqn("dq_app_settings")
-        self._rules_table = self._oltp_sql.fqn("dq_quality_rules")
+        self._rules_table = self._oltp_sql.fqn("dq_resolved_rules")
         self._products_table = self._oltp_sql.fqn("dq_data_products")
         self._monitored_tables_table = self._oltp_sql.fqn("dq_monitored_tables")
         self._data_product_service = data_product_service

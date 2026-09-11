@@ -1,8 +1,8 @@
-"""Materializer (Phase 3C) — renders applied registry rules into ``dq_quality_rules``.
+"""Materializer (Phase 3C) — renders applied registry rules into ``dq_resolved_rules``.
 
 This is the SAFETY-CRITICAL boundary between the Rules Registry (authoring/
 governance layer) and the existing, UNCHANGED runner: every
-``dq_quality_rules`` row this module writes must be shaped exactly like a
+``dq_resolved_rules`` row this module writes must be shaped exactly like a
 row a human would have hand-authored through the single-table editor
 (``RulesCatalogService``), because the wheel-task runner that executes
 checks was not touched by the Rules Registry work and only understands
@@ -22,11 +22,11 @@ override). A binding's applied rules only get (re-)materialized when:
   -> :meth:`Materializer.rematerialize_for_rule`).
 
 Applying, pinning, or overriding a rule only ever writes to
-``dq_applied_rules``; it never touches ``dq_quality_rules`` until one of
+``dq_applied_rules``; it never touches ``dq_resolved_rules`` until one of
 the two publish-triggered calls above runs.
 
 For each ``dq_applied_rules`` row under a monitored table binding, this
-renders ONE ``dq_quality_rules`` row per mapping GROUP in
+renders ONE ``dq_resolved_rules`` row per mapping GROUP in
 ``column_mapping`` (slots substituted with real columns, non-``None``
 parameter values filled in), stamps dimension/severity/polarity/
 provenance into ``user_metadata`` (§9 — the runner already aggregates
@@ -60,6 +60,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.rule import compute_rule_fingerprint
 from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -287,7 +288,7 @@ def render_check(
     row_filter: str | None = None,
     pass_threshold: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Render one materialized ``dq_quality_rules.check`` dict for one mapping group.
+    """Render one materialized ``dq_resolved_rules.check`` dict for one mapping group.
 
     *app_settings* is only read to resolve the rendered ``criticality``: the
     severity -> criticality mapping is admin-editable via the reserved
@@ -488,12 +489,12 @@ def _slugify(value: str) -> str:
 
 
 class Materializer:
-    """Renders applied registry rules into ``dq_quality_rules`` rows (Phase 3C).
+    """Renders applied registry rules into ``dq_resolved_rules`` rows (Phase 3C).
 
     Reads live application state (``dq_applied_rules`` via
     :class:`MonitoredTableService`) and the registry's frozen publish
     snapshots (``dq_rule_versions`` via :class:`RegistryService`), and
-    writes/upserts/cleans-up ``dq_quality_rules`` rows accordingly.
+    writes/upserts/cleans-up ``dq_resolved_rules`` rows accordingly.
     """
 
     def __init__(
@@ -507,13 +508,13 @@ class Materializer:
         self._registry = registry
         self._monitored_tables = monitored_tables
         self._app_settings = app_settings
-        self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._quality_rules_table = sql.fqn("dq_resolved_rules")
         self._check_col = sql.q("check")
 
     def materialize_binding(self, binding_id: str) -> list[str]:
         """Materialize every applied rule under *binding_id*.
 
-        Returns the sorted list of materialized ``dq_quality_rules.rule_id``
+        Returns the sorted list of materialized ``dq_resolved_rules.rule_id``
         values written (for diagnostics/tests).
 
         Raises:
@@ -682,7 +683,7 @@ class Materializer:
         # exposes the slots this follower's stored column_mapping binds), an
         # empty result must NOT be treated as delete-all: doing so would
         # ``_delete_stale_groups(expected=∅)`` and wipe every approved
-        # ``dq_quality_rules`` row for this application, then the downstream
+        # ``dq_resolved_rules`` row for this application, then the downstream
         # re-freeze would empty the frozen snapshot and leave the binding
         # unrunnable. Instead leave the existing rows untouched (mirroring the
         # ``rendered is None`` early-return) so the previous approved checks
@@ -743,15 +744,19 @@ class Materializer:
         existing = self._get_materialized_row(row_id)
         check_json = json.dumps(check, sort_keys=True)
         check_expr = self._sql.json_literal_expr(json.dumps(check))
+        # dqx-core per-rule fingerprint, stored so the dq_rules_core view can
+        # expose it (same contract as RulesCatalogService's authored rows).
+        e_fp = escape_sql_string(compute_rule_fingerprint(check))
 
         if existing is None:
             self._sql.execute(
                 f"INSERT INTO {self._quality_rules_table} "
                 f"(rule_id, table_fqn, {self._check_col}, version, status, source, "
-                "registry_rule_id, registry_version, applied_rule_id, created_by, created_at, updated_by, updated_at) "
+                "registry_rule_id, registry_version, applied_rule_id, rule_fingerprint, "
+                "created_by, created_at, updated_by, updated_at) "
                 f"VALUES ('{escape_sql_string(row_id)}', '{escape_sql_string(table_fqn)}', {check_expr}, "
                 f"{version_number}, 'draft', 'registry', '{escape_sql_string(applied.rule_id)}', "
-                f"{version_number}, '{escape_sql_string(applied.id or '')}', "
+                f"{version_number}, '{escape_sql_string(applied.id or '')}', '{e_fp}', "
                 f"{self._opt_str(applied.created_by)}, now(), {self._opt_str(applied.created_by)}, now())"
             )
             return
@@ -776,6 +781,7 @@ class Materializer:
             f"  registry_rule_id = '{escape_sql_string(applied.rule_id)}', "
             f"  registry_version = {version_number}, "
             f"  applied_rule_id = '{escape_sql_string(applied.id or '')}', "
+            f"  rule_fingerprint = '{e_fp}', "
             "  updated_at = now() "
             f"WHERE rule_id = '{escape_sql_string(row_id)}'"
         )
@@ -830,7 +836,7 @@ class Materializer:
         return status, registry_version, normalized
 
     def _existing_group_ids(self, applied_rule_id: str | None) -> set[str]:
-        """Return the ``dq_quality_rules.rule_id``s currently materialized for *applied_rule_id*.
+        """Return the ``dq_resolved_rules.rule_id``s currently materialized for *applied_rule_id*.
 
         Used by :meth:`_materialize_applied_rule` to preserve (and keep
         counting as "expected") the rows of an application whose every mapping
@@ -884,7 +890,7 @@ class Materializer:
         Read-only draft-run source (design spec §4.1, ``source == draft``):
         renders every applied rule under *binding_id* through the SAME
         :meth:`_iter_rendered_checks` path materialization uses, but writes
-        NOTHING to ``dq_quality_rules``. The returned list is exactly the
+        NOTHING to ``dq_resolved_rules``. The returned list is exactly the
         shape the runner consumes (same as
         ``RulesCatalogService.get_approved_checks_for_table`` output), so a
         draft run of a monitored table executes its live authored state

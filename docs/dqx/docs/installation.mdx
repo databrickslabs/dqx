@@ -441,13 +441,40 @@ Databricks CLI will confirm a few options:
 
 ## DQX Studio installation
 
-[DQX Studio](/docs/studio/) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) using a [Declarative Automation Bundle](https://docs.databricks.com/aws/en/dev-tools/bundles/) (DAB, formerly known as Databricks Asset Bundle).
+[DQX Studio](/docs/studio/) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html).
 
-<Admonition type="info" title="Coming soon: Databricks Marketplace">
-We plan to publish DQX Studio to the Databricks Marketplace for one-click installation. Until then, deploy it with the bundle steps below.
+There are two ways to install it:
+
+1. **From the Databricks Marketplace (recommended)** — a one-click install into your workspace, with no local toolchain or repository checkout. Best for most users.
+2. **With a Declarative Automation Bundle (DAB)** — deploy from the source repository with the Databricks CLI. Use this if you can't install from the Marketplace, or you want to customize the bundle.
+
+Both routes deploy the same app and finish in the same in-app **setup wizard**, and both require the workspace-level prerequisites listed under [Prerequisites](#prerequisites-for-installing-dqx-studio) below (Databricks Apps enabled, user token passthrough, serverless compute, a Unity Catalog catalog, and Lakebase Postgres).
+
+### Install DQX Studio from the Databricks Marketplace {#install-dqx-studio-from-the-databricks-marketplace}
+
+The Marketplace listing installs DQX Studio into your workspace as a Databricks App — no repository checkout, `make`, or local build toolchain required. A workspace administrator performs the install.
+
+1. In your Databricks workspace, open **Marketplace** and search for **DQX Studio**. Open the listing and **Get instant access / Install** to add the app to your workspace.
+
+2. When prompted, **bind the three required resources**:
+
+   - a **SQL warehouse** (serverless recommended),
+   - a **Lakebase Postgres endpoint** — required for Studio's application state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping), and
+   - a **Unity Catalog volume** — the bound volume selects Studio's **main catalog and schema**.
+
+3. Make sure a workspace administrator belongs to the workspace group configured as **`DQX_ADMIN_GROUP`** before opening the app — the first admin bootstraps roles for everyone else.
+
+4. **Open the app.** The built-in **setup wizard** checks the resource bindings, creates the required sibling schemas, runs migrations, publishes the task-runner wheels, and explains any Unity Catalog grants that are still needed. It links straight to the Jobs UI for assigning the task-runner's external `run_as` service principal.
+
+Once the wizard reports green, DQX Studio is ready — continue with the [Quickstart](/docs/studio/quickstart).
+
+<Admonition type="info" title="Prefer the bundle?">
+If you can't use the Marketplace, or want to customize the deployment, use the [Declarative Automation Bundle](#install-dqx-studio-using-a-declarative-automation-bundle) route below instead. It deploys the same app.
 </Admonition>
 
-### Prerequisites
+### Prerequisites for installing DQX Studio {#prerequisites-for-installing-dqx-studio}
+
+The workspace-level items below (Databricks Apps, user token passthrough, serverless compute, a Unity Catalog catalog, and Lakebase Postgres) apply to **both** install routes. The **Databricks CLI**, `make`, and **app build toolchain** items apply only to the bundle (DAB) route.
 
 - **Databricks CLI** v1.4.0 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v1.4.0 is required for the `postgres_projects` / `postgres_roles` resources; `lifecycle.prevent_destroy` on the studio's stateful schemas / volume / Lakebase project needs only v0.268+.
 - Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.

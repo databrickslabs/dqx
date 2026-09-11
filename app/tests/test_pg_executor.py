@@ -1780,7 +1780,7 @@ class TestSimpleProperties:
     def test_fqn_returns_two_part_name(self) -> None:
         """Postgres has one catalog per connection — fqn drops the catalog part."""
         e = _make_pg_executor(schema="my_schema")
-        assert e.fqn("dq_quality_rules") == "my_schema.dq_quality_rules"
+        assert e.fqn("dq_resolved_rules") == "my_schema.dq_resolved_rules"
 
     def test_ts_text_is_identity(self) -> None:
         """Postgres lets ``_to_text`` ISO-format the timestamp on the way out."""

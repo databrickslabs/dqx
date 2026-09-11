@@ -324,7 +324,7 @@ class RuleCatalogEntryOut(BaseModel):
 
 
 class RuleHistoryEntryOut(BaseModel):
-    """One recorded change from the ``dq_quality_rules_history`` audit log.
+    """One recorded change from the ``dq_resolved_rules_history`` audit log.
 
     Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
     Review show a previous-vs-proposed diff for a per-table rule draft. Each
@@ -1049,7 +1049,7 @@ class MonitoredTableReviewOut(BaseModel):
     """Response for the submit/approve/reject monitored-table lifecycle routes.
 
     ``table`` carries the binding with its new roll-up status; ``affected_check_count``
-    is how many materialized ``dq_quality_rules`` rows changed status in this
+    is how many materialized ``dq_resolved_rules`` rows changed status in this
     transition (submitted, approved, or rejected respectively).
     """
 
