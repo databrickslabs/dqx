@@ -14,6 +14,7 @@ import re
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.services import genie_space_service as gs
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -58,6 +59,11 @@ def ws() -> MagicMock:
     ws = MagicMock(name="WorkspaceClient")
     ws.api_client.do.return_value = {"spaces": []}
     return ws
+
+
+@pytest.fixture(autouse=True)
+def app_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "studio-app-client-id")
 
 
 def do_calls(ws: MagicMock) -> list[tuple]:
@@ -811,7 +817,6 @@ def ensure(settings: MagicMock, ws: MagicMock) -> str | None:
         settings=settings,
         ws=ws,
         warehouse_id="wh-1",
-        parent_path="/Users/sp",
         catalog=CATALOG,
         schema=SCHEMA,
     )
@@ -830,7 +835,7 @@ def test_creates_space_and_persists_id_hash_status(settings: MagicMock, ws: Magi
     assert create_call.args == ("POST", "/api/2.0/genie/spaces")
     body = create_call.kwargs["body"]
     assert body["warehouse_id"] == "wh-1"
-    assert body["parent_path"] == "/Users/sp"
+    assert body["parent_path"] == "/Shared/dqx-studio/studio-app-client-id"
     assert body["title"] == gs.SPACE_TITLE
     assert json.loads(body["serialized_space"])["version"] == 2
 
@@ -839,14 +844,28 @@ def test_creates_space_and_persists_id_hash_status(settings: MagicMock, ws: Magi
     assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
+def test_creates_shared_parent_folder_before_space(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {"spaces": []},
+        {"space_id": "space-123"},
+    ]
+
+    assert ensure(settings, ws) == "space-123"
+
+    ws.workspace.mkdirs.assert_called_once_with("/Shared/dqx-studio/studio-app-client-id")
+
+
 def test_reuses_existing_space_by_title_prefix_newest_first(settings: MagicMock, ws: MagicMock) -> None:
-    ws.api_client.do.return_value = {
-        "spaces": [
-            {"space_id": "old", "title": f"{gs.SPACE_TITLE} 2026-01-01 00:00:00"},
-            {"space_id": "new", "title": f"{gs.SPACE_TITLE} 2026-06-01 00:00:00"},
-            {"space_id": "unrelated", "title": "Some other space"},
-        ]
-    }
+    ws.api_client.do.side_effect = [
+        {
+            "spaces": [
+                {"space_id": "old", "title": f"{gs.SPACE_TITLE} 2026-01-01 00:00:00"},
+                {"space_id": "new", "title": f"{gs.SPACE_TITLE} 2026-06-01 00:00:00"},
+                {"space_id": "unrelated", "title": "Some other space"},
+            ]
+        },
+        {"space_id": "new", "parent_path": "/Shared/dqx-studio/studio-app-client-id"},
+    ]
     assert ensure(settings, ws) == "new"
     # Found by prefix — no POST create happened.
     assert all(c.args[0] != "POST" for c in do_calls(ws))
@@ -854,13 +873,46 @@ def test_reuses_existing_space_by_title_prefix_newest_first(settings: MagicMock,
     assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
+def test_does_not_reuse_title_match_from_another_parent(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "other-space", "title": gs.SPACE_TITLE}]},
+        {"space_id": "other-space", "parent_path": "/Users/service-principal"},
+        {"space_id": "shared-space"},
+    ]
+
+    assert ensure(settings, ws) == "shared-space"
+
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert create_call.kwargs["body"]["parent_path"] == "/Shared/dqx-studio/studio-app-client-id"
+
+
+def test_parent_lookup_failure_checks_remaining_candidates_before_giving_up(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {
+            "spaces": [
+                {"space_id": "unavailable", "title": gs.SPACE_TITLE},
+                {"space_id": "candidate", "title": gs.SPACE_TITLE},
+            ]
+        },
+        RuntimeError("temporary detail failure"),
+        {"space_id": "candidate", "parent_path": "/Shared/dqx-studio/studio-app-client-id"},
+    ]
+
+    assert ensure(settings, ws) == "candidate"
+
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
+
+
 def test_find_pages_through_the_space_list(settings: MagicMock, ws: MagicMock) -> None:
     ws.api_client.do.side_effect = [
         {"spaces": [{"space_id": "x", "title": "nope"}], "next_page_token": "t2"},
         {"spaces": [{"space_id": "match", "title": f"{gs.SPACE_TITLE} 2026-05-01"}]},
+        {"space_id": "match", "parent_path": "/Shared/dqx-studio/studio-app-client-id"},
     ]
-    assert gs._find_space_id_by_title(ws, gs.SPACE_TITLE) == "match"
-    first, second = do_calls(ws)
+    assert gs._find_space_id_by_title(ws, gs.SPACE_TITLE, "/Shared/dqx-studio/studio-app-client-id") == "match"
+    first, second, _detail = do_calls(ws)
     assert first.kwargs == {"query": {"page_size": 100}}
     assert second.kwargs == {"query": {"page_size": 100, "page_token": "t2"}}
 
@@ -868,9 +920,96 @@ def test_find_pages_through_the_space_list(settings: MagicMock, ws: MagicMock) -
 def test_noop_when_id_present_and_hash_unchanged(settings: MagicMock, ws: MagicMock) -> None:
     settings.store[gs.SETTING_SPACE_ID] = "space-123"
     settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.return_value = {"space_id": "space-123"}
     assert ensure(settings, ws) == "space-123"
-    ws.api_client.do.assert_not_called()
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
     settings.save_setting.assert_not_called()
+
+
+def test_recreates_when_stored_space_is_deleted_with_unchanged_config(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = [
+        NotFound("space was deleted"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+
+    ws.workspace.mkdirs.assert_called_once_with("/Shared/dqx-studio/studio-app-client-id")
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
+def test_recreates_when_stored_space_response_is_not_found(settings: MagicMock, ws: MagicMock) -> None:
+    class RuntimeNotFoundError(RuntimeError):
+        error_code = "NOT_FOUND"
+
+    settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = [
+        RuntimeNotFoundError("space was deleted"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
+def test_permission_denied_on_verify_keeps_stored_space(settings: MagicMock, ws: MagicMock) -> None:
+    # PERMISSION_DENIED on the verify GET is not proof the space is gone (a
+    # transient ACL blip): the stored id must be kept, not dropped and
+    # recreated, which would orphan the original and leave a duplicate.
+    class RuntimePermissionDeniedError(RuntimeError):
+        error_code = "PERMISSION_DENIED"
+
+    settings.store[gs.SETTING_SPACE_ID] = "inaccessible-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = RuntimePermissionDeniedError("app identity cannot access space")
+
+    assert ensure(settings, ws) == "inaccessible-space"
+
+    assert settings.store[gs.SETTING_SPACE_ID] == "inaccessible-space"
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/inaccessible-space")
+
+
+def test_recreates_when_stored_space_is_deleted_during_config_update(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"
+    ws.api_client.do.side_effect = [
+        NotFound("space was deleted"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+
+    ws.workspace.mkdirs.assert_called_once_with("/Shared/dqx-studio/studio-app-client-id")
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
+def test_transient_verification_failure_keeps_stored_space_usable(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "space-123"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = RuntimeError("temporary verification failure")
+
+    assert ensure(settings, ws) == "space-123"
+
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
+    assert gs.SETTING_STATUS not in settings.store
+
+
+def test_transient_verification_failure_never_replaces_stored_space(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "inaccessible-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = RuntimeError("stored space is inaccessible")
+
+    assert ensure(settings, ws) == "inaccessible-space"
+
+    assert settings.store[gs.SETTING_SPACE_ID] == "inaccessible-space"
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/inaccessible-space")
 
 
 def test_patches_in_place_when_hash_drifted(settings: MagicMock, ws: MagicMock) -> None:
@@ -879,7 +1018,7 @@ def test_patches_in_place_when_hash_drifted(settings: MagicMock, ws: MagicMock) 
     ws.api_client.do.return_value = {}
     assert ensure(settings, ws) == "space-123"
 
-    (patch_call,) = do_calls(ws)
+    _verify_call, patch_call = do_calls(ws)
     assert patch_call.args == ("PATCH", "/api/2.0/genie/spaces/space-123")
     assert json.loads(patch_call.kwargs["body"]["serialized_space"])["version"] == 2
 
@@ -890,7 +1029,7 @@ def test_patches_in_place_when_hash_drifted(settings: MagicMock, ws: MagicMock) 
 def test_patch_failure_keeps_old_hash_so_next_boot_retries(settings: MagicMock, ws: MagicMock) -> None:
     settings.store[gs.SETTING_SPACE_ID] = "space-123"
     settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"
-    ws.api_client.do.side_effect = RuntimeError("transient flap")
+    ws.api_client.do.side_effect = [{"space_id": "space-123"}, RuntimeError("transient flap")]
     assert ensure(settings, ws) == "space-123"
     # Hash NOT advanced — the next provision sees a mismatch and retries.
     assert settings.store[gs.SETTING_CONFIG_HASH] == "stale-hash"
@@ -924,7 +1063,6 @@ def test_ensure_never_raises_even_when_settings_blow_up(ws: MagicMock) -> None:
             settings=settings,
             ws=ws,
             warehouse_id="wh-1",
-            parent_path="/Users/sp",
             catalog=CATALOG,
             schema=SCHEMA,
         )
@@ -932,13 +1070,30 @@ def test_ensure_never_raises_even_when_settings_blow_up(ws: MagicMock) -> None:
     )
 
 
-def test_list_failure_degrades_to_create(settings: MagicMock, ws: MagicMock) -> None:
-    ws.api_client.do.side_effect = [
-        RuntimeError("list unavailable"),
-        {"space_id": "space-9"},
+def test_list_failure_does_not_create_duplicate(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = RuntimeError("list unavailable")
+
+    assert ensure(settings, ws) is None
+
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
+
+
+def test_paging_cap_degrades_to_create_rather_than_failing_forever(settings: MagicMock, ws: MagicMock) -> None:
+    # A workspace larger than the paging cap exposes no reusable candidate in
+    # the scanned pages. Degrade to creating the space (and store its id) rather
+    # than hard-failing every startup — a permanent, self-repeating failure that
+    # would never provision the space.
+    ws.api_client.do.side_effect = [{"spaces": [], "next_page_token": f"page-{page + 1}"} for page in range(20)] + [
+        {"space_id": "created-space"}
     ]
-    assert ensure(settings, ws) == "space-9"
-    assert settings.store[gs.SETTING_SPACE_ID] == "space-9"
+
+    assert ensure(settings, ws) == "created-space"
+
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert settings.store[gs.SETTING_SPACE_ID] == "created-space"
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
 def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: MagicMock, caplog) -> None:
@@ -949,7 +1104,6 @@ def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: Ma
         settings=settings,
         ws=ws,
         warehouse_id="wh-1",
-        parent_path="/Users/sp",
         catalog="bad`catalog",  # Invalid: contains backtick
         schema=SCHEMA,
     )
@@ -965,7 +1119,6 @@ def test_invalid_schema_fails_fast_with_clear_error(settings: MagicMock, ws: Mag
         settings=settings,
         ws=ws,
         warehouse_id="wh-1",
-        parent_path="/Users/sp",
         catalog=CATALOG,
         schema="bad\\schema",  # Invalid: contains backslash
     )
