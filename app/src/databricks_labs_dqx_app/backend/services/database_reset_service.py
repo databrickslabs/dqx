@@ -19,7 +19,8 @@ Scope decisions:
 - Rows are DELETEd, not tables DROPped — the schema (and the
   ``dq_migrations`` version tracker) must survive so the app keeps working
   without a redeploy/re-migrate.
-- ``dq_app_settings`` IS cleared (a full reset), then the fresh-install
+- ``dq_app_settings`` is cleared EXCEPT the two in-flight job-status keys
+  (``reset_database_status`` / ``demo_content_status``), then the fresh-install
   DEFAULT content it held is immediately RE-PROVISIONED in the same request
   by re-running the app's first-boot seed routines (see
   :meth:`DatabaseResetService._reprovision_defaults`). A "full reset" returns
@@ -28,7 +29,14 @@ Scope decisions:
   one. (Historically these were only re-seeded lazily at the next app
   startup, which left the tables empty until a restart; that was the B2-113
   bug this service now fixes.) Every other setting still degrades to a
-  compiled-in default on read, so clearing the rest of the blob is safe.
+  compiled-in default on read, so clearing the rest of the blob is safe. The
+  status keys are spared because the reset (and the concurrent-guard demo
+  deploy) write their ``running`` status into this very table just before the
+  work starts: wiping it mid-operation would break the 409 guard, wedge the UI
+  poll, and drop the terminal succeeded/failed write. Sparing only those two
+  keys keeps ZERO long-term reset history — it just keeps the live status
+  alive so the terminal write lands (see
+  :meth:`DatabaseResetService._clear_app_settings_preserving_status`).
 - The acting admin is NOT locked out: ``dq_role_mappings`` rows for the
   ``admin`` role are preserved, so every admin (including the caller) keeps
   access. All other role mappings are cleared.
@@ -40,11 +48,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.demo.status import DEMO_STATUS_KEY
 from databricks_labs_dqx_app.backend.migrations import (
     ANALYTICAL_TABLE_NAMES,
     OLTP_TABLE_NAMES,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.reset_status import RESET_STATUS_KEY
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -56,9 +66,28 @@ logger = logging.getLogger(__name__)
 # the UI copy — keep the two in lock-step.
 RESET_CONFIRMATION_PHRASE = "reset dqx studio"
 
-# The one OLTP table that gets partial (not full) clearing: admin role
-# mappings are preserved so the acting admin is never locked out.
+# OLTP tables that get partial (not full) clearing:
+#  - ``dq_role_mappings``: admin role mappings are preserved so the acting
+#    admin is never locked out.
+#  - ``dq_app_settings``: the in-flight reset/demo job-status rows are preserved
+#    so the ``running`` status survives its own wipe (see below).
 _ROLE_MAPPINGS_TABLE = "dq_role_mappings"
+_APP_SETTINGS_TABLE = "dq_app_settings"
+
+# The ``dq_app_settings`` key column (a single-row-per-key KV store). Kept in
+# lock-step with the migration DDL (see ``migrations.postgres`` and the Delta
+# OLTP fallback) and every ``AppSettingsService`` read/write.
+_SETTINGS_KEY_COLUMN = "setting_key"
+
+# The two ``dq_app_settings`` keys that must survive the wipe: the reset and
+# demo job-status rows. The reset itself is what clears ``dq_app_settings``, and
+# the ``running`` status the route wrote just before launching lives there — so
+# an unconditional clear would delete the very row the 409 guard, the UI poll,
+# and the terminal succeeded/failed write all depend on. We preserve only these
+# in-flight status keys (imported from their owning modules, never hardcoded);
+# every other setting is still cleared and re-seeded, so this keeps ZERO
+# long-term reset history — it only keeps the live status alive mid-operation.
+_PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY)
 
 
 @dataclass(frozen=True)
@@ -166,6 +195,8 @@ class DatabaseResetService:
         for name in OLTP_TABLE_NAMES:
             if name == _ROLE_MAPPINGS_TABLE:
                 self._clear_role_mappings_preserving_admins(cleared, failed)
+            elif name == _APP_SETTINGS_TABLE:
+                self._clear_app_settings_preserving_status(cleared, failed)
             else:
                 self._clear_table(self._oltp, name, cleared, failed)
 
@@ -266,6 +297,41 @@ class DatabaseResetService:
             # recorded, not swallowed, and never aborts the whole reset.
             failed[table] = str(exc)
             logger.warning("Failed to clear table %s: %s", table, exc, exc_info=True)
+
+    def _clear_app_settings_preserving_status(
+        self,
+        cleared: list[str],
+        failed: dict[str, str],
+    ) -> None:
+        """Clear ``dq_app_settings`` EXCEPT the in-flight job-status keys.
+
+        The reset clears ``dq_app_settings``, but the ``running`` status row the
+        route persisted immediately before launching the reset lives there too.
+        An unconditional ``DELETE`` would remove it mid-operation, breaking the
+        409 mutual-exclusion guard, wedging the UI poll (a running→idle flip
+        stops the spinner early), and dropping the terminal succeeded/failed
+        write. So we spare exactly the reset + demo status keys — mirroring how
+        ``dq_role_mappings`` spares the admin rows — and clear everything else.
+        This preserves NO long-term reset history; it only keeps the live status
+        alive so the terminal write lands. Every other setting is re-seeded (run
+        review statuses, label definitions) or degrades to a compiled-in default
+        on read, so clearing the rest of the blob stays safe.
+        """
+        fqn = self._oltp.fqn(_APP_SETTINGS_TABLE)
+        # ``setting_key`` is a trusted, compiled-in column name (never user
+        # input), so it goes in bare — matching the bare ``role`` column in
+        # ``_clear_role_mappings_preserving_admins`` and staying backend-portable
+        # (no backend-specific quoting). The preserved key VALUES are string
+        # literals, so they are escaped with ``escape_sql_string`` (doubled
+        # single quotes) exactly like the admin-role literal there.
+        preserved = ", ".join(f"'{escape_sql_string(k)}'" for k in _PRESERVED_APP_SETTINGS_KEYS)
+        try:
+            self._oltp.execute(f"DELETE FROM {fqn} WHERE {_SETTINGS_KEY_COLUMN} NOT IN ({preserved})")
+            cleared.append(_APP_SETTINGS_TABLE)
+        except Exception as exc:
+            # Best-effort: recorded, not swallowed, and never aborts the reset.
+            failed[_APP_SETTINGS_TABLE] = str(exc)
+            logger.warning("Failed to clear app settings: %s", exc, exc_info=True)
 
     def _clear_role_mappings_preserving_admins(
         self,

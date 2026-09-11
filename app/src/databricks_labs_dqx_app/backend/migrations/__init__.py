@@ -279,6 +279,9 @@ _V1_ANALYTICAL_BASELINE = (
     "  source_table_fqn STRING NOT NULL,"
     "  view_fqn STRING,"
     "  sample_limit INT,"
+    # Which unit ``sample_limit`` speaks. Without it a 10%-of-1M run and a
+    # whole-table run both persist sample_limit=0 and cannot be told apart.
+    "  sample_kind STRING,"
     "  rows_profiled INT,"
     "  columns_profiled INT,"
     "  duration_seconds DOUBLE,"

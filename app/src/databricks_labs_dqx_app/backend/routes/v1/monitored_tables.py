@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_rule_suggester,
     get_rules_catalog_service,
+    get_schedule_grant_service,
     get_tag_suggestion_service,
     require_role,
 )
@@ -42,6 +43,11 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
     DraftRunRequiredError,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    ScheduleGrantService,
+    manage_block_detail,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
@@ -454,12 +460,19 @@ def update_monitored_table_schedule(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
 ) -> MonitoredTableOut:
     """Set or clear a monitored table's run schedule (P21 item 14).
 
     Requires ``MODIFY`` on the monitored table unless the caller is an
     admin/approver. Orthogonal to the review lifecycle — does NOT flip the
     binding's status. An approved table with a cron fires on the in-app scheduler.
+
+    When a schedule is being *set* (a non-empty cron), the caller must be able to
+    grant the scheduler service principals SELECT on the source table — scheduled
+    runs have no OBO token and read as those SPs. If the caller can grant we do so
+    (idempotently) before saving; if not, the save is hard-blocked (403) naming
+    the users/groups that hold MANAGE (Task 12).
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -470,6 +483,25 @@ def update_monitored_table_schedule(
         principal_ids=set(principal_ids),
         principal_email=user_email,
     )
+
+    # Only gate/grant when a schedule is actually being set/enabled — clearing a
+    # schedule (empty cron) needs no source-table access.
+    if (body.schedule_cron or "").strip():
+        detail = svc.get(binding_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        table_fqn = detail.table.table_fqn
+        try:
+            grant_svc.grant_select_to_schedulers(table_fqn)
+        except CannotManageError as e:
+            raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+        except Exception as e:
+            logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Could not grant the scheduler read access to this table. Please try again.",
+            )
+
     try:
         table = svc.update_schedule(
             binding_id,

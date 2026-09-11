@@ -5283,7 +5283,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \"val%\""}},
+            "check": {"function": "sql_expression", "arguments": {"expression": 'col1 not like "val%"'}},
         },
         {
             "criticality": "error",
@@ -5327,7 +5327,7 @@ not
                 [
                     {
                         "name": "not_col1_not_like_val",
-                        "message": "Value is not matching expression: col1 not like \"val%\"",
+                        "message": 'Value is not matching expression: col1 not like "val%"',
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -5337,7 +5337,7 @@ not
                     },
                     {
                         "name": "not_col2_not_like_val",
-                        "message": "Value is not matching expression: col2 \nnot \n  like \"val%\"",
+                        "message": 'Value is not matching expression: col2 \nnot \n  like "val%"',
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -5383,7 +5383,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.sql_expression,
-            check_func_kwargs={"expression": "col1 not like \"val%\""},
+            check_func_kwargs={"expression": 'col1 not like "val%"'},
         ),
         DQRowRule(
             criticality="error",
@@ -5418,7 +5418,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                 [
                     {
                         "name": "not_col1_not_like_val",
-                        "message": "Value is not matching expression: col1 not like \"val%\"",
+                        "message": 'Value is not matching expression: col1 not like "val%"',
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -6417,6 +6417,18 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks, ref_dfs=ref_dfs)
 
+    # Second is_in_distribution fixture entry ({2: 0.5, 3: 0.3}, distance=0.1) flags every row:
+    # col10 is all 2s, so actual={2: 1.0, residual: 0} vs expected={2: 0.5, 3: 0.3, residual: 0.2}
+    # gives TVD = 0.5 · (0.5 + 0.3 + 0.2) = 0.5, which exceeds the allowed distance=0.1.
+    col10_distribution_violation = build_quality_violation(
+        name="col10_is_not_in_distribution",
+        message=(
+            "Column 'col10' actual distribution deviates from expected by TVD=0.500000, "
+            "which exceeds the allowed distance=0.1."
+        ),
+        columns=["col10"],
+        function="is_in_distribution",
+    )
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
@@ -6444,6 +6456,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "en",
                 "https://example.com/a",
                 None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -6470,6 +6483,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "en",
                 "https://sub.example.org/p?q=1",
                 None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -6496,6 +6510,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "de",
                 "ftp://files.example.org/f.txt",
                 None,
+                [col10_distribution_violation],
                 None,
             ],
         ],
@@ -7261,6 +7276,25 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="*",
             check_func_kwargs={"aggr_type": "count", "ref_df_name": "ref_df_key"},
         ),
+        # is_in_distribution check — TVD-based categorical distribution check on col10
+        # (constant "2" here, so {2: 1.0} matches exactly with TVD=0 at the tightest possible distance).
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_in_distribution,
+            column="col10",
+            check_func_kwargs={"distribution": {2: 1.0}, "distance": 0.0},
+        ),
+        # Second is_in_distribution rule exercises non-trivial TVD math with a residual bucket
+        # (sum<1) and a listed key not present in the data (counted as 0). For col10 all 2s:
+        # actual 2=1.0, residual=0; expected 2=0.5, 3=0.3, residual=0.2 → TVD = 0.5*(0.5+0.3+0.2) = 0.5.
+        # distance=0.1 exceeds that TVD, so every row is flagged — this verifies the classes/programmatic
+        # path catches a real distribution mismatch end-to-end, not just that the check runs.
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_in_distribution,
+            column="col10",
+            check_func_kwargs={"distribution": {2: 0.5, 3: 0.3}, "distance": 0.1},
+        ),
         # is_valid_json check
         DQRowRule(
             criticality="error",
@@ -7413,6 +7447,18 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
 
+    # Second is_in_distribution rule ({2: 0.5, 3: 0.3}, distance=0.1) flags every row:
+    # col10 is all 2s, so actual={2: 1.0, residual: 0} vs expected={2: 0.5, 3: 0.3, residual: 0.2}
+    # gives TVD = 0.5 · (0.5 + 0.3 + 0.2) = 0.5, which exceeds the allowed distance=0.1.
+    col10_distribution_violation = build_quality_violation(
+        name="col10_is_not_in_distribution",
+        message=(
+            "Column 'col10' actual distribution deviates from expected by TVD=0.500000, "
+            "which exceeds the allowed distance=0.1."
+        ),
+        columns=["col10"],
+        function="is_in_distribution",
+    )
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
@@ -7438,6 +7484,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "en",
                 "https://example.com/a",
                 None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -7462,6 +7509,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "en",
                 "https://sub.example.org/p?q=1",
                 None,
+                [col10_distribution_violation],
                 None,
             ],
             [
@@ -7486,6 +7534,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "de",
                 "ftp://files.example.org/f.txt",
                 None,
+                [col10_distribution_violation],
                 None,
             ],
         ],
@@ -9422,7 +9471,7 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
                                     "score": {"df": "26.7", "ref": "26.9"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": "id1 != 2",
@@ -9524,7 +9573,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": None,
@@ -9560,7 +9609,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "active": {"df": "true"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": None,
@@ -9597,7 +9646,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "active": {"ref": "true"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": None,
@@ -9745,7 +9794,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                                     "name": {"ref": "Marcin"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": filter_str,
@@ -9771,7 +9820,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                                     "name": {"df": "Marcin"},
                                 },
                             },
-                            separators=(',', ':'),
+                            separators=(",", ":"),
                         ),
                         "columns": pk_columns,
                         "filter": filter_str,
@@ -10759,3 +10808,112 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
         SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# is_in_distribution — apply_checks_by_metadata (YAML-equivalent) scenarios
+# ---------------------------------------------------------------------------
+
+
+def test_apply_checks_by_metadata_is_in_distribution_matches(ws, spark):
+    """YAML/metadata path: actual distribution matches expected within distance → no violations."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "id: int, value: string"
+    test_df = spark.createDataFrame(
+        [[i + 1, v] for i, v in enumerate(["A"] * 7 + ["B"] * 2 + ["C"])],
+        schema,
+    )
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_in_distribution",
+                "arguments": {
+                    "column": "value",
+                    "distribution": {"A": 0.75, "B": 0.15, "C": 0.10},
+                    "distance": 0.05,
+                },
+            },
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [[i + 1, v, None, None] for i, v in enumerate(["A"] * 7 + ["B"] * 2 + ["C"])],
+        schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_is_in_distribution_fails_when_distance_too_small(ws, spark):
+    """YAML/metadata path: distance=0 exposes a TVD=0.05 gap → every row is flagged."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "id: int, value: string"
+    test_df = spark.createDataFrame(
+        [[i + 1, v] for i, v in enumerate(["A"] * 7 + ["B"] * 2 + ["C"])],
+        schema,
+    )
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: is_in_distribution
+            arguments:
+              column: value
+              distribution:
+                A: 0.75
+                B: 0.15
+                C: 0.10
+              distance: 0.0
+        """
+    )
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks_yaml)
+
+    violation = build_quality_violation(
+        name="value_is_not_in_distribution",
+        message=(
+            "Column 'value' actual distribution deviates from expected by TVD=0.050000, "
+            "which exceeds the allowed distance=0.0."
+        ),
+        columns=["value"],
+        function="is_in_distribution",
+    )
+    expected = spark.createDataFrame(
+        [[i + 1, v, [violation], None] for i, v in enumerate(["A"] * 7 + ["B"] * 2 + ["C"])],
+        schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_is_in_distribution_case_insensitive_normalisation(ws, spark):
+    """YAML/metadata path with case_sensitive=false lowercases both the column and expected keys."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "id: int, value: string"
+    test_df = spark.createDataFrame(
+        [[i + 1, v] for i, v in enumerate(["a", "A", "A", "B", "b"])],
+        schema,
+    )
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_in_distribution",
+                "arguments": {
+                    "column": "value",
+                    "distribution": {"A": 0.6, "B": 0.4},
+                    "distance": 0.001,
+                    "case_sensitive": False,
+                },
+            },
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [[i + 1, v, None, None] for i, v in enumerate(["a", "A", "A", "B", "b"])],
+        schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
