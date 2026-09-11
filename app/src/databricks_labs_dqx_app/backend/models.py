@@ -2,7 +2,7 @@ import functools
 from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .. import __version__
 from .config import AI_SAMPLE_ROW_LIMIT
@@ -1455,9 +1455,42 @@ class DryRunOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ProfileRunIn(BaseModel):
+class ProfilerSampleOverride(BaseModel):
+    """Optional per-run override of the admin profiler sampling setting.
+
+    Both fields default to ``None``, meaning "use the configured admin
+    setting". *sample_kind* picks which form *sample_value* takes, so the
+    two forms are mutually exclusive by construction — there is no way to
+    request a row cap and a percentage at the same time.
+    """
+
+    sample_kind: Literal["full", "records", "percent"] | None = Field(
+        default=None,
+        description="Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.",
+    )
+    sample_value: int | None = Field(
+        default=None,
+        ge=1,
+        description="Row count when sample_kind is records, 1-100 when percent. Ignored for full.",
+    )
+
+    @model_validator(mode="after")
+    def _percent_within_range(self) -> "ProfilerSampleOverride":
+        """Reject a percentage above 100.
+
+        *sample_value* carries two different units, so the bound depends on
+        *sample_kind* and cannot be expressed as a plain ``le``. A percentage
+        over 100 is rejected rather than clamped: any value at or above 100 is
+        the whole table, so silently accepting it would turn a request for a cap
+        into a full scan. Mirrors the 400 the admin PUT returns.
+        """
+        if self.sample_kind == "percent" and self.sample_value is not None and self.sample_value > 100:
+            raise ValueError("sample_value must be between 1 and 100 when sample_kind is 'percent'.")
+        return self
+
+
+class ProfileRunIn(ProfilerSampleOverride):
     table_fqn: str = Field(description="Fully qualified table name to profile")
-    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample")
     columns: list[str] | None = Field(default=None, description="Specific columns to profile (all if None)")
     profile_options: dict[str, Any] | None = Field(
         default=None,
@@ -1496,6 +1529,13 @@ class ProfileRunSummaryOut(BaseModel):
     run_id: str
     source_table_fqn: str
     status: str | None = None
+    # Row cap for a ``records`` run; 0 for ``full`` and ``percent``, which have
+    # no exact cap. Read WITH ``sample_kind`` — alone it cannot distinguish a
+    # percentage sample from a whole-table scan.
+    sample_limit: int | None = None
+    # Which unit ``sample_limit`` speaks: full / records / percent. None for
+    # runs recorded before the column existed.
+    sample_kind: str | None = None
     rows_profiled: int | None = None
     columns_profiled: int | None = None
     duration_seconds: float | None = None
@@ -1517,9 +1557,8 @@ class ProfileRunSummaryOut(BaseModel):
     job_run_id: int | None = None
 
 
-class BatchProfileRunIn(BaseModel):
+class BatchProfileRunIn(ProfilerSampleOverride):
     table_fqns: list[str] = Field(description="List of fully qualified table names to profile")
-    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample per table")
     profile_options: dict[str, Any] | None = Field(
         default=None,
         description="Advanced profiler options applied to all tables",
@@ -2178,6 +2217,12 @@ class GroupRowOut(BaseModel):
     is keyed on, so the UI can facet-filter by rule IDENTITY across
     renames; None for legacy/untagged name-keyed groups and on every
     other axis).
+
+    *pass_threshold* is the frozen per-run pass threshold (%) in effect for
+    the group — the value stamped on the NEWEST run pooled into the group
+    (mirroring how the by-rule label is taken from the newest run). None when
+    no contributing run carried a frozen threshold (legacy runs predating the
+    stamp). Surfaced so the UI can show "threshold used" in the drilldown.
     """
 
     label: str | None = None
@@ -2190,6 +2235,7 @@ class GroupRowOut(BaseModel):
     total_tests: int | None = None
     breached: bool = False
     breach_criticality: str | None = None
+    pass_threshold: int | None = None
 
 
 class TrendPointOut(BaseModel):
@@ -2564,6 +2610,44 @@ class ScheduleConfigHistoryOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Schedule grant preflight models (Task 12)
+# ---------------------------------------------------------------------------
+
+
+class ManageHolderOut(BaseModel):
+    """A user or group that can grant on a table (holds MANAGE or is an owner)."""
+
+    principal: str = Field(description="User name / email or group name that can grant on the table")
+    type: str = Field(description="Best-effort classification: 'user' or 'group'")
+
+
+class SchedulePreflightIn(BaseModel):
+    """Body of ``POST /schedule-grants/preflight`` — the table(s) about to be scheduled."""
+
+    table_fqns: list[str] = Field(description="Fully qualified table names the schedule will run against")
+
+
+class SchedulePreflightTableOut(BaseModel):
+    """Per-table grantability for the schedule editor.
+
+    ``can_manage`` is ``True`` when the caller can grant SELECT to the scheduler
+    service principals (they own the table/schema/catalog or hold MANAGE,
+    directly or via a group). When ``False`` the schedule save is hard-blocked
+    and ``manage_holders`` names who to ask instead.
+    """
+
+    fqn: str
+    can_manage: bool
+    manage_holders: list[ManageHolderOut] = Field(default_factory=list)
+
+
+class SchedulePreflightOut(BaseModel):
+    """Response of the schedule preflight — one entry per requested table."""
+
+    tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # DQX check function registry models
 # ---------------------------------------------------------------------------
 
@@ -2830,14 +2914,28 @@ class ResetDatabaseIn(BaseModel):
 
 
 class ResetDatabaseOut(BaseModel):
-    """Result of a database reset — what was cleared, kept, and by whom."""
+    """Acknowledgement that a database reset was launched on a background thread.
 
-    status: str
-    performed_by: str
-    performed_at: str
-    cleared_tables: list[str] = Field(default_factory=list)
-    failed_tables: dict[str, str] = Field(default_factory=dict)
-    preserved_note: str = ""
+    The reset clears 32 cross-backend tables and reprovisions the Ask-Genie
+    space, which can outlive the Databricks Apps gateway idle timeout — so this
+    endpoint fires the work on a named daemon thread and returns immediately with
+    the initial ``running`` state. Progress (and the terminal ``succeeded`` /
+    ``failed`` outcome, with counts) is polled via ``GET /admin/reset-status``.
+    """
+
+    state: str
+    started_at: str
+
+
+class ResetStatusOut(BaseModel):
+    """Current state of the long-running database-reset job."""
+
+    state: str
+    message: str
+    started_at: str
+    updated_at: str
+    cleared_count: int = 0
+    failed_count: int = 0
 
 
 class ExportOut(BaseModel):

@@ -19,6 +19,23 @@ import axios from "axios";
 // contract for the whole orval/axios client. `indexes: null` = no brackets.
 axios.defaults.paramsSerializer = { indexes: null };
 
+// Defense-in-depth request timeout. Without one, a request that the backend
+// finished but whose response never reaches the browser (e.g. the Databricks
+// Apps gateway drops a connection that outlived its idle timeout) leaves the
+// promise pending forever — a mutation's `isPending` stays true and any spinner
+// bound to it spins indefinitely. A finite timeout rejects such a request into
+// the error path instead.
+//
+// The value must sit safely ABOVE the backend's own synchronous ceilings, or it
+// false-trips valid-but-slow reads. Several endpoints run SQL inside the request
+// (table preview/query, dq_results / dq_score / quarantine / metrics), and the
+// SqlExecutor default statement timeout is 120s — add cold-warehouse start +
+// large-scan + Genie NL latency on top. 300s clears all of that with margin,
+// while still catching a genuinely dead request. The long-running jobs (reset,
+// demo seed, runs) all return immediately and are polled, so none depend on a
+// tight timeout here.
+axios.defaults.timeout = 300_000;
+
 // Response interceptor for logging only (no retries)
 axios.interceptors.response.use(
   (response) => {

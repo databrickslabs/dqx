@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -62,6 +62,12 @@ import {
   useGetRequireDraftRunSettings,
   useSaveRequireDraftRunSettings,
   getGetRequireDraftRunSettingsQueryKey,
+  useGetDraftRunSampleLimit,
+  useGetProfilerSample,
+  useSaveProfilerSample,
+  useSaveDraftRunSampleLimit,
+  getGetDraftRunSampleLimitQueryKey,
+  getGetProfilerSampleQueryKey,
   useGetShareTablesWithWorkspaceUsers,
   useSaveShareTablesWithWorkspaceUsers,
   getGetShareTablesWithWorkspaceUsersQueryKey,
@@ -92,11 +98,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useResetDatabase } from "@/lib/api";
+import { useResetDatabase, useResetStatus, getResetStatusQueryKey } from "@/lib/api";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
+import { sampleValueForKind } from "@/lib/sampling";
 import { Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -115,6 +122,7 @@ import {
 import { ChevronDown, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 
 export const Route = createFileRoute("/_sidebar/settings")({
   component: () => <ConfigPage />,
@@ -1525,7 +1533,6 @@ function RunReviewStatusesSettings() {
 
 // Sentinel values for Radix Select — it rejects empty-string item values.
 const NO_ENDPOINT_VALUE = "__none__";
-const NO_WAREHOUSE_VALUE = "__default__";
 
 /**
  * SQL-warehouse dropdown. Groups warehouses into Serverless and Classic with
@@ -1538,40 +1545,51 @@ function WarehouseSelect({
   value,
   onChange,
   warehouses,
+  defaultWarehouseId,
   disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
   warehouses: WarehouseOut[];
+  defaultWarehouseId?: string;
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
+  // With no explicit override, show the effective/default warehouse as selected.
+  const selectedId = value || defaultWarehouseId || "";
   const { serverless, classic } = useMemo(() => {
     const byId = new Map(warehouses.map((w) => [w.id, w]));
-    // Ensure saved id is always present in the list even if not in workspace
-    if (value && !byId.has(value)) {
-      byId.set(value, { id: value, name: value, serverless: false, running: false });
+    // Ensure the selected id is always present in the list even if not in workspace
+    if (selectedId && !byId.has(selectedId)) {
+      byId.set(selectedId, { id: selectedId, name: selectedId, serverless: false, running: false });
     }
     const all = Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
     return {
       serverless: all.filter((w) => w.serverless),
       classic: all.filter((w) => !w.serverless),
     };
-  }, [warehouses, value]);
+  }, [warehouses, selectedId]);
+
+  const optionSuffix = (w: WarehouseOut) => {
+    if (defaultWarehouseId && w.id === defaultWarehouseId) {
+      return ` ${t("config.computeWarehouseDefaultSuffix")}`;
+    }
+    if (w.id === selectedId && !warehouses.some((x) => x.id === selectedId)) {
+      return ` (${t("config.computeWarehouseCustomOption")})`;
+    }
+    return "";
+  };
 
   return (
     <Select
-      value={value || NO_WAREHOUSE_VALUE}
-      onValueChange={(v) => onChange(v === NO_WAREHOUSE_VALUE ? "" : v)}
+      value={selectedId || undefined}
+      onValueChange={(v) => onChange(v)}
       disabled={disabled}
     >
       <SelectTrigger className="h-8 text-xs w-52">
         <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
-          {t("config.computeWarehouseDefault")}
-        </SelectItem>
         {serverless.length > 0 && (
           <SelectGroup>
             <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pt-1">
@@ -1582,9 +1600,7 @@ function WarehouseSelect({
                 <span className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
                   {w.name}
-                  {w.id === value && !warehouses.some((x) => x.id === value)
-                    ? ` (${t("config.computeWarehouseCustomOption")})`
-                    : ""}
+                  {optionSuffix(w)}
                 </span>
               </SelectItem>
             ))}
@@ -1600,9 +1616,7 @@ function WarehouseSelect({
                 <span className="flex items-center gap-1.5">
                   <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", w.running ? "bg-green-500" : "bg-red-500")} />
                   {w.name}
-                  {w.id === value && !warehouses.some((x) => x.id === value)
-                    ? ` (${t("config.computeWarehouseCustomOption")})`
-                    : ""}
+                  {optionSuffix(w)}
                 </span>
               </SelectItem>
             ))}
@@ -2143,6 +2157,210 @@ function RequireDraftRunSettingsCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Draft-run sample limit — admin knob capping the rows a DRAFT monitored-table
+// run reads (0 = whole table). Approved/published ("Run now") runs never sample;
+// they always scan the full table, so there is deliberately no knob for them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Convert a stored draft_run_sample_limit (rows; 0 = whole table) → SampleSelector {kind, value}. */
+function limitToSample(limit: number): { kind: SampleKind; value: number } {
+  if (limit === 0) return { kind: "full", value: 1000 };
+  return { kind: "records", value: limit };
+}
+
+/** Convert SampleSelector {kind, value} → a draft_run_sample_limit row count.
+ *  Percent is disabled in this context (disablePercent), but guard here as
+ *  belt-and-suspenders: any non-full kind stores the numeric value as rows. */
+function sampleToLimit(kind: SampleKind, value: number): number {
+  if (kind === "full") return 0;
+  return value;
+}
+
+function DraftRunSampleLimitSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetDraftRunSampleLimit();
+  const settings = resp?.data;
+  const saveMutation = useSaveDraftRunSampleLimit();
+  const { isAdmin } = usePermissions();
+
+  // Pre-hydration state matches the compiled-in default (whole table) so the
+  // row does not flash "Random sample / 1000" before the query resolves.
+  const [sampleKind, setSampleKind] = useState<SampleKind>("full");
+  const [sampleValue, setSampleValue] = useState(1000);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      const { kind, value } = limitToSample(settings.draft_run_sample_limit);
+      setSampleKind(kind);
+      setSampleValue(value);
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const handleSave = useCallback(
+    (kind: SampleKind, value: number) => {
+      const limit = sampleToLimit(kind, value);
+      saveMutation.mutate(
+        { data: { draft_run_sample_limit: limit } },
+        {
+          onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
+            toast.success(t("config.draftSampleSaved"));
+          },
+          onError: (err: unknown) => {
+            const axErr = err as AxiosError<{ detail?: string }>;
+            toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDraftSample"));
+          },
+        },
+      );
+    },
+    [saveMutation, queryClient, t],
+  );
+
+  const handleKindChange = (k: SampleKind) => {
+    setSampleKind(k);
+    handleSave(k, sampleValue);
+  };
+
+  const handleValueChange = (n: number) => {
+    setSampleValue(n);
+    handleSave(sampleKind, n);
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-5 w-5" />
+          {t("config.draftSampleTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label className="text-sm">{t("config.draftSampleLabel")}</Label>
+          </div>
+          <SampleSelector
+            kind={sampleKind}
+            value={sampleValue}
+            onKind={handleKindChange}
+            onValue={handleValueChange}
+            disablePercent
+            compact
+          />
+        </div>
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.draftSampleAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profiler sampling — admin knob controlling how much of a source table the
+// profiler reads. Unlike the draft-run knob above this one allows a PERCENT
+// unit as well as a row count, so `disablePercent` is deliberately NOT set.
+// The two units are mutually exclusive: `kind` decides which one `value` means.
+//
+// This is the DEFAULT for both profiling entry points (the Profiler page and
+// the Profile tab on a monitored table); the Profiler page can still override
+// it for a single run. DQ runs are unaffected — scheduled runs always scan the
+// full table so their pass rates stay meaningful.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProfilerSampleSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetProfilerSample();
+  const settings = resp?.data;
+  const saveMutation = useSaveProfilerSample();
+  const { isAdmin } = usePermissions();
+
+  const [sampleKind, setSampleKind] = useState<SampleKind>("percent");
+  const [sampleValue, setSampleValue] = useState(10);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setSampleKind(settings.sample_kind);
+      // `full` stores 0, which is not a valid selector value — keep the
+      // compiled-in default visible so switching back to a sample shows a
+      // sensible number rather than 0.
+      setSampleValue(settings.sample_value || settings.default_value || 10);
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const handleSave = useCallback(
+    (kind: SampleKind, value: number) => {
+      saveMutation.mutate(
+        { data: { sample_kind: kind, sample_value: kind === "full" ? null : value } },
+        {
+          onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: getGetProfilerSampleQueryKey() });
+            toast.success(t("config.profilerSampleSaved"));
+          },
+          onError: (err: unknown) => {
+            const axErr = err as AxiosError<{ detail?: string }>;
+            toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveProfilerSample"));
+          },
+        },
+      );
+    },
+    [saveMutation, queryClient, t],
+  );
+
+  const handleKindChange = (k: SampleKind) => {
+    setSampleKind(k);
+    // Switching records → percent cannot reuse a row count; clamping it would
+    // save 100% (the whole table) without the admin choosing that.
+    const next = sampleValueForKind(k, sampleValue);
+    setSampleValue(next);
+    handleSave(k, next);
+  };
+
+  const handleValueChange = (n: number) => {
+    setSampleValue(n);
+    handleSave(sampleKind, n);
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5" />
+          {t("config.profilerSampleTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label className="text-sm">{t("config.profilerSampleLabel")}</Label>
+          </div>
+          <SampleSelector
+            kind={sampleKind}
+            value={sampleValue}
+            onKind={handleKindChange}
+            onValue={handleValueChange}
+            compact
+          />
+        </div>
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.profilerSampleAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Share new tables / collections with the workspace users group. When on,
 // newly created monitored tables and collections get the default users-group
 // grant. When off (default), only the owner is granted. Registry rules always
@@ -2363,6 +2581,7 @@ function ComputeSettingsCard() {
           value={warehouseId}
           onChange={handleWarehouseChange}
           warehouses={warehouses}
+          defaultWarehouseId={settings?.effective_warehouse_id ?? undefined}
           disabled={!isAdmin || saveMutation.isPending}
         />
       </div>
@@ -2440,7 +2659,47 @@ function DangerZoneCard() {
   const [typed, setTyped] = useState("");
   const resetMutation = useResetDatabase();
 
-  const canConfirm = typed.trim() === RESET_DB_PHRASE && !resetMutation.isPending;
+  // The reset now runs on a background thread and returns immediately; the POST
+  // no longer carries the outcome. Poll the reset-status endpoint (like
+  // DeployDemoRow polls demo/status) and drive the spinner + terminal toast off
+  // the polled state, so a request that outlives the gateway idle timeout can no
+  // longer strand the spinner forever.
+  const { data: statusResp } = useResetStatus({
+    query: {
+      // reset-status is an ADMIN-only endpoint — don't poll it for non-admins
+      // (that would fire a 403 on every mount).
+      enabled: isAdmin,
+      refetchInterval: (query) => (query.state.data?.data?.state === "running" ? 2000 : false),
+    },
+  });
+  const status = statusResp?.data;
+  const isRunning = status?.state === "running" || resetMutation.isPending;
+
+  // Fire the success/failure toast when the polled status transitions OUT of
+  // `running` into a terminal state. A ref-tracked previous state means we only
+  // toast on a genuine running→terminal edge, never on mount over a stale
+  // terminal status from an earlier reset.
+  const prevResetStateRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const state = status?.state;
+    const prev = prevResetStateRef.current;
+    prevResetStateRef.current = state;
+    if (prev !== "running") return;
+    if (state === "succeeded") {
+      const failed = status?.failed_count ?? 0;
+      if (failed > 0) {
+        toast.warning(t("config.resetDbPartial", { count: failed }));
+      } else {
+        toast.success(t("config.resetDbSuccess", { count: status?.cleared_count ?? 0 }));
+      }
+      // Everything the app cached is now stale — refetch across the board.
+      queryClient.invalidateQueries();
+    } else if (state === "failed") {
+      toast.error(status?.message || t("config.resetDbFailed"));
+    }
+  }, [status?.state, status?.cleared_count, status?.failed_count, status?.message, queryClient, t]);
+
+  const canConfirm = typed.trim() === RESET_DB_PHRASE && !isRunning;
 
   const closeDialog = () => {
     setOpen(false);
@@ -2452,17 +2711,11 @@ function DangerZoneCard() {
     resetMutation.mutate(
       { data: { confirmation_phrase: RESET_DB_PHRASE } },
       {
-        onSuccess: (resp) => {
-          const cleared = resp.data.cleared_tables?.length ?? 0;
-          const failed = Object.keys(resp.data.failed_tables ?? {}).length;
-          if (failed > 0) {
-            toast.warning(t("config.resetDbPartial", { count: failed }));
-          } else {
-            toast.success(t("config.resetDbSuccess", { count: cleared }));
-          }
+        onSuccess: () => {
           closeDialog();
-          // Everything the app cached is now stale — refetch across the board.
-          queryClient.invalidateQueries();
+          // Kick the poll immediately so the spinner picks up the `running`
+          // state; the terminal toast fires from the polled transition above.
+          queryClient.invalidateQueries({ queryKey: getResetStatusQueryKey() });
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
@@ -2513,7 +2766,7 @@ function DangerZoneCard() {
       <Dialog
         open={open}
         onOpenChange={(o) => {
-          if (resetMutation.isPending) return;
+          if (isRunning) return;
           if (o) setOpen(true);
           else closeDialog();
         }}
@@ -2536,19 +2789,19 @@ function DangerZoneCard() {
               autoComplete="off"
               onChange={(e) => setTyped(e.target.value)}
               placeholder={t("config.resetDbConfirmPlaceholder")}
-              disabled={resetMutation.isPending}
+              disabled={isRunning}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canConfirm) handleConfirm();
               }}
             />
           </div>
           <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={resetMutation.isPending}>
+            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={isRunning}>
               {t("config.resetDbCancel")}
             </Button>
             <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={!canConfirm} className="gap-1.5 dark:bg-red-600 dark:hover:bg-red-500">
-              {resetMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {resetMutation.isPending ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
+              {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {isRunning ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2616,6 +2869,8 @@ function ConfigPage() {
       { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
+      { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
+      { id: "profilerSample", tab: "compute", title: t("config.profilerSampleTitle"), keywords: t("config.kwProfilerSample"), render: () => <ProfilerSampleSettings /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
