@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { Loader2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { currentUser } from "@/lib/api";
+import {
+  currentUser,
+  getCurrentUserQueryKey,
+  getGetSetupStatusQueryKey,
+  getSetupStatus,
+} from "@/lib/api";
+import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -19,6 +25,7 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation();
   const tRef = useRef(t);
+  const queryClient = useQueryClient();
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -27,15 +34,32 @@ export function AuthGuard({ children }: AuthGuardProps) {
     tRef.current = t;
   }, [t]);
 
+  // Warm the setup-readiness check in PARALLEL with the auth handshake so
+  // SetupGate doesn't add a second sequential round-trip once auth resolves.
+  // Retries like the auth check below (the OBO token may not be ready on the
+  // first tick); SetupGate reads the same query key, so it reuses this fetch.
+  useEffect(() => {
+    void queryClient.prefetchQuery({
+      queryKey: getGetSetupStatusQueryKey(),
+      queryFn: () => getSetupStatus(),
+      retry: 15,
+    });
+  }, [queryClient]);
+
   useEffect(() => {
     let cancelled = false;
     let timeoutId: NodeJS.Timeout;
 
     const checkAuth = async () => {
       try {
-        await currentUser({ timeout: 10000 });
+        const me = await currentUser({ timeout: 10000 });
 
         if (!cancelled) {
+          // Seed the React Query cache with the current-user response we just
+          // fetched, so useCurrentUserSuspense (home route + sidebar shell)
+          // resolves from cache instead of suspending into a blank/black frame
+          // the instant the loading spinner hands off to the router.
+          queryClient.setQueryData(getCurrentUserQueryKey(), me);
           setIsAuthReady(true);
         }
       } catch (err) {
@@ -84,7 +108,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         clearTimeout(timeoutId);
       }
     };
-  }, [retryCount, isAuthReady, error]);
+  }, [retryCount, isAuthReady, error, queryClient]);
 
   // Show error state
   if (error) {
@@ -108,14 +132,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   // Show loading state while waiting for auth
   if (!isAuthReady) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center space-y-4">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-          <div className="text-lg font-medium">{t("auth.loadingMessage")}</div>
-        </div>
-      </div>
-    );
+    return <StudioLoadingScreen />;
   }
 
   // Auth is ready, render the app

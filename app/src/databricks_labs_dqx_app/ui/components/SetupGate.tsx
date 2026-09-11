@@ -14,10 +14,10 @@ import {
 import { setupView } from "@/lib/setup-state";
 import { useWorkspaceHost } from "@/lib/api-custom";
 import {
-  SetupLoading,
   SetupStatusUnavailable,
   SetupWizard,
 } from "@/components/setup/SetupWizard";
+import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
   children: React.ReactNode;
@@ -82,7 +82,10 @@ export function SetupGate({ children }: SetupGateProps) {
         setupStatus.data.data.report.state !== "ready",
     },
   });
-  if (setupStatus.isPending) return <SetupLoading />;
+  // While readiness is being checked, show the same "Loading DQX Studio" spinner
+  // AuthGuard uses, so the check reads as one continuous load — no flash of the
+  // "Checking Studio readiness" card, and no blank/black screen.
+  if (setupStatus.isPending) return <StudioLoadingScreen />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
   const view = setupView(setupStatus.data.data);

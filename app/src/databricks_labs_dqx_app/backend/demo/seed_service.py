@@ -83,6 +83,11 @@ from databricks_labs_dqx_app.backend.registry_models import (
     set_reserved_tag,
     set_slot_tags,
 )
+from databricks_labs_dqx_app.backend.profiler_options import sample_profile_options
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    PROFILER_SAMPLE_KIND_RECORDS,
+    ProfilerSample,
+)
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService, DesiredAppliedRule
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
@@ -137,6 +142,7 @@ _PROFILE_TIMEOUT_SECONDS = 900
 _PROFILE_POLL_SECONDS = 10
 # Rows the demo profiler samples from its source table.
 _PROFILE_SAMPLE_LIMIT = 50_000
+_PROFILE_SAMPLE = ProfilerSample(kind=PROFILER_SAMPLE_KIND_RECORDS, value=_PROFILE_SAMPLE_LIMIT)
 
 
 @dataclass
@@ -439,12 +445,16 @@ class DemoSeedService:
         run_id = uuid4().hex[:16]
         view_fqn: str | None = None
         try:
-            view_fqn = profiler_view.create_view(table_fqn, sample_limit=_PROFILE_SAMPLE_LIMIT)
+            view_fqn = profiler_view.create_view(table_fqn, sample=_PROFILE_SAMPLE)
             config = {
-                "sample_limit": _PROFILE_SAMPLE_LIMIT,
+                "sample_kind": _PROFILE_SAMPLE.kind,
+                "sample_value": _PROFILE_SAMPLE.value,
                 "source_table_fqn": table_fqn,
                 "columns": None,
-                "profile_options": None,
+                # Pin the profiler's own sampling off via the shared helper —
+                # copying its output would let the demo drift back to DQX core
+                # defaults (~300 rows) if the convention changes.
+                "profile_options": sample_profile_options(_PROFILE_SAMPLE, None),
             }
             job_run_id = job_service.submit_run(
                 task_type="profile",
@@ -460,6 +470,7 @@ class DemoSeedService:
                 source_table_fqn=table_fqn,
                 view_fqn=view_fqn,
                 sample_limit=_PROFILE_SAMPLE_LIMIT,
+                sample_kind=_PROFILE_SAMPLE.kind,
                 job_run_id=job_run_id,
             )
             status = self._wait_for_profile(run_id)
@@ -819,10 +830,15 @@ class DemoSeedService:
         for table, binding_id in binding_map.items():
             run = self._binding_run.run_binding(binding_id, "approved", None, user_email)
             gate_runs[table] = run.run_id
-        for run_id in gate_runs.values():
-            self._wait_for_run(run_id)
+        # Capture each gate run's TERMINAL status. A broken binding (e.g. an
+        # unquoted ``is_in_list`` enum that DQX resolves as a column reference)
+        # makes the run FAIL, so a non-SUCCESS terminal status is a misfire —
+        # aborting here in minutes with a clear error rather than grinding
+        # through the multi-hour weekly loop waiting on metrics that a failed
+        # run never writes.
+        gate_status = {table: self._wait_for_run(run_id) for table, run_id in gate_runs.items()}
         for table, run_id in gate_runs.items():
-            self._assert_no_misfire(table, run_id)
+            self._assert_no_misfire(table, run_id, gate_status[table])
         for run_id in gate_runs.values():
             self._delete_run(run_id)
 
@@ -858,11 +874,15 @@ class DemoSeedService:
                 return
             time.sleep(_METRICS_POLL_SECONDS)
 
-    def _assert_no_misfire(self, table: str, run_id: str) -> None:
-        """Raise when a run's check misfired — catastrophic rate, or a uniqueness band breach.
+    def _assert_no_misfire(self, table: str, run_id: str, status: str = "SUCCESS") -> None:
+        """Raise when a run misfired — non-SUCCESS terminal state, catastrophic rate, or a uniqueness band breach.
 
-        Two independent gates:
+        Three independent gates:
 
+        * **Terminal status** — the run must have reached ``SUCCESS``. A broken
+          binding (e.g. an unquoted ``is_in_list`` enum DQX resolves as a column
+          reference) makes the run FAIL and write no metrics, so any non-SUCCESS
+          terminal state is a hard misfire caught before the metric reads below.
         * **Catastrophic rate** — any check failing at or above
           :data:`_MISFIRE_RATE` of rows is a mis-bound predicate.
         * **Uniqueness band** — the ``unique`` rule's check must land inside
@@ -870,7 +890,19 @@ class DemoSeedService:
           (e.g. keyed on the wrong column) flags every row, so a failed-row
           count outside the expected ``(low, high)`` band is a misfire even
           when it stays below the catastrophic rate.
+
+        Args:
+            table: the table whose gate run is being asserted (for messages).
+            run_id: the gate run id whose metrics are inspected.
+            status: the run's terminal status from :meth:`_wait_for_run`. A
+                non-SUCCESS value fails the gate immediately.
         """
+        if status != "SUCCESS":
+            raise RuntimeError(
+                f"Validation gate: run for table '{self._sanitize(table)}' terminated with status "
+                f"'{self._sanitize(status)}' instead of SUCCESS — a check likely failed to bind "
+                f"(e.g. an unquoted is_in_list enum resolved as a column reference)."
+            )
         input_rows, failures = self._read_run_check_failures(run_id)
         if input_rows <= 0:
             return
@@ -1039,8 +1071,11 @@ class DemoSeedService:
             for table, binding_id in binding_map.items():
                 run = self._binding_run.run_binding(binding_id, "approved", None, user_email)
                 week_runs[table] = run.run_id
-            for run_id in week_runs.values():
-                self._wait_for_run(run_id)
+            # Record each run's TERMINAL status. A FAILED/CANCELED run never
+            # writes metrics, so re-dating it would only burn the bounded
+            # `_wait_for_metrics` deadline waiting for rows that never arrive
+            # (the "deploy never ends" symptom); such runs are skipped below.
+            week_status = {table: self._wait_for_run(run_id) for table, run_id in week_runs.items()}
             # Sweep any deleted-gate-run orphan metrics BEFORE this week's score
             # refresh. The validation gate runs execute against BASELINE-reset
             # data at real wall-clock and are deleted, but a late-arriving metrics
@@ -1057,6 +1092,15 @@ class DemoSeedService:
             # leftovers are removed.
             self._delete_orphan_metrics()
             for table, run_id in week_runs.items():
+                if week_status.get(table) != "SUCCESS":
+                    logger.warning(
+                        "Demo weekly run for table '%s' (week %d) terminated with status '%s'; "
+                        "skipping re-date and score refresh for this run.",
+                        self._sanitize(table),
+                        week,
+                        self._sanitize(week_status.get(table) or "UNKNOWN"),
+                    )
+                    continue
                 self._redate_run(run_id, target_iso)
                 self._score_cache.refresh_for_tables([self._table_fqn(table)])
                 self._redate_history("table", self._table_fqn(table), target_iso)
