@@ -957,6 +957,22 @@ def test_recreates_when_stored_space_response_is_not_found(settings: MagicMock, 
     assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
 
 
+def test_recreates_when_stored_space_is_inaccessible_to_app_identity(settings: MagicMock, ws: MagicMock) -> None:
+    class RuntimePermissionDeniedError(RuntimeError):
+        error_code = "PERMISSION_DENIED"
+
+    settings.store[gs.SETTING_SPACE_ID] = "inaccessible-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = [
+        RuntimePermissionDeniedError("app identity cannot access space"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
 def test_recreates_when_stored_space_is_deleted_during_config_update(settings: MagicMock, ws: MagicMock) -> None:
     settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
     settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"

@@ -59,6 +59,7 @@ out of the app lifespan.
 import hashlib
 import json
 import logging
+import os
 import secrets
 from collections.abc import Callable
 
@@ -82,7 +83,7 @@ from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn, validate
 logger = logging.getLogger(__name__)
 
 SPACE_TITLE = "DQX Studio — DQ Results"
-SPACE_PARENT_PATH = "/Shared/dqx-studio"
+SPACE_PARENT_ROOT = "/Shared/dqx-studio"
 SPACE_DESCRIPTION = "Ask about data-quality scores, pass rates, and failing rules."
 
 # Settings keys (dq_app_settings) — same keys as dqlake so the semantics port 1:1.
@@ -93,6 +94,12 @@ SETTING_STATUS = "dq_genie_space_status"
 
 class _SpaceLookupError(RuntimeError):
     """Raised when existing spaces cannot be safely classified."""
+
+
+def space_parent_path() -> str:
+    """Return the app-client-specific folder used for this deployment's space."""
+    client_id = (os.environ.get("DATABRICKS_CLIENT_ID") or "").strip()
+    return f"{SPACE_PARENT_ROOT}/{client_id}" if client_id else SPACE_PARENT_ROOT
 
 
 # Status values surfaced to the UI.
@@ -1674,6 +1681,7 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
         if page_token:
             raise _SpaceLookupError
         matches.sort(key=lambda sp: sp.get("title") or "", reverse=True)
+        unclassified_match = False
         for match in matches:
             space_id = match.get("space_id")
             if not space_id:
@@ -1681,9 +1689,13 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
             try:
                 detail = ws.api_client.do("GET", f"/api/2.0/genie/spaces/{space_id}")
             except Exception as error:
-                raise _SpaceLookupError from error
+                logger.info("Genie space detail lookup skipped: %s", type(error).__name__)
+                unclassified_match = True
+                continue
             if isinstance(detail, dict) and detail.get("parent_path") == parent_path:
                 return space_id
+        if unclassified_match:
+            raise _SpaceLookupError
     except _SpaceLookupError:
         raise
     except Exception as error:
@@ -1750,14 +1762,16 @@ def ensure_dq_genie_space(
         if existing:
             try:
                 ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
-            except NotFound:
-                existing = None
-            except Exception:
-                # A full parent-scoped list below can still safely recover an
-                # inaccessible or differently-owned stale setting.
-                existing = None
+            except Exception as error:
+                error_code = getattr(error, "error_code", None)
+                if isinstance(error, NotFound) or error_code in {"NOT_FOUND", "PERMISSION_DENIED"}:
+                    existing = None
+                else:
+                    logger.info("Genie space verification skipped: %s", type(error).__name__)
+                    return existing
 
-        # Already-provisioned and unchanged: no configuration update needed.
+        # A matching hash needs no update, but only after verifying that the
+        # persisted space has not been deleted or trashed.
         if existing and stored_hash == desired_hash:
             return existing
 
@@ -1782,19 +1796,20 @@ def ensure_dq_genie_space(
 
         # No id stored: find-or-create.
         settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
+        parent_path = space_parent_path()
         try:
-            space_id = _find_space_id_by_title(ws, SPACE_TITLE, SPACE_PARENT_PATH)
+            space_id = _find_space_id_by_title(ws, SPACE_TITLE, parent_path)
         except _SpaceLookupError:
             logger.info("Genie space lookup skipped; provisioning will retry on next startup")
             settings.save_setting(SETTING_STATUS, STATUS_ERROR)
             return None
         if space_id is None:
-            ws.workspace.mkdirs(SPACE_PARENT_PATH)
+            ws.workspace.mkdirs(parent_path)
             payload = build_create_payload(
                 catalog,
                 schema,
                 warehouse_id=warehouse_id,
-                parent_path=SPACE_PARENT_PATH,
+                parent_path=parent_path,
             )
             try:
                 resp = ws.api_client.do("POST", "/api/2.0/genie/spaces", body=payload)
