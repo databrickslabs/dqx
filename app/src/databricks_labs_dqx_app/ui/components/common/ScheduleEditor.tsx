@@ -63,6 +63,9 @@ interface Props {
   onRemove: () => void;
   /** Reports whether the displayed cron is one the backend scheduler accepts. */
   onValidityChange: (valid: boolean) => void;
+  /** Node rendered ABOVE the first schedule setting (e.g. a permission warning
+   *  card) — shown in both the empty state and the editor. */
+  banner?: ReactNode;
   /** Extra controls (e.g. a Save button) rendered in the editor footer. */
   actions?: ReactNode;
   /** Optional footer note shown under the editor. */
@@ -83,6 +86,7 @@ export function ScheduleEditor({
   onSampleSizeChange,
   onRemove,
   onValidityChange,
+  banner,
   actions,
   footerNote,
   emptyText,
@@ -101,6 +105,7 @@ export function ScheduleEditor({
   if (!showEditor) {
     return (
       <div className="space-y-4 max-w-xl">
+        {banner}
         <p className="text-sm text-muted-foreground">{emptyText}</p>
         {canEdit && (
           <Button
@@ -120,6 +125,7 @@ export function ScheduleEditor({
 
   return (
     <div className="space-y-6 max-w-xl">
+      {banner}
       <div className="space-y-2">
         <Label htmlFor="schedule-kind">{t("schedule.kindLabel")}</Label>
         <Select
@@ -140,14 +146,6 @@ export function ScheduleEditor({
         </Select>
       </div>
 
-      <SchedulePicker
-        cron={cron ?? DEFAULT_CADENCE_CRON}
-        timezone={timezone}
-        onChange={onChange}
-        onValidityChange={onValidityChange}
-        canEdit={canEdit}
-      />
-
       <div className="space-y-2">
         <Label>{t("schedule.sampleLabel")}</Label>
         <SampleSelector
@@ -163,7 +161,17 @@ export function ScheduleEditor({
           }}
           disablePercent
         />
-        <p className="text-xs text-muted-foreground">{t("schedule.sampleHint")}</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>{t("schedule.frequencyLabel")}</Label>
+        <SchedulePicker
+          cron={cron ?? DEFAULT_CADENCE_CRON}
+          timezone={timezone}
+          onChange={onChange}
+          onValidityChange={onValidityChange}
+          canEdit={canEdit}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

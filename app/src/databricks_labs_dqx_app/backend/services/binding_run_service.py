@@ -47,7 +47,7 @@ _SQL_CHECK_PREFIX = "__sql_check__/"
 #     scheduled runs from the schedule's own ``schedule_sample_size``, which is
 #     NULL (→ whole table) unless someone set it.
 #   * source='draft'    → caller-supplied sample_size, or
-#     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT (1000) when omitted; 0 = unlimited.
+#     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT (0 = unlimited) when omitted.
 # Dryrun/preview routes (routes/v1/dryrun.py) are a separate flow with
 # their own explicit sampling.
 
@@ -208,7 +208,7 @@ class BindingRunService:
           dialog's answer; the scheduler passes the schedule's
           ``schedule_sample_size``.
         - draft runs use *sample_size* when provided (0 = unlimited);
-          otherwise ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000).
+          otherwise ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (0 = the whole table).
 
         Naming note: the task entrypoint submitted here is historically
         called ``dryrun`` — that is the frozen runner's task_type for
@@ -251,14 +251,19 @@ class BindingRunService:
         checks = _stamp_run_provenance(checks, run_mode, binding_version)
 
         # Approved runs honour the caller's scope and fall back to a full
-        # table; draft runs fall back to the compiled-in default of 1000
-        # (0 = unlimited everywhere).
+        # table; draft runs fall back to the admin-configured draft-run sample
+        # limit (compiled-in default of 0 = whole table when unset)
+        # everywhere. Resolving from the setting here is belt-and-suspenders:
+        # the UI now sends the configured size on draft runs, but a caller that
+        # omits it (or a scheduled/programmatic path) still honours the admin
+        # knob rather than silently scanning the whole table.
         if sample_size is not None:
             resolved_sample_size = sample_size
         elif source == "approved":
             resolved_sample_size = 0
         else:
-            resolved_sample_size = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+            configured = self._settings_service.get_draft_run_sample_limit()
+            resolved_sample_size = configured if configured is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
 
         run_id = uuid4().hex[:16]
         # Persisted ``run_type`` for the ``dq_validation_runs`` row — the

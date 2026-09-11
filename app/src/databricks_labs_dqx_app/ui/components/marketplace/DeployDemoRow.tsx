@@ -31,6 +31,9 @@ export function DeployDemoRow() {
 
   const { data: statusResp } = useDemoContentStatus({
     query: {
+      // demo/status is an ADMIN-only endpoint — don't poll it for non-admins
+      // (that would fire a 403 on every mount).
+      enabled: isAdmin,
       refetchInterval: (query) => (query.state.data?.data?.state === "running" ? 10000 : false),
     },
   });

@@ -136,7 +136,9 @@ def test_definition_for_moves_scalars_into_parameters():
     assert "allowed" in param_names, "the scalar `allowed` must be a RuleParameter"
     allowed = next(p for p in definition.parameters if p.name == "allowed")
     assert allowed.type == "list"
-    assert isinstance(allowed.value, list) and "US" in allowed.value
+    # is_in_list treats a bare string as a COLUMN reference, so the enum values
+    # are stored as SQL string literals (single-quoted).
+    assert isinstance(allowed.value, list) and "'US'" in allowed.value
     # body carries only the column placeholder, no scalar
     assert definition.body["arguments"] == {"column": "{{country}}"}
     assert "allowed" not in definition.body["arguments"]
@@ -429,6 +431,100 @@ def test_assert_no_misfire_raises_when_unique_count_outside_band():
 
     with pytest.raises(RuntimeError, match="uniqueness"):
         svc._assert_no_misfire("customers", "run1")
+
+
+def test_assert_no_misfire_raises_on_non_success_terminal_status():
+    # C1 / #133: a broken binding (e.g. an unquoted is_in_list enum resolving as
+    # a column reference) makes the gate run FAIL. A FAILED run writes no metrics,
+    # so the misfire assertion must key off the terminal status and abort — never
+    # fall through to the (empty) metric read and pass mutely.
+    svc, deps = _svc()
+    with pytest.raises(RuntimeError, match="terminated with status"):
+        svc._assert_no_misfire("customers", "run1", "FAILED")
+    # the failure is detected from status alone — no metric read is attempted
+    assert not deps["app_sql"].query_dicts.called
+
+
+def test_validation_gate_aborts_when_a_gate_run_fails():
+    # C1 / #133 (root cause): a FAILED gate run must abort the seed in the gate —
+    # in minutes with a clear error — rather than proceeding into the multi-hour
+    # weekly loop. The gate also must NOT delete/re-date anything once it aborts.
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="gate-run")
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [] if "SELECT 1" in sql else [{"status": "FAILED"}]
+    )
+
+    binding_map = {"customers": "b-customers", "orders": "b-orders"}
+    with pytest.raises(RuntimeError, match="terminated with status"):
+        svc._validation_gate(binding_map, "admin@example.com")
+
+    # aborted before the gate-run cleanup (DELETE only runs after every misfire
+    # assertion passes), so no gate rows were deleted.
+    executed = [c.args[0] for c in deps["app_sql"].execute.call_args_list]
+    assert not any(s.startswith("DELETE FROM") for s in executed)
+
+
+def test_run_aborts_on_failed_gate_run_before_building_weekly_trend():
+    # End-to-end guard for the "demo deploy hang": with a FAILED gate run, run()
+    # aborts at the validation gate and NEVER enters the weekly loop (which would
+    # submit weeks*bindings more runs and burn per-run metric-wait timeouts).
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="gate-run")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [] if "SELECT 1" in sql else [{"status": "FAILED"}]
+    )
+
+    with pytest.raises(RuntimeError, match="terminated with status"):
+        svc.run(user_email="admin@example.com", wipe_first=False, weeks=9)
+
+    # the gate submits exactly one run per binding, then aborts — the weekly loop
+    # (weeks*bindings further runs) never executes.
+    assert deps["binding_run"].run_binding.call_count == len(manifest.BINDINGS)
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "failed"
+
+
+def test_weekly_trend_skips_redate_for_a_failed_run(monkeypatch):
+    # #133 defense-in-depth: even past the gate, a FAILED/CANCELED weekly run must
+    # be SKIPPED — never re-dated. A failed run writes no metrics, so re-dating it
+    # would only burn the bounded _wait_for_metrics deadline on rows that never
+    # arrive. Assert no metrics re-date UPDATE is issued when the run fails.
+    from databricks_labs_dqx_app.backend.demo import seed_service as ss
+
+    monkeypatch.setattr(ss, "_METRICS_POLL_SECONDS", 0)
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    # every weekly run terminates FAILED
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [] if "SELECT 1" in sql else [{"status": "FAILED"}]
+    )
+
+    binding_map = {"customers": "b-customers", "orders": "b-orders"}
+    rule_map = {spec.key: "r1" for spec in manifest.RULES}
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
+
+    # a FAILED run is skipped: NO dq_metrics/dq_validation_runs re-date UPDATE and
+    # NO per-table score refresh for it.
+    metrics_updates = [
+        c.args[0]
+        for c in deps["app_sql"].execute.call_args_list
+        if c.args and c.args[0].startswith("UPDATE") and "dq_metrics" in c.args[0]
+    ]
+    assert not metrics_updates, f"a FAILED run must not be re-dated; got {metrics_updates!r}"
+    assert not deps["score_cache"].refresh_for_tables.called
 
 
 def test_assert_no_misfire_passes_when_unique_count_inside_band():
