@@ -4,7 +4,7 @@ The registry is the authoring/governance layer described in
 ``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §3 — reusable,
 versioned, table-agnostic rule *templates* that are later applied to a
 monitored table (mapping slots to real columns) and materialized into
-``dq_quality_rules`` (unchanged runner-facing table).
+``dq_resolved_rules`` (unchanged runner-facing table).
 
 Descriptive metadata — ``name``, ``description``, ``dimension``, ``severity``
 — is intentionally **not** a column on any of these models. It lives as
@@ -115,7 +115,7 @@ class RuleDefinition(BaseModel):
             "Optional custom failure message (a Spark SQL expression string), mirroring "
             "DQRule.message_expr. Threaded through create/update and frozen into each "
             "dq_rule_versions snapshot as part of the definition. Materialized as a "
-            "top-level 'message_expr' key on the rendered dq_quality_rules check when set; "
+            "top-level 'message_expr' key on the rendered dq_resolved_rules check when set; "
             "omitted entirely when None or empty."
         ),
     )
@@ -127,7 +127,7 @@ class RuleDefinition(BaseModel):
             "time. Validated for SQL safety on create/update. Threaded through create/"
             "update and frozen into each dq_rule_versions snapshot as part of the "
             "definition. Materialized as a top-level 'filter' key on the rendered "
-            "dq_quality_rules check when set; omitted entirely when None or empty."
+            "dq_resolved_rules check when set; omitted entirely when None or empty."
         ),
     )
 
@@ -739,7 +739,7 @@ def registry_display_status(status: str, version: int, modified_since_publish: b
 # that decides which output DataFrame a failing row lands in — it is NOT
 # the same axis as the registry's ``severity`` tag (Low/Medium/High/
 # Critical), but the materializer has to pick *some* concrete criticality
-# when it renders a ``dq_quality_rules`` row, so this is the single place
+# when it renders a ``dq_resolved_rules`` row, so this is the single place
 # that conversion happens. The mapping is admin-editable: it lives in the
 # ``value_criticality`` map on the reserved ``severity`` label definition
 # (``dq_app_settings`` / ``label_definitions``), with

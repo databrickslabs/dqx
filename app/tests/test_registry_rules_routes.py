@@ -778,7 +778,7 @@ class TestLifecycleRoutes:
 
     def test_approve_rematerializes_following_applications(self):
         """Publishing a registry rule must propagate to every FOLLOWING
-        (unpinned) application so their materialized ``dq_quality_rules``
+        (unpinned) application so their materialized ``dq_resolved_rules``
         rows pick up the new version (design spec §5)."""
         svc = MagicMock()
         published = _rule(status="approved", version=2)

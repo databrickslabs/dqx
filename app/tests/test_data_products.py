@@ -491,7 +491,7 @@ class TestListAndGet:
         self, service, sql, monitored_tables, materializer
     ):
         """P-item 44: a freshly-saved DRAFT space's ``# Checks`` must reflect the
-        checks its applied rules expand to, NOT the materialized ``dq_quality_rules``
+        checks its applied rules expand to, NOT the materialized ``dq_resolved_rules``
         row count (0 until approval/run). ``# Rules`` stays the applied-rule count."""
         sql.query.side_effect = [
             [_product_row(product_id="p1", status="draft", version="0")],

@@ -1,0 +1,38 @@
+---
+sidebar_position: 0
+title: Use outside the app
+---
+
+import { FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Use DQX Studio data outside the app
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+</FeatureTags>
+
+DQX Studio is where you *author, review, and govern* rules — but the rules and
+results it stores are meant to be used by your pipelines too. Studio persists its
+state in your own Unity Catalog catalog, so anything the app knows, your jobs and
+notebooks can read directly.
+
+Two things you'll most often want from outside the app:
+
+- **[Load approved rules](/docs/studio/integrations/load-rules)** — read the rules
+  you approved in Studio into a pipeline with the standard
+  `DQEngine.load_checks` API, and run them wherever your data lives (production
+  included). Studio exposes a dqx-core-compatible view (`dq_rules_core`) for exactly
+  this.
+- **[Read quarantined records](/docs/studio/integrations/read-quarantine)** — query
+  the failing rows Studio's runs captured (`dq_quarantine_records`), for dashboards,
+  alerting, or your own triage.
+
+<div className="admonition admonition-note">
+
+DQX Studio's own runs target dev/UAT data and write results to the app's catalog —
+they are **not** intended to run rules as part of your production pipelines. To run
+Studio-authored rules against production data, load them with
+[`DQEngine.load_checks`](/docs/studio/integrations/load-rules) from your own
+pipeline.
+
+</div>

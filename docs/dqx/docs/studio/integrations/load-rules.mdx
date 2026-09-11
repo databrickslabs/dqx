@@ -1,0 +1,145 @@
+---
+sidebar_position: 1
+title: Load rules outside the app
+---
+
+import Admonition from '@theme/Admonition';
+import { FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Load Studio rules outside the app
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+</FeatureTags>
+
+Rules you approve in DQX Studio can be loaded and run by any PySpark pipeline
+using the standard [DQX Core](/docs/guide/) API — no export step, no copy-paste.
+Studio publishes a **dqx-core-compatible view**, `dq_rules_core`, over its approved
+rules, and `DQEngine.load_checks` reads it directly.
+
+## The `dq_rules_core` view
+
+Studio stores each authored rule as a row in its internal `dq_resolved_rules`
+table. That table carries Studio-specific columns (lifecycle status, versioning,
+provenance) that dqx-core doesn't understand. The **`dq_rules_core`** view reshapes
+the **approved** rules into exactly the columns dqx-core's Lakebase reader expects:
+
+| View column | Meaning |
+| ----------- | ------- |
+| `name`, `criticality`, `filter` | The check's identity and severity. |
+| `check` | The inner `{function, arguments}` (and `for_each_column` when used). |
+| `run_config_name` | **The fully-qualified table the rule applies to** (`table_fqn`). |
+| `user_metadata` | Any tags/labels attached to the rule. |
+| `rule_fingerprint`, `rule_set_fingerprint` | dqx-core fingerprints (used to select the current rule set). |
+
+Only rules at status **`approved`** appear in the view — drafts and rejected rules
+are never loaded.
+
+<Admonition type="info" title="run_config_name is the table FQN">
+Studio groups rules by the table they apply to, so the view maps
+`run_config_name` to that table's fully-qualified name (for example
+`main.sales.orders`). Cross-table SQL checks, which have no single home table,
+appear under a synthetic `run_config_name` of the form <code>__sql_check__/&lt;name&gt;</code>.
+</Admonition>
+
+## Load approved rules
+
+Point `LakebaseChecksStorageConfig` at the view and pass the table you want the
+rules for as `run_config_name`:
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import LakebaseChecksStorageConfig
+
+engine = DQEngine(WorkspaceClient())
+
+checks = engine.load_checks(
+    LakebaseChecksStorageConfig(
+        # <lakebase-database>.<studio-schema>.dq_rules_core
+        location="databricks_postgres.dqx_studio.dq_rules_core",
+        instance_name="<your-lakebase-instance>",   # Studio's Lakebase instance
+        run_config_name="main.sales.orders",         # the table the rules apply to
+    )
+)
+
+# Run the Studio-authored rules against your own DataFrame
+checked_df = engine.apply_checks_by_metadata(df, checks)
+
+# ...or split valid rows from quarantined ones
+valid_df, quarantined_df = engine.apply_checks_by_metadata_and_split(df, checks)
+```
+
+With no `rule_set_fingerprint` given, the loader returns the **current** approved
+rule set for the table. All approved rules for a table share one
+`rule_set_fingerprint`, so you always get the complete set, not a single rule.
+
+<Admonition type="tip" title="Which tables have approved rules?">
+List the loadable `run_config_name` values with a quick query against the view:
+
+```sql
+SELECT DISTINCT run_config_name
+FROM dqx_studio.dq_rules_core
+ORDER BY run_config_name;
+```
+</Admonition>
+
+## Grant access to the view
+
+`dq_rules_core` lives in Studio's **Lakebase Postgres** schema, so access is **not**
+automatic — a reader outside the app (an engineer, or a pipeline's service
+principal) needs a Studio/Lakebase administrator to grant **two** things:
+
+1. **Access to the Lakebase database instance.** To open a connection,
+   `load_checks` mints a short-lived Postgres credential from Databricks for
+   Studio's Lakebase instance. The reader's Databricks identity must be allowed to
+   use that database instance (grant it on the instance in Databricks). Without
+   this, the connection can't be established.
+
+2. **A Postgres `SELECT` on the view.** The Postgres role mapped to the reader's
+   Databricks identity needs `USAGE` on the schema and `SELECT` on the view. An
+   administrator (or the Studio app's owning superuser role) runs, against the
+   Lakebase database:
+
+   ```sql
+   GRANT USAGE  ON SCHEMA dqx_studio          TO "<principal>";
+   GRANT SELECT ON dqx_studio.dq_rules_core   TO "<principal>";
+   ```
+
+   `<principal>` is the Postgres role for the reader's identity — for a service
+   principal, its **application id**. Granting `SELECT` on the view is enough;
+   readers do **not** need access to the underlying `dq_resolved_rules` table.
+
+For a **service principal** reader, pass its id as `client_id` so the connection
+authenticates as that SP:
+
+```python
+LakebaseChecksStorageConfig(
+    location="databricks_postgres.dqx_studio.dq_rules_core",
+    instance_name="<your-lakebase-instance>",
+    client_id="<service-principal-application-id>",
+    run_config_name="main.sales.orders",
+)
+```
+
+<Admonition type="tip" title="Least privilege">
+Grant read access only to the principals that actually run the rules, and only
+`SELECT` on `dq_rules_core` — never broader write access to Studio's schema.
+</Admonition>
+
+## Notes and limits
+
+- **Approved only.** The view excludes drafts and rejected rules by design. Approve
+  a rule in Studio before a pipeline can load it.
+- **Fingerprints.** `rule_fingerprint` is dqx-core's `compute_rule_fingerprint` of
+  the **stored** check. `rule_set_fingerprint` is computed over a table's approved
+  set so the loader can pick the current version. For rules that use
+  `for_each_column`, Studio stores the *compact* (un-expanded) check, so both
+  fingerprints are taken over that compact form and may differ from values dqx-core
+  computes by expanding the fan-out first — this never affects *which* rules load,
+  only the informational fingerprint values.
+- **Read-only.** `dq_rules_core` is a view. Author and manage rules in the app;
+  pipelines only read.
+- **Availability.** The view ships with recent DQX Studio versions. If a workspace
+  was installed before it existed, an administrator re-provisions Studio's schema so
+  the view (and the `rule_fingerprint` column it reads) are created.

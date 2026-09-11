@@ -31,7 +31,7 @@ the **About** tab, where you describe what the rule is. You'll fill in the
 
 Fill in:
 
-- **Name** — a short, human name. Say what good looks like, not what's wrong:
+- **Name** — a short, human readable name. Say what good looks like, not what's wrong:
   *"Email is present"*, not *"email null check"*.
 - **Description** — one line on what the rule checks and why it matters.
 - **Default severity** — how much a failure of this rule matters:
@@ -240,7 +240,7 @@ specific:
 - `signup date can't be in the future`
 - `card last four must be present when payment method is card`
 
-The app reads your description, picks a matching check (or chains a few together),
+The app reads your description, picks a matching rule (or chains a few together),
 and fills in the details — the allowed values, the range, the pattern, and so on.
 
 You can also ask for a specific *type* of rule rather than only describing the

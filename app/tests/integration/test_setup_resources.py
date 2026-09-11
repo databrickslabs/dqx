@@ -19,8 +19,8 @@ from databricks_labs_dqx_app.backend.startup import publish_wheels_to_volume
 _EXPECTED_OLTP_TABLES = (
     "dq_migrations",
     "dq_app_settings",
-    "dq_quality_rules",
-    "dq_quality_rules_history",
+    "dq_resolved_rules",
+    "dq_resolved_rules_history",
     "dq_role_mappings",
     "dq_comments",
     "dq_schedule_runs",

@@ -166,7 +166,7 @@ class TestListAndGet:
 
     def test_list_check_count_from_snapshot_for_approved_binding(self):
         # An approved binding (version > 0) reports its frozen snapshot's
-        # check count, NOT the transient live dq_quality_rules count (B2-25).
+        # check count, NOT the transient live dq_resolved_rules count (B2-25).
         svc = MagicMock()
         approved = MonitoredTableSummary(
             table=MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="approved", version=4),
