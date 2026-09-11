@@ -55,6 +55,7 @@ EXPECTED_PARAMETER_ORDER = {
     "is_ipv6_address_in_cidr": ("column", "cidr_block"),
     "is_data_fresh": ("column", "max_age_minutes", "base_timestamp"),
     "has_no_outliers": ("column", "row_filter"),
+    "is_in_distribution": ("column", "distribution", "distance", "case_sensitive", "row_filter"),
     "is_unique": ("columns", "nulls_distinct", "row_filter"),
     "foreign_key": ("columns", "ref_columns", "ref_df_name", "ref_table", "negate", "row_filter", "null_safe"),
     "sql_query": (
