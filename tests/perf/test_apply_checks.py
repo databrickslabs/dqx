@@ -6,7 +6,7 @@ import pytest
 import pyspark.sql.functions as F
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
-from tests.perf.conftest import DEFAULT_ROWS
+from tests.perf.conftest import DEFAULT_ROWS, DISTRIBUTION_VALUE_COUNT
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
@@ -2442,5 +2442,27 @@ def test_benchmark_is_valid_language_code(benchmark, ws, generated_language_code
     ]
     benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_language_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_in_distribution(benchmark, ws, generated_distribution_df):
+    """Benchmark is_in_distribution against a 20-value categorical column.
+
+    Expected distribution is uniform over the same 20 int values dbldatagen draws from, and
+    distance=1.0 (the TVD upper bound) keeps the check passing regardless of small sampling
+    skew introduced by the generator, so the benchmark measures the full aggregation path
+    without failing on synthetic noise."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    uniform_distribution = {i: 1.0 / DISTRIBUTION_VALUE_COUNT for i in range(1, DISTRIBUTION_VALUE_COUNT + 1)}
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_in_distribution,
+            column="col_categorical",
+            check_func_kwargs={"distribution": uniform_distribution, "distance": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_distribution_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS

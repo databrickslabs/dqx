@@ -147,7 +147,6 @@ import {
   type CreateRegistryRuleInAuthorKind,
   type AiGenerateRuleOut,
 } from "@/lib/api";
-import { LifecycleRationaleDialog } from "@/components/LifecycleRationaleDialog";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import {
@@ -2189,10 +2188,6 @@ export function RegistryRuleFormDialog({
   // submit buttons publish in one step — relabel them accordingly.
   const { willAutoApprove } = useApprovalsMode();
   const [saving, setSaving] = useState(false);
-  // Submit/save-and-submit open the shared rationale dialog first; the pending
-  // mode tells onConfirm whether to PATCH-then-submit or submit-only.
-  const [submitRationaleOpen, setSubmitRationaleOpen] = useState(false);
-  const [pendingSubmitMode, setPendingSubmitMode] = useState<"saveAndSubmit" | "submitOnly" | null>(null);
 
   // Published version lineage for the History tab. Only queried for a rule
   // that has been published at least once (version > 0) and while the dialog
@@ -3078,11 +3073,6 @@ export function RegistryRuleFormDialog({
     } finally {
       setSaving(false);
     }
-  };
-
-  const openSubmitRationale = (mode: "saveAndSubmit" | "submitOnly") => {
-    setPendingSubmitMode(mode);
-    setSubmitRationaleOpen(true);
   };
 
   const dialogTitle = readOnly
@@ -4728,48 +4718,6 @@ export function RegistryRuleFormDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <LifecycleRationaleDialog
-        open={submitRationaleOpen}
-        onOpenChange={(open) => {
-          setSubmitRationaleOpen(open);
-          if (!open) setPendingSubmitMode(null);
-        }}
-        action="submit"
-        title={
-          willAutoApprove
-            ? pendingSubmitMode === "submitOnly"
-              ? t("rulesRegistry.publishNow")
-              : t("rulesRegistry.saveAndPublish")
-            : isPublishedRevision
-              ? pendingSubmitMode === "submitOnly"
-                ? t("rulesRegistry.submitForReview")
-                : t("rulesRegistry.saveAndSubmitReview")
-              : pendingSubmitMode === "submitOnly"
-                ? t("rulesRegistry.actionSubmit")
-                : t("rulesRegistry.saveAndSubmit")
-        }
-        confirmLabel={
-          willAutoApprove
-            ? pendingSubmitMode === "submitOnly"
-              ? t("rulesRegistry.publishNow")
-              : t("rulesRegistry.saveAndPublish")
-            : isPublishedRevision
-              ? pendingSubmitMode === "submitOnly"
-                ? t("rulesRegistry.submitForReview")
-                : t("rulesRegistry.saveAndSubmitReview")
-              : pendingSubmitMode === "submitOnly"
-                ? t("rulesRegistry.actionSubmit")
-                : t("rulesRegistry.saveAndSubmit")
-        }
-        busy={saving}
-        onConfirm={(rationale) => {
-          const mode = pendingSubmitMode;
-          setSubmitRationaleOpen(false);
-          setPendingSubmitMode(null);
-          if (mode === "submitOnly") void handleSubmitOnly(rationale);
-          else if (mode === "saveAndSubmit") void handleSave(true, rationale);
-        }}
-      />
       {buildWithAiBanner}
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4983,7 +4931,7 @@ export function RegistryRuleFormDialog({
           // The draft is already persisted and unchanged — submit it
           // for approval directly rather than issuing a redundant save.
           withMissingFieldsTooltip(
-            <Button onClick={() => openSubmitRationale("submitOnly")} disabled={saving || !canSubmit || submitDisabledNoChanges} className="gap-2">
+            <Button onClick={() => void handleSubmitOnly(null)} disabled={saving || !canSubmit || submitDisabledNoChanges} className="gap-2">
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
               {willAutoApprove
                 ? t("rulesRegistry.publishNow")
@@ -4998,7 +4946,7 @@ export function RegistryRuleFormDialog({
         ) : (
           withNoRevisionTooltip(
             withMissingFieldsTooltip(
-              <Button onClick={() => openSubmitRationale("saveAndSubmit")} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
+              <Button onClick={() => void handleSave(true, null)} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
                 {willAutoApprove
                   ? t("rulesRegistry.saveAndPublish")
