@@ -26,6 +26,8 @@ from databricks.labs.dqx.utils import (
     get_file_extension,
     resolve_variables,
     quote_column_name,
+    unquote_column_name,
+    normalize_column_expr,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
@@ -945,3 +947,67 @@ def test_quote_column_name():
     column_name = "my `column` name"
     result = quote_column_name(column_name)
     assert result == "`my ``column`` name`"
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        # Back-quoted identifiers are unwrapped
+        ("`Customer Name`", "Customer Name"),
+        ("`my ``column`` name`", "my `column` name"),
+        # Plain names, dotted paths and expressions are returned unchanged
+        ("Customer Name", "Customer Name"),
+        ("id", "id"),
+        ("struct_col.field1", "struct_col.field1"),
+        ("a + b", "a + b"),
+        ("*", "*"),
+    ],
+)
+def test_unquote_column_name(name: str, expected: str):
+    assert unquote_column_name(name) == expected
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Customer Name", "`Customer Name`", "id", "struct_col.field1"],
+)
+def test_unquote_reverses_quote_column_name(name: str):
+    assert unquote_column_name(quote_column_name(name)) == name
+
+
+@pytest.mark.parametrize(
+    "column, expected",
+    [
+        # Valid bare identifiers are left untouched
+        ("id", "id"),
+        ("col_1", "col_1"),
+        ("_private", "_private"),
+        # Nested-field paths keep working; each valid segment is left alone
+        ("struct_col.field1", "struct_col.field1"),
+        ("a.b.c", "a.b.c"),
+        # Names requiring SQL escaping are back-quoted
+        ("Päivämäärä", "`Päivämäärä`"),
+        ("Ääkkönen", "`Ääkkönen`"),
+        ("Customer Name", "`Customer Name`"),
+        # A character that is an operator only when whitespace-separated is treated as part of the name
+        ("gross-margin", "`gross-margin`"),
+        ("col#1", "`col#1`"),
+        # Only the segment that needs escaping is quoted in a nested path
+        ("parent.Odd Name", "parent.`Odd Name`"),
+        # Already back-quoted names contain a backtick and are passed through unchanged
+        ("`Customer Name`", "`Customer Name`"),
+        # SQL expressions are passed through unchanged
+        ("a + b", "a + b"),
+        ("gross - margin", "gross - margin"),
+        ("substr(x, 1, 2)", "substr(x, 1, 2)"),
+        ("amount * 1.5", "amount * 1.5"),
+        ("col > 5", "col > 5"),
+        ("*", "*"),
+        # Ambiguous cases the conservative heuristic intentionally does not escape: names containing
+        # expression characters, and operator-free expressions (treated as a name).
+        ("amount (usd)", "amount (usd)"),
+        ("col IS NOT NULL", "`col IS NOT NULL`"),
+    ],
+)
+def test_normalize_column_expr(column: str, expected: str):
+    assert normalize_column_expr(column) == expected
