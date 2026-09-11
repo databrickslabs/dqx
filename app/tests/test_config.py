@@ -4,6 +4,22 @@ import pytest
 from pydantic import ValidationError
 
 
+def test_lakebase_pool_min_size_defaults_to_zero(monkeypatch):
+    # Scale-to-zero: the pool must be allowed to drain to zero idle
+    # connections so a suspended Lakebase endpoint isn't kept warm.
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_LAKEBASE_POOL_MIN_SIZE", raising=False)
+    assert AppConfig(_env_file=None).lakebase_pool_min_size == 0
+
+
+def test_lakebase_pool_min_size_env_override(monkeypatch):
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_LAKEBASE_POOL_MIN_SIZE", "2")
+    assert AppConfig(_env_file=None).lakebase_pool_min_size == 2
+
+
 def test_admin_group_defaults_to_workspace_admins(monkeypatch):
     from databricks_labs_dqx_app.backend.config import AppConfig
 

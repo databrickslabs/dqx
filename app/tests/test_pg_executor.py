@@ -1507,6 +1507,29 @@ class TestBuildPgExecutorFromConnection:
         assert executor.username == "app"
         assert pool.call_args.kwargs["kwargs"]["password"] == "secret"
         thread_factory.assert_not_called()
+
+    def test_pool_min_size_defaults_to_zero_for_scale_to_zero(self) -> None:
+        # A held-open connection (min_size >= 1) keeps a scale-to-zero Lakebase
+        # endpoint awake; the default must drain to zero so it can suspend.
+        ws = self._workspace()
+        connection = LakebaseConnection(
+            endpoint=None,
+            host="db.example",
+            port=5432,
+            database="dqx",
+            username="app",
+            password=SecretStr("secret"),
+            schema="dqx_studio",
+        )
+
+        with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
+            patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
+        ):
+            pool.check_connection = MagicMock()
+            build_pg_executor_from_connection(ws, connection)  # no pool_min_size override
+
+        assert pool.call_args.kwargs["min_size"] == 0
         ws.postgres.get_endpoint.assert_not_called()
         ws.postgres.generate_database_credential.assert_not_called()
         ws.current_user.me.assert_not_called()
