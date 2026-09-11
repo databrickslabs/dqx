@@ -31,7 +31,9 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_SAMPLE_SEED,
     PROFILE_OPTION_TRIM_STRINGS,
 )
-from databricks.labs.dqx.profiler.profiler_column_metrics import PROFILE_COLUMN_METRIC_REGISTRY
+from databricks.labs.dqx.profiler.profiler_column_metrics import (
+    build_registered_metric_aggregations,
+)
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 
@@ -440,16 +442,17 @@ class DQProfiler(DQEngineBase):
             total_count: Total number of rows in the input DataFrame.
         """
         for field in self.get_columns_or_fields(df_cols):
-            column_df, column_label = self._prepare_column_df(df, field, opts)
+            column_df, column_label = DQProfiler._prepare_column_df(df, field, opts)
             field_summary_stats = summary_stats.get(field.name, {})
-            metrics = self._build_column_metrics(column_df, column_label, field, field_summary_stats, total_count)
+            metrics = DQProfiler._build_column_metrics(column_df, column_label, field, field_summary_stats, total_count)
             summary_stats[field.name] = metrics
 
             self._build_profiles_for_column(column_df, field, metrics, opts, dq_rules)
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
 
-    def _prepare_column_df(self, df: DataFrame, field: T.StructField, opts: dict[str, Any]) -> tuple[DataFrame, str]:
+    @staticmethod
+    def _prepare_column_df(df: DataFrame, field: T.StructField, opts: dict[str, Any]) -> tuple[DataFrame, str]:
         trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
         field_name = field.name
         field_type = field.dataType
@@ -460,22 +463,21 @@ class DQProfiler(DQEngineBase):
             column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
         return column_df, column_label
 
+    @staticmethod
     def _build_column_metrics(
-        self,
         column_df: DataFrame,
         column_label: str,
         field: T.StructField,
         field_summary_stats: dict[str, Any],
         total_count: int,
     ) -> dict[str, Any]:
-        # count_non_null is computed inline rather than through PROFILE_COLUMN_METRIC_REGISTRY so a
-        # user-registered metric under the same key cannot break count_null derivation
-        # (total_count - count_non_null) by evaluating to SQL NULL.
-        field_metric_aggregations = [F.count(column_label).alias("count_non_null")]
-        for metric_name, metric_function in PROFILE_COLUMN_METRIC_REGISTRY.items():
-            metric_col = metric_function(field, column_label)
-            if metric_col is not None:
-                field_metric_aggregations.append(metric_col.alias(metric_name))
+        # count_non_null / count_null / count are always-on internals aggregated (or derived) here,
+        # not through PROFILE_COLUMN_METRIC_REGISTRY. build_registered_metric_aggregations skips
+        # reserved keys as defence-in-depth so a colliding entry injected directly into the registry
+        # can never shadow the inline alias via Row.asDict().
+        count_non_null_alias = "count_non_null"
+        field_metric_aggregations = [F.count(column_label).alias(count_non_null_alias)]
+        field_metric_aggregations.extend(build_registered_metric_aggregations(field, column_label))
 
         field_aggregation_stats: dict[str, Any] = {}
         field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
@@ -488,9 +490,14 @@ class DQProfiler(DQEngineBase):
                 if metric_value is not None
             }
 
+        # Merge order guarantees reserved keys are authoritative: summary_stats first, then
+        # registry aggregations, then the always-on internals (count_non_null / count / count_null)
+        # last, so nothing upstream can shadow them.
+        count_non_null = field_aggregation_stats.get(count_non_null_alias, 0)
         metrics: dict[str, Any] = {**field_summary_stats, **field_aggregation_stats}
+        metrics["count_non_null"] = count_non_null
         metrics["count"] = total_count
-        metrics["count_null"] = total_count - metrics["count_non_null"]
+        metrics["count_null"] = total_count - count_non_null
         return metrics
 
     def _build_profiles_for_column(

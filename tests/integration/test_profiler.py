@@ -8,10 +8,11 @@ from pyspark.sql import functions as F
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     PROFILE_COLUMN_METRIC_REGISTRY,
+    RESERVED_PROFILE_COLUMN_METRIC_KEYS,
     register_profile_column_metric,
 )
 
@@ -282,6 +283,35 @@ def test_profiler_drops_registered_custom_column_metric_that_evaluates_to_null(
     )
 
     assert metric_key not in summary_stats["amount"]
+
+
+def test_profiler_rejects_reserved_metric_key_and_keeps_count_derivation_intact(
+    spark, ws, snapshot_profile_column_metric_registry
+):
+    # Guards against overwriting builtin metric: a user metric registered under the reserved
+    # key "count_non_null" (or "count" / "count_null") must be refused at registration time so it
+    # cannot collide with the inline aggregation and corrupt count_null (which is derived as
+    # total_count - count_non_null).
+    with pytest.raises(InvalidParameterError):
+        register_profile_column_metric("count_non_null")(lambda _field, _column_label: F.count("*"))
+
+    for reserved_key in RESERVED_PROFILE_COLUMN_METRIC_KEYS:
+        assert PROFILE_COLUMN_METRIC_REGISTRY.get(reserved_key) is None
+
+    schema = T.StructType([T.StructField("amount", T.IntegerType())])
+    input_df = spark.createDataFrame([[10], [20], [None], [40], [None]], schema=schema)
+
+    profiler = DQProfiler(ws)
+    summary_stats, _ = profiler.profile(
+        input_df,
+        options={"sample_fraction": None, "llm_primary_key_detection": False, "remove_outliers": False},
+    )
+
+    amount_stats = summary_stats["amount"]
+    assert amount_stats["count"] == 5
+    assert amount_stats["count_non_null"] == 3
+    assert amount_stats["count_null"] == 2
+    assert amount_stats["count_non_null"] + amount_stats["count_null"] == amount_stats["count"]
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws, set_utc_timezone):

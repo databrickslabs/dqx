@@ -1,7 +1,12 @@
 import pytest
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     PROFILE_COLUMN_METRIC_REGISTRY,
+    RESERVED_PROFILE_COLUMN_METRIC_KEYS,
+    build_registered_metric_aggregations,
     deregister_profile_column_metric,
     register_profile_column_metric,
 )
@@ -44,3 +49,58 @@ def test_deregister_profile_column_metric_missing_key_is_noop(restore_profile_co
     # Deregistering an unregistered key must not raise, so callers can use it unconditionally in cleanup.
     deregister_profile_column_metric("never_registered_key")
     assert "never_registered_key" not in PROFILE_COLUMN_METRIC_REGISTRY
+
+
+@pytest.mark.parametrize("reserved_key", sorted(RESERVED_PROFILE_COLUMN_METRIC_KEYS))
+def test_register_profile_column_metric_rejects_reserved_key(reserved_key, restore_profile_column_metric_registry):
+    snapshot = dict(PROFILE_COLUMN_METRIC_REGISTRY)
+
+    with pytest.raises(InvalidParameterError):
+
+        @register_profile_column_metric(reserved_key)
+        def _shadow_metric(_field, _column_label):
+            return None
+
+    # Registry must be left unmodified.
+    assert PROFILE_COLUMN_METRIC_REGISTRY == snapshot
+
+
+@pytest.mark.parametrize("reserved_key", sorted(RESERVED_PROFILE_COLUMN_METRIC_KEYS))
+def test_deregister_profile_column_metric_rejects_reserved_key(reserved_key, restore_profile_column_metric_registry):
+    snapshot = dict(PROFILE_COLUMN_METRIC_REGISTRY)
+
+    with pytest.raises(InvalidParameterError):
+        deregister_profile_column_metric(reserved_key)
+
+    assert PROFILE_COLUMN_METRIC_REGISTRY == snapshot
+
+
+@pytest.mark.parametrize("reserved_key", sorted(RESERVED_PROFILE_COLUMN_METRIC_KEYS))
+def test_build_registered_metric_aggregations_skips_reserved_key_collision(
+    reserved_key, restore_profile_column_metric_registry
+):
+    # Even when a colliding entry is injected directly into the registry (bypassing the
+    # register_profile_column_metric guard), the reserved key must be excluded from the
+    # aggregation list so it cannot shadow the inline count_non_null alias via Row.asDict().
+    PROFILE_COLUMN_METRIC_REGISTRY.clear()
+
+    def _shadow(_field, _column_label):
+        return F.lit(None).cast(T.LongType())
+
+    PROFILE_COLUMN_METRIC_REGISTRY[reserved_key] = _shadow
+
+    aggregations = build_registered_metric_aggregations(T.StructField("amount", T.IntegerType()), "amount")
+    assert not aggregations
+
+
+def test_build_registered_metric_aggregations_skips_metrics_returning_none(restore_profile_column_metric_registry):
+    # Metric functions may return None to opt out for a given field type; those entries must
+    # not appear in the aggregation list.
+    PROFILE_COLUMN_METRIC_REGISTRY.clear()
+
+    @register_profile_column_metric("always_none")
+    def _always_none(_field, _column_label):
+        return None
+
+    aggregations = build_registered_metric_aggregations(T.StructField("amount", T.IntegerType()), "amount")
+    assert not aggregations

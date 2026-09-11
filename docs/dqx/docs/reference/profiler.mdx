@@ -145,16 +145,28 @@ def percentile_10(field: T.StructField, column_label: str) -> Column | None:
 
 ### Built-in column metrics
 
-The following metrics are available to all profile builders:
+Two groups of metrics are available to all profile builders: **always-on internals** that the profiler owns, and **registry-managed** metrics that can be added, replaced, or removed via `register_profile_column_metric` / `deregister_profile_column_metric`.
+
+**Always-on internals (not deregisterable):**
 
 | Metric key | Applicable types | Description |
 |---|---|---|
+| `count` | All | Total row count (before null filtering) |
 | `count_non_null` | All | Non-null value count |
-| `count_null` | All | Null value count |
+| `count_null` | All | Null value count (derived from `count - count_non_null`) |
+
+These keys are reserved: calling `register_profile_column_metric("count")` / `"count_non_null"` / `"count_null"` — or `deregister_profile_column_metric` with any of them — raises `InvalidParameterError`. Profile builders can rely on these keys always being present with integer values.
+
+**Registry-managed built-ins:**
+
+| Metric key | Applicable types | Description |
+|---|---|---|
 | `count_distinct` | All | Distinct non-null value count |
 | `empty_count` | Text only | Empty-string count; `0` for non-text |
 
-Spark's `DataFrame.summary()` additionally contributes `count`, `mean`, `stddev`, `min`, `25`, `50`, `75`, and `max` for numeric columns.
+Both are registered via `@register_profile_column_metric(...)` at import time and can be deregistered like any custom metric.
+
+Spark's `DataFrame.summary()` additionally contributes `mean`, `stddev`, `min`, `25`, `50`, `75`, and `max` for numeric columns.
 
 See the [Data Profiling Guide](/docs/guide/data_profiling#extending-the-profiler-with-custom-column-metrics) for a complete example including a custom profile builder that consumes a custom metric.
 
