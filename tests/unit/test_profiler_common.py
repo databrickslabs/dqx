@@ -1,7 +1,23 @@
 import datetime
 from decimal import Decimal
 
-from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
+import pytest
+import pyspark.sql.types as T
+
+from databricks.labs.dqx.profiler.common import is_text, val_maybe_to_str, val_to_str
+
+
+@pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])
+def test_is_text_returns_true_for_text_types(column_type):
+    assert is_text(column_type) is True
+
+
+@pytest.mark.parametrize(
+    "column_type",
+    [T.IntegerType(), T.LongType(), T.DoubleType(), T.FloatType(), T.DateType(), T.TimestampType(), T.BooleanType()],
+)
+def test_is_text_returns_false_for_non_text_types(column_type):
+    assert is_text(column_type) is False
 
 
 def test_val_to_str():
