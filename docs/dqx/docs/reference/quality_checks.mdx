@@ -2000,6 +2000,22 @@ Numeric values sort lexically (for example, `"10"` before `"2"`), while the comp
 This avoids Cartesian fan-out without triggering eager validation jobs. It adds window partitioning and sorting, and
 does not search for the pairing that produces the fewest differences. Unique-key groups still match one-to-one.
 
+<Admonition type="note" title="Duplicate keys with a filter">
+Because lazy pairing is positional rather than value-aware, a duplicate-key group that combines a `filter` (`row_filter`)
+with interleaving reference values can pair a row with a differently-valued reference row and report a spurious `changed`,
+even when a value-matching reference row exists. For example, matching on `id` with `filter: in_scope`:
+
+```python
+# source:    (1, "B", in_scope=True), (1, "A", in_scope=False)
+# reference: (1, "A"),                (1, "B")
+# the in-scope (1, "B") has a value-matching reference (1, "B") but is paired with (1, "A") and flagged:
+# {"row_missing": false, "row_extra": false, "changed": {"value": {"df": "B", "ref": "A"}}}
+```
+
+For correctness-sensitive comparisons over duplicate keys, use unique matching keys or set `raise_on_duplicate_keys: true`,
+which pairs rows without positional guessing and is not affected by this.
+</Admonition>
+
 Set `raise_on_duplicate_keys: true` to require unique matching keys in both datasets. This opt-in validation eagerly
 executes Spark jobs and raises `InvalidParameterError` if either dataset contains duplicate matching-key combinations.
 When the matching keys are known to be unique, this is also the more efficient option: it validates uniqueness with a
