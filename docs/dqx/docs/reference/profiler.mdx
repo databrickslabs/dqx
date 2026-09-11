@@ -126,9 +126,9 @@ The `DQDltGenerator` class creates Delta Live Tables expectation statements from
 
 ## Custom Column Metrics
 
-Use `register_profile_column_metric` to add your own per-column metrics. Metrics are computed once per column before any profile builder runs and are available to all builders.
+Use the `register_profile_column_metric` decorator to add your own per-column metrics. Each metric is computed once per column (before any profile builder runs) and shared across every profile builder — but each additional registered metric adds an aggregation to every profiling run.
 
-A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column` or `None` to skip for that column type. The *profile_column_metric_type* passed to the decorator becomes the key in the metrics dictionary that all profile builders receive.
+A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column` or `None` to skip for that column type. The string passed to the decorator's *profile_column_metric_type* argument (e.g. `"percentile_10"`) becomes the key in the metrics dictionary that all profile builders receive.
 
 ```python
 from pyspark.sql import Column

@@ -718,9 +718,13 @@ with your desired profile accuracy. Manually review and tune rules generated fro
 
 ## Extending the profiler with custom column metrics
 
-Use `register_profile_column_metric` to add your own per-column metrics.
-Metrics are computed once per column before any profile builder runs, so they are available to every builder at no extra cost.
-The *profile_column_metric_type* passed to the decorator becomes the key under which the value is available inside profile builders.
+Use the `register_profile_column_metric` decorator to add your own per-column metrics.
+Each metric is computed once per column (before any profile builder runs) and shared across every profile builder, so builders never recompute it — but each additional registered metric adds an aggregation to **every** profiling run (see the warning below).
+The string passed to the decorator's *profile_column_metric_type* argument (e.g. `"percentile_10"` in the example below) becomes the key under which the value is exposed to profile builders.
+
+A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column`, or `None` to skip the metric for that column type.
+
+See [Custom Column Metrics](/docs/reference/profiler#custom-column-metrics) in the profiler reference for the built-in metric keys (both always-on internals and registry-managed built-ins) that are also available to profile builders.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -752,7 +756,9 @@ deregister_profile_column_metric("percentile_10")
 The call is a no-op if the key is not registered, so it is safe to use unconditionally in cleanup paths (e.g. notebook teardown, test fixtures).
 </Admonition>
 
-Combine this with `register_profile_builder` to generate rules based on the metric:
+Combine this with the `register_profile_builder` decorator to generate data quality rule suggestions based on the metric.
+A builder function receives the *df* (`DataFrame`), *column_name* (`str`), *column_type* (`DataType`), *profiler_metrics* (`dict[str, Any]` — the column-level statistics the profiler computed, keyed by metric type, including any custom metrics you registered), and *profiler_options* (`dict[str, Any]` — profiler configuration).
+It returns a `DQProfile` (a data quality rule suggestion), or `None` to emit nothing for that column:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
