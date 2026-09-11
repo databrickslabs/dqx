@@ -152,6 +152,8 @@ def get_column_name_or_alias(
     Args:
         column: Column, ConnectColumn (if PySpark Connect available), or string representing a column.
         normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
+            For string inputs, any surrounding back-quotes the user supplied (e.g. "`Customer Name`") are
+            stripped first so quotes do not leak into display names or generated check names.
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
             Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully
             reconstructed correctly when converting to string (e.g. F.col("a") + F.lit(1)).
@@ -164,7 +166,9 @@ def get_column_name_or_alias(
         InvalidParameterError: If the column expression is invalid or unsupported.
     """
     if isinstance(column, str):
-        col_str = column
+        col_str = unquote_column_name(column)
+        if normalize:
+            col_str = normalize_col_str(col_str)
     else:
         # Extract the last alias or column name from the PySpark Column string representation.
         # Strip the representation first to guard against trailing whitespace or CRLF line endings
@@ -337,7 +341,7 @@ def normalize_column_expr(column: str) -> str:
 
     Check functions accept a column as either a plain name or a SQL expression string. A plain name that
     is not a valid bare identifier (spaces, dashes, non-ASCII letters, etc., e.g. "Customer Name",
-    "gross-margin" or "Päivämäärä") does not parse when passed to ``F.expr`` and must be back-quoted. A
+    "gross-margin" or "Päivämäärä") does not parse when passed to *F.expr* and must be back-quoted. A
     SQL expression (e.g. "a + b", "substr(x, 1, 2)", "*") must be passed through as-is.
 
     Name and expression cannot be told apart with certainty from a string alone. This function uses a
@@ -345,18 +349,18 @@ def normalize_column_expr(column: str) -> str:
     contains characters that typically appear in expressions (parentheses, brackets, quotes, comma, star)
     or arithmetic/comparison operators that are whitespace-separated (e.g. "a + b"). Everything else is
     treated as a dotted column path: each segment is left alone if it is a valid bare identifier. Otherwise
-    it is back-quoted (e.g. "struct_col.field1" is unchanged, "Customer Name" becomes "`Customer Name`")
+    it is back-quoted.
 
     This heuristic intentionally excludes two ambiguous cases: names that contain expression characters
     (e.g. "amount (usd)"), and operator-free SQL expressions such as "col IS NOT NULL" (which is treated
     as a name). Callers with such columns should back-quote the name themselves, pass a Column expression,
-    or use the ``sql_expression`` check.
+    or use the *sql_expression* check.
 
     Args:
         column: Column reference provided as a string (plain name, nested path, or SQL expression).
 
     Returns:
-        A string safe to pass to ``F.expr``.
+        A string safe to pass to *F.expr*.
     """
     if SQL_EXPRESSION_STRUCTURE_PATTERN.search(column) or SQL_EXPRESSION_OPERATOR_PATTERN.search(column):
         return column

@@ -25,7 +25,6 @@ from databricks.labs.dqx.utils import (
     safe_filter_expr,
     normalize_col_str,
     normalize_column_expr,
-    unquote_column_name,
     get_columns_as_strings,
     to_lowercase,
 )
@@ -4856,12 +4855,8 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
             - Spark Column expression corresponding to the input.
     """
     col_expr = _get_column_expr(column)
-    if isinstance(column, str):
-        column_str = unquote_column_name(column)
-        col_str_norm = normalize_col_str(column_str)
-    else:
-        column_str = get_column_name_or_alias(col_expr)
-        col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
+    column_str = get_column_name_or_alias(column)
+    col_str_norm = get_column_name_or_alias(column, normalize=True)
 
     return col_str_norm, column_str, col_expr
 
