@@ -131,8 +131,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             # with the table-agnostic registry ``dq_rules``: these are the
             # rules resolved/materialized against a concrete ``table_fqn``.
             # ``registry_rule_id``/``registry_version``/``applied_rule_id``
-            # are provenance columns (Phase 3A, see docs/superpowers/specs/
-            # 2026-07-02-rules-registry-design.md §3.1): when a row was
+            # are Rules Registry provenance columns: when a row was
             # materialized from a Rules Registry application, they point
             # back at the source ``dq_rules`` row, the published version
             # substituted, and the ``dq_applied_rules`` link — all NULL for
@@ -156,7 +155,11 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  registry_rule_id  TEXT,"
             "  registry_version  INTEGER,"
             "  applied_rule_id   TEXT,"
-            "  rule_fingerprint  TEXT,"
+            # NOT NULL: every writer (RulesCatalogService.save/update_rule,
+            # Materializer) sets this via compute_rule_fingerprint. Enforcing it
+            # keeps the dq_rules_core set-fingerprint aggregation exact — a NULL
+            # would be silently skipped by string_agg and weaken uniqueness.
+            "  rule_fingerprint  TEXT NOT NULL,"
             "  created_by TEXT,"
             "  created_at TIMESTAMPTZ,"
             "  updated_by TEXT,"
@@ -766,7 +769,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  FROM {_S}.dq_resolved_rules WHERE status = 'approved'"
             "), set_fp AS ("
             "  SELECT table_fqn, encode(sha256(convert_to("
-            "    '[' || string_agg('\"' || rule_fingerprint || '\"', ', ' ORDER BY rule_fingerprint) || ']',"
+            # COLLATE "C" forces codepoint ordering so the hash byte-matches
+            # dqx-core's compute_rule_set_fingerprint (Python sorts by codepoint),
+            # independent of the database's default collation.
+            "    '[' || string_agg('\"' || rule_fingerprint || '\"', ', ' ORDER BY rule_fingerprint COLLATE \"C\") || ']',"
             "    'UTF8')), 'hex') AS rule_set_fingerprint "
             "  FROM approved GROUP BY table_fqn"
             ") SELECT "
