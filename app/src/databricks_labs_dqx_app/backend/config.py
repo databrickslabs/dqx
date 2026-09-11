@@ -121,7 +121,12 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_LAKEBASE_SCHEMA",
         description="Postgres schema for app tables. Created at startup if missing.",
     )
-    lakebase_pool_min_size: int = Field(default=1, validation_alias="DQX_LAKEBASE_POOL_MIN_SIZE")
+    # Default 0 so the pool can drain to zero idle connections and let a
+    # scale-to-zero Lakebase endpoint suspend. A held-open connection (min_size
+    # >= 1) is periodically re-established after suspension kills it, nudging
+    # the endpoint awake. The pool's pre-ping (see PgExecutor) reconnects on the
+    # next real request, so min_size=0 costs only a cold-connect after idle.
+    lakebase_pool_min_size: int = Field(default=0, validation_alias="DQX_LAKEBASE_POOL_MIN_SIZE")
     lakebase_pool_max_size: int = Field(default=10, validation_alias="DQX_LAKEBASE_POOL_MAX_SIZE")
     # Lakebase OAuth tokens currently expire after one hour; refresh
     # well before that so in-flight queries never see a 401.

@@ -34,11 +34,13 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
+    _ACTIVE_POLL_SECONDS,
     _CRON_WEEKDAY_NAMES,
     _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
+    _IDLE_POLL_SECONDS,
     _METADATA_DIM_REFRESH_INTERVAL_HOURS,
     _PROFILE_SAMPLE_LIMIT,
     _RUN_SET_SWEEP_MAX_RUNS,
@@ -1388,6 +1390,125 @@ class TestTickMonitoredTables:
 
         assert (fired == ["b1"]) == expect_fires
         svc._tick_one_table = monkeypatch_target
+
+
+# ---------------------------------------------------------------------------
+# Idle back-off — _tick returns whether any active work exists so _loop can
+# stop pinning Lakebase awake with a 60s query when nothing is scheduled
+# (letting the endpoint scale to zero). _tick_products / _tick_monitored_tables
+# report their found-count; _poll_interval_seconds picks the sleep cadence.
+# ---------------------------------------------------------------------------
+
+
+class TestTickProductsReturnsCount:
+    def test_returns_zero_without_service(self, make_scheduler):
+        svc, _mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        assert svc._tick_products(datetime.now(timezone.utc)) == 0
+
+    def test_returns_zero_when_none_scheduled(self, make_scheduler):
+        svc, _mocks, _dp = _make_product_scheduler(make_scheduler)
+        svc._load_scheduled_products = lambda: []  # type: ignore[method-assign]
+        assert svc._tick_products(datetime.now(timezone.utc)) == 0
+
+    def test_returns_count_of_scheduled_products(self, make_scheduler):
+        svc, _mocks, _dp = _make_product_scheduler(make_scheduler)
+        svc._load_scheduled_products = lambda: [  # type: ignore[method-assign]
+            {"product_id": "a", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"},
+            {"product_id": "b", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"},
+        ]
+        svc._tick_one_product = lambda p, now: None  # type: ignore[method-assign]
+        assert svc._tick_products(datetime.now(timezone.utc)) == 2
+
+
+class TestTickMonitoredTablesReturnsCount:
+    def test_returns_zero_without_service(self, make_scheduler):
+        svc, _mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        assert svc._tick_monitored_tables(datetime.now(timezone.utc)) == 0
+
+    def test_returns_zero_when_none_scheduled(self, make_scheduler):
+        svc, _mocks, _br = _make_table_scheduler(make_scheduler)
+        svc._load_scheduled_tables = lambda: []  # type: ignore[method-assign]
+        assert svc._tick_monitored_tables(datetime.now(timezone.utc)) == 0
+
+    def test_returns_count_of_scheduled_tables(self, make_scheduler):
+        svc, _mocks, _br = _make_table_scheduler(make_scheduler)
+        svc._load_scheduled_tables = lambda: [  # type: ignore[method-assign]
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"},
+        ]
+        svc._tick_one_table = lambda t, now: None  # type: ignore[method-assign]
+        assert svc._tick_monitored_tables(datetime.now(timezone.utc)) == 1
+
+
+def _stub_idle_sources(svc, *, configs=None, products=0, tables=0):
+    """Neutralise every due-ness source _tick consults so its return value
+    depends only on what we inject. Trackers return a far-future next_run so
+    active configs never actually fire during the assertion."""
+    far_future = (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()
+    svc._load_schedule_configs = lambda: (configs or {})  # type: ignore[method-assign]
+    svc._get_tracker = lambda name: {"next_run_at": far_future}  # type: ignore[method-assign]
+    svc._tick_products = lambda now: products  # type: ignore[method-assign]
+    svc._tick_monitored_tables = lambda now: tables  # type: ignore[method-assign]
+    svc._refresh_scores_for_completed_runs = lambda now: None  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+class TestTickReportsActiveWork:
+    async def test_idle_when_nothing_scheduled(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(svc)
+        assert await svc._tick() is False
+
+    async def test_active_for_non_manual_config(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(svc, configs={"s1": {"frequency": "daily"}})
+        assert await svc._tick() is True
+
+    async def test_manual_and_paused_configs_are_not_active(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(
+            svc,
+            configs={
+                "m": {"frequency": "manual"},
+                "p": {"frequency": "daily", "paused": True},
+            },
+        )
+        assert await svc._tick() is False
+
+    async def test_active_for_scheduled_product(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(svc, products=2)
+        assert await svc._tick() is True
+
+    async def test_active_for_scheduled_monitored_table(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(svc, tables=1)
+        assert await svc._tick() is True
+
+    async def test_failing_source_is_treated_as_active(self, make_scheduler):
+        # A due-ness source that errors must not let the loop back off — that
+        # could hide real scheduled work behind the longer idle interval.
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(svc)
+
+        def _boom(now):
+            raise RuntimeError("boom")
+
+        svc._tick_products = _boom  # type: ignore[method-assign]
+        assert await svc._tick() is True
+
+
+class TestPollInterval:
+    def test_active_uses_tight_cadence(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        assert svc._poll_interval_seconds(True) == _ACTIVE_POLL_SECONDS
+
+    def test_idle_backs_off(self, make_scheduler):
+        svc, _mocks = make_scheduler()
+        assert svc._poll_interval_seconds(False) == _IDLE_POLL_SECONDS
+
+    def test_idle_interval_is_longer_than_active(self):
+        # The whole point: idle must poll less often so Lakebase can suspend.
+        assert _IDLE_POLL_SECONDS > _ACTIVE_POLL_SECONDS
 
 
 # ---------------------------------------------------------------------------

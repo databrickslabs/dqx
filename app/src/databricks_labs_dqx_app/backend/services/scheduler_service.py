@@ -207,6 +207,26 @@ _METADATA_DIM_REFRESH_INTERVAL_HOURS = 1
 # ``tag_reconcile_service`` was wired or when tag-auto-apply is off.
 _TAG_RECONCILE_INTERVAL_HOURS = 6
 
+# Scheduler loop poll cadence. When any schedule is active (a non-manual,
+# non-paused scope config, a cron-scheduled data product, or a cron-scheduled
+# monitored table) the loop wakes every ``_ACTIVE_POLL_SECONDS`` so due runs
+# fire promptly. When nothing is scheduled it backs off to
+# ``_IDLE_POLL_SECONDS`` so the ``_tick`` query against the OLTP store stops
+# pinning a scale-to-zero Lakebase endpoint awake every minute — the endpoint
+# can then suspend in the gaps. ``reload()`` still wakes the loop immediately
+# when a schedule config is saved (see the config/schedule routes), so the
+# longer idle interval only ever bounds first pickup of a schedule created
+# while idle.
+#
+# The idle interval is set to one hour to match the current idle floor: the
+# hourly metadata-dim refresh (``_METADATA_DIM_REFRESH_INTERVAL_HOURS``) reads
+# the Lakebase Rules Registry every hour regardless, so polling less often than
+# that would not let Lakebase suspend any longer. Lowering that floor (and thus
+# raising this interval to multi-hour) requires making the metadata refresh
+# skip-when-unchanged — deferred.
+_ACTIVE_POLL_SECONDS = 60
+_IDLE_POLL_SECONDS = 3600
+
 # System attribution for scheduler-initiated writes (mirrors the
 # ``user_email="scheduler"`` the product/table run ticks already use).
 _SCHEDULER_SYSTEM_USER = "scheduler"
@@ -448,12 +468,25 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
-        """Check schedules every 60 seconds and trigger due runs."""
+        """Trigger due runs, then sleep until the next tick or a ``reload()``.
+
+        The sleep cadence adapts to whether anything is scheduled (see
+        :meth:`_poll_interval_seconds`): the tight ``_ACTIVE_POLL_SECONDS``
+        while schedules exist, and the longer ``_IDLE_POLL_SECONDS`` when the
+        app is idle so the ``_tick`` query stops pinning a scale-to-zero
+        Lakebase endpoint awake every minute. ``reload()`` interrupts the sleep
+        immediately when a schedule is saved, so the longer idle interval never
+        delays a schedule the user just created.
+        """
         while True:
+            # Default to the active cadence: if a tick raises before it can
+            # report, keep polling tightly rather than risk backing off while
+            # real work is pending.
+            has_active_work = True
             try:
                 recalc = self._force_recalc
                 self._force_recalc = False
-                await self._tick(recalc=recalc)
+                has_active_work = await self._tick(recalc=recalc)
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
                 await self._maybe_sweep_stale_tmp_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
@@ -465,13 +498,33 @@ class SchedulerService:
                 logger.exception("Scheduler tick failed")
 
             try:
-                await asyncio.wait_for(self._reload_event.wait(), timeout=60)
+                timeout = self._poll_interval_seconds(has_active_work)
+                await asyncio.wait_for(self._reload_event.wait(), timeout=timeout)
                 self._reload_event.clear()
             except asyncio.TimeoutError:
                 pass
 
-    async def _tick(self, *, recalc: bool = False) -> None:
+    def _poll_interval_seconds(self, has_active_work: bool) -> int:
+        """Seconds to sleep before the next tick.
+
+        Active schedules need the tight ``_ACTIVE_POLL_SECONDS`` cadence so due
+        runs fire promptly. When nothing is scheduled we back off to
+        ``_IDLE_POLL_SECONDS`` so the OLTP-store query in :meth:`_tick` stops
+        holding a scale-to-zero Lakebase endpoint awake — the endpoint can
+        suspend in the gap and ``reload()`` still wakes us the instant a
+        schedule is saved.
+        """
+        return _ACTIVE_POLL_SECONDS if has_active_work else _IDLE_POLL_SECONDS
+
+    async def _tick(self, *, recalc: bool = False) -> bool:
         """Single scheduler iteration: load configs, check each, trigger if due.
+
+        Returns ``True`` when at least one *active* schedule exists — a
+        non-manual, non-paused scope config, a cron-scheduled data product, or
+        a cron-scheduled monitored table — so :meth:`_loop` knows whether it
+        can back off (see :meth:`_poll_interval_seconds`). A due-ness source
+        that errors counts as active, so a transient failure never lets the
+        loop go idle while real work may be pending.
 
         When *recalc* is True (after a config save), ``next_run_at`` is
         recomputed from the current config so schedule time changes take
@@ -492,6 +545,7 @@ class SchedulerService:
         else:
             logger.info("Scheduler tick: found %d config(s), recalc=%s", len(configs), recalc)
 
+        active_configs = 0
         for name, cfg in configs.items():
             freq = cfg.get("frequency", "manual")
             if freq == "manual":
@@ -503,6 +557,10 @@ class SchedulerService:
             # next tick simply picks the schedule back up.
             if cfg.get("paused"):
                 continue
+
+            # A non-manual, non-paused config is active work: the loop must
+            # keep polling tightly to fire it even if it is not due yet.
+            active_configs += 1
 
             try:
                 tracker = await asyncio.to_thread(self._get_tracker, name)
@@ -574,20 +632,27 @@ class SchedulerService:
         # product-tick failure is fully isolated inside
         # :meth:`_tick_products` and cannot roll back or skip anything
         # the config loop already did.
+        # A sentinel of -1 marks "source errored, count unknown" so the
+        # active-work check below treats it as active (keep polling tightly)
+        # rather than let a transient failure back the loop off.
+        product_count = 0
         try:
-            await asyncio.to_thread(self._tick_products, now)
+            product_count = await asyncio.to_thread(self._tick_products, now)
         except Exception:
             logger.exception("Scheduler failed processing Data Product schedules")
+            product_count = -1
 
         # Third, independent due-ness source (P21 item 14): monitored
         # tables with an approved snapshot (``version > 0``) carrying a
         # cron — not gated on current review ``status``, see
         # :meth:`_load_scheduled_tables`. Fully isolated inside
         # :meth:`_tick_monitored_tables` like the product tick above.
+        table_count = 0
         try:
-            await asyncio.to_thread(self._tick_monitored_tables, now)
+            table_count = await asyncio.to_thread(self._tick_monitored_tables, now)
         except Exception:
             logger.exception("Scheduler failed processing monitored-table schedules")
+            table_count = -1
 
         # Completion observation: refresh the Lakebase score cache for any
         # scheduler-launched run whose terminal ``dq_validation_runs`` row
@@ -598,6 +663,11 @@ class SchedulerService:
             await asyncio.to_thread(self._refresh_scores_for_completed_runs, now)
         except Exception:
             logger.exception("Scheduler failed refreshing the score cache for completed runs")
+
+        # Active when any due-ness source has scheduled work (or errored, via
+        # the -1 sentinel). Score-refresh is completion bookkeeping, not a
+        # due-ness source, so it never affects the poll cadence.
+        return active_configs > 0 or product_count != 0 or table_count != 0
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
@@ -651,8 +721,12 @@ class SchedulerService:
     # back to UTC, matching the scope-config path's behaviour for the
     # common case where no timezone was configured.
 
-    def _tick_products(self, now: datetime) -> None:
+    def _tick_products(self, now: datetime) -> int:
         """Check every cron-scheduled Table Space with an approved snapshot and trigger due ones.
+
+        Returns the number of cron-scheduled products found (0 when the
+        scheduler has no :class:`DataProductService` or none are scheduled) so
+        :meth:`_tick` can fold it into its active-work signal.
 
         Eligibility (see :meth:`_load_scheduled_products`) is
         ``version > 0``, not the space's current review ``status`` — a
@@ -666,11 +740,11 @@ class SchedulerService:
         to call unconditionally from :meth:`_tick`.
         """
         if self._data_product_service is None:
-            return
+            return 0
 
         products = self._load_scheduled_products()
         if not products:
-            return
+            return 0
 
         logger.info("Scheduler tick: found %d scheduled data product(s)", len(products))
 
@@ -679,6 +753,8 @@ class SchedulerService:
                 self._tick_one_product(product, now)
             except Exception:
                 logger.exception("Scheduler failed processing product schedule 'product:%s'", product["product_id"])
+
+        return len(products)
 
     def _load_scheduled_products(self) -> list[dict[str, Any]]:
         """Return cron-scheduled Table Spaces that have an approved (frozen) snapshot.
@@ -879,20 +955,19 @@ class SchedulerService:
     # scheduler runs the frozen, already-reviewed snapshot regardless of
     # whether the binding is currently mid-review for NEWER content.
 
-    def _tick_monitored_tables(self, now: datetime) -> None:
+    def _tick_monitored_tables(self, now: datetime) -> int:
         """Check every cron-scheduled monitored table with an approved snapshot and trigger due ones.
 
-        No-op when the scheduler was constructed without a
-        :class:`BindingRunService` (legacy deployments, or unit tests that
-        only exercise the other paths) — safe to call unconditionally from
-        :meth:`_tick`.
+        Returns the number of cron-scheduled monitored tables found (0 when the
+        scheduler has no :class:`BindingRunService` or none are scheduled) so
+        :meth:`_tick` can fold it into its active-work signal.
         """
         if self._binding_run_service is None:
-            return
+            return 0
 
         tables = self._load_scheduled_tables()
         if not tables:
-            return
+            return 0
 
         logger.info("Scheduler tick: found %d scheduled monitored table(s)", len(tables))
 
@@ -901,6 +976,8 @@ class SchedulerService:
                 self._tick_one_table(table, now)
             except Exception:
                 logger.exception("Scheduler failed processing table schedule 'table:%s'", table["binding_id"])
+
+        return len(tables)
 
     def _load_scheduled_tables(self) -> list[dict[str, Any]]:
         """Return cron-scheduled monitored tables that have an approved (frozen) snapshot.

@@ -245,7 +245,7 @@ class PgExecutor:
         token_refresh_retry_seconds: int = 10,
         token_refresh_retry_jitter: float = 0.3,
         token_refresh_max_failures: int = 12,
-        pool_min_size: int = 1,
+        pool_min_size: int = 0,
         pool_max_size: int = 10,
     ) -> None:
         self._ws = ws
@@ -314,6 +314,13 @@ class PgExecutor:
         # dead connection and the fresh connect re-auths with the current
         # OAuth token (read from ``_connect_kwargs['password']``, which
         # the refresh loop keeps current) and resumes the endpoint.
+        #
+        # ``min_size`` defaults to 0 (see AppConfig.lakebase_pool_min_size) so
+        # the pool drains to zero idle connections and lets the endpoint
+        # actually suspend. A held-open connection would be re-established by
+        # the pool after suspension killed it, nudging the endpoint awake and
+        # defeating scale-to-zero; the pre-ping above absorbs the cold-connect
+        # on the next real request instead.
         self._pool: ConnectionPool = ConnectionPool(
             conninfo="",
             min_size=pool_min_size,
@@ -945,7 +952,7 @@ def build_pg_executor(
     token_refresh_retry_seconds: int = 10,
     token_refresh_retry_jitter: float = 0.3,
     token_refresh_max_failures: int = 12,
-    pool_min_size: int = 1,
+    pool_min_size: int = 0,
     pool_max_size: int = 10,
 ) -> PgExecutor:
     """Construct a :class:`PgExecutor` from a Databricks workspace client.
@@ -1009,7 +1016,7 @@ def build_pg_executor_from_connection(
     token_refresh_retry_seconds: int = 10,
     token_refresh_retry_jitter: float = 0.3,
     token_refresh_max_failures: int = 12,
-    pool_min_size: int = 1,
+    pool_min_size: int = 0,
     pool_max_size: int = 10,
 ) -> PgExecutor:
     """Construct an executor from endpoint or platform-bound connection values."""
