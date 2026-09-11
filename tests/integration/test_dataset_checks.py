@@ -2940,8 +2940,11 @@ def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(
 
 
 def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSession):
+    # A filtered source row (id=1) is still present in the source, so it must pair with its reference
+    # counterpart (violation suppressed) rather than splitting into a phantom "missing" row. A reference
+    # key that is genuinely absent from the source (id=2) must still be reported as missing (issue #1504).
     df = spark.createDataFrame([(1, "A", False)], "id int, value string, in_scope boolean")
-    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    ref_df = spark.createDataFrame([(1, "B"), (2, "C")], "id int, value string")
     condition, apply = compare_datasets(
         columns=["id"],
         ref_columns=["id"],
@@ -2950,17 +2953,56 @@ def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSe
         check_missing_records=True,
     )
 
-    actual = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
-    excluded_row = next(row for row in actual if row["in_scope"] is False)
-    missing_row = next(row for row in actual if row["in_scope"] is None)
+    result = apply(df, spark, {"ref_df": ref_df})
+    actual = result.select("id", "value", "in_scope", condition.alias("violation")).collect()
+    excluded_row = next(row for row in actual if row["id"] == 1)
+    missing_row = next(row for row in actual if row["id"] == 2)
 
     assert len(actual) == 2
+    # The filtered source row pairs with reference id=1 and is not reported as missing.
+    assert excluded_row["in_scope"] is False
     assert excluded_row["violation"] is None
+    # The reference-only row (id=2) is still reported as missing.
+    assert missing_row["in_scope"] is None
     assert json.loads(missing_row["violation"]) == {
         "row_missing": True,
         "row_extra": False,
-        "changed": {"value": {"ref": "B"}},
+        "changed": {"value": {"ref": "C"}},
     }
+
+
+def test_compare_datasets_filter_duplicate_keys_interleaving_refs_known_limitation(spark: SparkSession):
+    # KNOWN LIMITATION (documented, not desired behavior). The scope-first ordering that fixes #1504 cannot
+    # also preserve value alignment when a single key carries BOTH in- and out-of-scope source rows AND the
+    # reference has multiple rows with interleaving compared values. Here the in-scope source row (1,"B")
+    # has a value-matching reference (1,"B"), but scope-first ordering pairs it with reference (1,"A")
+    # instead and reports a spurious "changed". A fully correct result would suppress both rows.
+    #
+    # This test pins the current behavior so any future change to the pairing heuristic is deliberate. See
+    # the "Known limitation" comment on the lazy row-number ordering in compare_datasets (check_funcs.py).
+    df = spark.createDataFrame([(1, "B", True), (1, "A", False)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    result = apply(df, spark, {"ref_df": ref_df})
+    actual = result.select("value", "in_scope", condition.alias("violation")).collect()
+    in_scope_row = next(row for row in actual if row["in_scope"] is True)
+    excluded_row = next(row for row in actual if row["in_scope"] is False)
+
+    assert len(actual) == 2
+    # Documented limitation: the in-scope row is flagged "changed" despite a value-matching reference.
+    assert json.loads(in_scope_row["violation"]) == {
+        "row_missing": False,
+        "row_extra": False,
+        "changed": {"value": {"df": "B", "ref": "A"}},
+    }
+    # The out-of-scope row's violation is suppressed by the filter regardless.
+    assert excluded_row["violation"] is None
 
 
 @pytest.mark.parametrize("duplicate_key", [1, None])

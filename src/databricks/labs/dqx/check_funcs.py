@@ -3125,7 +3125,8 @@ def compare_datasets(
         by compared values using per-group row-number windows; this is robust to duplicates but sorts both
         datasets on the compared columns.
         When *row_filter* is set, uniqueness is validated only over the rows that pass the filter; duplicate
-        matching keys among filtered-out rows do not raise, because those rows never participate in pairing.
+        matching keys among filtered-out rows do not raise, because in-scope rows are given priority for
+        reference pairing and filtered-out rows only fill any pairing slots left over.
 
 
     Returns:
@@ -3198,8 +3199,11 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
-        # Keep rows outside the check filter in the output, but isolate them from reference pairing so they
-        # cannot consume a duplicate-key row number. Coalesce NULL to false to match Spark filter semantics.
+        # Keep rows outside the check filter in the output while giving in-scope rows priority for reference
+        # pairing, so an excluded row cannot consume the reference slot that an in-scope row needs (issue
+        # #1504). Coalesce NULL to false to match Spark filter semantics. The scope is used only to order
+        # pairing (below) - it is deliberately kept out of the join keys so an out-of-scope source row still
+        # pairs with its reference counterpart instead of splitting into phantom missing/extra rows.
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
         pairing_scope_col = f"__match_scope_{unique_id}"
         df, ref_df = (
@@ -3213,16 +3217,29 @@ def compare_datasets(
         # missing and extra. Both the lazy and eager paths need this signal.
         row_number_col = f"__match_row_number_{unique_id}"
         if not raise_on_duplicate_keys:
-            order_columns = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+            # In-scope rows sort first (pairing_scope descending: True before False) so that when duplicate
+            # keys exist, in-scope rows claim the low sequence numbers - and therefore the reference rows -
+            # before any excluded row. Reference rows carry a constant scope, so they order by value alone.
+            #
+            # Known limitation: this scope-first ordering is what fixes #1504 (an excluded row can no longer
+            # starve an in-scope row of its reference slot), but it cannot also preserve value alignment for
+            # every duplicate-key shape. When a single key carries BOTH in- and out-of-scope source rows AND
+            # the reference has multiple rows with interleaving compared values, the scope-first sort can pair
+            # an in-scope row with a differently-valued reference row and flag a spurious "changed" - even
+            # though a value-matching reference row exists. Single-pass positional pairing cannot satisfy both
+            # #1504 (needs scope priority) and that case (needs value alignment) at once, because the correct
+            # choice depends on whether the excluded row has a value-matching reference. This is an accepted
+            # edge of the lazy duplicate-key heuristic; see test_compare_datasets_filter_duplicate_keys_*.
+            order_columns = [F.col(pairing_scope_col).desc()] + (
+                [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+            )
             df = df.withColumn(
                 row_number_col,
-                F.row_number().over(Window.partitionBy(*pk_column_names, pairing_scope_col).orderBy(*order_columns)),
+                F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
             )
             ref_df = ref_df.withColumn(
                 row_number_col,
-                F.row_number().over(
-                    Window.partitionBy(*ref_pk_column_names, pairing_scope_col).orderBy(*order_columns)
-                ),
+                F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
             )
         else:
             match_count_col = f"__match_count_{unique_id}"
@@ -3241,15 +3258,21 @@ def compare_datasets(
                     )
             # Matching keys are unique here, so every group's sequence number is 1; a constant non-null
             # marker gives _add_row_diffs the same present-vs-missing signal without a window shuffle.
+            #
+            # Uniqueness is validated over in-scope rows only (above), so an out-of-scope source row that
+            # shares a key with an in-scope row also gets sequence number 1 and joins the same reference row.
+            # This is a known internal quirk: a reference row can be represented in more than one output row
+            # in this path. It is not user-visible - out-of-scope violations are suppressed and, with
+            # check_missing_records disabled, no reference-only rows are added - so it is left as-is.
             df = df.withColumn(row_number_col, F.lit(1))
             ref_df = ref_df.withColumn(row_number_col, F.lit(1))
 
-        # Both signals ride in the join keys. pairing_scope_col (source = filter result, reference = true)
-        # keeps an out-of-filter source row from ever matching a reference row, so it cannot consume a
-        # reference's pairing slot; row_number_col then pairs surviving duplicate keys positionally. The
-        # source and reference key lists stay symmetric so the join keys line up.
-        join_columns = [*pk_column_names, pairing_scope_col, row_number_col]
-        ref_join_columns = [*ref_pk_column_names, pairing_scope_col, row_number_col]
+        # row_number_col pairs duplicate keys positionally after in-scope rows have claimed the low sequence
+        # numbers (see the ordering above), so an out-of-filter source row still matches its reference
+        # counterpart rather than splitting into phantom missing/extra rows. The source and reference key
+        # lists stay symmetric so the join keys line up.
+        join_columns = [*pk_column_names, row_number_col]
+        ref_join_columns = [*ref_pk_column_names, row_number_col]
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
