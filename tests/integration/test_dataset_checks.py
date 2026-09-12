@@ -2973,15 +2973,7 @@ def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSe
     }
 
 
-def test_compare_datasets_filter_duplicate_keys_interleaving_refs_known_limitation(spark: SparkSession):
-    # KNOWN LIMITATION (documented, not desired behavior). The scope-first ordering that fixes #1504 cannot
-    # also preserve value alignment when a single key carries BOTH in- and out-of-scope source rows AND the
-    # reference has multiple rows with interleaving compared values. Here the in-scope source row (1,"B")
-    # has a value-matching reference (1,"B"), but scope-first ordering pairs it with reference (1,"A")
-    # instead and reports a spurious "changed". A fully correct result would suppress both rows.
-    #
-    # This test pins the current behavior so any future change to the pairing heuristic is deliberate. See
-    # the "Known limitation" comment on the lazy row-number ordering in compare_datasets (check_funcs.py).
+def test_compare_datasets_filter_duplicate_keys_preserves_exact_matches(spark: SparkSession):
     df = spark.createDataFrame([(1, "B", True), (1, "A", False)], "id int, value string, in_scope boolean")
     ref_df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
     condition, apply = compare_datasets(
@@ -2997,14 +2989,25 @@ def test_compare_datasets_filter_duplicate_keys_interleaving_refs_known_limitati
     excluded_row = next(row for row in actual if row["in_scope"] is False)
 
     assert len(actual) == 2
-    # Documented limitation: the in-scope row is flagged "changed" despite a value-matching reference.
-    assert json.loads(in_scope_row["violation"]) == {
-        "row_missing": False,
-        "row_extra": False,
-        "changed": {"value": {"df": "B", "ref": "A"}},
-    }
-    # The out-of-scope row's violation is suppressed by the filter regardless.
+    assert in_scope_row["violation"] is None
     assert excluded_row["violation"] is None
+
+
+def test_compare_datasets_filter_prioritizes_tolerant_in_scope_match(spark: SparkSession):
+    df = spark.createDataFrame([(1, 1.05, True), (1, 1.0, False)], "id int, value double, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, 1.0)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        abs_tolerance=0.1,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
 
 
 @pytest.mark.parametrize("duplicate_key", [1, None])
