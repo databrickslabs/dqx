@@ -71,8 +71,10 @@ class TestAppSettingsDraftRunSampleLimit:
         assert keys["setting_key"] == "draft_run_sample_limit"
         assert values["setting_value"] == "5000"
 
-    def test_default_constant_is_1000(self):
-        assert DRAFT_RUN_SAMPLE_LIMIT_DEFAULT == 1000
+    def test_default_constant_is_the_whole_table(self):
+        """0 is the 'unlimited' convention, so an unconfigured draft run scans
+        the whole table rather than a 1,000-row subset."""
+        assert DRAFT_RUN_SAMPLE_LIMIT_DEFAULT == 0
 
 
 # ---------------------------------------------------------------------------

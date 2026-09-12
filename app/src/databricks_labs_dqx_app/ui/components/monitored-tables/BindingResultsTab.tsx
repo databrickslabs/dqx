@@ -546,10 +546,14 @@ function ResultsBody({
   // hover reflects each rule's own breach regardless of the active drilldown
   // filter.
   const breachedRuleCriticality: Record<string, string> = {};
+  // Same keying, carrying the frozen threshold so the ⚠ tooltip can name the
+  // percentage the rule was judged against.
+  const breachedRuleThreshold: Record<string, number> = {};
   if (thresholdEnabled) {
     for (const r of base.by_rule) {
       if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
         breachedRuleCriticality[r.label] = r.breach_criticality;
+        if (r.pass_threshold != null) breachedRuleThreshold[r.label] = r.pass_threshold;
       }
     }
   }
@@ -1096,6 +1100,7 @@ function ResultsBody({
                   severityRanks={sevRanks}
                   dimensionColors={dimColors}
                   breachedRuleCriticality={breachedRuleCriticality}
+                  breachedRuleThreshold={breachedRuleThreshold}
                 />
               )}
             </CollapseRegion>

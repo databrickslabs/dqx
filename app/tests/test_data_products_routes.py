@@ -231,6 +231,7 @@ class TestUpdate:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            grant_svc=MagicMock(),
         )
         svc.update.assert_called_once_with("p1", {"description": "new desc"}, "alice@x")
 
@@ -246,6 +247,7 @@ class TestUpdate:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                grant_svc=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -261,6 +263,7 @@ class TestUpdate:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                grant_svc=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 

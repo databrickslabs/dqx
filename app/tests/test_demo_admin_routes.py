@@ -33,11 +33,19 @@ def demo_status_store_mock() -> MagicMock:
     return MagicMock()
 
 
+@pytest.fixture
+def reset_status_store_mock() -> MagicMock:
+    store = MagicMock()
+    store.is_running.return_value = False
+    return store
+
+
 def _build_client(
     *,
     role: UserRole,
     seeder: MagicMock | None = None,
     status_store: MagicMock | None = None,
+    reset_status_store: MagicMock | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(admin_router, prefix="/admin")
@@ -51,6 +59,13 @@ def _build_client(
         app.dependency_overrides[deps.get_demo_seed_service] = lambda: seeder
     if status_store is not None:
         app.dependency_overrides[deps.get_demo_status_store] = lambda: status_store
+    # deploy_demo_content also gates on the reset status store (mutual
+    # exclusion); default to "not running" so it never blocks unless a test
+    # supplies a store that is.
+    if reset_status_store is None:
+        reset_status_store = MagicMock()
+        reset_status_store.is_running.return_value = False
+    app.dependency_overrides[deps.get_reset_status_store] = lambda: reset_status_store
     return TestClient(app, raise_server_exceptions=True)
 
 
@@ -99,6 +114,25 @@ def test_deploy_conflict_when_already_running(demo_seed_service_mock, demo_statu
         role=UserRole.ADMIN,
         seeder=demo_seed_service_mock,
         status_store=demo_status_store_mock,
+    )
+
+    resp = client.post("/admin/demo/deploy", json={"wipe_first": False})
+
+    assert resp.status_code == 409
+    demo_seed_service_mock.run.assert_not_called()
+
+
+def test_deploy_conflict_when_reset_running(demo_seed_service_mock, demo_status_store_mock):
+    # Symmetric to the reset-side guard: a demo deploy is rejected with 409 while
+    # a database reset is in progress (they share the SP warehouse + Lakebase).
+    demo_status_store_mock.is_running.return_value = False
+    reset_store = MagicMock()
+    reset_store.is_running.return_value = True
+    client = _build_client(
+        role=UserRole.ADMIN,
+        seeder=demo_seed_service_mock,
+        status_store=demo_status_store_mock,
+        reset_status_store=reset_store,
     )
 
     resp = client.post("/admin/demo/deploy", json={"wipe_first": False})

@@ -82,6 +82,11 @@ export type BreakdownRow = {
   /** Criticality of the breach (worst child): "error" | "warn" | null.
    *  Accepts the raw API string; BreachIcon renders nothing for non-"error"/"warn" values. */
   breach_criticality?: string | null;
+  /** Frozen per-run pass threshold (%) in effect for the group — the value
+   *  stamped on the newest run pooled into it. Null for legacy runs with no
+   *  frozen threshold. Surfaced only in the breach icon's tooltip, so it costs
+   *  no row height until someone asks why the ⚠ is there. */
+  pass_threshold?: number | null;
 };
 
 type SortKey =
@@ -342,21 +347,26 @@ export function DimensionBreakdown({
                       {r.label == null ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
-                        <span className="flex items-center gap-2">
-                          {colorMap?.[r.label] && (
-                            <span
-                              className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
-                              style={{ backgroundColor: colorMap[r.label] }}
-                            />
-                          )}
-                          {renderLabel?.(r.label, facetValue) ?? (
-                            <TruncatedText text={r.label} className="min-w-0" />
-                          )}
-                          {breachEnabled && r.breached && (
-                            <BreachIcon criticality={r.breach_criticality} />
-                          )}
-                          {rowLink?.(r.label)}
-                        </span>
+                        <div className="min-w-0">
+                          <span className="flex items-center gap-2">
+                            {colorMap?.[r.label] && (
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: colorMap[r.label] }}
+                              />
+                            )}
+                            {renderLabel?.(r.label, facetValue) ?? (
+                              <TruncatedText text={r.label} className="min-w-0" />
+                            )}
+                            {breachEnabled && r.breached && (
+                              <BreachIcon
+                                criticality={r.breach_criticality}
+                                threshold={r.pass_threshold}
+                              />
+                            )}
+                            {rowLink?.(r.label)}
+                          </span>
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">

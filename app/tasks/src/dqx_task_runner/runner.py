@@ -354,7 +354,16 @@ def _run_profile(
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.labs.dqx.profiler.generator import DQGenerator
 
-    sample_limit = config.get("sample_limit", 50_000)
+    # Sampling is applied by the temp view the submitting route built (see
+    # ``view_service.build_sample_select``), so the runner must NOT re-limit here — a
+    # second ``df.limit`` would silently override a percentage sample and make
+    # ``rows_profiled`` disagree with what was actually profiled.
+    sample_kind = config.get("sample_kind", "full")
+    sample_value = int(config.get("sample_value") or 0)
+    # The results table stores one integer cap. A percentage or full-table run
+    # has no exact row cap, so record 0 (the existing "unlimited" convention)
+    # and let ``rows_profiled`` carry the real figure.
+    sample_limit = sample_value if sample_kind == "records" else 0
     source_table_fqn = config.get("source_table_fqn", "")
     columns = config.get("columns") or None
     profile_options = config.get("profile_options") or {}
@@ -363,8 +372,14 @@ def _run_profile(
     start = time.time()
 
     df = _read_view_with_retry(spark, view_fqn)
-    if sample_limit:
-        df = df.limit(sample_limit)
+
+    # ``rows_profiled`` must reflect what the profiler actually saw. Two things
+    # make that true: the route pins the profiler's own sampling options off, and
+    # the view's TABLESAMPLE carries a REPEATABLE seed. The seed matters — the
+    # view is not materialized, so this count and the profiling passes below are
+    # separate scans that would each draw a different sample without it. See
+    # ``view_service.build_sample_select``.
+    rows_profiled = df.count()
 
     profiler = DQProfiler(ws, spark)
     summary, profiles = profiler.profile(df, columns=columns, options=profile_options)
@@ -373,7 +388,6 @@ def _run_profile(
     rules = generator.generate_dq_rules(profiles)
 
     duration = round(time.time() - start, 2)
-    rows_profiled = df.count()
     columns_profiled = len(profiles) if profiles else 0
 
     # Write result row. Profiling has no checks yet, but we still record a
@@ -394,6 +408,7 @@ def _run_profile(
                 source_table_fqn,
                 view_fqn,
                 sample_limit,
+                sample_kind,
                 rows_profiled,
                 columns_profiled,
                 duration,
@@ -406,7 +421,7 @@ def _run_profile(
         ],
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
-            "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
+            "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled INT, columns_profiled INT, "
             "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
             "status STRING, error_message STRING, "
             "rule_set_fingerprint STRING"
@@ -1236,12 +1251,13 @@ def _write_error(
                     requesting_user,
                     source_table_fqn,
                     view_fqn,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                    None,  # sample_limit
+                    None,  # sample_kind
+                    None,  # rows_profiled
+                    None,  # columns_profiled
+                    None,  # duration_seconds
+                    None,  # summary_json
+                    None,  # generated_rules_json
                     "FAILED",
                     error_message,
                     fingerprint,
@@ -1249,7 +1265,7 @@ def _write_error(
             ],
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
-                "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
+                "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled INT, columns_profiled INT, "
                 "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
                 "status STRING, error_message STRING, "
                 "rule_set_fingerprint STRING"
