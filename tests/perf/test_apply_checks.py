@@ -2181,7 +2181,7 @@ def test_benchmark_is_geo_within_distance(benchmark, ws, generated_df):
     """Benchmark `is_geo_within_distance`.
 
     Uses col_geo_point against a reference point with a 1 km radius to benchmark the geodesic
-    `st_distance` path on GEOGRAPHY values.
+    `st_distancespheroid` path.
     """
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [

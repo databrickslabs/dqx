@@ -260,7 +260,7 @@
       convert_reference_geometry: true
 
 # is_geo_within_distance check (geo, geodesic distance in meters, requires runtime 17.1+)
-# location point must lie within 1 km of the reference point
+# point_geom must lie within 1 km of the reference point
 - criticality: error
   check:
     function: is_geo_within_distance

@@ -64,18 +64,24 @@ def test_is_geo_within_distance_with_expression_distance_does_not_raise():
     is_geo_within_distance("location", _REFERENCE_POINT_WKT, "radius_m * 2")
 
 
-def test_is_geo_within_distance_accepts_zero_distance():
-    is_geo_within_distance("location", _REFERENCE_POINT_WKT, 0)
-
-
-@pytest.mark.parametrize("distance", [-1, -0.5, float("nan"), float("inf"), float("-inf"), True, False])
+@pytest.mark.parametrize(
+    "distance",
+    [-1, -0.5, float("nan"), float("inf"), float("-inf"), True, False, 10**400, "-100", "nan", "inf", "-1e3"],
+)
 def test_is_geo_within_distance_rejects_invalid_distance(distance):
+    """Numeric literals and numeric strings are held to the same rule; 10**400 overflows float."""
     with pytest.raises(InvalidParameterError, match="finite, non-negative"):
-        is_geo_within_distance("location", _REFERENCE_GEOMETRY_WKT, distance)
+        is_geo_within_distance("location", _REFERENCE_POINT_WKT, distance)
+
+
+@pytest.mark.parametrize("distance", [0, 1000, 2.5, "1000", "1e3", " 100 ", "radius_m * 2", "radius_m"])
+def test_is_geo_within_distance_accepts_valid_distance(distance):
+    """Non-negative numbers, numeric strings and SQL expressions are all accepted."""
+    is_geo_within_distance("location", _REFERENCE_POINT_WKT, distance)
 
 
 def test_is_geo_within_distance_without_conversion_has_proper_alias():
-    """The native GEOGRAPHY path renders values with st_astext, but must keep the same alias."""
+    """The native GEOMETRY path renders values with st_astext, but must keep the same alias."""
     column = is_geo_within_distance("location", F.col("reference_location"), 1000)
     column_str = _column_expression_clean(column)
     assert column_str.endswith(
