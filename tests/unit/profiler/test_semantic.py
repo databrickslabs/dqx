@@ -336,6 +336,36 @@ def test_measurement_detector_rejects_string_column():
     assert DEFAULT_MEASUREMENT_DETECTOR.detect(ctx) is None
 
 
+@pytest.mark.parametrize(
+    "bad_stat",
+    [
+        pytest.param("not-a-number", id="string-triggers-value-error"),
+        pytest.param(complex(1, 2), id="complex-triggers-type-error"),
+    ],
+)
+def test_measurement_detector_malformed_stats_yields_unknown_distribution(bad_stat):
+    # min/max/mean/stddev present but not castable to float — classification cannot proceed.
+    # Regression guard: previously the zero-fallback path drove *distribution* to *"constant"*
+    # for a highly variable column; it must be *"unknown"* instead. Parametrized so both
+    # exception paths caught by the detector (ValueError from strings, TypeError from complex)
+    # exercise the *"unknown"* return.
+    ctx = _fake_ctx(
+        column_type=T.IntegerType(),
+        metrics={
+            "count_non_null": 100,
+            "min": bad_stat,
+            "max": bad_stat,
+            "mean": bad_stat,
+            "stddev": bad_stat,
+        },
+    )
+    result = DEFAULT_MEASUREMENT_DETECTOR.detect(ctx)
+    assert result is not None
+    assert result.name == "measurement"
+    assert isinstance(result.properties, MeasurementProperties)
+    assert result.properties.distribution == "unknown"
+
+
 def test_text_detector_positive_string_column():
     ctx = _fake_ctx(column_type=T.StringType(), metrics={"count_non_null": 5})
     result = DEFAULT_TEXT_DETECTOR.detect(ctx)

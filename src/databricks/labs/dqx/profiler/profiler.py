@@ -161,7 +161,10 @@ class DQProfiler(DQEngineBase):
 
         logger.info(f"Profiling {input_config.location} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=input_config)
-        return self._profile_dataframe(df=df, columns=columns, options=options)
+        # Route through *self.profile* (not *_profile_dataframe*) so the nested
+        # *profile* telemetry event fires alongside *profile_table*. Downstream
+        # dashboards key on the *profile* event for per-DataFrame counts.
+        return self.profile(df=df, columns=columns, options=options)
 
     @telemetry_logger("profiler", "profile_tables_for_patterns")
     def profile_tables_for_patterns(
@@ -532,10 +535,6 @@ class DQProfiler(DQEngineBase):
 
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
             if profile_type.contextual_builder is not None:
-                # Refresh the frozen context with the current *metrics* snapshot so contextual
-                # builders registered after *min_max* observe the resolved min/max values written
-                # back below (see the write-back block after this loop).
-                builder_ctx = builder_ctx.with_metrics(metrics)
                 profile = profile_type.contextual_builder(builder_ctx)
             elif profile_type.builder is not None:
                 profile = profile_type.builder(column_df, field_name, field_type, dict(metrics), dict(opts))
@@ -554,6 +553,11 @@ class DQProfiler(DQEngineBase):
                     metrics["min"] = profile.parameters.get("min")
                 if profile.parameters.get("max") is not None:
                     metrics["max"] = profile.parameters.get("max")
+                # Refresh the frozen context so contextual builders registered after *min_max*
+                # observe the resolved min/max values just written back. Pydantic materializes
+                # *ctx.metrics* as a fresh dict at construction, so contextual builders will not
+                # see mutations to the outer *metrics* dict without an explicit refresh.
+                builder_ctx = builder_ctx.with_metrics(metrics)
 
     def _detect_semantic_type(
         self,

@@ -145,9 +145,8 @@ checks. For example, a *vehicle_type* column classified as an *enum* now receive
 *cargo_weight* column is classified as a *measurement* and receives *min_max* only.
 
 The feature is fully opt-in: it runs if a `semantic_registry` is supplied to the
-`DQProfiler` constructor. When no registry is supplied, the profiler output is
-byte-identical to the pre-feature behaviour and every `DQProfile.semantic_type`
-field is `None`.
+`DQProfiler` constructor. When no registry is supplied, semantic detection does
+not run and every `DQProfile.semantic_type` field is `None`.
 
 ### Composing a registry
 

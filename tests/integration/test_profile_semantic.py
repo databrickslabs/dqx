@@ -58,15 +58,15 @@ def _profile_by_column(profiles):
     return grouped
 
 
-def test_profile_without_semantic_registry_matches_pre_feature_output(spark, ws):
-    """No registry → profiler output is identical to the pre-feature behaviour.
+def test_profile_without_semantic_registry_leaves_semantic_type_unset(spark, ws):
+    """No registry → semantic detection does not run.
 
     Every DQProfile.semantic_type must be None because detection did not run.
     """
     df = _make_demo_df(spark)
     profiler = DQProfiler(ws)
     _stats, profiles = profiler.profile(df, options={"sample_fraction": None, "llm_primary_key_detection": False})
-    assert profiles, "expected the pre-feature profiler to emit at least one profile"
+    assert profiles, "expected the profiler to emit at least one profile"
     tagged = [(p.column, p.name, p.semantic_type) for p in profiles if p.semantic_type is not None]
     assert not tagged, f"expected all profiles to have semantic_type=None, got tagged: {tagged}"
 
@@ -192,13 +192,15 @@ def test_short_type_low_cardinality_classified_as_enum_and_emits_is_in(spark, ws
 
 
 def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
-    """A contextual builder ordered after `min_max` observes resolved `min`/`max` via `ctx.metrics`.
+    """A contextual builder ordered after `min_max` observes the *changed* `min`/`max` via `ctx.metrics`.
 
-    Regression guard: `DQProfiler._build_profiles_for_column` calls
-    `builder_ctx.with_metrics(metrics)` before each contextual builder so the frozen context
-    reflects write-backs performed by earlier builders. Removing or misplacing that refresh
-    would silently return stale metrics to downstream builders — a latent contract break for
-    custom builders that depend on `min_max`'s write-back.
+    Regression guard: after `min_max` writes its resolved bounds back into *metrics*,
+    `DQProfiler._build_profiles_for_column` refreshes the frozen builder context with
+    `builder_ctx.with_metrics(metrics)` so contextual builders registered later see the
+    new values instead of the pre-`min_max` summary stats. Uses `remove_outliers=True`
+    with a tight `num_sigmas` so the `min_max` builder emits sigma-capped bounds strictly
+    inside the raw column range — proving that what the spy observes came from the
+    write-back, not from the initial summary stats.
     """
     seen_metrics: list[dict] = []
 
@@ -210,19 +212,27 @@ def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
         schema = T.StructType([T.StructField("value", T.LongType())])
         rows = [(i,) for i in range(100)]
         df = spark.createDataFrame(rows, schema=schema)
+        raw_min, raw_max = 0, 99
         profiler = DQProfiler(ws)
         _stats, profiles = profiler.profile(
             df,
             options={
                 "sample_fraction": None,
                 "llm_primary_key_detection": False,
-                "remove_outliers": False,
+                "remove_outliers": True,
+                # Sigma capping with mean≈49.5, stddev≈29 and 0.5 sigmas keeps bounds strictly
+                # inside [0, 99], so the resolved min/max differ from the raw column bounds.
+                "num_sigmas": 0.5,
+                "round": False,
             },
         )
         min_max_profiles = [p for p in profiles if p.column == "value" and p.name == "min_max"]
         assert len(min_max_profiles) == 1, f"expected one min_max profile on 'value', got: {min_max_profiles}"
         expected_min = min_max_profiles[0].parameters["min"]
         expected_max = min_max_profiles[0].parameters["max"]
+        assert (
+            raw_min < expected_min < expected_max < raw_max
+        ), f"expected sigma-capped bounds strictly inside ({raw_min}, {raw_max}), got ({expected_min}, {expected_max})"
         assert seen_metrics, "spy contextual builder was not invoked"
         spy_seen = seen_metrics[-1]
         assert (

@@ -327,9 +327,10 @@ def _detect_measurement(ctx: DQProfileContext) -> DQSemanticType | None:
             stddev_f = float(stddev)
             mean_f = float(mean)
         except (TypeError, ValueError):
-            span = 0.0
-            stddev_f = 0.0
-            mean_f = 0.0
+            # Stat cast failed; classification is not attempted. Keep *distribution* as *unknown*
+            # rather than falling through the zero-fallback branches below (which would label a
+            # highly variable column as *constant*).
+            return DQSemanticType(name="measurement", properties=MeasurementProperties(distribution="unknown"))
         if span <= 0:
             distribution = "constant"
         elif stddev_f == 0:

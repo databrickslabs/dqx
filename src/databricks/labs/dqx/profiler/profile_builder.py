@@ -99,8 +99,11 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
     When a semantic registry is configured and the column was classified as *enum*,
     the distinct values collected by the enum detector are reused (no extra Spark
     action). Columns classified as other semantic types (*key*, *measurement*,
-    *text*, user-defined) are skipped. When no semantic type is present (default
-    path), applicability follows today's byte-identical rules.
+    *text*, user-defined) are skipped. When no semantic type is present, the
+    builder applies the shared applicability gate: the type must satisfy
+    *_supports_distinct* and the *distinct_count / count_non_null* ratio must fall
+    below the configured *distinct_ratio* threshold — the same denominator used by
+    the semantic-enum detector so the two paths agree on low-repetition columns.
 
     Args:
         ctx: Profile context (column, type, metrics, options, semantic_type).
