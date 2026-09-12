@@ -1,3 +1,5 @@
+from pyspark.sql import Column
+import pyspark.sql.functions as F
 from pyspark.testing.utils import assertDataFrameEqual
 from databricks.labs.dqx.geo.check_funcs import (
     is_area_equal_to,
@@ -30,6 +32,7 @@ from databricks.labs.dqx.geo.check_funcs import (
     is_geo_intersects,
     is_geo_touches,
     is_geo_within,
+    is_geo_within_distance,
 )
 
 _POINT_INSIDE = "POINT(4.9 52.37)"
@@ -47,6 +50,15 @@ _INTERSECTS_PRECISE_SCHEMA = "geom: string, geom_does_not_intersect_reference_ge
 _INTERSECTS_APPROXIMATE_SCHEMA = "geom: string, geom_does_not_intersect_reference_geometry_approximately: string"
 _TOUCHES_SCHEMA = "geom: string, geom_does_not_touch_reference_geometry: string"
 _WITHIN_SCHEMA = "geom: string, geom_does_not_contain_reference_geometry: string"
+_WITHIN_DISTANCE_SCHEMA = "geom: string, geom_is_not_within_distance_from_reference_geometry: string"
+_WITHIN_DISTANCE_CONDITION_SCHEMA = "geom_is_not_within_distance_from_reference_geometry: string"
+# is_geo_within_distance fixtures: ~10.2 km and ~68 m from _POINT_INSIDE on the WGS 84 ellipsoid
+_POINT_FAR = "POINT(5.05 52.37)"
+_POINT_NEAR = "POINT(4.901 52.37)"
+_POINT_FAR_WKB = bytes.fromhex("010100000033333333333314408FC2F5285C2F4A40")
+_POINT_FAR_GEOJSON = '{"type":"Point","coordinates":[5.05,52.37]}'
+_POINT_INSIDE_GEOJSON = '{"type":"Point","coordinates":[4.9,52.37]}'
+_NOT_A_GEOMETRY = "not-a-geometry"
 
 
 def _contains_violation(value: str) -> str:
@@ -75,6 +87,22 @@ def _touches_violation(value: str) -> str:
 
 def _within_violation(value: str) -> str:
     return f"value `{value}` in column `geom` does not contain reference geometry"
+
+
+def _within_distance_violation(value: str, distance: int) -> str:
+    return f"value `{value}` in column `geom` is farther than {distance} meters from the reference geometry"
+
+
+def _within_distance_invalid(value: str) -> str:
+    return f"value `{value}` in column `geom` is not a valid geometry"
+
+
+def _within_distance_not_point(value: str) -> str:
+    return f"value `{value}` in column `geom` is not a point geometry"
+
+
+def _within_distance_bad_srid(value: str, srid: int) -> str:
+    return f"value `{value}` in column `geom` has SRID {srid}; only WGS 84 (SRID 4326) coordinates are supported"
 
 
 def test_is_geometry(skip_if_runtime_not_geo_compatible, spark):
@@ -1160,5 +1188,232 @@ def test_is_geo_within_exterior_reference_violation(skip_if_runtime_not_geo_comp
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
         [[column_polygon, _within_violation(column_polygon)], [None, None]], _WITHIN_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def _within_distance(reference: str | Column, distance: int | Column) -> Column:
+    return is_geo_within_distance("geom", reference, distance, convert_column=True, convert_reference_geometry=True)
+
+
+def test_is_geo_within_distance_inside_radius_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A point roughly 68 m from the reference is inside the 1 km radius — no violation."""
+    test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame([[_POINT_NEAR, None], [None, None]], _WITHIN_DISTANCE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_on_reference_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A point identical to the reference is at distance 0, which passes even a zero radius."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 0))
+    expected = spark.createDataFrame([[_POINT_INSIDE, None], [None, None]], _WITHIN_DISTANCE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_outside_radius_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A point roughly 10 km from the reference is outside the 1 km radius — violation."""
+    test_df = spark.createDataFrame([[_POINT_FAR], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_FAR, _within_distance_violation(_POINT_FAR, 1000)], [None, None]], _WITHIN_DISTANCE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_with_column_distance(skip_if_runtime_not_geo_compatible, spark):
+    """The radius can vary per row when supplied as a column expression."""
+    test_df = spark.createDataFrame(
+        [[_POINT_NEAR, 1000], [_POINT_FAR, 1000], [_POINT_FAR, 20000]], "geom: string, radius_m: int"
+    )
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, F.col("radius_m")))
+    expected = spark.createDataFrame(
+        [[_POINT_NEAR, None], [_POINT_FAR, _within_distance_violation(_POINT_FAR, 1000)], [_POINT_FAR, None]],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_null_distance_is_skipped(skip_if_runtime_not_geo_compatible, spark):
+    """A null radius makes the comparison unknown, so the row is skipped rather than flagged."""
+    test_df = spark.createDataFrame([[_POINT_FAR, None]], "geom: string, radius_m: int")
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, F.col("radius_m")))
+    expected = spark.createDataFrame([[_POINT_FAR, None]], _WITHIN_DISTANCE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_empty_point_is_skipped(skip_if_runtime_not_geo_compatible, spark):
+    """An empty point has no distance; it is skipped here and left to is_non_empty_geometry."""
+    test_df = spark.createDataFrame([["POINT EMPTY"]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame([["POINT EMPTY", None]], _WITHIN_DISTANCE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_invalid_column_violation(skip_if_runtime_not_geo_compatible, spark):
+    """An unparseable column value is reported as an invalid geometry, showing the raw input."""
+    test_df = spark.createDataFrame([[_NOT_A_GEOMETRY], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame(
+        [[_NOT_A_GEOMETRY, _within_distance_invalid(_NOT_A_GEOMETRY)], [None, None]], _WITHIN_DISTANCE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_invalid_reference_violation(skip_if_runtime_not_geo_compatible, spark):
+    """An unparseable reference is reported separately from an unparseable column value."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_NOT_A_GEOMETRY, 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_INSIDE, "reference geometry for column `geom` is not a valid geometry"], [None, None]],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_non_point_column_violation(skip_if_runtime_not_geo_compatible, spark):
+    """st_distancespheroid is points-only; a polygon value is reported instead of raising."""
+    test_df = spark.createDataFrame([[_REF_POLYGON], [_POINT_NEAR], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame(
+        [[_REF_POLYGON, _within_distance_not_point(_REF_POLYGON)], [_POINT_NEAR, None], [None, None]],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_non_point_reference_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A polygon reference is reported on every non-null row instead of raising."""
+    test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_REF_POLYGON, 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_NEAR, "reference geometry for column `geom` is not a point geometry"], [None, None]],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_binary_column(skip_if_runtime_not_geo_compatible, spark):
+    """WKB input renders as WKT when it parses and as hex when it does not."""
+    test_df = spark.createDataFrame([[_POINT_FAR_WKB], [bytes.fromhex("0000")], [None]], "geom: binary")
+    actual = test_df.select(_within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame(
+        [[_within_distance_violation(_POINT_FAR, 1000)], [_within_distance_invalid("0000")], [None]],
+        _WITHIN_DISTANCE_CONDITION_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_geojson_reference_with_wkt_column(skip_if_runtime_not_geo_compatible, spark):
+    """WKT parses with SRID 0 and GeoJSON with SRID 4326; both are stamped as WGS 84 before measuring."""
+    test_df = spark.createDataFrame([[_POINT_NEAR], [_POINT_FAR]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE_GEOJSON, 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_NEAR, None], [_POINT_FAR, _within_distance_violation(_POINT_FAR, 1000)]], _WITHIN_DISTANCE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_geojson_column_with_wkt_reference(skip_if_runtime_not_geo_compatible, spark):
+    """A GeoJSON column value is parsed and rendered as WKT in the message."""
+    test_df = spark.createDataFrame([[_POINT_FAR_GEOJSON]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_FAR_GEOJSON, _within_distance_violation(_POINT_FAR, 1000)]], _WITHIN_DISTANCE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_native_geometry_no_violation(skip_if_runtime_not_geo_compatible, spark):
+    """With convert_column=False both inputs are already native GEOMETRY values."""
+    test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA).select(
+        F.call_function("try_to_geometry", F.col("geom")).alias("geom")
+    )
+    condition = is_geo_within_distance("geom", F.call_function("try_to_geometry", F.lit(_POINT_INSIDE)), 1000)
+    actual = test_df.select(condition)
+    expected = spark.createDataFrame([[None], [None]], _WITHIN_DISTANCE_CONDITION_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_native_geometry_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A native GEOMETRY value outside the radius is flagged, with the value rendered via st_astext."""
+    test_df = spark.createDataFrame([[_POINT_FAR]], _GEO_SCHEMA).select(
+        F.call_function("try_to_geometry", F.col("geom")).alias("geom")
+    )
+    condition = is_geo_within_distance("geom", F.call_function("try_to_geometry", F.lit(_POINT_INSIDE)), 1000)
+    actual = test_df.select(condition)
+    expected = spark.createDataFrame(
+        [[_within_distance_violation(_POINT_FAR, 1000)]], _WITHIN_DISTANCE_CONDITION_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_reference_column(skip_if_runtime_not_geo_compatible, spark):
+    """The reference can vary per row; a null reference makes the row unmeasurable and it is skipped."""
+    test_df = spark.createDataFrame(
+        [[_POINT_NEAR, _POINT_INSIDE], [_POINT_FAR, _POINT_INSIDE], [_POINT_FAR, None]], "geom: string, ref: string"
+    )
+    actual = test_df.select("geom", _within_distance(F.col("ref"), 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_NEAR, None], [_POINT_FAR, _within_distance_violation(_POINT_FAR, 1000)], [_POINT_FAR, None]],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_empty_reference_violation(skip_if_runtime_not_geo_compatible, spark):
+    """An empty reference point can never be within distance of anything, so every row is reported."""
+    test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance("POINT EMPTY", 1000))
+    expected = spark.createDataFrame(
+        [[_POINT_NEAR, "reference geometry for column `geom` is empty"], [None, None]], _WITHIN_DISTANCE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_projected_srid_column_violation(skip_if_runtime_not_geo_compatible, spark):
+    """SRID 0 and 4326 are WGS 84; any other SRID would be misread as degrees and is reported instead."""
+    wgs84 = f"SRID=4326;{_POINT_NEAR}"
+    projected = f"SRID=3857;{_POINT_FAR}"
+    test_df = spark.createDataFrame([[wgs84], [projected]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    expected = spark.createDataFrame(
+        [[wgs84, None], [projected, _within_distance_bad_srid(_POINT_FAR, 3857)]], _WITHIN_DISTANCE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_projected_srid_reference_violation(skip_if_runtime_not_geo_compatible, spark):
+    """A reference carrying a projected SRID is reported on every row rather than measured."""
+    test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", _within_distance(f"SRID=3857;{_POINT_INSIDE}", 1000))
+    expected = spark.createDataFrame(
+        [
+            [
+                _POINT_NEAR,
+                "reference geometry for column `geom` has SRID 3857; only WGS 84 (SRID 4326) coordinates are supported",
+            ],
+            [None, None],
+        ],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_within_distance_with_expression_distance(skip_if_runtime_not_geo_compatible, spark):
+    """A string distance is a SQL expression over the row; a numeric string is a plain literal."""
+    test_df = spark.createDataFrame([[_POINT_FAR, 600], [_POINT_FAR, 6000]], "geom: string, radius_m: int")
+    actual = test_df.select(
+        "geom",
+        _within_distance(_POINT_INSIDE, "radius_m * 2").alias("expression"),
+        _within_distance(_POINT_INSIDE, "20000").alias("numeric_string"),
+    )
+    expected = spark.createDataFrame(
+        [
+            [_POINT_FAR, _within_distance_violation(_POINT_FAR, 1200), None],
+            [_POINT_FAR, None, None],
+        ],
+        "geom: string, expression: string, numeric_string: string",
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)

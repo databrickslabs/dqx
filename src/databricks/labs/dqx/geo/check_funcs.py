@@ -1,7 +1,8 @@
 from collections.abc import Callable
+import math
 import operator as py_operator
 import uuid
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
@@ -985,6 +986,106 @@ def are_polygons_mutually_disjoint(
     return condition, apply
 
 
+class _GeoOperands(NamedTuple):
+    """Normalised operands shared by the geo relationship checks."""
+
+    col_str_norm: str
+    col_expr_str: str
+    col_expr: Column
+    ref_expr: Column
+    col_geom: Column
+    ref_geom: Column
+
+
+def _prepare_geo_operands(
+    column: str | Column,
+    reference_geometry: str | bytes | Column,
+    convert_column: bool,
+    convert_reference_geometry: bool,
+) -> _GeoOperands:
+    """Normalise the column and reference operands of a geo relationship check.
+
+    A *reference_geometry* given as a plain string or bytes value is always treated as a literal,
+    never as a column name. *try_to_geometry* is applied to each operand whose convert flag is set;
+    otherwise the operand is assumed to already hold a native GEOMETRY value.
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    ref_expr = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
+    col_geom = F.call_function("try_to_geometry", col_expr) if convert_column else col_expr
+    ref_geom = F.call_function("try_to_geometry", ref_expr) if convert_reference_geometry else ref_expr
+    return _GeoOperands(col_str_norm, col_expr_str, col_expr, ref_expr, col_geom, ref_geom)
+
+
+class _PointDiagnostics(NamedTuple):
+    """Why a geometry operand cannot be measured with *st_distancespheroid*, one condition per reason."""
+
+    invalid: Column
+    not_point: Column
+    bad_srid: Column
+    srid: Column
+
+
+def _diagnose_point_operand(raw: Column, geom: Column) -> _PointDiagnostics:
+    """Classify an operand of a geodesic distance measurement.
+
+    *st_distancespheroid* is defined for points only and raises when its arguments carry different
+    SRIDs, and it always interprets coordinates as WGS 84 degrees. An operand is therefore usable when
+    it parsed, is a point, and carries SRID 0 (unknown, as produced by WKT and WKB input) or 4326 (as
+    produced by EWKT and GeoJSON input); any other SRID would be silently misread. A NULL *raw* input
+    is not invalid, it is simply absent, so the caller can skip the row.
+    """
+    srid = F.call_function("st_srid", geom)
+    return _PointDiagnostics(
+        invalid=raw.isNotNull() & geom.isNull(),
+        not_point=F.call_function("st_geometrytype", geom) != F.lit(POINT_TYPE),
+        bad_srid=~srid.isin(0, DEFAULT_SRID),
+        srid=srid,
+    )
+
+
+def _raw_geo_value_as_text(col_expr: Column) -> Column:
+    """Render an unparsed WKT/WKB input value for an error message.
+
+    Binary (WKB/EWKB) values are rendered as hex: casting raw bytes to string is not valid UTF-8 and
+    breaks result collection.
+    """
+    is_binary = F.call_function("typeof", col_expr) == F.lit("binary")
+    return F.when(is_binary, F.hex(col_expr)).otherwise(col_expr.cast("string"))
+
+
+def _geo_value_message(value: Column, col_expr_str: str, suffix: str | Column) -> Column:
+    """Build the standard geo check message: value `<value>` in column `<col>` <suffix>."""
+    suffix_col = F.lit(f" {suffix}") if isinstance(suffix, str) else F.concat(F.lit(" "), suffix)
+    return F.concat_ws("", F.lit("value `"), value, F.lit(f"` in column `{col_expr_str}`"), suffix_col)
+
+
+def _validate_distance(distance: int | float | str | Column) -> None:
+    """Reject distance literals that can never describe a radius in meters.
+
+    Column expressions are evaluated per row and are not range-checked. String literals that parse
+    as a number are held to the same rule as numeric literals, so *"-100"* and *-100* behave alike;
+    other strings are SQL expressions and pass through untouched.
+    """
+    if isinstance(distance, Column):
+        return
+    # *bool* is a subclass of *int*, so it would otherwise slip through as a 0/1 metre radius.
+    if isinstance(distance, bool):
+        raise InvalidParameterError(f"'distance' must be a finite, non-negative number of meters, got {distance!r}.")
+    if isinstance(distance, str):
+        try:
+            value: float = float(distance)
+        except ValueError:
+            return
+    else:
+        value = distance
+    try:
+        is_finite = math.isfinite(value)
+    except OverflowError:  # an int too large to represent as a float
+        is_finite = False
+    if not (is_finite and value >= 0):
+        raise InvalidParameterError(f"'distance' must be a finite, non-negative number of meters, got {distance!r}.")
+
+
 def _has_topological_relationship_precise(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -997,13 +1098,12 @@ def _has_topological_relationship_precise(
             f"'topological_relationship' must be one of {sorted(_PRECISE_TOPOLOGICAL_RELATIONSHIPS)}, got '{topological_relationship}'."
         )
 
-    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    operands = _prepare_geo_operands(column, reference_geometry, convert_column, convert_reference_geometry)
+    col_str_norm, col_expr_str, col_expr = operands.col_str_norm, operands.col_expr_str, operands.col_expr
 
-    col_geom = F.call_function("try_to_geometry", col_expr) if convert_column else col_expr
-    ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
-    ref_geom = F.call_function("try_to_geometry", ref_col) if convert_reference_geometry else ref_col
-
-    has_relationship = F.call_function(_PRECISE_TOPOLOGICAL_FUNCS[topological_relationship], ref_geom, col_geom)
+    has_relationship = F.call_function(
+        _PRECISE_TOPOLOGICAL_FUNCS[topological_relationship], operands.ref_geom, operands.col_geom
+    )
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~has_relationship)
     text_value_col = F.call_function("st_astext", F.call_function("try_to_geometry", col_expr))
 
@@ -1339,4 +1439,129 @@ def is_geo_within(
     """
     return _has_topological_relationship_precise(
         column, reference_geometry, convert_column, convert_reference_geometry, "WITHIN"
+    )
+
+
+@requires_dbr_version("17.1")
+@register_rule("row")
+def is_geo_within_distance(
+    column: str | Column,
+    reference_geometry: str | bytes | Column,
+    distance: int | float | str | Column,
+    convert_column: bool = False,
+    convert_reference_geometry: bool = False,
+) -> Column:
+    """Checks if the column point is within a geodesic distance of the reference point using *st_distancespheroid*.
+
+    The distance is measured in meters along the WGS 84 ellipsoid. This is what makes the check
+    meaningful for longitude/latitude data: the planar *st_distance* returns coordinate units, which
+    for such data are degrees. A value is reported when the geodesic distance between it and the
+    reference point is strictly greater than *distance*.
+
+    Only point geometries are supported, because *st_distancespheroid* is defined for points only.
+    Coordinates are always interpreted as WGS 84 degrees: an operand with SRID 0 (unknown, as produced
+    by WKT and WKB input) is treated as WGS 84, an operand with SRID 4326 (as produced by EWKT and
+    GeoJSON input) is used as is, and the two can be mixed freely. A column value or reference that is
+    not a valid geometry, is not a point, or carries any other SRID is reported rather than measured.
+    An empty reference point is reported on every row, since nothing can be within distance of it.
+
+    Both the target column and the reference geometry are always handled as GEOMETRY.
+    When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
+    *try_to_geometry* is applied to parse the value from any supported format (WKT, WKB, EWKT, EWKB,
+    GeoJSON). See https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_geometry
+    for details. When conversion is not requested, the input is assumed to already hold a native
+    GEOMETRY value.
+
+    Args:
+        column: Column to check. Null values are skipped for validation. Empty points have no
+            distance and are skipped as well; use *is_non_empty_geometry* to report them.
+        reference_geometry: Reference point as a literal WKT/EWKT/GeoJSON string or WKB/EWKB bytes
+            value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A
+            plain string is always treated as a literal, not a column name. Rows where a referenced
+            column is null are skipped.
+        distance: Maximum allowed distance in meters. Accepts a non-negative number, a Column
+            expression (e.g. *F.col('radius_m')*), or a string SQL expression evaluated against the
+            input DataFrame. Numeric literals, including numeric strings such as *"1000"*, are
+            validated up front; Column and expression distances are evaluated per row and are not
+            range-checked. Rows where the distance expression evaluates to null are skipped.
+        convert_column: When True, *try_to_geometry* is applied to convert column values to GEOMETRY.
+            When False (default), the column is assumed to already hold a native GEOMETRY value.
+        convert_reference_geometry: When True, *try_to_geometry* is applied to convert the reference
+            geometry to GEOMETRY. When False (default), the reference geometry is assumed to already
+            hold a native GEOMETRY value.
+
+    Returns:
+        Column object indicating whether values in the input column are farther than *distance* meters
+        from the reference point, or cannot be measured against it.
+
+    Raises:
+        InvalidParameterError: If *distance* is a boolean, or a numeric literal (number or numeric
+            string) that is negative, NaN, infinite or too large to represent as a float.
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    _validate_distance(distance)
+
+    col_str_norm, col_expr_str, col_expr, ref_expr, col_geom, ref_geom = _prepare_geo_operands(
+        column, reference_geometry, convert_column, convert_reference_geometry
+    )
+    distance_expr = get_limit_expr(distance)
+    col = _diagnose_point_operand(col_expr, col_geom)
+    ref = _diagnose_point_operand(ref_expr, ref_geom)
+    ref_empty = F.call_function("st_isempty", ref_geom)
+
+    # Every reason the pair cannot be measured. A NULL reference (absent, not invalid) leaves this NULL,
+    # which keeps the whole condition NULL so `make_condition` skips the row, matching the other geo
+    # checks. `when` short-circuits, so `st_distancespheroid` - which raises on non-points and on
+    # mismatched SRIDs - is only ever evaluated for two WGS 84 points, both stamped as such.
+    unmeasurable = col.invalid | ref.invalid | col.not_point | ref.not_point | col.bad_srid | ref.bad_srid | ref_empty
+    geodesic_distance = F.when(
+        ~unmeasurable,
+        F.call_function(
+            "st_distancespheroid",
+            F.call_function("st_setsrid", col_geom, F.lit(DEFAULT_SRID)),
+            F.call_function("st_setsrid", ref_geom, F.lit(DEFAULT_SRID)),
+        ),
+    )
+
+    # A parsed value renders readably through `st_astext` whether it came from WKT, WKB or a native
+    # GEOMETRY. An unparseable value has no `st_astext`, so the raw input is shown instead. That branch
+    # is only reachable with conversion on; a native GEOMETRY column has no string cast, so the parsed
+    # rendering is reused there to keep the expression analysable.
+    parsed_value = F.call_function("st_astext", col_geom)
+    raw_value = _raw_geo_value_as_text(col_expr) if convert_column else parsed_value
+    reference = f"reference geometry for column `{col_expr_str}`"
+    srid_note = f"; only WGS 84 (SRID {DEFAULT_SRID}) coordinates are supported"
+
+    message = (
+        F.when(col.invalid, _geo_value_message(raw_value, col_expr_str, "is not a valid geometry"))
+        .when(ref.invalid, F.lit(f"{reference} is not a valid geometry"))
+        .when(col.not_point, _geo_value_message(parsed_value, col_expr_str, "is not a point geometry"))
+        .when(ref.not_point, F.lit(f"{reference} is not a point geometry"))
+        .when(
+            col.bad_srid,
+            _geo_value_message(
+                parsed_value, col_expr_str, F.concat(F.lit("has SRID "), col.srid.cast("string"), F.lit(srid_note))
+            ),
+        )
+        .when(ref.bad_srid, F.concat(F.lit(f"{reference} has SRID "), ref.srid.cast("string"), F.lit(srid_note)))
+        .when(ref_empty, F.lit(f"{reference} is empty"))
+        .otherwise(
+            _geo_value_message(
+                parsed_value,
+                col_expr_str,
+                F.concat(
+                    F.lit("is farther than "),
+                    distance_expr.cast("string"),
+                    F.lit(" meters from the reference geometry"),
+                ),
+            )
+        )
+    )
+
+    return make_condition(
+        F.when(col_expr.isNull(), F.lit(None)).otherwise(unmeasurable | (geodesic_distance > distance_expr)),
+        message,
+        alias=f"{col_str_norm}_is_not_within_distance_from_reference_geometry",
     )
