@@ -1,6 +1,7 @@
-import uuid
+import dataclasses
 import logging
 import os
+import uuid
 from concurrent import futures
 from decimal import Decimal, Context
 from difflib import SequenceMatcher
@@ -11,13 +12,15 @@ import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
+
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
-from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_text
+from databricks.labs.dqx.profiler.common import TEXT_TYPES
+from databricks.labs.dqx.profiler.common import is_text
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
@@ -34,8 +37,13 @@ from databricks.labs.dqx.profiler.profile_options import (
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     build_registered_metric_aggregations,
 )
-from databricks.labs.dqx.utils import list_tables
+from databricks.labs.dqx.profiler.semantic import (
+    DQProfileContext,
+    DQSemanticType,
+    SemanticRegistry,
+)
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.utils import list_tables
 
 try:
     from databricks.labs.dqx.llm.llm_pk_engine import DQLLMPrimaryKeyEngine
@@ -55,6 +63,8 @@ class DQProfiler(DQEngineBase):
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
         llm_model_config: LLMModelConfig | None = None,
+        *,
+        semantic_registry: SemanticRegistry | None = None,
     ):
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
@@ -63,6 +73,7 @@ class DQProfiler(DQEngineBase):
         self.llm_engine = (
             DQLLMPrimaryKeyEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
         )
+        self._semantic_registry = semantic_registry
 
     @staticmethod
     def get_columns_or_fields(columns: list[T.StructField]) -> list[T.StructField]:
@@ -102,6 +113,15 @@ class DQProfiler(DQEngineBase):
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
 
+        return self._profile_dataframe(df, columns, options)
+
+    def _profile_dataframe(
+        self,
+        df: DataFrame,
+        columns: list[str] | None,
+        options: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], list[DQProfile]]:
+        """Shared private entry point for *.profile()* and *.profile_table()*."""
         columns = columns or df.columns
         df_columns = [f for f in df.schema.fields if f.name in columns]
         df = df.select(*[f.name for f in df_columns])
@@ -144,6 +164,9 @@ class DQProfiler(DQEngineBase):
 
         logger.info(f"Profiling {input_config.location} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=input_config)
+        # Route through *self.profile* (not *_profile_dataframe*) so the nested
+        # *profile* telemetry event fires alongside *profile_table*. Downstream
+        # dashboards key on the *profile* event for per-DataFrame counts.
         return self.profile(df=df, columns=columns, options=options)
 
     @telemetry_logger("profiler", "profile_tables_for_patterns")
@@ -520,10 +543,28 @@ class DQProfiler(DQEngineBase):
         *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
         without triggering a second Spark action.
         """
+        semantic_type = self._detect_semantic_type(column_df, field.name, field.dataType, metrics, opts)
+
+        builder_ctx = DQProfileContext(
+            df=column_df,
+            column_name=field.name,
+            column_type=field.dataType,
+            metrics=metrics,
+            options=opts,
+            semantic_type=semantic_type,
+        )
+
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
-            profile = profile_type.builder(column_df, field.name, field.dataType, metrics, opts)
+            if profile_type.contextual_builder is not None:
+                profile = profile_type.contextual_builder(builder_ctx)
+            elif profile_type.builder is not None:
+                profile = profile_type.builder(column_df, field.name, field.dataType, dict(metrics), dict(opts))
+            else:
+                continue
             if not profile:
                 continue
+            if semantic_type is not None and profile.semantic_type is None:
+                profile = dataclasses.replace(profile, semantic_type=semantic_type.name)
             dq_rules.append(profile)
             # Write resolved min/max back into metrics so callers (e.g. summary_stats consumers)
             # can access the final values without re-running Spark aggregates.
@@ -532,6 +573,35 @@ class DQProfiler(DQEngineBase):
                     metrics["min"] = profile.parameters.get("min")
                 if profile.parameters.get("max") is not None:
                     metrics["max"] = profile.parameters.get("max")
+                # Refresh the frozen context so contextual builders registered after *min_max*
+                # observe the resolved min/max values just written back. Pydantic materializes
+                # *ctx.metrics* as a fresh dict at construction, so contextual builders will not
+                # see mutations to the outer *metrics* dict without an explicit refresh.
+                builder_ctx = builder_ctx.with_metrics(metrics)
+
+    def _detect_semantic_type(
+        self,
+        column_df: DataFrame,
+        field_name: str,
+        field_type: T.DataType,
+        metrics: dict[str, Any],
+        opts: dict[str, Any],
+    ) -> DQSemanticType | None:
+        if self._semantic_registry is None:
+            return None
+        detector_ctx = DQProfileContext(
+            df=column_df,
+            column_name=field_name,
+            column_type=field_type,
+            metrics=metrics,
+            options=opts,
+            semantic_type=None,
+        )
+        for detector in self._semantic_registry.detectors:
+            match = detector.detect(detector_ctx)
+            if match is not None:
+                return match
+        return None
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]

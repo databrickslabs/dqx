@@ -1,6 +1,7 @@
 import dataclasses
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import logging
 
 import pytest
 import pyspark.sql.types as T
@@ -19,6 +20,7 @@ from databricks.labs.dqx.profiler.profile_builder import (
     PROFILE_BUILDER_REGISTRY,
     register_profile_builder,
 )
+from databricks.labs.dqx import telemetry
 
 from tests.constants import TEST_CATALOG
 
@@ -1107,6 +1109,46 @@ def test_profile_table(spark, ws, make_schema, make_random):
     assert len(stats.keys()) > 0
     assert stats["id"]["count"] == 4  # Verify we got all records
     assert profiles == expected_profiles
+
+
+def test_profile_table_emits_nested_profile_telemetry(spark, ws, make_schema, make_random, caplog):
+    """*profile_table* must fire both the outer *profile_table* and the nested *profile* signals.
+
+    Downstream dashboards key on the *profile* event for per-DataFrame counts; if
+    *profile_table* were to bypass the decorated *profile* entry point, those counts
+    would silently drop. Observed at the SDK boundary via the debug log
+    *"Added User-Agent extra <key>=<value>"* that *log_telemetry* emits immediately
+    before stamping the header on the workspace call — a legitimate external observation
+    that does not patch any DQX symbol.
+    """
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+
+    input_schema = T.StructType([T.StructField("id", T.IntegerType())])
+    spark.createDataFrame([[1], [2], [3]], schema=input_schema).write.format("delta").saveAsTable(table_name)
+
+    # Reset the per-process dedup cache so previously-sent signals do not suppress the ones
+    # this test asserts on.
+    telemetry.reset_telemetry_cache()
+    try:
+        with caplog.at_level(logging.DEBUG, logger="databricks.labs.dqx.telemetry"):
+            profiler = DQProfiler(ws)
+            profiler.profile_table(
+                input_config=InputConfig(location=table_name),
+                options={"sample_fraction": None, "llm_primary_key_detection": False},
+            )
+
+        prefix = "Added User-Agent extra "
+        emitted = {
+            record.getMessage()[len(prefix) :] for record in caplog.records if record.getMessage().startswith(prefix)
+        }
+        assert (
+            "profiler=profile_table" in emitted
+        ), f"expected 'profiler=profile_table' User-Agent extra, got: {emitted}"
+        assert "profiler=profile" in emitted, f"expected nested 'profiler=profile' User-Agent extra, got: {emitted}"
+    finally:
+        telemetry.reset_telemetry_cache()
 
 
 def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
