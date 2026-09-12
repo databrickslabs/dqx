@@ -3427,11 +3427,16 @@ def compare_datasets(
     Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
     Cartesian fan-out but does not attempt to minimize the number of reported column changes.
 
-    This lazy pairing adds two *row_number* window computations (one per dataset) that sort both
-    datasets on the compared columns, which can be costly on large inputs. When the matching keys
-    are known to be unique, set *raise_on_duplicate_keys* to True to skip the windows and pair rows
-    with a single join instead; this is the more efficient option on large datasets, at the cost of
-    an eager uniqueness check that raises if duplicates are present.
+    When *row_filter* is set, exact-value in-scope rows are paired first. Remaining rows are
+    paired positionally with in-scope source rows first, so filtered-out rows cannot consume a
+    reference position needed by an in-scope row or disturb an available exact match.
+
+    Unfiltered lazy pairing adds two *row_number* window computations (one per dataset) that sort
+    both datasets on the compared columns. Filtered comparisons add value-group counts and exact
+    and residual ranking. When the matching keys are known to be unique, set
+    *raise_on_duplicate_keys* to True to skip this pairing work and use a single join instead; this
+    is the more efficient option on large datasets, at the cost of an eager uniqueness check that
+    raises if duplicates are present.
 
     The log containing detailed differences is written to the message field of the check result as a JSON string.
 
@@ -3576,30 +3581,19 @@ def compare_datasets(
         # missing side of the join. Without it, both look "null" and the row is wrongly flagged as both
         # missing and extra. Both the lazy and eager paths need this signal.
         row_number_col = f"__match_row_number_{unique_id}"
+        pairing_phase_col = None
         if not raise_on_duplicate_keys:
-            # In-scope rows sort first (pairing_scope descending: True before False) so that when duplicate
-            # keys exist, in-scope rows claim the low sequence numbers - and therefore the reference rows -
-            # before any excluded row. Reference rows carry a constant scope, so they order by value alone.
-            #
-            # Known limitation: this scope-first ordering is what fixes #1504 (an excluded row can no longer
-            # starve an in-scope row of its reference slot), but it cannot also preserve value alignment for
-            # every duplicate-key shape. When a single key carries BOTH in- and out-of-scope source rows AND
-            # the reference has multiple rows with interleaving compared values, the scope-first sort can pair
-            # an in-scope row with a differently-valued reference row and flag a spurious "changed" - even
-            # though a value-matching reference row exists. Single-pass positional pairing cannot satisfy both
-            # #1504 (needs scope priority) and that case (needs value alignment) at once, because the correct
-            # choice depends on whether the excluded row has a value-matching reference. This is an accepted
-            # edge of the lazy duplicate-key heuristic; see test_compare_datasets_filter_duplicate_keys_*.
-            order_columns = [F.col(pairing_scope_col).desc()] + (
-                [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
-            )
-            df = df.withColumn(
+            df, ref_df, pairing_phase_col = _add_lazy_pairing_columns(
+                df,
+                ref_df,
+                pk_column_names,
+                ref_pk_column_names,
+                compare_columns,
+                pairing_scope_col,
                 row_number_col,
-                F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
-            )
-            ref_df = ref_df.withColumn(
-                row_number_col,
-                F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
+                unique_id,
+                null_safe_row_matching,
+                exact_value_pairing=bool(row_filter and compare_columns),
             )
         else:
             match_count_col = f"__match_count_{unique_id}"
@@ -3637,7 +3631,17 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        results = _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
+        results = _match_paired_rows(
+            df,
+            ref_df,
+            pk_column_names,
+            ref_pk_column_names,
+            compare_columns,
+            row_number_col,
+            pairing_phase_col,
+            check_missing_records,
+            null_safe_row_matching,
+        )
         results = _add_row_diffs(results, join_columns, ref_join_columns, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
@@ -4478,6 +4482,168 @@ def _generate_field_presence_checks(
             validations.extend(child_checks)
 
     return validations
+
+
+def _add_lazy_pairing_columns(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    compare_columns: list[str],
+    pairing_scope_col: str,
+    row_number_col: str,
+    unique_id: str,
+    null_safe_row_matching: bool | None,
+    *,
+    exact_value_pairing: bool,
+) -> tuple[DataFrame, DataFrame, str | None]:
+    order_columns = [F.col(pairing_scope_col).desc()] + (
+        [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+    )
+    if exact_value_pairing:
+        return _add_exact_value_pairing_columns(
+            df,
+            ref_df,
+            pk_column_names,
+            ref_pk_column_names,
+            compare_columns,
+            pairing_scope_col,
+            row_number_col,
+            unique_id,
+            null_safe_row_matching,
+            order_columns,
+        )
+
+    df = df.withColumn(
+        row_number_col,
+        F.row_number().over(Window.partitionBy(*pk_column_names).orderBy(*order_columns)),
+    )
+    ref_df = ref_df.withColumn(
+        row_number_col,
+        F.row_number().over(Window.partitionBy(*ref_pk_column_names).orderBy(*order_columns)),
+    )
+    return df, ref_df, None
+
+
+def _add_exact_value_pairing_columns(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    compare_columns: list[str],
+    pairing_scope_col: str,
+    row_number_col: str,
+    unique_id: str,
+    null_safe_row_matching: bool | None,
+    order_columns: list[Column],
+) -> tuple[DataFrame, DataFrame, str]:
+    """Assign exact-value pairs first, then rank remaining rows positionally."""
+    source_value_columns = [*pk_column_names, *compare_columns]
+    ref_value_columns = [*ref_pk_column_names, *compare_columns]
+    source_count_col = f"__source_value_count_{unique_id}"
+    ref_count_col = f"__ref_value_count_{unique_id}"
+    opposite_count_col = f"__opposite_value_count_{unique_id}"
+
+    source_count_input = df.where(F.col(pairing_scope_col))
+    ref_count_input = ref_df
+    if not null_safe_row_matching:
+        source_count_input = source_count_input.dropna(subset=pk_column_names)
+        ref_count_input = ref_count_input.dropna(subset=ref_pk_column_names)
+
+    source_counts = source_count_input.groupBy(*dict.fromkeys(source_value_columns)).agg(
+        F.count("*").alias(source_count_col)
+    )
+    ref_counts = ref_count_input.groupBy(*dict.fromkeys(ref_value_columns)).agg(F.count("*").alias(ref_count_col))
+    df = _match_rows(
+        df.alias("df"),
+        ref_counts.alias("ref_df"),
+        source_value_columns,
+        ref_value_columns,
+        check_missing_records=False,
+        null_safe_row_matching=True,
+    ).select(
+        "df.*",
+        F.coalesce(F.col(f"ref_df.{ref_count_col}"), F.lit(0)).alias(opposite_count_col),
+    )
+    ref_df = _match_rows(
+        ref_df.alias("df"),
+        source_counts.alias("ref_df"),
+        ref_value_columns,
+        source_value_columns,
+        check_missing_records=False,
+        null_safe_row_matching=True,
+    ).select(
+        "df.*",
+        F.coalesce(F.col(f"ref_df.{source_count_col}"), F.lit(0)).alias(opposite_count_col),
+    )
+
+    exact_rank_col = f"__exact_match_rank_{unique_id}"
+    exact_pair_col = f"__is_exact_match_{unique_id}"
+    residual_rank_col = f"__residual_match_rank_{unique_id}"
+    pairing_phase_col = f"__match_phase_{unique_id}"
+    df = df.withColumn(
+        exact_rank_col,
+        F.row_number().over(
+            Window.partitionBy(*dict.fromkeys(source_value_columns)).orderBy(F.col(pairing_scope_col).desc())
+        ),
+    )
+    ref_df = ref_df.withColumn(
+        exact_rank_col,
+        F.row_number().over(Window.partitionBy(*dict.fromkeys(ref_value_columns)).orderBy(F.lit(1))),
+    )
+    df = df.withColumn(
+        exact_pair_col,
+        F.col(pairing_scope_col) & (F.col(exact_rank_col) <= F.col(opposite_count_col)),
+    )
+    ref_df = ref_df.withColumn(exact_pair_col, F.col(exact_rank_col) <= F.col(opposite_count_col))
+    df = df.withColumn(
+        residual_rank_col,
+        F.row_number().over(Window.partitionBy(*pk_column_names, exact_pair_col).orderBy(*order_columns)),
+    )
+    ref_df = ref_df.withColumn(
+        residual_rank_col,
+        F.row_number().over(Window.partitionBy(*ref_pk_column_names, exact_pair_col).orderBy(*order_columns)),
+    )
+    df = df.withColumn(pairing_phase_col, F.col(exact_pair_col).cast("int")).withColumn(
+        row_number_col,
+        F.when(F.col(exact_pair_col), F.col(exact_rank_col)).otherwise(F.col(residual_rank_col)),
+    )
+    ref_df = ref_df.withColumn(pairing_phase_col, F.col(exact_pair_col).cast("int")).withColumn(
+        row_number_col,
+        F.when(F.col(exact_pair_col), F.col(exact_rank_col)).otherwise(F.col(residual_rank_col)),
+    )
+    return df, ref_df, pairing_phase_col
+
+
+def _match_paired_rows(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    compare_columns: list[str],
+    row_number_col: str,
+    pairing_phase_col: str | None,
+    check_missing_records: bool | None,
+    null_safe_row_matching: bool | None,
+) -> DataFrame:
+    join_columns = [*pk_column_names, row_number_col]
+    ref_join_columns = [*ref_pk_column_names, row_number_col]
+    if pairing_phase_col is None:
+        return _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
+
+    join_condition = F.lit(True)
+    for column, ref_column in zip(pk_column_names, ref_pk_column_names):
+        if null_safe_row_matching:
+            join_condition &= F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+        else:
+            join_condition &= F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}")
+    join_condition &= F.col(f"df.{pairing_phase_col}") == F.col(f"ref_df.{pairing_phase_col}")
+    join_condition &= F.col(f"df.{row_number_col}") == F.col(f"ref_df.{row_number_col}")
+    for column in compare_columns:
+        join_condition &= (F.col(f"df.{pairing_phase_col}") == 0) | F.col(f"df.{column}").eqNullSafe(
+            F.col(f"ref_df.{column}")
+        )
+    return df.join(ref_df, on=join_condition, how="full_outer" if check_missing_records else "left_outer")
 
 
 def _match_rows(
