@@ -2000,6 +2000,11 @@ Numeric values sort lexically (for example, `"10"` before `"2"`), while the comp
 This avoids Cartesian fan-out without triggering eager validation jobs. It adds window partitioning and sorting, and
 does not search for the pairing that produces the fewest differences. Unique-key groups still match one-to-one.
 
+When a `filter` (`row_filter`) is present, lazy pairing first matches in-scope rows with equal compared values. Remaining
+rows are paired positionally with in-scope source rows first. This prevents filtered-out rows from consuming reference
+positions needed by in-scope rows while preserving available exact matches. The extra matching phase applies only to
+filtered comparisons.
+
 Set `raise_on_duplicate_keys: true` to require unique matching keys in both datasets. This opt-in validation eagerly
 executes Spark jobs and raises `InvalidParameterError` if either dataset contains duplicate matching-key combinations.
 When the matching keys are known to be unique, this is also the more efficient option: it validates uniqueness with a
