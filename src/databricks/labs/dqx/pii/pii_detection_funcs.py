@@ -18,7 +18,7 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, pandas_udf
 
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_column_name_resolution
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
@@ -30,6 +30,7 @@ _default_nlp_engine_config = NLPEngineConfig.SPACY_SMALL
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def does_not_contain_pii(
     column: str | Column,
     language: str = "en",
