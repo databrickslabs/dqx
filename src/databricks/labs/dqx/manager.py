@@ -400,7 +400,8 @@ class DQRuleManager:
         """
         try:
             # perform logical plan validation without triggering computation
-            _ = self.df.select(F.expr(column) if isinstance(column, str) else column).schema
+            col_expr = F.expr(column) if isinstance(column, str) else column
+            _ = self.df.select(col_expr).schema
             return ColumnResolution.EXPRESSION
         except AnalysisException as e:
             expression_error = e
