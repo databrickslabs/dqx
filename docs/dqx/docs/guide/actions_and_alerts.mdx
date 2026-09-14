@@ -500,6 +500,107 @@ audit = DQAction(
   </TabItem>
 </Tabs>
 
+### CollectLineageAction
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="<next>" heading={false} />
+</FeatureTags>
+
+`CollectLineageAction` collects the upstream, downstream, per-failed-column, and last-modifier lineage
+for the run's *input_location* and persists it into a Delta table. It is intended to be paired with
+alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can
+answer *"what feeds this table and who wrote it last?"* directly from a DQ alert.
+
+The action never fails the pipeline: collection errors are logged and returned as `CONFIG_ERROR`
+so a stale system-table read never neglects check results.
+
+**Configuration:**
+
+- *LineageSearchConfig* (used for *upstream*, *downstream*, *columns*): *enabled* (bool, default `True`),
+  *depth* (int ≥ 0, default `1`), *lookback_days* (int ≥ 1, default `30`), *max_nodes* (int ≥ 1,
+  default `500`, hard cap on nodes visited per direction).
+- *LineageEntitySearchConfig* (used for *entities*): *enabled* (bool, default `True`), *lookback_days*
+  (int ≥ 1, default `1`), *max_last_runs* (int ≥ 1, default `1`).
+- *LineageActionConfig* composes those four sub-configs — *upstream*, *downstream*, *columns*, *entities*
+  — each defaulting to its type's default.
+- *output_config* (required *OutputConfig*): the Delta destination for the persisted lineage rows.
+  Fully configurable — *location*, *format*, *mode*, *options*, *partition_by*, *cluster_by*.
+
+<Admonition type="note" title="Keep write mode consistent with failed-check output">
+Set `output_config.mode` equal to `RunConfig.output_config.mode` (the failed-checks output mode) so
+lineage writes stay consistent with how DQX writes failed rows. This is a coherence contract, not a
+type-level constraint — the framework does not enforce it.
+</Admonition>
+
+**Emitted extras:** exactly `{"lineage_location": "<full name>"}`. Downstream actions read the table
+when they need the full structure — see [Passing data between actions (extras)](#passing-data-between-actions-extras).
+
+**Persisted table schema** (columns are the same on every run, including empty runs):
+
+| Column                 | Type         | Populated for                                    |
+|------------------------|--------------|--------------------------------------------------|
+| *run_id*               | STRING       | every row (from `context.run_id`)                |
+| *run_time*             | TIMESTAMP    | every row (from `context.run_time`)              |
+| *source_table*         | STRING       | every row (`context.input_location`)             |
+| *edge_type*            | STRING       | every row — *upstream* / *downstream* / *column_upstream* / *column_downstream* / *last_modifier* |
+| *depth*                | BIGINT       | edge rows (BFS depth); null for last-modifier    |
+| *target_table*         | STRING       | edge rows                                        |
+| *target_delta_version* | BIGINT       | edge rows (when known)                           |
+| *source_column*        | STRING       | column-lineage rows                              |
+| *target_column*        | STRING       | column-lineage rows                              |
+| *modifier_job_id*      | BIGINT       | last-modifier rows                               |
+| *modifier_run_id*      | BIGINT       | last-modifier rows                               |
+| *modifier_job_name*    | STRING       | last-modifier rows                               |
+| *modifier_status*      | STRING       | last-modifier rows                               |
+| *modifier_start_ms*    | BIGINT       | last-modifier rows                               |
+| *modifier_end_ms*      | BIGINT       | last-modifier rows                               |
+| *modifier_url*         | STRING       | last-modifier rows                               |
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import (
+    CollectLineageAction,
+    DQAction,
+    LineageActionConfig,
+    LineageSearchConfig,
+)
+from databricks.labs.dqx.config import OutputConfig
+
+lineage = DQAction(
+    action=CollectLineageAction(
+        output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
+        config=LineageActionConfig(
+            upstream=LineageSearchConfig(depth=2, lookback_days=30, max_nodes=200),
+            downstream=LineageSearchConfig(depth=1),
+        ),
+    ),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: collect_lineage
+    output_config:
+      location: cat.sch.dqx_lineage
+      mode: append
+    config:
+      upstream:
+        depth: 2
+        lookback_days: 30
+        max_nodes: 200
+      downstream:
+        depth: 1
+```
+
+  </TabItem>
+</Tabs>
+
 ## Registering a custom action
 
 The built-in actions (`DQAlert`, `FailPipeline`, `NoOpAction`) cover the common cases, but you can add
@@ -587,6 +688,77 @@ configuration: they are **not** stored with the metadata in `actions_location`. 
 unique: registering a *different* class under a `type` already taken by another raises
 `InvalidActionError`, but re-running the same definition (e.g. a notebook cell) simply overwrites it.
 </Admonition>
+
+## Passing data between actions (extras)
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="<next>" heading={false} />
+</FeatureTags>
+
+Actions in a DQX run evaluate **sequentially**, so an earlier action can hand a small payload to a
+later one — for example, `CollectLineageAction` publishes the full name of the lineage table it just
+wrote, and a following `DQAlert` embeds that table name into its message. This is exposed through
+`ActionResult.extras` / `ActionContext.extras` and needs no new orchestration abstraction.
+
+**Contract**
+
+- Producer returns `ActionResult(..., extras=<ScalarNode>)`. *extras* is optional and defaults to
+  `None` for backward compatibility with actions written before this feature.
+- *ScalarNode* is the primitive-tree union
+  `str | int | float | bool | list[node] | tuple[node, ...] | set[leaf] | frozenset[leaf] | dict[str, node]`.
+  Bytes, `None` values, and arbitrary objects are **not** allowed — the evaluator validates every
+  payload at the boundary, and a violation is logged and recorded as `CONFIG_ERROR` while the loop
+  continues.
+- Consumer reads the payload via `context.get_action_extras("<producing-action-name>")` (or
+  `context.extras.get(...)`) and gets the producer's value verbatim.
+- The evaluator **deep-copies** the payload before inserting it into the next `ActionContext`, so
+  mutations made by the producer after *execute* returned are invisible downstream.
+
+<Admonition type="caution" title="Extras are keyed by producing action name">
+Two `DQAction` entries with the same `name` share one *extras* slot. The second action's payload
+overwrites the first (last-write-wins). Give producers distinct names when consumers must
+distinguish between them.
+</Admonition>
+
+**Minimal worked example** — an alert that references the lineage table produced by the previous
+action:
+
+```python
+from typing import Literal
+from databricks.labs.dqx.actions import (
+    Action,
+    ActionContext,
+    ActionResult,
+    ActionServices,
+    ActionStatus,
+    CollectLineageAction,
+    DQAction,
+    register_action,
+)
+from databricks.labs.dqx.config import OutputConfig
+
+
+@register_action
+class LineageAwareAlert(Action):
+    type: Literal["lineage_aware_alert"] = "lineage_aware_alert"
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        lineage_info = context.get_action_extras("collect_lineage") or {}
+        table = lineage_info.get("lineage_location")
+        # ... build and deliver an alert message that mentions `table` ...
+        return ActionResult(action_name=self.name or self.type, fired=True, status=ActionStatus.HEALTHY)
+
+
+actions = [
+    DQAction(
+        action=CollectLineageAction(
+            output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
+        ),
+    ),
+    DQAction(condition="error_row_count > 0", action=LineageAwareAlert()),
+]
+```
 
 ## Alert Types
 
