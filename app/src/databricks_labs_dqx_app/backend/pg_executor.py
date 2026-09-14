@@ -245,7 +245,7 @@ class PgExecutor:
         token_refresh_retry_seconds: int = 10,
         token_refresh_retry_jitter: float = 0.3,
         token_refresh_max_failures: int = 12,
-        pool_min_size: int = 1,
+        pool_min_size: int = 0,
         pool_max_size: int = 10,
     ) -> None:
         self._ws = ws
@@ -314,18 +314,34 @@ class PgExecutor:
         # dead connection and the fresh connect re-auths with the current
         # OAuth token (read from ``_connect_kwargs['password']``, which
         # the refresh loop keeps current) and resumes the endpoint.
+        #
+        # ``min_size`` defaults to 0 (see AppConfig.lakebase_pool_min_size) so
+        # the pool drains to zero idle connections and lets the endpoint
+        # actually suspend. A held-open connection would be re-established by
+        # the pool after suspension killed it, nudging the endpoint awake and
+        # defeating scale-to-zero; the pre-ping above absorbs the cold-connect
+        # on the next real request instead.
         self._pool: ConnectionPool = ConnectionPool(
             conninfo="",
             min_size=pool_min_size,
             max_size=pool_max_size,
             max_lifetime=self._token_refresh_seconds,
             check=ConnectionPool.check_connection,
-            open=False,  # opened explicitly below so failures surface eagerly
+            open=False,  # opened explicitly below, then probed so failures surface eagerly
             kwargs=self._connect_kwargs,
             timeout=30.0,
             name="dqx-lakebase",
         )
         self._pool.open(wait=True, timeout=30.0)
+        # ``open(wait=True)`` only waits for ``min_size`` connections, so with
+        # the scale-to-zero default of 0 it returns without ever contacting the
+        # database — a bad host, wrong schema, or unauthorized credential would
+        # otherwise surface only on the first real request. A one-shot probe
+        # restores eager fail-fast at startup: it opens and validates a single
+        # connection, then returns it to the pool, which drains back to
+        # ``min_size`` and leaves scale-to-zero intact.
+        with self._pool.connection() as probe:
+            probe.execute("SELECT 1")
         logger.info(
             "Lakebase connection pool open (host=%s db=%s schema=%s user=%s)",
             host,
@@ -945,7 +961,7 @@ def build_pg_executor(
     token_refresh_retry_seconds: int = 10,
     token_refresh_retry_jitter: float = 0.3,
     token_refresh_max_failures: int = 12,
-    pool_min_size: int = 1,
+    pool_min_size: int = 0,
     pool_max_size: int = 10,
 ) -> PgExecutor:
     """Construct a :class:`PgExecutor` from a Databricks workspace client.
@@ -1009,7 +1025,7 @@ def build_pg_executor_from_connection(
     token_refresh_retry_seconds: int = 10,
     token_refresh_retry_jitter: float = 0.3,
     token_refresh_max_failures: int = 12,
-    pool_min_size: int = 1,
+    pool_min_size: int = 0,
     pool_max_size: int = 10,
 ) -> PgExecutor:
     """Construct an executor from endpoint or platform-bound connection values."""

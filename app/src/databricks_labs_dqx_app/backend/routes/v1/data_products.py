@@ -72,6 +72,18 @@ def _current_user_email(obo_ws: WorkspaceClient) -> str:
     return user.user_name or "unknown"
 
 
+def _notify_scheduler() -> None:
+    """Wake the in-process scheduler so a newly approved cron-scheduled product
+    is picked up immediately rather than after the idle poll interval (which can
+    be an hour once the loop has backed off to let Lakebase suspend)."""
+    try:
+        from databricks_labs_dqx_app.backend._scheduler_registry import notify_scheduler
+
+        notify_scheduler()
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------------
 # List / Get
 # ------------------------------------------------------------------
@@ -494,6 +506,8 @@ def submit_data_product(
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
             svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            # Auto-approve activates any cron on the space — wake the scheduler.
+            _notify_scheduler()
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)
@@ -529,6 +543,9 @@ def approve_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         svc.approve(product_id, user_email, rationale=body.rationale if body else None)
+        # Approval activates any cron on the space — wake the scheduler so its
+        # first run does not wait out the idle poll interval.
+        _notify_scheduler()
         detail = svc.get(product_id)
         assert detail is not None  # just approved it
         return DataProductOut.from_domain(detail)

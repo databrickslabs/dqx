@@ -133,6 +133,18 @@ def _current_user_email(obo_ws: WorkspaceClient) -> str:
     return user.user_name or "unknown"
 
 
+def _notify_scheduler() -> None:
+    """Wake the in-process scheduler so a newly set cron on an approved table is
+    picked up immediately rather than after the idle poll interval (which can be
+    an hour once the loop has backed off to let Lakebase suspend)."""
+    try:
+        from databricks_labs_dqx_app.backend._scheduler_registry import notify_scheduler
+
+        notify_scheduler()
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------------
 # List / Get
 # ------------------------------------------------------------------
@@ -511,6 +523,11 @@ def update_monitored_table_schedule(
             schedule_kind=body.schedule_kind,
             schedule_sample_size=body.schedule_sample_size,
         )
+        # Setting a cron on an approved table activates it immediately (the
+        # schedule is orthogonal to the review lifecycle) — wake the scheduler
+        # so its first run does not wait out the idle poll interval.
+        if (body.schedule_cron or "").strip():
+            _notify_scheduler()
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
