@@ -97,9 +97,19 @@ class _SpaceLookupError(RuntimeError):
 
 
 def space_parent_path() -> str:
-    """Return the app-client-specific folder used for this deployment's space."""
+    """Return the app-client-specific folder used for this deployment's space.
+
+    Raises:
+        ValueError: if *DATABRICKS_CLIENT_ID* is unset or empty. Without a
+            per-deployment client id there is no isolation between Studio
+            deployments sharing one workspace, so we refuse to resolve onto the
+            shared root (where a second deployment could adopt this space, or
+            vice versa) rather than collapse the two together.
+    """
     client_id = (os.environ.get("DATABRICKS_CLIENT_ID") or "").strip()
-    return f"{SPACE_PARENT_ROOT}/{client_id}" if client_id else SPACE_PARENT_ROOT
+    if not client_id:
+        raise ValueError("DATABRICKS_CLIENT_ID is not set; cannot isolate the Genie space per deployment")
+    return f"{SPACE_PARENT_ROOT}/{client_id}"
 
 
 # Status values surfaced to the UI.
@@ -1702,9 +1712,16 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
             if isinstance(detail, dict) and detail.get("parent_path") == parent_path:
                 return space_id
         if unclassified_match:
-            raise _SpaceLookupError
-    except _SpaceLookupError:
-        raise
+            # Some title-matching candidates could not be classified (their
+            # detail GET failed — e.g. an ACL denial on another deployment's
+            # space) and none confirmed a match for this parent. Do NOT hard-
+            # fail: raising stores no id, so provisioning would repeat the same
+            # failure on every startup and the space would never be created.
+            # Degrade to creating it (fall through to return None → the caller
+            # creates), mirroring the paging-cap branch above. Worst case is a
+            # single duplicate if an unclassifiable candidate was in fact
+            # reusable — a one-time cost that then stabilises.
+            logger.info("Genie space classification incomplete; proceeding to create rather than failing forever")
     except Exception as error:
         raise _SpaceLookupError from error
     return None
@@ -1808,7 +1825,15 @@ def ensure_dq_genie_space(
 
         # No id stored: find-or-create.
         settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
-        parent_path = space_parent_path()
+        try:
+            parent_path = space_parent_path()
+        except ValueError as error:
+            # No per-deployment client id: fail closed rather than provision
+            # into the shared root, where a second deployment could adopt this
+            # space (or vice versa). A clean skip, not a crash.
+            logger.warning(f"Genie space provisioning skipped: {error}")
+            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+            return None
         try:
             space_id = _find_space_id_by_title(ws, SPACE_TITLE, parent_path)
         except _SpaceLookupError:

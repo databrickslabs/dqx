@@ -1096,6 +1096,52 @@ def test_paging_cap_degrades_to_create_rather_than_failing_forever(settings: Mag
     assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
+def test_unclassifiable_title_matches_degrade_to_create(settings: MagicMock, ws: MagicMock) -> None:
+    # The list succeeds and surfaces a title-matching space, but its detail GET
+    # fails (e.g. a PERMISSION_DENIED on another deployment's space) so it can't
+    # be confirmed against this parent, and no other candidate matches. Degrade
+    # to creating the space rather than hard-failing every startup — the same
+    # resilience contract the paging-cap branch already follows. Raising here
+    # would store no id and repeat the failure on every boot.
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "foreign", "title": gs.SPACE_TITLE}]},
+        RuntimeError("detail unavailable"),
+        {"space_id": "created-space"},
+    ]
+
+    assert ensure(settings, ws) == "created-space"
+
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert settings.store[gs.SETTING_SPACE_ID] == "created-space"
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
+
+
+def test_space_parent_path_requires_a_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "some-client")
+    assert gs.space_parent_path() == "/Shared/dqx-studio/some-client"
+    # Without a client id there is no per-deployment isolation, so refuse to
+    # resolve a path rather than collapse onto the shared root.
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    with pytest.raises(ValueError):
+        gs.space_parent_path()
+
+
+def test_missing_client_id_fails_closed_without_provisioning(
+    settings: MagicMock, ws: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without a per-deployment client id, two Studio deployments in one
+    # workspace would collapse onto the shared root and adopt each other's
+    # space. Fail closed (no create, status error) rather than risk a
+    # cross-deployment collision.
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+
+    assert ensure(settings, ws) is None
+
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
+
+
 def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: MagicMock, caplog) -> None:
     # Invalid catalog/schema should fail fast with a clear error during validation,
     # not silently emit malformed SQL statements. The error is caught by the
