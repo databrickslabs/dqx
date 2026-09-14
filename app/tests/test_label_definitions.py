@@ -127,6 +127,12 @@ class TestSeedReservedLabelDefinitions:
         assert (
             keys["dimension"]["value_descriptions"]["Validity"] == "Whether values match the expected format or rules."
         )
+        # Severity carries value_descriptions too (parity with dimension) so
+        # the Settings editor / label picker show a blurb for each level.
+        severity_descriptions = keys["severity"]["value_descriptions"]
+        assert set(severity_descriptions) == {"Low", "Medium", "High", "Critical"}
+        assert all(isinstance(v, str) and v.strip() for v in severity_descriptions.values())
+        assert severity_descriptions["Critical"].startswith("Blocking issues with severe impact")
 
     def test_noop_when_both_present(self, svc):
         s, sql = svc
@@ -183,6 +189,116 @@ class TestSeedReservedLabelDefinitions:
 
         assert result is False
         assert not sql.upsert.called
+
+
+# ---------------------------------------------------------------------------
+# Backfill value_descriptions onto already-seeded reserved keys
+# ---------------------------------------------------------------------------
+
+
+class TestBackfillReservedValueDescriptions:
+    """``backfill_reserved_value_descriptions_if_missing`` closes the gap for
+    deployments seeded before ``value_descriptions`` was added to the seed:
+    it fills only absent entries, never overwriting admin-authored text or
+    touching other fields / user-created definitions."""
+
+    @pytest.fixture
+    def svc(self, sql_executor_mock):
+        from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+        return AppSettingsService(sql_executor_mock), sql_executor_mock
+
+    @staticmethod
+    def _saved_payload(sql):
+        kwargs = sql.upsert.call_args.kwargs
+        payload = (
+            kwargs["value_cols"]["setting_value"]
+            if "value_cols" in kwargs
+            else sql.upsert.call_args.args[2]["setting_value"]
+        )
+        return {d["key"]: d for d in json.loads(payload)}
+
+    def test_fills_severity_definition_missing_descriptions(self, svc):
+        s, sql = svc
+        # A pre-existing severity definition seeded before descriptions existed.
+        existing = [
+            {
+                "key": "severity",
+                "values": ["Low", "Medium", "High", "Critical"],
+                "is_builtin": True,
+            }
+        ]
+        sql.query.return_value = [(json.dumps(existing),)]
+
+        result = s.backfill_reserved_value_descriptions_if_missing()
+
+        assert result is True
+        keys = self._saved_payload(sql)
+        descriptions = keys["severity"]["value_descriptions"]
+        assert set(descriptions) == {"Low", "Medium", "High", "Critical"}
+        assert descriptions["Critical"].startswith("Blocking issues with severe impact")
+
+    def test_does_not_overwrite_admin_authored_descriptions(self, svc):
+        s, sql = svc
+        existing = [
+            {
+                "key": "severity",
+                "values": ["Low", "Medium", "High", "Critical"],
+                "is_builtin": True,
+                # Admin already wrote their own blurb for Critical; only the
+                # missing levels should be filled in.
+                "value_descriptions": {"Critical": "Our own critical wording."},
+            }
+        ]
+        sql.query.return_value = [(json.dumps(existing),)]
+
+        result = s.backfill_reserved_value_descriptions_if_missing()
+
+        assert result is True
+        keys = self._saved_payload(sql)
+        descriptions = keys["severity"]["value_descriptions"]
+        # Admin text preserved verbatim...
+        assert descriptions["Critical"] == "Our own critical wording."
+        # ...and the absent levels backfilled from the seed.
+        assert descriptions["Low"] and descriptions["Medium"] and descriptions["High"]
+
+    def test_noop_when_all_descriptions_present(self, svc):
+        s, sql = svc
+        # Reproduce a fully-seeded deployment via the public seed path, then
+        # feed that exact stored state back into the backfill.
+        sql.query.return_value = []
+        assert s.seed_reserved_label_definitions_if_absent() is True
+        seeded_payload = self._saved_payload(sql)
+        sql.query.return_value = [(json.dumps(list(seeded_payload.values())),)]
+        sql.upsert.reset_mock()
+
+        result = s.backfill_reserved_value_descriptions_if_missing()
+
+        assert result is False
+        assert not sql.upsert.called
+
+    def test_ignores_non_reserved_definitions(self, svc):
+        s, sql = svc
+        existing = [{"key": "team", "values": ["a", "b"]}]
+        sql.query.return_value = [(json.dumps(existing),)]
+
+        result = s.backfill_reserved_value_descriptions_if_missing()
+
+        assert result is False
+        assert not sql.upsert.called
+
+    def test_only_fills_values_still_listed_on_definition(self, svc):
+        s, sql = svc
+        # Admin trimmed severity down to two levels; backfill must not
+        # reintroduce descriptions for values the definition no longer lists.
+        existing = [{"key": "severity", "values": ["Low", "High"], "is_builtin": True}]
+        sql.query.return_value = [(json.dumps(existing),)]
+
+        result = s.backfill_reserved_value_descriptions_if_missing()
+
+        assert result is True
+        keys = self._saved_payload(sql)
+        assert set(keys["severity"]["value_descriptions"]) == {"Low", "High"}
 
 
 # ---------------------------------------------------------------------------

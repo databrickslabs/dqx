@@ -847,6 +847,101 @@ class TestSuggestField:
             await service.suggest_field(field="dimension", context="ctx", user_email="a@x")
 
 
+class TestSuggestFieldNameCasing:
+    """Suggested rule NAMES are always Title Case.
+
+    The rule context is full of snake_case identifiers (the DQX check-function
+    name, column/slot names), so the model frequently answers in snake_case
+    however the prompt is worded. The casing is therefore enforced server-side
+    rather than merely requested.
+    """
+
+    async def test_snake_case_suggestion_is_title_cased(self):
+        gateway = _gateway_returning(json.dumps({"value": "order_amount_must_be_positive"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Order Amount Must Be Positive"
+
+    async def test_all_lower_case_phrase_is_title_cased(self):
+        gateway = _gateway_returning(json.dumps({"value": "order amount must be positive"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Order Amount Must Be Positive"
+
+    async def test_already_title_case_is_left_alone(self):
+        gateway = _gateway_returning(json.dumps({"value": "Order Amount Must Be Positive"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Order Amount Must Be Positive"
+
+    @pytest.mark.parametrize(
+        "suggestion",
+        ["PostgreSQL Connection Valid", "SKU Is Present", "Order ETA Within SLA"],
+    )
+    async def test_correct_casing_survives_untouched(self, suggestion):
+        """Blanket re-casing would flatten acronyms and proper nouns the model got
+        right ("PostgreSQL" -> "Postgresql"), so a capitalised suggestion is kept
+        exactly as the model wrote it."""
+        gateway = _gateway_returning(json.dumps({"value": suggestion}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == suggestion
+
+    async def test_acronyms_are_upper_cased(self):
+        gateway = _gateway_returning(json.dumps({"value": "customer_id_is_valid_url"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Customer ID Is Valid URL"
+
+    async def test_surrounding_whitespace_is_trimmed(self):
+        gateway = _gateway_returning(json.dumps({"value": "  unique_order_id  "}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Unique Order ID"
+
+    async def test_name_prompt_asks_for_title_case(self):
+        """The prompt should also ask, so the model usually gets it right and the
+        normalisation is a safety net rather than the only mechanism."""
+        gateway = _gateway_returning(json.dumps({"value": "Some Name"}))
+        service = _service(gateway)
+
+        await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        system = gateway.query.call_args.kwargs["messages"][0]["content"]
+        assert "Title Case" in system
+        assert "snake_case" in system
+
+    async def test_other_fields_are_not_re_cased(self):
+        """Description text must keep its original casing and punctuation."""
+        gateway = _gateway_returning(json.dumps({"value": "Flags orders whose amount is negative."}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="description", context="ctx", user_email="a@x")
+
+        assert value == "Flags orders whose amount is negative."
+
+    async def test_other_fields_get_no_name_guidance(self):
+        gateway = _gateway_returning(json.dumps({"value": "Completeness"}))
+        service = _service(gateway)
+
+        await service.suggest_field(field="dimension", context="ctx", user_email="a@x")
+
+        system = gateway.query.call_args.kwargs["messages"][0]["content"]
+        assert "Title Case" not in system
+
+
 class TestWriteSql:
     async def test_returns_safe_predicate_and_polarity(self):
         gateway = _gateway_returning(json.dumps({"predicate": "{{amount}} > 0", "polarity": "pass"}))

@@ -47,6 +47,38 @@ class ScheduleConfigService:
         self._sql = sql
         self._table = sql.fqn("dq_schedule_configs")
         self._history_table = sql.fqn("dq_schedule_configs_history")
+        self._rules_table = sql.fqn("dq_quality_rules")
+
+    def resolve_scope_table_fqns(self, config: dict[str, Any]) -> list[str]:
+        """Resolve the real table FQNs a scope-config schedule would run against.
+
+        Mirrors the FQN-based filters of ``SchedulerService._resolve_scope``
+        (``scope_mode`` + ``scope_catalogs`` / ``scope_schemas`` / ``scope_tables``)
+        so the schedule-save grant gate (Task 12) covers exactly the tables the
+        scheduler will read. The run-time ``scope_labels`` narrowing is a
+        secondary filter and is intentionally not reproduced here — omitting it
+        only *widens* the gate set (grants are idempotent, and the user must be
+        able to manage each table anyway), never narrows it. Synthetic
+        cross-table keys (``__sql_check__/<name>``) carry no physical table and
+        are excluded.
+        """
+        rows = self._sql.query(
+            f"SELECT DISTINCT table_fqn FROM {self._rules_table} WHERE status = 'approved'"
+        )  # noqa: S608
+        fqns = [r[0] for r in rows if r[0] and not str(r[0]).startswith("__sql_check__/")]
+
+        mode = config.get("scope_mode", "all")
+        if mode == "catalog":
+            catalogs = set(config.get("scope_catalogs") or [])
+            fqns = [f for f in fqns if f.split(".")[0] in catalogs]
+        elif mode == "schema":
+            schemas = set(config.get("scope_schemas") or [])
+            fqns = [f for f in fqns if ".".join(f.split(".")[:2]) in schemas]
+        elif mode == "tables":
+            tables = set(config.get("scope_tables") or [])
+            fqns = [f for f in fqns if f in tables]
+
+        return fqns
 
     def list_schedules(self) -> list[ScheduleConfigEntry]:
         ts = self._sql.ts_text

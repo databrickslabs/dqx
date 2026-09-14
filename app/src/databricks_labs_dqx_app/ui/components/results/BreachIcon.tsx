@@ -12,14 +12,25 @@ import { cn } from "@/lib/utils";
  * Renders nothing when criticality is null/undefined or an unrecognised value.
  * The icon is always amber (item 45 — no variable colour for threshold fails);
  * error vs warn is still conveyed by the tooltip text, not the colour.
+ *
+ * The tooltip names the threshold that was missed when the caller knows it.
+ * That hover is the ONLY place the threshold appears in results: the row used
+ * to carry a persistent "threshold used: N%" caption, which added a second
+ * line to every breached row for a number that only matters once you are
+ * already asking why the triangle is there.
  */
 export function BreachIcon({
   criticality,
+  threshold,
   className,
 }: {
   /** Accepts the raw API string so callers need no cast. Only "error"/"warn"
    *  render; any other value (null, undefined, unknown string) renders nothing. */
   criticality: string | null | undefined;
+  /** Pass threshold that was breached, already in percent (e.g. 95 for 95%).
+   *  Named in the tooltip when supplied; omit it where no single threshold
+   *  applies to the group (a whole run, say) and the tooltip stays generic. */
+  threshold?: number | null;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -27,9 +38,13 @@ export function BreachIcon({
   if (criticality !== "error" && criticality !== "warn") return null;
 
   const isError = criticality === "error";
-  const tooltip = isError
+  const base = isError
     ? t("resultsUi.breachErrorTooltip")
     : t("resultsUi.breachWarnTooltip");
+  const tooltip =
+    threshold == null
+      ? base
+      : t("resultsUi.breachTooltipWithThreshold", { pct: threshold });
 
   return (
     <Tooltip>

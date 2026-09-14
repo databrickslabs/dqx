@@ -103,6 +103,7 @@ export function FailingRecordsTable({
   severityRanks,
   dimensionColors,
   breachedRuleCriticality,
+  breachedRuleThreshold,
 }: {
   rows: FailingRecord[];
   /** True total matching failed records (may exceed `rows.length` when the
@@ -124,6 +125,9 @@ export function FailingRecordsTable({
    *  matching rule in the cell-hover tooltip. Empty/absent = no breach icons
    *  (feature off or no breaches). */
   breachedRuleCriticality?: Record<string, string>;
+  /** Rule name → the frozen pass threshold (%) it breached, so the ⚠ tooltip
+   *  can name the number. Same keying as `breachedRuleCriticality`. */
+  breachedRuleThreshold?: Record<string, number>;
 }) {
   const { t } = useTranslation();
   // Hovered row index + cursor position. The detail panel is a `fixed`
@@ -358,7 +362,10 @@ export function FailingRecordsTable({
                         surfaces the breach right on the failing record's hover,
                         next to the rule that triggered it. */}
                     {f.rule_name && breachedRuleCriticality?.[f.rule_name] && (
-                      <BreachIcon criticality={breachedRuleCriticality[f.rule_name]} />
+                      <BreachIcon
+                        criticality={breachedRuleCriticality[f.rule_name]}
+                        threshold={breachedRuleThreshold?.[f.rule_name]}
+                      />
                     )}
                     {f.severity && (
                       <span
