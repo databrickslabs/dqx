@@ -27,6 +27,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.secrets import SecretResolver
+from databricks.labs.dqx.utils import ScalarNode
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,12 @@ class ActionContext:
         condition: The gating condition expression of the action being executed, or *None* when the
             action fires unconditionally. Set per-action by the evaluator so an action (e.g. an alert
             message) can report *why* it fired; the engine leaves it *None* on the shared run context.
+        extras: Mapping keyed by producing action name to the *ScalarNode* payload that action
+            returned via *ActionResult.extras*. Populated by the evaluator as each action completes:
+            the payload is validated and deep-copied before insertion, and the outer *ActionContext*
+            is rebuilt via *dataclasses.replace* for the next action, so downstream actions cannot
+            observe post-execute mutations by the producer. Empty by default; two-level indexing
+            (action name → user-defined keys) means separate actions never collide on keys.
     """
 
     metrics: dict[str, object]
@@ -92,6 +99,24 @@ class ActionContext:
     rule_set_fingerprint: str | None = None
     user_metadata: dict[str, str] | None = None
     condition: str | None = None
+    extras: dict[str, ScalarNode] = field(default_factory=dict) # TODO (IK): DEFAULT - NONE, make it plain dict[str, str]
+
+    # TODO (IK): Remove - useless
+    def get_action_extras(self, action_name: str) -> ScalarNode | None:
+        """Return the extras payload produced by *action_name*, or *None* if absent.
+
+        Provides a typed accessor over *self.extras* so consumers do not need to reach into raw
+        dict semantics. Because *None* is not a valid *ScalarNode* value, a *None* return
+        unambiguously means "no such action ran, or that action returned no extras".
+
+        Args:
+            action_name: The producing action's *name* to look up.
+
+        Returns:
+            The *ScalarNode* payload the named action returned, or *None* when no extras were
+            recorded for that name.
+        """
+        return self.extras.get(action_name)
 
 
 # ---------------------------------------------------------------------------
@@ -110,12 +135,21 @@ class ActionResult:
         status: Aggregate outcome of the action execution.
         destination_errors: Mapping of destination name to error message for
             any delivery failures.  Empty when all deliveries succeeded.
+        extras: Optional payload produced by this action for consumption by later actions in the
+            evaluator loop. Must conform to the *ScalarNode* contract
+            (*str | int | float | bool | list | tuple | set | frozenset | dict[str, ScalarNode]*).
+            *None* (the default) means the action produced no payload — this preserves backward
+            compatibility for actions written before extras existed. The evaluator deep-copies
+            this value before inserting it into the next *ActionContext.extras* under the action's
+            name, so authors do not need to freeze or defensively copy the payload themselves.
+            Validation runs at the evaluator boundary, not inside this dataclass.
     """
 
     action_name: str
     fired: bool
     status: ActionStatus
     destination_errors: dict[str, str] = field(default_factory=dict)
+    extras: ScalarNode | None = None
 
 
 # ---------------------------------------------------------------------------

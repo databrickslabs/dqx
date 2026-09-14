@@ -30,7 +30,8 @@ from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _saniti
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.message import StandardMessageBuilder
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
-from databricks.labs.dqx.errors import InvalidConditionError, TerminalActionError
+from databricks.labs.dqx.errors import InvalidActionError, InvalidConditionError, TerminalActionError
+from databricks.labs.dqx.utils import ScalarNode, deep_copy_scalar_node, validate_scalar_node
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,12 @@ class ActionEvaluator:
         """
         results: list[ActionResult] = []
         deferred: list[TerminalActionError] = []
+        # Copy the caller's extras so accumulated propagation and later mutations do not leak back
+        # into the shared incoming context. Extras propagation is opt-in per action: only actions
+        # returning a non-None extras payload contribute a slot to this map, and deep-copy at the
+        # boundary severs the caller's reference so downstream actions cannot observe mutations
+        # made by the producer after execute() returned.
+        accumulated_extras: dict[str, ScalarNode] = dict(context.extras)
 
         for dq_action in self._actions:
             safe_name = _sanitize(dq_action.name)
@@ -160,11 +167,38 @@ class ActionEvaluator:
             # ------------------------------------------------------------------
             try:
                 # Pass the action's own gating condition so the action (e.g. an alert message) can
-                # report why it fired; the shared run context carries no per-action condition.
-                action_context = dataclasses.replace(context, condition=dq_action.condition)
+                # report why it fired; the shared run context carries no per-action condition. Also
+                # feed the accumulated extras of all preceding actions so this one can read them
+                # via context.get_action_extras(...).
+                action_context = dataclasses.replace(
+                    context, condition=dq_action.condition, extras=accumulated_extras
+                )
                 result = dq_action.action.execute(action_context, self._services)
                 results.append(result)
                 self._log_fired(safe_name, result)
+                # TODO (IK): EXTRACT TO METHOD
+                if result.extras is not None:
+                    try:
+                        validate_scalar_node(result.extras)
+                    except InvalidActionError as exc:
+                        # Isolate the failure: do not contribute this action's extras to the
+                        # accumulated map, record CONFIG_ERROR, and continue the loop.
+                        logger.warning(
+                            f"Action '{safe_name}' returned invalid extras and was skipped for "
+                            f"propagation: {_sanitize(str(exc))}"
+                        )
+                        self._state_store.record(
+                            self._build_event(
+                                dq_action,
+                                context,
+                                fired=True,
+                                status=ActionStatus.CONFIG_ERROR,
+                                destination_errors=result.destination_errors,
+                            )
+                        )
+                        continue
+                    accumulated_extras[dq_action.name] = deep_copy_scalar_node(result.extras)
+                    logger.debug(f"Recorded extras from action '{safe_name}' for downstream propagation.")
                 self._state_store.record(
                     self._build_event(
                         dq_action,
@@ -179,6 +213,8 @@ class ActionEvaluator:
                     f"Action '{safe_name}' fired with status '{ActionStatus.UNHEALTHY.value}' and raised a "
                     f"terminal error; deferring until loop completes."
                 )
+                # Terminal action didn't complete cleanly, so any extras it may have produced are
+                # discarded — do not touch accumulated_extras here.
                 deferred.append(exc)
                 self._state_store.record(
                     self._build_event(dq_action, context, fired=True, status=ActionStatus.UNHEALTHY)
