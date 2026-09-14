@@ -521,7 +521,8 @@ class SchedulerService:
 
         Returns ``True`` when at least one *active* schedule exists — a
         non-manual, non-paused scope config, a cron-scheduled data product, or
-        a cron-scheduled monitored table — so :meth:`_loop` knows whether it
+        a cron-scheduled monitored table — or a scheduler-tracked run is still
+        awaiting its completion score refresh, so :meth:`_loop` knows whether it
         can back off (see :meth:`_poll_interval_seconds`). A due-ness source
         that errors counts as active, so a transient failure never lets the
         loop go idle while real work may be pending.
@@ -632,27 +633,27 @@ class SchedulerService:
         # product-tick failure is fully isolated inside
         # :meth:`_tick_products` and cannot roll back or skip anything
         # the config loop already did.
-        # A sentinel of -1 marks "source errored, count unknown" so the
-        # active-work check below treats it as active (keep polling tightly)
-        # rather than let a transient failure back the loop off.
-        product_count = 0
+        # An errored source is treated as active work so the active-work
+        # check below keeps polling tightly rather than letting a transient
+        # failure back the loop off.
+        product_active = False
         try:
-            product_count = await asyncio.to_thread(self._tick_products, now)
+            product_active = await asyncio.to_thread(self._tick_products, now) > 0
         except Exception:
             logger.exception("Scheduler failed processing Data Product schedules")
-            product_count = -1
+            product_active = True
 
         # Third, independent due-ness source (P21 item 14): monitored
         # tables with an approved snapshot (``version > 0``) carrying a
         # cron — not gated on current review ``status``, see
         # :meth:`_load_scheduled_tables`. Fully isolated inside
         # :meth:`_tick_monitored_tables` like the product tick above.
-        table_count = 0
+        table_active = False
         try:
-            table_count = await asyncio.to_thread(self._tick_monitored_tables, now)
+            table_active = await asyncio.to_thread(self._tick_monitored_tables, now) > 0
         except Exception:
             logger.exception("Scheduler failed processing monitored-table schedules")
-            table_count = -1
+            table_active = True
 
         # Completion observation: refresh the Lakebase score cache for any
         # scheduler-launched run whose terminal ``dq_validation_runs`` row
@@ -664,10 +665,16 @@ class SchedulerService:
         except Exception:
             logger.exception("Scheduler failed refreshing the score cache for completed runs")
 
-        # Active when any due-ness source has scheduled work (or errored, via
-        # the -1 sentinel). Score-refresh is completion bookkeeping, not a
-        # due-ness source, so it never affects the poll cadence.
-        return active_configs > 0 or product_count != 0 or table_count != 0
+        # Active when any due-ness source has scheduled work (or errored), or a
+        # scheduler-tracked run is still awaiting its completion score refresh.
+        # Score-refresh is completion bookkeeping, not a due-ness source, but it
+        # piggybacks on the 60s tick — backing off to the idle interval while a
+        # run is pending would leave its score cache and last-run timestamps
+        # stale for up to an hour (out-of-band manual runs reach
+        # ``_pending_score_runs`` via ``_sweep_recent_run_sets`` with no schedule
+        # configured), so a non-empty pending set keeps the tight cadence until
+        # the run's terminal row is observed.
+        return active_configs > 0 or product_active or table_active or bool(self._pending_score_runs)
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.

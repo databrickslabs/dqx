@@ -327,12 +327,21 @@ class PgExecutor:
             max_size=pool_max_size,
             max_lifetime=self._token_refresh_seconds,
             check=ConnectionPool.check_connection,
-            open=False,  # opened explicitly below so failures surface eagerly
+            open=False,  # opened explicitly below, then probed so failures surface eagerly
             kwargs=self._connect_kwargs,
             timeout=30.0,
             name="dqx-lakebase",
         )
         self._pool.open(wait=True, timeout=30.0)
+        # ``open(wait=True)`` only waits for ``min_size`` connections, so with
+        # the scale-to-zero default of 0 it returns without ever contacting the
+        # database — a bad host, wrong schema, or unauthorized credential would
+        # otherwise surface only on the first real request. A one-shot probe
+        # restores eager fail-fast at startup: it opens and validates a single
+        # connection, then returns it to the pool, which drains back to
+        # ``min_size`` and leaves scale-to-zero intact.
+        with self._pool.connection() as probe:
+            probe.execute("SELECT 1")
         logger.info(
             "Lakebase connection pool open (host=%s db=%s schema=%s user=%s)",
             host,

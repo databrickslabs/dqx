@@ -1496,6 +1496,15 @@ class TestTickReportsActiveWork:
         svc._tick_products = _boom  # type: ignore[method-assign]
         assert await svc._tick() is True
 
+    async def test_pending_score_run_keeps_tick_active(self, make_scheduler):
+        # A completed-run score refresh rides the 60s tick, so a run still
+        # awaiting its terminal row must hold the tight cadence even with nothing
+        # scheduled — otherwise its scores stay stale for up to the idle interval.
+        svc, _mocks = make_scheduler()
+        _stub_idle_sources(svc)
+        svc._pending_score_runs["r1"] = datetime.now(timezone.utc)
+        assert await svc._tick() is True
+
 
 class TestPollInterval:
     def test_active_uses_tight_cadence(self, make_scheduler):
