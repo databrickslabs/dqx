@@ -101,6 +101,10 @@ def _within_distance_not_point(value: str) -> str:
     return f"value `{value}` in column `geom` is not a point geometry"
 
 
+def _within_distance_empty(value: str) -> str:
+    return f"value `{value}` in column `geom` is an empty geometry"
+
+
 def _within_distance_bad_srid(value: str, srid: int) -> str:
     return f"value `{value}` in column `geom` has SRID {srid}; only WGS 84 (SRID 4326) coordinates are supported"
 
@@ -1243,11 +1247,14 @@ def test_is_geo_within_distance_null_distance_is_skipped(skip_if_runtime_not_geo
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_is_geo_within_distance_empty_point_is_skipped(skip_if_runtime_not_geo_compatible, spark):
-    """An empty point has no distance; it is skipped here and left to is_non_empty_geometry."""
-    test_df = spark.createDataFrame([["POINT EMPTY"]], _GEO_SCHEMA)
+def test_is_geo_within_distance_empty_point_violation(skip_if_runtime_not_geo_compatible, spark):
+    """An empty point has no location to measure from and is reported explicitly, like an unparseable value."""
+    test_df = spark.createDataFrame([["POINT EMPTY"], [_POINT_NEAR], [None]], _GEO_SCHEMA)
     actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
-    expected = spark.createDataFrame([["POINT EMPTY", None]], _WITHIN_DISTANCE_SCHEMA)
+    expected = spark.createDataFrame(
+        [["POINT EMPTY", _within_distance_empty("POINT EMPTY")], [_POINT_NEAR, None], [None, None]],
+        _WITHIN_DISTANCE_SCHEMA,
+    )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
@@ -1367,7 +1374,8 @@ def test_is_geo_within_distance_empty_reference_violation(skip_if_runtime_not_ge
     test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA)
     actual = test_df.select("geom", _within_distance("POINT EMPTY", 1000))
     expected = spark.createDataFrame(
-        [[_POINT_NEAR, "reference geometry for column `geom` is empty"], [None, None]], _WITHIN_DISTANCE_SCHEMA
+        [[_POINT_NEAR, "reference geometry for column `geom` is an empty geometry"], [None, None]],
+        _WITHIN_DISTANCE_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 

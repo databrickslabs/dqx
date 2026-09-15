@@ -1022,6 +1022,7 @@ class _PointDiagnostics(NamedTuple):
     invalid: Column
     not_point: Column
     bad_srid: Column
+    empty: Column
     srid: Column
 
 
@@ -1031,14 +1032,17 @@ def _diagnose_point_operand(raw: Column, geom: Column) -> _PointDiagnostics:
     *st_distancespheroid* is defined for points only and raises when its arguments carry different
     SRIDs, and it always interprets coordinates as WGS 84 degrees. An operand is therefore usable when
     it parsed, is a point, and carries SRID 0 (unknown, as produced by WKT and WKB input) or 4326 (as
-    produced by EWKT and GeoJSON input); any other SRID would be silently misread. A NULL *raw* input
-    is not invalid, it is simply absent, so the caller can skip the row.
+    produced by EWKT and GeoJSON input); any other SRID would be silently misread. An empty point has
+    no location to measure from, so it is reported explicitly rather than left to the NULL distance
+    the measurement would otherwise yield. A NULL *raw* input is not invalid, it is simply absent, so
+    the caller can skip the row.
     """
     srid = F.call_function("st_srid", geom)
     return _PointDiagnostics(
         invalid=raw.isNotNull() & geom.isNull(),
         not_point=F.call_function("st_geometrytype", geom) != F.lit(POINT_TYPE),
         bad_srid=~srid.isin(0, DEFAULT_SRID),
+        empty=F.call_function("st_isempty", geom),
         srid=srid,
     )
 
@@ -1462,8 +1466,8 @@ def is_geo_within_distance(
     Coordinates are always interpreted as WGS 84 degrees: an operand with SRID 0 (unknown, as produced
     by WKT and WKB input) is treated as WGS 84, an operand with SRID 4326 (as produced by EWKT and
     GeoJSON input) is used as is, and the two can be mixed freely. A column value or reference that is
-    not a valid geometry, is not a point, or carries any other SRID is reported rather than measured.
-    An empty reference point is reported on every row, since nothing can be within distance of it.
+    not a valid geometry, is not a point, is empty, or carries any other SRID is reported rather than
+    measured, since none of those has a location to measure from.
 
     Both the target column and the reference geometry are always handled as GEOMETRY.
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
@@ -1473,8 +1477,8 @@ def is_geo_within_distance(
     GEOMETRY value.
 
     Args:
-        column: Column to check. Null values are skipped for validation. Empty points have no
-            distance and are skipped as well; use *is_non_empty_geometry* to report them.
+        column: Column to check. Null values are skipped for validation; empty points are reported,
+            as they have no location to measure.
         reference_geometry: Reference point as a literal WKT/EWKT/GeoJSON string or WKB/EWKB bytes
             value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A
             plain string is always treated as a literal, not a column name. Rows where a referenced
@@ -1509,13 +1513,14 @@ def is_geo_within_distance(
     distance_expr = get_limit_expr(distance)
     col = _diagnose_point_operand(col_expr, col_geom)
     ref = _diagnose_point_operand(ref_expr, ref_geom)
-    ref_empty = F.call_function("st_isempty", ref_geom)
 
     # Every reason the pair cannot be measured. A NULL reference (absent, not invalid) leaves this NULL,
     # which keeps the whole condition NULL so `make_condition` skips the row, matching the other geo
     # checks. `when` short-circuits, so `st_distancespheroid` - which raises on non-points and on
     # mismatched SRIDs - is only ever evaluated for two WGS 84 points, both stamped as such.
-    unmeasurable = col.invalid | ref.invalid | col.not_point | ref.not_point | col.bad_srid | ref.bad_srid | ref_empty
+    unmeasurable = (
+        col.invalid | ref.invalid | col.not_point | ref.not_point | col.bad_srid | ref.bad_srid | col.empty | ref.empty
+    )
     geodesic_distance = F.when(
         ~unmeasurable,
         F.call_function(
@@ -1546,7 +1551,8 @@ def is_geo_within_distance(
             ),
         )
         .when(ref.bad_srid, F.concat(F.lit(f"{reference} has SRID "), ref.srid.cast("string"), F.lit(srid_note)))
-        .when(ref_empty, F.lit(f"{reference} is empty"))
+        .when(col.empty, _geo_value_message(parsed_value, col_expr_str, "is an empty geometry"))
+        .when(ref.empty, F.lit(f"{reference} is an empty geometry"))
         .otherwise(
             _geo_value_message(
                 parsed_value,
