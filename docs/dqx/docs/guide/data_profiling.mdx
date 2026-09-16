@@ -715,3 +715,89 @@ Combining either limit with `sample_by_column` may filter out values and lead to
 Summary statistics from limited samples may not reflect the characteristics of the overall dataset. Balance the sampling rate and limits
 with your desired profile accuracy. Manually review and tune rules generated from profiles on sample data to ensure correctness.
 </Admonition>
+
+## Extending the profiler with custom column metrics
+
+Use the `register_profile_column_metric` decorator to add your own per-column metrics.
+Each metric is computed once per column (before any profile builder runs) and shared across every profile builder, so builders never recompute it — but each additional registered metric adds an aggregation to **every** profiling run (see the warning below).
+The string passed to the decorator's *profile_column_metric_type* argument (e.g. `"percentile_10"` in the example below) becomes the key under which the value is exposed to profile builders.
+
+A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column`, or `None` to skip the metric for that column type.
+
+See [Custom Column Metrics](/docs/reference/profiler#custom-column-metrics) in the profiler reference for the built-in metric keys (both always-on internals and registry-managed built-ins) that are also available to profile builders.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from pyspark.sql import Column
+    from pyspark.sql import functions as F
+    from pyspark.sql import types as T
+    from databricks.labs.dqx.profiler.profiler_column_metrics import register_profile_column_metric
+
+    @register_profile_column_metric("percentile_10")
+    def percentile_10(field: T.StructField, column_label: str) -> Column | None:
+        # Return None to skip for column types where the metric does not apply
+        if not isinstance(field.dataType, T.NumericType):
+            return None
+        return F.percentile_approx(column_label, 0.1)
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="Registration has global side effects">
+`register_profile_column_metric` mutates a module-level registry, so a registered metric persists for the lifetime of the Python process and is aggregated on **every** subsequent `DQProfiler.profile(...)` call for every column it applies to. Leaving unused metrics registered adds work to every profiling run and can slow it down. Remove a metric you no longer need with `deregister_profile_column_metric`:
+
+```python
+from databricks.labs.dqx.profiler.profiler_column_metrics import deregister_profile_column_metric
+
+deregister_profile_column_metric("percentile_10")
+```
+
+The call is a no-op if the key is not registered, so it is safe to use unconditionally in cleanup paths (e.g. notebook teardown, test fixtures).
+</Admonition>
+
+Combine this with the `register_profile_builder` decorator to generate data quality rule suggestions based on the metric.
+A builder function receives the *df* (`DataFrame`), *column_name* (`str`), *column_type* (`DataType`), *profiler_metrics* (`dict[str, Any]` — the column-level statistics the profiler computed, keyed by metric type, including any custom metrics you registered), and *profiler_options* (`dict[str, Any]` — profiler configuration).
+It returns a `DQProfile` (a data quality rule suggestion), or `None` to emit nothing for that column:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profile import DQProfile
+    from databricks.labs.dqx.profiler.profile_builder import register_profile_builder
+    from pyspark.sql import DataFrame
+    from pyspark.sql import types as T
+    from typing import Any
+
+    @register_profile_builder("p10_lower_bound")
+    def make_p10_lower_bound_profile(
+        df: DataFrame,
+        column_name: str,
+        column_type: T.DataType,
+        profiler_metrics: dict[str, Any],
+        profiler_options: dict[str, Any],
+    ) -> DQProfile | None:
+        p10 = profiler_metrics.get("percentile_10")
+        if p10 is None:
+            return None
+        return DQProfile(
+            name="min_max",
+            column=column_name,
+            description=f"Lower bound set to 10th percentile ({p10})",
+            parameters={"min": p10},
+        )
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="Registration has global side effects">
+`register_profile_builder` shares the same global-registry lifecycle as `register_profile_column_metric` — a registered builder persists for the lifetime of the Python process and runs on **every** subsequent `DQProfiler.profile(...)` call. Remove a builder you no longer need with `deregister_profile_builder`:
+
+```python
+from databricks.labs.dqx.profiler.profile_builder import deregister_profile_builder
+
+deregister_profile_builder("p10_lower_bound")
+```
+
+See [Registration has global side effects](#extending-the-profiler-with-custom-column-metrics) above for the full caveat (unused registrations slow down every profiling run; cleanup is safe to call unconditionally).
+</Admonition>

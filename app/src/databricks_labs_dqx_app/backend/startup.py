@@ -433,6 +433,10 @@ async def _run_post_migration_startup(
         logger.warning("Could not seed default run review statuses")
     try:
         settings.seed_reserved_label_definitions_if_absent()
+        # Backfill descriptions onto reserved definitions seeded before the
+        # seed carried them (idempotent, never overwrites admin edits) so
+        # already-deployed workspaces pick up newly added value_descriptions.
+        settings.backfill_reserved_value_descriptions_if_missing()
     except Exception:
         logger.warning("Could not seed reserved label definitions")
 

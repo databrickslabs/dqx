@@ -90,13 +90,13 @@ if (!rootElement.innerHTML) {
   const renderApp = () => {
     root.render(
       <StrictMode>
-        <AuthGuard>
-          <QueryClientProvider client={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <AuthGuard>
             <SetupGate>
               <RouterProvider router={router} />
             </SetupGate>
-          </QueryClientProvider>
-        </AuthGuard>
+          </AuthGuard>
+        </QueryClientProvider>
       </StrictMode>,
     );
   };

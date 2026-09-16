@@ -25,6 +25,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
+    get_schedule_grant_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -46,6 +47,11 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateDataProductIn,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    ScheduleGrantService,
+    manage_block_detail,
+)
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     BindingNotApprovedError,
     DataProductService,
@@ -219,11 +225,19 @@ def update_data_product(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
 ) -> DataProductOut:
     """Apply a partial update. Any successful update flips the space back to ``draft``.
 
     Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
     caller is an admin/approver.
+
+    When a schedule is being *set* (a non-empty cron), the caller must be able to
+    grant the scheduler service principals SELECT on *every* member table —
+    scheduled runs have no OBO token and read as those SPs. If the caller can
+    grant on all members we do so (idempotently) before saving; if they lack
+    MANAGE on any member the save is hard-blocked (403) naming the blocked
+    tables and, for each, the users/groups that hold MANAGE (Task 12).
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -234,8 +248,38 @@ def update_data_product(
         principal_ids=set(principal_ids),
         principal_email=user_email,
     )
+    updates = body.model_dump(exclude_unset=True)
+
+    # Only gate/grant when a schedule is actually being set/enabled on the
+    # collection — a non-empty cron. Clearing or unrelated partial updates skip.
+    if (updates.get("schedule_cron") or "").strip():
+        member_fqns = svc.member_table_fqns(product_id)
+        # Resolve the caller identity once so the per-table MANAGE gate below
+        # reads it from cache instead of re-issuing current_user.me() each time.
+        grant_svc.prime_caller_identity()
+        blocked: list[tuple[str, list[dict[str, str]]]] = []
+        for fqn in member_fqns:
+            if not grant_svc.user_can_manage(fqn):
+                blocked.append((fqn, grant_svc.manage_holders(fqn)))
+        if blocked:
+            raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
+        try:
+            # Every member is MANAGE-gated above, so grant with the precleared
+            # call — grant_select_to_schedulers would re-run the same ownership +
+            # effective-privilege round-trips, doubling the UC calls per table.
+            grant_svc.prime_scheduler_sp_identities()
+            for fqn in member_fqns:
+                grant_svc.grant_select_precleared(fqn)
+        except CannotManageError as e:
+            raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+        except Exception as e:
+            logger.error(f"Failed to grant scheduler access for product {product_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Could not grant the scheduler read access to the collection's tables. Please try again.",
+            )
+
     try:
-        updates = body.model_dump(exclude_unset=True)
         svc.update(product_id, updates, user_email)
         detail = svc.get(product_id)
         assert detail is not None  # just updated

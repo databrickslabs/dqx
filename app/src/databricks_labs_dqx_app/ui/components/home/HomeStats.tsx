@@ -158,36 +158,42 @@ function StatCard({
           <Icon
             className={`h-4 w-4 shrink-0 ${inverted ? "text-background" : "text-muted-foreground"}`}
           />
-          <span
-            className={`min-w-0 truncate text-xs font-medium uppercase tracking-wide ${
-              inverted ? "text-background/80" : "text-muted-foreground"
-            }`}
-            title={label}
-          >
-            {label}
-          </span>
-          {infoText && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className={`inline-flex shrink-0 items-center justify-center focus-visible:outline-none ${
-                      inverted
-                        ? "text-background/70 hover:text-background"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    aria-label={infoText}
-                  >
-                    <HelpCircle className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
-                  <p>{infoText}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
+          {/* Label + "?" explainer share one inline group so the tooltip
+              trigger sits directly beside (and baseline-centered with) the
+              label text rather than floating as a separate row-level item
+              (#118). The group is `min-w-0` so the label can still truncate. */}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={`min-w-0 truncate text-xs font-medium uppercase tracking-wide ${
+                inverted ? "text-background/80" : "text-muted-foreground"
+              }`}
+              title={label}
+            >
+              {label}
+            </span>
+            {infoText && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className={`inline-flex shrink-0 items-center justify-center leading-none focus-visible:outline-none ${
+                        inverted
+                          ? "text-background/70 hover:text-background"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      aria-label={infoText}
+                    >
+                      <HelpCircle className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-xs">
+                    <p>{infoText}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
         </div>
         <div className="flex h-9 items-center gap-2 text-3xl font-semibold tabular-nums sm:h-10 sm:text-4xl">
           {loading ? (
@@ -212,7 +218,11 @@ function CardGrid({ children }: { children: React.ReactNode }) {
 function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) {
   const { t } = useTranslation();
   const { data } = useGetHomeStatsSuspense({
-    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS, refetchOnMount: "always" },
+    // staleTime:Infinity + refetchOnWindowFocus:false (RESULTS_QUERY_OPTIONS):
+    // fetch once, then refresh via run-completion invalidation (this endpoint is
+    // in the results-invalidation list). No refetchOnMount:"always" — that fired
+    // a second /home/stats call right after the page loaded.
+    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
   });
   const { rule_count, monitored_table_count, table_space_count, score, score_delta } = data;
   const trend = data.score_trend ?? [];

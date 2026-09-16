@@ -541,6 +541,7 @@ class TestUpdateSchedule:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            grant_svc=MagicMock(),
         )
         assert result.schedule_cron == "0 6 * * *"
         assert result.schedule_tz == "UTC"
@@ -564,6 +565,7 @@ class TestUpdateSchedule:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            grant_svc=MagicMock(),
         )
         assert result.schedule_sample_size == 5000
         svc.update_schedule.assert_called_once_with(
@@ -582,6 +584,7 @@ class TestUpdateSchedule:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            grant_svc=MagicMock(),
         )
         assert result.schedule_cron is None
         svc.update_schedule.assert_called_once_with(
@@ -601,6 +604,7 @@ class TestUpdateSchedule:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                grant_svc=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
