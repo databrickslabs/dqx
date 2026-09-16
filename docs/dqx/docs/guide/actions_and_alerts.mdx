@@ -512,8 +512,20 @@ for the run's *input_location* and persists it into a Delta table. It is intende
 alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can
 answer *"what feeds this table and who wrote it last?"* directly from a DQ alert.
 
+See the end-to-end walkthrough in
+[demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_lineage_action.py)
+for a pipeline that exercises lineage collection with an alert on top.
+
 The action never fails the pipeline: collection errors are logged and returned as `CONFIG_ERROR`
 so a stale system-table read never neglects check results.
+
+<Admonition type="note" title="Requires DBR 17+">
+Upstream and downstream table walks use a single recursive CTE against *system.access.table_lineage*
+with an in-CTE full-path cycle guard, so the compute must be on **Databricks Runtime 17 or newer**
+(the release that introduced ``WITH RECURSIVE``). On older runtimes the walk fails softly, a
+sanitised warning is logged, and an empty *LINEAGE_TABLE_SCHEMA* DataFrame is written — no other
+lineage collection is affected.
+</Admonition>
 
 **Configuration:**
 
@@ -703,16 +715,15 @@ wrote, and a following `DQAlert` embeds that table name into its message. This i
 
 **Contract**
 
-- Producer returns `ActionResult(..., extras=<ScalarNode>)`. *extras* is optional and defaults to
-  `None` for backward compatibility with actions written before this feature.
-- *ScalarNode* is the primitive-tree union
-  `str | int | float | bool | list[node] | tuple[node, ...] | set[leaf] | frozenset[leaf] | dict[str, node]`.
-  Bytes, `None` values, and arbitrary objects are **not** allowed — the evaluator validates every
-  payload at the boundary, and a violation is logged and recorded as `CONFIG_ERROR` while the loop
-  continues.
-- Consumer reads the payload via `context.get_action_extras("<producing-action-name>")` (or
-  `context.extras.get(...)`) and gets the producer's value verbatim.
-- The evaluator **deep-copies** the payload before inserting it into the next `ActionContext`, so
+- Producer returns `ActionResult(..., extras=<dict[str, str] | None>)`. *extras* is optional and
+  defaults to `None` for backward compatibility with actions written before this feature.
+- The payload is a flat *dict[str, str]* — small, cheap to copy, safe to log. If a producer needs to
+  transport richer structure, persist it and hand back the
+  location/reference as a string; downstream consumers read the persisted artefact directly.
+- Consumer reads the payload via `context.get_extras("<producing-action-name>")`, which always
+  returns a `dict[str, str]` (empty when no producer of that name has contributed yet) so no
+  intermediate `None`-guards are needed at the call site.
+- The evaluator **copies** the payload before inserting it into the next `ActionContext`, so
   mutations made by the producer after *execute* returned are invisible downstream.
 
 <Admonition type="caution" title="Extras are keyed by producing action name">
@@ -744,7 +755,7 @@ class LineageAwareAlert(Action):
     type: Literal["lineage_aware_alert"] = "lineage_aware_alert"
 
     def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
-        lineage_info = context.get_action_extras("collect_lineage") or {}
+        lineage_info = context.get_extras("collect_lineage")
         table = lineage_info.get("lineage_location")
         # ... build and deliver an alert message that mentions `table` ...
         return ActionResult(action_name=self.name or self.type, fired=True, status=ActionStatus.HEALTHY)

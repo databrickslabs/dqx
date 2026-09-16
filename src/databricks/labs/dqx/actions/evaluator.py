@@ -30,8 +30,7 @@ from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _saniti
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.message import StandardMessageBuilder
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
-from databricks.labs.dqx.errors import InvalidActionError, InvalidConditionError, TerminalActionError
-from databricks.labs.dqx.utils import ScalarNode, deep_copy_scalar_node, validate_scalar_node
+from databricks.labs.dqx.errors import InvalidConditionError, TerminalActionError
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +96,13 @@ class ActionEvaluator:
         """
         results: list[ActionResult] = []
         deferred: list[TerminalActionError] = []
-        # Copy the caller's extras so accumulated propagation and later mutations do not leak back
-        # into the shared incoming context. Extras propagation is opt-in per action: only actions
-        # returning a non-None extras payload contribute a slot to this map, and deep-copy at the
-        # boundary severs the caller's reference so downstream actions cannot observe mutations
-        # made by the producer after execute() returned.
-        accumulated_extras: dict[str, ScalarNode] = dict(context.extras)
+        # Extras propagation is opt-in per action: the accumulator stays *None* until the first
+        # producer contributes, and only actions returning a non-None extras payload add a slot.
+        # A shallow dict-copy at the boundary severs the caller's reference so downstream actions
+        # cannot observe mutations made by the producer after execute() returned.
+        accumulated_extras: dict[str, dict[str, str]] | None = (
+            dict(context.extras) if context.extras is not None else None
+        )
 
         for dq_action in self._actions:
             safe_name = _sanitize(dq_action.name)
@@ -169,36 +169,12 @@ class ActionEvaluator:
                 # Pass the action's own gating condition so the action (e.g. an alert message) can
                 # report why it fired; the shared run context carries no per-action condition. Also
                 # feed the accumulated extras of all preceding actions so this one can read them
-                # via context.get_action_extras(...).
-                action_context = dataclasses.replace(
-                    context, condition=dq_action.condition, extras=accumulated_extras
-                )
+                # via context.extras.get(...).
+                action_context = dataclasses.replace(context, condition=dq_action.condition, extras=accumulated_extras)
                 result = dq_action.action.execute(action_context, self._services)
                 results.append(result)
                 self._log_fired(safe_name, result)
-                # TODO (IK): EXTRACT TO METHOD
-                if result.extras is not None:
-                    try:
-                        validate_scalar_node(result.extras)
-                    except InvalidActionError as exc:
-                        # Isolate the failure: do not contribute this action's extras to the
-                        # accumulated map, record CONFIG_ERROR, and continue the loop.
-                        logger.warning(
-                            f"Action '{safe_name}' returned invalid extras and was skipped for "
-                            f"propagation: {_sanitize(str(exc))}"
-                        )
-                        self._state_store.record(
-                            self._build_event(
-                                dq_action,
-                                context,
-                                fired=True,
-                                status=ActionStatus.CONFIG_ERROR,
-                                destination_errors=result.destination_errors,
-                            )
-                        )
-                        continue
-                    accumulated_extras[dq_action.name] = deep_copy_scalar_node(result.extras)
-                    logger.debug(f"Recorded extras from action '{safe_name}' for downstream propagation.")
+                accumulated_extras = self._record_extras(dq_action, result, accumulated_extras)
                 self._state_store.record(
                     self._build_event(
                         dq_action,
@@ -227,6 +203,26 @@ class ActionEvaluator:
             raise deferred[0]
 
         return results
+
+    @staticmethod
+    def _record_extras(
+        dq_action: DQAction,
+        result: ActionResult,
+        accumulated_extras: dict[str, dict[str, str]] | None,
+    ) -> dict[str, dict[str, str]] | None:
+        """Append *result.extras* under *dq_action.name* into a fresh accumulator and return it.
+
+        Skips accumulation when the action returned no extras. The inserted payload is copied so a
+        producer that mutates the returned dict after *execute* cannot leak that mutation to
+        downstream actions.
+        """
+        if not result.extras:
+            return accumulated_extras
+        if accumulated_extras is None:
+            accumulated_extras = {}
+        accumulated_extras[dq_action.name] = dict(result.extras)
+        logger.debug(f"Recorded extras from action '{_sanitize(dq_action.name)}' for downstream propagation.")
+        return accumulated_extras
 
     @staticmethod
     def _log_fired(safe_name: str, result: ActionResult) -> None:

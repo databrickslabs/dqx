@@ -1,15 +1,13 @@
 """Unit tests for extras propagation across the *ActionEvaluator* loop.
 
-Covers the contract added by the *lineage_action* feature (Step 4 of the plan): a producer
-returns *ActionResult.extras*, the evaluator validates and deep-copies the payload, and the next
-action sees it under the producer's name via *ActionContext.get_action_extras*.
+Contract: a producer returns *ActionResult.extras* as *dict[str, str] | None*; the evaluator
+copies the payload into *ActionContext.extras* under the producer's name so the next action can
+read it back via ``context.extras.get(<producer-name>)``.
 """
 
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import create_autospec
-
-from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import (
@@ -57,9 +55,9 @@ def _make_dq_action(action: object, name: str) -> DQAction:
 
 
 class _ProducerAction:
-    """Emits a *ScalarNode* extras payload."""
+    """Emits a *dict[str, str]* extras payload."""
 
-    def __init__(self, name: str, extras: Any) -> None:
+    def __init__(self, name: str, extras: dict[str, str] | None) -> None:
         self.name = name
         self._extras = extras
 
@@ -73,16 +71,14 @@ class _ProducerAction:
 
 
 class _MutatingProducer:
-    """Producer that mutates its returned payload *after* execute returns (deep-copy guard)."""
+    """Producer that mutates its returned payload *after* execute returns (copy guard)."""
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.payload: dict[str, Any] = {"seen": True, "list": [1, 2, 3]}
+        self.payload: dict[str, str] = {"seen": "true"}
 
     def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
-        return ActionResult(
-            action_name=self.name, fired=True, status=ActionStatus.UNHEALTHY, extras=self.payload
-        )
+        return ActionResult(action_name=self.name, fired=True, status=ActionStatus.UNHEALTHY, extras=self.payload)
 
 
 class _RecordingConsumer:
@@ -90,12 +86,12 @@ class _RecordingConsumer:
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.observed: dict[str, Any] | None = None
+        self.observed: dict[str, dict[str, str]] | None = None
 
     def execute(self, context: ActionContext, _services: ActionServices) -> ActionResult:
-        # Copy so subsequent evaluator mutations of accumulated_extras cannot retroactively change
-        # what this consumer observed at its own execute time.
-        self.observed = {k: v for k, v in context.extras.items()}
+        # Snapshot so subsequent evaluator mutations of accumulated_extras cannot retroactively
+        # change what this consumer observed at its own execute time.
+        self.observed = None if context.extras is None else {k: dict(v) for k, v in context.extras.items()}
         return ActionResult(action_name=self.name, fired=True, status=ActionStatus.HEALTHY)
 
 
@@ -130,7 +126,8 @@ def test_producer_extras_visible_to_next_action() -> None:
 
 
 def test_producer_mutation_after_execute_does_not_leak_downstream() -> None:
-    """Deep-copy severs the caller's reference: post-execute mutation is invisible downstream."""
+    """A dict-copy at the evaluator boundary severs the caller's reference — post-execute
+    mutation is invisible downstream."""
     producer = _MutatingProducer("producer")
     intermediate = _RecordingConsumer("intermediate")
     final = _RecordingConsumer("final")
@@ -142,7 +139,7 @@ def test_producer_mutation_after_execute_does_not_leak_downstream() -> None:
 
         def execute(self, _context: ActionContext, _services: ActionServices) -> ActionResult:
             producer.payload["seen"] = "MUTATED"
-            producer.payload["list"].append(999)
+            producer.payload["extra"] = "sneaked"
             return ActionResult(action_name=self.name, fired=True, status=ActionStatus.HEALTHY)
 
     evaluator = ActionEvaluator(
@@ -158,11 +155,11 @@ def test_producer_mutation_after_execute_does_not_leak_downstream() -> None:
     evaluator.evaluate(_make_context())
 
     assert final.observed is not None
-    assert final.observed["producer"] == {"seen": True, "list": [1, 2, 3]}
+    assert final.observed["producer"] == {"seen": "true"}
 
 
-def test_none_extras_does_not_create_context_key() -> None:
-    """extras=None must not create a slot in ActionContext.extras."""
+def test_none_extras_keeps_context_extras_none_for_next_action() -> None:
+    """Without any producer contributing, *context.extras* stays *None* for downstream actions."""
     silent = _NoExtrasAction("silent")
     consumer = _RecordingConsumer("consumer")
 
@@ -173,18 +170,13 @@ def test_none_extras_does_not_create_context_key() -> None:
     )
     evaluator.evaluate(_make_context())
 
-    assert consumer.observed == {}
+    assert consumer.observed is None
 
 
 def test_same_name_actions_last_write_wins() -> None:
-    """Two DQAction entries with the same name: later overwrites earlier (documented contract).
-
-    Extras are keyed by producing action name, so the second producer with the same name replaces
-    the first producer's payload in the accumulated map. This test documents that observed
-    behaviour so future refactors do not silently change it.
-    """
-    first = _ProducerAction("dup", {"round": 1})
-    second = _ProducerAction("dup", {"round": 2})
+    """Two DQAction entries with the same name: later overwrites earlier (documented contract)."""
+    first = _ProducerAction("dup", {"round": "1"})
+    second = _ProducerAction("dup", {"round": "2"})
     consumer = _RecordingConsumer("consumer")
 
     evaluator = ActionEvaluator(
@@ -198,29 +190,7 @@ def test_same_name_actions_last_write_wins() -> None:
     )
     evaluator.evaluate(_make_context())
 
-    assert consumer.observed == {"dup": {"round": 2}}
-
-
-def test_invalid_extras_records_config_error_and_continues() -> None:
-    """A ScalarNode-invalid extras payload triggers CONFIG_ERROR and does not break the loop.
-
-    The producer returns an object that fails validate_scalar_node (a live WorkspaceClient); the
-    evaluator must skip propagation for that action, record the outcome as CONFIG_ERROR, and
-    continue evaluating the next action.
-    """
-    bad = _ProducerAction("bad_producer", {"client": create_autospec(WorkspaceClient, instance=True)})
-    consumer = _RecordingConsumer("consumer")
-
-    store = ActionStateStore()
-    evaluator = ActionEvaluator(
-        actions=[_make_dq_action(bad, "bad_producer"), _make_dq_action(consumer, "consumer")],
-        state_store=store,
-        services=_make_services(),
-    )
-    evaluator.evaluate(_make_context())
-
-    # consumer ran (loop did not break) and never saw the invalid extras
-    assert consumer.observed == {}
+    assert consumer.observed == {"dup": {"round": "2"}}
 
 
 def test_existing_actions_still_work_without_extras() -> None:
@@ -251,9 +221,9 @@ def test_existing_actions_still_work_without_extras() -> None:
 
 
 def test_incoming_context_extras_are_preserved_and_not_mutated() -> None:
-    """The caller's context.extras dict is copied — evaluator mutations must not leak back."""
+    """The caller's *context.extras* dict is copied — evaluator mutations must not leak back."""
     producer = _ProducerAction("producer", {"foo": "bar"})
-    caller_extras: dict[str, Any] = {"seed": {"value": 1}}
+    caller_extras: dict[str, dict[str, str]] = {"seed": {"value": "1"}}
 
     context = ActionContext(
         metrics={"error_row_count": 5},
@@ -269,25 +239,29 @@ def test_incoming_context_extras_are_preserved_and_not_mutated() -> None:
     )
     evaluator.evaluate(context)
 
-    assert consumer.observed == {"seed": {"value": 1}, "producer": {"foo": "bar"}}
+    assert consumer.observed == {"seed": {"value": "1"}, "producer": {"foo": "bar"}}
     # Caller's original dict is untouched.
-    assert caller_extras == {"seed": {"value": 1}}
+    assert caller_extras == {"seed": {"value": "1"}}
 
 
-def test_get_action_extras_returns_producer_payload() -> None:
-    """context.get_action_extras returns the producing action's payload or None."""
+def test_consumer_reads_extras_via_get_extras() -> None:
+    """Consumers read producer payloads via ``context.get_extras("<name>")``.
+
+    The accessor collapses both *None* cases (no producer yet, missing key) into an empty dict, so
+    callers never need the ``(context.extras or {}).get(...) or {}`` dance.
+    """
     producer = _ProducerAction("producer", {"lineage_location": "cat.sch.lin"})
 
     class _AssertingConsumer:
         name = "consumer"
 
         def __init__(self) -> None:
-            self.produced_payload: Any = None
-            self.missing: Any = "sentinel"
+            self.produced_payload: dict[str, str] = {"sentinel": "1"}
+            self.missing: dict[str, str] = {"sentinel": "1"}
 
         def execute(self, context: ActionContext, _services: ActionServices) -> ActionResult:
-            self.produced_payload = context.get_action_extras("producer")
-            self.missing = context.get_action_extras("does_not_exist")
+            self.produced_payload = context.get_extras("producer")
+            self.missing = context.get_extras("does_not_exist")
             return ActionResult(action_name=self.name, fired=True, status=ActionStatus.HEALTHY)
 
     consumer = _AssertingConsumer()
@@ -299,4 +273,24 @@ def test_get_action_extras_returns_producer_payload() -> None:
     evaluator.evaluate(_make_context())
 
     assert consumer.produced_payload == {"lineage_location": "cat.sch.lin"}
-    assert consumer.missing is None
+    assert consumer.missing == {}
+
+
+def test_get_extras_returns_empty_dict_when_no_producer_ran() -> None:
+    """*get_extras* returns *{}* both when the outer *extras* is *None* and when the key is missing."""
+    context = ActionContext(
+        metrics={},
+        run_id="run-get-extras",
+        run_time=datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    assert context.extras is None
+    assert context.get_extras("anything") == {}
+
+    populated = ActionContext(
+        metrics={},
+        run_id="run-get-extras",
+        run_time=datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+        extras={"producer": {"k": "v"}},
+    )
+    assert populated.get_extras("producer") == {"k": "v"}
+    assert populated.get_extras("other") == {}

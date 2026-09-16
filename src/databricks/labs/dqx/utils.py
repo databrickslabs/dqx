@@ -1,4 +1,3 @@
-import copy
 import os
 import json
 import datetime
@@ -25,7 +24,7 @@ from pydantic.functional_validators import PlainValidator
 from pydantic.json_schema import WithJsonSchema
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
-from databricks.labs.dqx.errors import InvalidActionError, InvalidParameterError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
@@ -128,25 +127,7 @@ def _strip_literals_and_comments(match: "re.Match[str]") -> str:
 
 
 ScalarLeaf: TypeAlias = str | int | float | bool
-"""JSON-safe leaf type used by action *extras* payloads.
-
-See *ScalarNode* for the recursive tree definition and *validate_scalar_node* for the boundary check.
-"""
-# TODO (IK): Isn't this an overengineering? This is.
-ScalarNode: TypeAlias = (
-    ScalarLeaf
-    | list["ScalarNode"]
-    | tuple["ScalarNode", ...]
-    | set[ScalarLeaf]
-    | frozenset[ScalarLeaf]
-    | dict[str, "ScalarNode"]
-)
-"""Recursive tree of *ScalarLeaf* values used to transport action *extras*.
-
-A node is either a leaf (*str*, *int*, *float*, *bool*) or a container of nodes: *list*, *tuple*,
-*set*, *frozenset*, or *dict[str, ScalarNode]*. Sets and frozensets can only hold leaves because
-Python sets cannot contain unhashable containers (*list*, *dict*).
-"""
+"""JSON-safe leaf type used across the variable-substitution subsystem."""
 
 _SCALAR_LEAF_TYPES: tuple[type, ...] = (str, int, float, bool)
 _SCALAR_VARIABLE_TYPES = (*_SCALAR_LEAF_TYPES, Decimal, datetime.date, datetime.datetime, datetime.time)
@@ -155,74 +136,8 @@ VariableValue = ScalarLeaf | Decimal | datetime.date | datetime.datetime | datet
 """Supported scalar types for variable substitution values.
 
 Extends *ScalarLeaf* with *Decimal* and date/datetime/time types that are meaningful for variable
-substitution into SQL/column expressions but out of scope for action *extras* (which are constrained
-to the JSON-safe *ScalarLeaf* union for safe deep-copy and cross-action transport).
+substitution into SQL/column expressions.
 """
-
-
-def _describe_path(path: str, segment: str) -> str:
-    """Extend a scalar-node key *path* with the next *segment* (for error messages)."""
-    if not path:
-        return segment
-    if segment.startswith("["):
-        return f"{path}{segment}"
-    return f"{path}.{segment}"
-
-
-def validate_scalar_node(payload: "ScalarNode", *, path: str = "") -> None:
-    """Validate that *payload* conforms to the *ScalarNode* contract.
-
-    Traverses *payload* recursively; raises *InvalidActionError* on the first violation with a
-    diagnosable key path (e.g. *foo.bar[2]*). This is called at the evaluator boundary before an
-    action's *extras* are propagated to downstream actions so that unsupported values (bytes,
-    *None*, arbitrary objects, non-str dict keys, sets of containers, …) cannot smuggle shared
-    mutable state through the action loop.
-
-    Args:
-        payload: The value to validate.
-        path: Internal key path used for error messages; callers should leave the default.
-
-    Raises:
-        InvalidActionError: When any value in *payload* falls outside the *ScalarNode* shape.
-    """
-    # bool is a subclass of int in Python, so isinstance(True, int) is True. The explicit tuple
-    # already covers both — no separate short-circuit for booleans is needed.
-    if isinstance(payload, _SCALAR_LEAF_TYPES):
-        return
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if not isinstance(key, str):
-                raise InvalidActionError(
-                    f"Invalid ScalarNode at '{path or '<root>'}': dict keys must be str, "
-                    f"got {type(key).__name__}."
-                )
-            validate_scalar_node(value, path=_describe_path(path, key))
-        return
-    if isinstance(payload, (list, tuple)):
-        for index, value in enumerate(payload):
-            validate_scalar_node(value, path=_describe_path(path, f"[{index}]"))
-        return
-    if isinstance(payload, (set, frozenset)):
-        for value in payload:
-            if not isinstance(value, _SCALAR_LEAF_TYPES):
-                raise InvalidActionError(
-                    f"Invalid ScalarNode at '{path or '<root>'}': set/frozenset may only contain "
-                    f"scalar leaves (str, int, float, bool), got {type(value).__name__}."
-                )
-        return
-    raise InvalidActionError(
-        f"Invalid ScalarNode at '{path or '<root>'}': unsupported type {type(payload).__name__}."
-    )
-
-
-def deep_copy_scalar_node(payload: "ScalarNode") -> "ScalarNode":
-    """Return a deep copy of a *ScalarNode* tree.
-
-    Thin wrapper around *copy.deepcopy* named for its intent so call sites read as boundary
-    intent, not plumbing. Used by the action evaluator to sever the caller's reference to a
-    payload before propagating it to downstream actions.
-    """
-    return copy.deepcopy(payload)
 
 
 def get_column_name_or_alias(

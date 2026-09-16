@@ -49,9 +49,9 @@ def test_metadata_dict_resolves_to_action() -> None:
             },
         },
     }
-    dq = ActionSerializer.from_dict(metadata)
-    assert isinstance(dq.action, CollectLineageAction)
-    action = dq.action
+    dq_action = ActionSerializer.from_dict(metadata)
+    assert isinstance(dq_action.action, CollectLineageAction)
+    action = dq_action.action
     assert action.output_config.location == "cat.sch.lin"
     assert action.output_config.mode == "overwrite"
     assert action.config.upstream.depth == 2
