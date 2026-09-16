@@ -4,6 +4,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
@@ -134,15 +135,6 @@ def _save_schedule_entry(
     return svc.save(body.schedule_name, body.config, user_email)
 
 
-def _notify_scheduler() -> None:
-    try:
-        from databricks_labs_dqx_app.backend._scheduler_registry import notify_scheduler
-
-        notify_scheduler()
-    except Exception:
-        pass
-
-
 @router.get(
     "",
     response_model=list[ScheduleConfigOut],
@@ -221,7 +213,7 @@ async def save_schedule(
     await _enforce_scheduler_grants(body.config, svc, grant_svc)
     try:
         entry = await asyncio.to_thread(_save_schedule_entry, obo_ws, svc, body)
-        _notify_scheduler()
+        scheduler_registry.notify_scheduler()
         return ScheduleConfigOut(
             schedule_name=entry.schedule_name,
             config=entry.config,
@@ -252,7 +244,7 @@ def delete_schedule(
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
         svc.delete(name, user_email)
-        _notify_scheduler()
+        scheduler_registry.notify_scheduler()
         return {"deleted": name}
     except Exception as e:
         logger.error("Failed to delete schedule %s: %s", name, e, exc_info=True)
