@@ -325,6 +325,8 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `limit`: maximum number of records to analyze.
     - `filter`: filter for the input data as a string SQL expression
     - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
+    - `profile_geospatial`: whether to profile `GEOMETRY`/`GEOGRAPHY` columns to generate geospatial quality checks (default: `false`).
+    - `geospatial_srid`: SRID used to compute areas when profiling `GEOMETRY` columns (default: `3857`).
 - `checks_user_requirements`: (optional) user input for AI-assisted rule generation. Only supported if `serverless_clusters` is enabled.
 - `llm_config`: (optional) configuration for the llm-assisted features
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
@@ -403,6 +405,10 @@ The profiler supports extensive configuration options to customize the profiling
       "filter": None,               # No filter (SQL expression)
 
       "llm_primary_key_detection": True,  # Detect PKs and generate uniqueness rule if found
+
+      # Geospatial options
+      "profile_geospatial": True,   # Profile GEOMETRY and GEOGRAPHY columns
+      "geospatial_srid": 3857,      # SRID used to compute areas when profiling GEOMETRY columns
     }
 
     ws = WorkspaceClient()
@@ -430,6 +436,8 @@ The profiler supports extensive configuration options to customize the profiling
         - `limit`: maximum number of records to analyze.
         - `filter`: string SQL expression to filter the input data
         - `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
+        - `profile_geospatial`: whether to profile `GEOMETRY`/`GEOGRAPHY` columns to generate geospatial quality checks (default: `false`).
+        - `geospatial_srid`: SRID used to compute areas when profiling `GEOMETRY` columns (default: `3857`).
 
     You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
@@ -504,6 +512,30 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
   </TabItem>
 </Tabs>
 
+## Profiling geospatial data
+
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX" version="0.17.0" heading={false} />
+</FeatureTags>
+
+The profiler can generate geospatial rule candidates from native `GEOMETRY` and `GEOGRAPHY` typed columns.
+Profiling for geospatial rules is disabled by default and requires explicit opt-in. Enable it by setting the 
+`profile_geospatial` option.
+
+<Admonition type="info" title="Geospatial profiling limitations">
+Profiling geospatial data has the following limitations:
+- Columns must be `GEOMETRY` or `GEOGRAPHY`. Values stored as strings or binary (e.g. WKB, WKT, or GeJSON) are not supported.
+- Databricks serverless compute or Databricks classic compute with a runtime 17.1 or later.
+</Admonition>
+
+```python
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.sdk import WorkspaceClient
+
+profiler = DQProfiler(WorkspaceClient())
+summary_stats, profiles = profiler.profile(input_df, options={"profile_geospatial": True})
+```
+
 ## Understanding summary statistics and profiles
 
 <Admonition type="info" title="How the data is profiled">
@@ -520,16 +552,22 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 
 ### Summary Statistics Reference
 
-| Field             | Meaning                                                                 | Notes                                                               |
-|-------------------|-------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `count`           | Rows actually profiled (after sampling **and** limit)                   | `≈ min(limit, sample_fraction × total_rows)`                        |
-| `mean`            | Arithmetic average of **non-null numeric** values                       | N/A for non-numeric                                                 |
-| `stddev`          | Sample standard deviation of **non-null numeric** values                | N/A for non-numeric                                                 |
-| `min`             | Smallest **non-null** value                                             | String = lexicographic; Date/Timestamp = earliest; Numeric = minimum|
-| `25` / `50` / `75`| Approximate 25th/50th/75th percentiles of **non-null numeric** values   | Uses Spark approximate quantiles                                    |
-| `max`             | Largest **non-null** value                                              | String = lexicographic; Date/Timestamp = latest; Numeric = maximum  |
-| `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
-| `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
+| Field                                                                   | Meaning                                                                                                      | Notes                                                                   |
+|-------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| `count`                                                                 | Rows actually profiled (after sampling **and** limit)                                                        | `≈ min(limit, sample_fraction × total_rows)`                            |
+| `mean`                                                                  | Arithmetic average of **non-null numeric** values                                                            | N/A for non-numeric                                                     |
+| `stddev`                                                                | Sample standard deviation of **non-null numeric** values                                                     | N/A for non-numeric                                                     |
+| `min`                                                                   | Smallest **non-null** value                                                                                  | String = lexicographic; Date/Timestamp = earliest; Numeric = minimum    |
+| `25` / `50` / `75`                                                      | Approximate 25th/50th/75th percentiles of **non-null numeric** values                                        | Uses Spark approximate quantiles                                        |
+| `max`                                                                   | Largest **non-null** value                                                                                   | String = lexicographic; Date/Timestamp = latest; Numeric = maximum      |
+| `count_non_null`                                                        | Number of non-null entries within the profiled rows                                                          |                                                                         |
+| `count_null`                                                            | Number of null entries within the profiled rows                                                              | `count_non_null + count_null = count`                                   |
+| `min_x_coordinate` / `max_x_coordinate`                                 | Longitudinal range of profiled geometries                                                                    | Only for `GEOMETRY`/`GEOGRAPHY` columns when `profile_geospatial` is on |
+| `min_y_coordinate` / `max_y_coordinate`                                 | Latitudinal range of profiled geometries                                                                     | Only for geospatial columns when `profile_geospatial` is on             |
+| `min_area` / `max_area`                                                 | Area range of profiled geometries (using `geospatial_srid`)                                                  | Only for geospatial columns when `profile_geospatial` is on             |
+| `min_num_points` / `max_num_points`                                     | Coordinate-count range of profiled geometries                                                                | Only for geospatial columns when `profile_geospatial` is on             |
+| `geometry_types`                                                        | Distinct `ST_GeometryType` values (e.g. `POINT`, `LINESTRING`, `POLYGON`) present in the profiled geometries | Only for geospatial columns when `profile_geospatial` is on             |
+| `empty_geometry_count` / `invalid_geometry_count` / `null_island_count` | Number of empty values, invalid values, or null islands in the profiled geometries                           | Only for geospatial columns when `profile_geospatial` is on             |
 
 ## Data Drift Detection
 

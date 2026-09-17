@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 import pyspark.sql.types as T
 
-from databricks.labs.dqx.profiler.common import is_text, val_maybe_to_str, val_to_str
+from databricks.labs.dqx.profiler.common import is_geospatial, is_text, val_maybe_to_str, val_to_str
 
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])
@@ -18,6 +18,14 @@ def test_is_text_returns_true_for_text_types(column_type):
 )
 def test_is_text_returns_false_for_non_text_types(column_type):
     assert is_text(column_type) is False
+
+
+@pytest.mark.parametrize(
+    "column_type",
+    [T.StringType(), T.BinaryType(), T.IntegerType(), T.DoubleType(), T.StructType()],
+)
+def test_is_geospatial_returns_false_for_non_geo_types(column_type):
+    assert is_geospatial(column_type) is False
 
 
 def test_val_to_str():

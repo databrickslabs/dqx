@@ -8,6 +8,7 @@ from pyspark.sql import types as T
 # Type alias for annotations; use TEXT_TYPES for isinstance() checks.
 TextType = T.CharType | T.StringType | T.VarcharType
 TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
+GEO_TYPE_NAMES: frozenset[str] = frozenset({"geometry", "geography"})
 
 
 def is_text(column_type: T.DataType) -> bool:
@@ -21,6 +22,24 @@ def is_text(column_type: T.DataType) -> bool:
         True if the column is a Spark text type, otherwise False
     """
     return isinstance(column_type, TEXT_TYPES)
+
+
+def is_geospatial(column_type: T.DataType) -> bool:
+    """
+    Validates that the input column type is a native GEOMETRY or GEOGRAPHY type.
+
+    Args:
+        column_type: Input column type
+
+    Returns:
+        True if the column is a native geometry/geography type, otherwise False
+
+    Notes:
+        *pyspark.sql.types* does not define *GeometryType* and *GeographyType*
+        across all versions. This method checks the type name against *GEO_TYPE_NAMES*
+        to ensure compatibility.
+    """
+    return column_type.typeName().lower() in GEO_TYPE_NAMES
 
 
 def val_to_str(value: Any, include_sql_quotes: bool = True):
