@@ -8,7 +8,6 @@ as the default implementation. This abstraction enables:
 """
 
 import os
-import inspect
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -186,22 +185,10 @@ def log_sklearn_model_compatible(
     model_name: str,
     signature: MLflowSignature,
 ):
-    """Log sklearn model with compatibility across MLflow API variants.
-
-    Some runtimes accept `name=...` while others require `artifact_path=...`.
-    """
-    log_model_params = inspect.signature(mlflow.sklearn.log_model).parameters
-    if "name" in log_model_params:
-        return mlflow.sklearn.log_model(
-            sk_model=model,
-            name="model",
-            registered_model_name=model_name,
-            signature=signature,
-            serialization_format=SKLEARN_SERIALIZATION_FORMAT,
-        )
+    """Log sklearn model to MLflow."""
     return mlflow.sklearn.log_model(
         sk_model=model,
-        artifact_path="model",
+        name="model",
         registered_model_name=model_name,
         signature=signature,
         serialization_format=SKLEARN_SERIALIZATION_FORMAT,

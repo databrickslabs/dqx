@@ -515,36 +515,6 @@ def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
         logger.warning(msg)
 
 
-@pytest.fixture(autouse=True)
-def _ensure_databricks_config_file(ws, tmp_path_factory):
-    """Ensure DATABRICKS_CONFIG_FILE points to a valid profile.
-
-    MLflow requires a Databricks config profile to exist even when using SDK auth.
-    If DATABRICKS_CONFIG_FILE is already set and the file exists, this is a no-op.
-    Otherwise, create a dummy profile with the real host from the workspace client.
-
-    Workaround for a since-fixed MLflow bug: https://github.com/mlflow/mlflow/pull/20599, "Fix Databricks
-    unified auth support when MLFLOW_ENABLE_DB_SDK=true", merged 2026-04-30. **The mlflow floor in
-    pyproject.toml now carries that fix** (``>=3.13.0``), so this fixture is scaffolding for a bug no
-    supported version has, and is a candidate for deletion.
-
-    It survives only because deleting it cannot be confirmed from CI: CI always supplies real credentials, so
-    the branch below never runs there. A full ``make anomaly`` against a workspace is what settles it. Note
-    that the dummy profile it writes carries ``token = dummy``, so anyone running locally *without*
-    DATABRICKS_CONFIG_FILE set gets ``PermissionDenied: Invalid access token`` from every test, which reads
-    as an expired token rather than as this fixture.
-    """
-    config_file = os.environ.get("DATABRICKS_CONFIG_FILE")
-    if config_file and os.path.isfile(config_file):
-        return
-
-    profile_dir = tmp_path_factory.mktemp("databricks_config")
-    profile_path = profile_dir / "databricks_profile"
-    host = ws.config.host
-    profile_path.write_text(f"[DEFAULT]\nhost = {host}\ntoken = dummy\n")
-    os.environ["DATABRICKS_CONFIG_FILE"] = str(profile_path)
-
-
 @pytest.fixture
 def mlflow_worker_experiment(ws):
     """Create one MLflow experiment per xdist worker (via module cache); reuse across tests.

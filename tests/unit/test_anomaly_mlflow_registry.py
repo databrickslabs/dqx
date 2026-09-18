@@ -53,34 +53,7 @@ def test_log_model_uses_name_when_supported(monkeypatch):
     assert info.registered_model_version == "1"
     assert captured["kwargs"]["name"] == "model"
     assert captured["kwargs"]["registered_model_name"] == "catalog.schema.model"
-    # Named rather than defaulted, and asserted on both branches: MLflow 3 validates a saved sklearn
-    # model against skops' trusted types and refuses MahalanobisDetector, which is DQX's own class, so
-    # omitting this breaks profile="correlation" at registration while every other test still passes.
-    assert captured["kwargs"]["serialization_format"] == SKLEARN_SERIALIZATION_FORMAT
-
-
-def test_log_model_uses_artifact_path_when_name_not_supported(monkeypatch):
-    captured = {}
-
-    def fake_log_model(*, sk_model, artifact_path, registered_model_name, signature, serialization_format):
-        captured["kwargs"] = {
-            "sk_model": sk_model,
-            "artifact_path": artifact_path,
-            "registered_model_name": registered_model_name,
-            "signature": signature,
-            "serialization_format": serialization_format,
-        }
-        return SimpleNamespace(registered_model_version="2")
-
-    monkeypatch.setattr(mlflow.sklearn, "log_model", fake_log_model)
-
-    info = log_sklearn_model_compatible(
-        model=_DummyModel(),
-        model_name="catalog.schema.model",
-        signature=_DummySignature(),
-    )
-
-    assert info.registered_model_version == "2"
-    assert captured["kwargs"]["artifact_path"] == "model"
-    assert captured["kwargs"]["registered_model_name"] == "catalog.schema.model"
+    # Named rather than defaulted: MLflow 3 validates a saved sklearn model against skops'
+    # trusted types and refuses MahalanobisDetector, which is DQX's own class, so omitting this
+    # breaks profile="correlation" at registration while every other test still passes.
     assert captured["kwargs"]["serialization_format"] == SKLEARN_SERIALIZATION_FORMAT
