@@ -10,6 +10,7 @@ from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import (
     PROFILE_BUILDER_REGISTRY,
     deregister_profile_builder,
+    make_geospatial_profile,
     make_has_no_outliers_profile,
     make_is_in_profile,
     make_min_max_profile,
@@ -752,3 +753,23 @@ def test_validate_profile_options_passes_when_only_one_list_set():
     validate_profile_options({"has_no_outliers_allow_columns": ["a"]})
     validate_profile_options({"has_no_outliers_deny_columns": ["b"]})
     validate_profile_options({})
+
+
+# ---------------------------------------------------------------------------
+# Geospatial builder gating
+# ---------------------------------------------------------------------------
+
+
+def test_geospatial_builder_is_registered():
+    assert "geospatial" in PROFILE_BUILDER_REGISTRY
+
+
+def test_make_geospatial_profile_returns_none_when_not_opted_in(mock_df):
+    assert make_geospatial_profile(mock_df, "geom", T.StringType(), {"count_non_null": 5}, {}) is None
+
+
+def test_make_geospatial_profile_returns_none_for_non_geospatial_column(mock_df):
+    profile = make_geospatial_profile(
+        mock_df, "value", T.StringType(), {"count_non_null": 5}, {"profile_geospatial": True}
+    )
+    assert profile is None

@@ -39,6 +39,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Maps the ST_GeometryType value profiled for a homogeneous geometry column to the geospatial check
+# that validates it. Unknown types produce no rule.
+_GEOMETRY_TYPE_CHECK_FUNCTIONS = {
+    "ST_Point": "is_point",
+    "ST_LineString": "is_linestring",
+    "ST_Polygon": "is_polygon",
+    "ST_MultiPoint": "is_multipoint",
+    "ST_MultiLineString": "is_multilinestring",
+    "ST_MultiPolygon": "is_multipolygon",
+    "ST_GeometryCollection": "is_geometrycollection",
+}
+
+
+def _geo_no_arg_check(function_name: str, column: str, criticality: str) -> dict:
+    """Builds a check dict for a geospatial check that takes only a column argument."""
+    return {
+        "check": {"function": function_name, "arguments": {"column": column}},
+        "name": f"{column}_{function_name}",
+        "criticality": criticality,
+    }
+
 
 class DQGenerator(DQEngineBase):
     def __init__(
@@ -527,6 +548,210 @@ class DQGenerator(DQEngineBase):
             "criticality": criticality,
         }
 
+    @staticmethod
+    def dq_generate_geometry_type(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that a geometry column holds a single geometry type.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the profiled ST_ geometry *type*.
+
+        Returns:
+            A dictionary representing the data quality rule, or None if the type is not recognized.
+        """
+        function_name = _GEOMETRY_TYPE_CHECK_FUNCTIONS.get(str(params.get("type")))
+        if not function_name:
+            return None
+        return _geo_no_arg_check(function_name, column, criticality)
+
+    @staticmethod
+    def dq_generate_has_x_coordinate_between(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometry column's x coordinates (a.k.a. longitude)
+        fall within a specific range.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the *min_value* and *max_value* bounds.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "has_x_coordinate_between",
+                "arguments": {"column": column, "min_value": params["min_value"], "max_value": params["max_value"]},
+            },
+            "name": f"{column}_x_coordinate_not_in_range",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def dq_generate_has_y_coordinate_between(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometry column's y coordinates (a.k.a. latitude)
+        fall within a specific range.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the *min_value* and *max_value* bounds.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "has_y_coordinate_between",
+                "arguments": {"column": column, "min_value": params["min_value"], "max_value": params["max_value"]},
+            },
+            "name": f"{column}_y_coordinate_not_in_range",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def dq_generate_is_area_not_less_than(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometry column's areas are not less than
+        a specified limit.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the *value* limit and optional *srid*.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        arguments = {"column": column, "value": params["value"]}
+        if params.get("srid") is not None:
+            arguments["srid"] = params["srid"]
+        return {
+            "check": {"function": "is_area_not_less_than", "arguments": arguments},
+            "name": f"{column}_area_less_than_limit",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def dq_generate_is_area_not_greater_than(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometry column's areas are not greater than
+        a specified limit.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the *value* limit and optional *srid*.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        arguments = {"column": column, "value": params["value"]}
+        if params.get("srid") is not None:
+            arguments["srid"] = params["srid"]
+        return {
+            "check": {"function": "is_area_not_greater_than", "arguments": arguments},
+            "name": f"{column}_area_greater_than_limit",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def dq_generate_is_num_points_not_less_than(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometry column's coordinate counts are not
+        less than a specified limit.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the *value* limit.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "is_num_points_not_less_than",
+                "arguments": {"column": column, "value": params["value"]},
+            },
+            "name": f"{column}_num_points_less_than_limit",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def dq_generate_is_num_points_not_greater_than(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometry column's coordinate counts are not
+        greater than a specified limit.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including the *value* limit.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "is_num_points_not_greater_than",
+                "arguments": {"column": column, "value": params["value"]},
+            },
+            "name": f"{column}_num_points_greater_than_limit",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def dq_generate_is_non_empty_geometry(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometries are not empty.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters (unused; consumed for a uniform dispatch signature).
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        params = params or {}
+        return _geo_no_arg_check("is_non_empty_geometry", column, criticality)
+
+    @staticmethod
+    def dq_generate_is_ogc_valid(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometries are valid in the OGC sense.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters (unused; consumed for a uniform dispatch signature).
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        params = params or {}
+        return _geo_no_arg_check("is_ogc_valid", column, criticality)
+
+    @staticmethod
+    def dq_generate_is_not_null_island(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check that geometries are not null islands (POINT(0 0)).
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters (unused; consumed for a uniform dispatch signature).
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        params = params or {}
+        return _geo_no_arg_check("is_not_null_island", column, criticality)
+
     _checks_mapping = {
         "is_not_null": dq_generate_is_not_null,
         "is_in": dq_generate_is_in,
@@ -535,4 +760,14 @@ class DQGenerator(DQEngineBase):
         "is_not_empty": dq_generate_is_not_empty,
         "is_unique": dq_generate_is_unique,
         "has_no_outliers": dq_generate_has_no_outliers,
+        "geometry_type": dq_generate_geometry_type,
+        "has_x_coordinate_between": dq_generate_has_x_coordinate_between,
+        "has_y_coordinate_between": dq_generate_has_y_coordinate_between,
+        "is_area_not_less_than": dq_generate_is_area_not_less_than,
+        "is_area_not_greater_than": dq_generate_is_area_not_greater_than,
+        "is_num_points_not_less_than": dq_generate_is_num_points_not_less_than,
+        "is_num_points_not_greater_than": dq_generate_is_num_points_not_greater_than,
+        "is_non_empty_geometry": dq_generate_is_non_empty_geometry,
+        "is_ogc_valid": dq_generate_is_ogc_valid,
+        "is_not_null_island": dq_generate_is_not_null_island,
     }
