@@ -2618,7 +2618,8 @@ def test_profiler_no_has_no_outliers_when_outliers_exceed_threshold(spark, ws):
     assert len(has_no_outliers_profiles) == 0
 
 
-def test_profiler_geospatial_generates_profiles_and_checks(spark, ws, skip_if_runtime_not_geo_compatible):
+
+def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_geo_compatible, spark, ws):
     geom_df = _geometry_dataframe(spark)
     assert is_geospatial(geom_df.schema["geom"].dataType)
 
@@ -2649,7 +2650,7 @@ def test_profiler_geospatial_generates_profiles_and_checks(spark, ws, skip_if_ru
     assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
 
 
-def test_profiler_geospatial_disabled_by_default(spark, ws, skip_if_runtime_not_geo_compatible):
+def test_profiler_geospatial_disabled_by_default(skip_if_runtime_not_geo_compatible, spark, ws):
     geom_df = _geometry_dataframe(spark)
     profiler = DQProfiler(ws)
     stats, profiles = profiler.profile(
@@ -2663,7 +2664,7 @@ def test_profiler_geospatial_disabled_by_default(spark, ws, skip_if_runtime_not_
     assert "min_x_coordinate" not in stats["geom"]
 
 
-def test_profiler_geospatial_skips_all_null_column(spark, ws, skip_if_runtime_not_geo_compatible):
+def test_profiler_geospatial_skips_all_null_column(skip_if_runtime_not_geo_compatible, spark, ws):
     null_geom_df = spark.createDataFrame(
         [[None], [None]], schema=T.StructType([T.StructField("wkt", T.StringType())])
     ).selectExpr("try_to_geometry(wkt) AS geom")
