@@ -529,18 +529,32 @@ lineage collection is affected.
 
 **Configuration:**
 
-- *LineageSearchConfig* (used for *upstream*, *downstream*, *columns*): *depth* (int ≥ 1,
-  default `1`), *lookback_days* (int ≥ 1, default `30`), *max_nodes* (int ≥ 1, default `100`).
-  Both the table-lineage and column-lineage walks are recursive and honour *depth* and
-  *max_nodes* identically. *max_nodes* is a **guardrail** applied as a ``LIMIT`` inside each
-  member of the recursive CTE (bounding the frontier per hop, so intermediate expansion is
-  capped per iteration) and once more at the tail (bounding total output). Together with
-  *depth* this bounds the traversal's materialised row count to ``O(depth * max_nodes)``.
-  It does **not** guarantee which rows survive when the graph produces more edges than the
-  cap (no ordering contract); treat it as a safety limit.
-- *LineageActionConfig* composes three optional sub-configs — *upstream*, *downstream*,
-  *columns*. Each defaults to a fresh *LineageSearchConfig* (direction on by default); set any
-  field to `null` (YAML) / `None` (Python) to disable that direction.
+- *LineageSearchConfig* (used for *upstream*, *downstream*, *column_upstream*,
+  *column_downstream*): *depth* (int ≥ 1, default `1`), *lookback_days* (int ≥ 1, default
+  `30`), *max_nodes* (int ≥ 1, default `100`). Both the table-lineage and column-lineage
+  walks are recursive and honour *depth* and *max_nodes* identically. *max_nodes* is a
+  **guardrail** applied as a ``LIMIT`` inside each member of the recursive CTE (bounding the
+  frontier per hop, so intermediate expansion is capped per iteration) and once more at the
+  tail (bounding total output). Together with *depth* this bounds the traversal's
+  materialised row count to ``O(depth * max_nodes)``. It does **not** guarantee which rows
+  survive when the graph produces more edges than the cap (no ordering contract); treat it
+  as a safety limit.
+- *LineageActionConfig* composes four optional sub-configs — *upstream*, *downstream*,
+  *column_upstream*, *column_downstream* — plus a *failures_source* selector:
+  - Sub-configs each default to a fresh *LineageSearchConfig* (direction on by default); set
+    any field to `null` (YAML) / `None` (Python) to disable that direction. Table and column
+    directions are symmetric — the split lets you collect, e.g., only *upstream* +
+    *column_downstream* if that is all you need.
+  - *failures_source* (default `"both"`) picks which sink the per-failed-column seeds are
+    read from: `"output"` reads only *context.output_location*, `"quarantine"` reads only
+    *context.quarantine_location*, `"both"` reads from whichever of the two are present and
+    unions the distinct failed columns. DQX writes failures to *quarantine_location* in
+    split-run mode and to *output_location* in non-split mode, so the default `"both"`
+    makes column lineage work in either configuration without extra wiring.
+  - *errors_column* / *warnings_column* (defaults `"_errors"` / `"_warnings"`) name the two
+    ARRAY&lt;STRUCT&gt; columns DQX appends to the output / quarantine tables. Override them
+    when the engine's error / warning column renames have been applied so this action can
+    still locate the issue structs.
 - *output_config* (required *OutputConfig*): the Delta destination for the persisted lineage rows.
   Fully configurable — *location*, *format*, *mode*, *options*, *partition_by*, *cluster_by*.
 
@@ -585,7 +599,9 @@ lineage = DQAction(
         config=LineageActionConfig(
             upstream=LineageSearchConfig(depth=2, lookback_days=30, max_nodes=100),
             downstream=LineageSearchConfig(depth=1),
-            columns=None,  # disable per-failed-column lineage for this action
+            column_upstream=LineageSearchConfig(depth=2),
+            column_downstream=None,  # disable downstream column lineage for this action
+            failures_source="both",   # read failures from output_location and quarantine_location
         ),
     ),
 )
@@ -607,7 +623,10 @@ lineage = DQAction(
         max_nodes: 100
       downstream:
         depth: 1
-      columns: null   # disable per-failed-column lineage for this action
+      column_upstream:
+        depth: 2
+      column_downstream: null   # disable downstream column lineage for this action
+      failures_source: both     # read failures from output_location and quarantine_location
 ```
 
   </TabItem>

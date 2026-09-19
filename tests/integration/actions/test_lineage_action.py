@@ -265,13 +265,18 @@ def _make_services(spark: SparkSession, ws: WorkspaceClient) -> ActionServices:
     )
 
 
-def _make_context(input_location: str, output_location: str | None = None) -> ActionContext:
+def _make_context(
+    input_location: str,
+    output_location: str | None = None,
+    quarantine_location: str | None = None,
+) -> ActionContext:
     return ActionContext(
         metrics={"error_row_count": 1},
         run_id="integration-lineage-run",
         run_time=datetime.now(timezone.utc),
         input_location=input_location,
         output_location=output_location,
+        quarantine_location=quarantine_location,
     )
 
 
@@ -302,7 +307,8 @@ def _table_only_action(lineage_location: str, *, downstream: bool = False, depth
         config=LineageActionConfig(
             upstream=LineageSearchConfig(depth=depth, lookback_days=30, max_nodes=100) if not downstream else None,
             downstream=LineageSearchConfig(depth=depth, lookback_days=30, max_nodes=100) if downstream else None,
-            columns=None,
+            column_upstream=None,
+            column_downstream=None,
         ),
     )
 
@@ -581,7 +587,8 @@ def test_column_lineage_ignores_prior_run_failures(
         config=LineageActionConfig(
             upstream=None,
             downstream=None,
-            columns=LineageSearchConfig(depth=1, lookback_days=30),
+            column_upstream=LineageSearchConfig(depth=1, lookback_days=30),
+            column_downstream=LineageSearchConfig(depth=1, lookback_days=30),
         ),
     )
     try:
@@ -652,7 +659,8 @@ def test_column_lineage_recurses_across_two_hops(
         config=LineageActionConfig(
             upstream=None,
             downstream=None,
-            columns=LineageSearchConfig(depth=2, lookback_days=30),
+            column_upstream=LineageSearchConfig(depth=2, lookback_days=30),
+            column_downstream=None,
         ),
     )
     _, persisted_up = _run_action(
@@ -677,7 +685,8 @@ def test_column_lineage_recurses_across_two_hops(
         config=LineageActionConfig(
             upstream=None,
             downstream=None,
-            columns=LineageSearchConfig(depth=2, lookback_days=30),
+            column_upstream=None,
+            column_downstream=LineageSearchConfig(depth=2, lookback_days=30),
         ),
     )
     _, persisted_down = _run_action(
@@ -722,7 +731,8 @@ def test_max_nodes_caps_dense_table_lineage(
         config=LineageActionConfig(
             upstream=None,
             downstream=LineageSearchConfig(depth=1, lookback_days=30, max_nodes=3),
-            columns=None,
+            column_upstream=None,
+            column_downstream=None,
         ),
     )
     _, persisted = _run_action(
@@ -737,3 +747,50 @@ def test_max_nodes_caps_dense_table_lineage(
         f"expected max_nodes=3 downstream rows, got {len(downstream_rows)}: "
         f"{[row['target_table'] for row in downstream_rows]}"
     )
+
+
+def test_column_lineage_reads_failures_from_quarantine(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+    make_output_table,
+) -> None:
+    """Split-run coverage — DQX writes failures to *quarantine_location* while *output_location*
+    carries only clean rows. ``failures_source="both"`` (the default) must still seed column
+    lineage from the quarantine sink.
+    """
+    source = "cat.sch.split_run_src"
+    downstream_table = "cat.sch.split_run_dst"
+    _seed_column_lineage(
+        spark,
+        patched_lineage_constants.column_lineage,
+        [(source, "value", downstream_table, "value_dst")],
+    )
+
+    # Fabricate a split run: *output_location* has no failure rows (imagine only valid rows
+    # landed there), *quarantine_location* carries the failure that column lineage must see.
+    output_location = make_output_table(failed_column="value", name_prefix="split_out")
+    spark.sql(f"DELETE FROM {output_location}")  # split runs route failures elsewhere
+    quarantine_location = make_output_table(failed_column="value", name_prefix="split_quar")
+
+    lineage_location = make_lineage_sink()
+    action = CollectLineageAction(
+        output_config=OutputConfig(location=lineage_location, mode="append"),
+        config=LineageActionConfig(
+            upstream=None,
+            downstream=None,
+            column_upstream=None,
+            column_downstream=LineageSearchConfig(depth=1, lookback_days=30),
+        ),
+    )
+    _, persisted = _run_action(
+        action=action,
+        context=_make_context(source, output_location=output_location, quarantine_location=quarantine_location),
+        services=_make_services(spark, ws),
+        lineage_location=lineage_location,
+        spark=spark,
+    )
+    column_rows = persisted.where(persisted["edge_type"] == "column_downstream").collect()
+    source_columns = {row["source_column"] for row in column_rows}
+    assert "value" in source_columns, f"quarantine-only failure did not seed column lineage: {source_columns}"

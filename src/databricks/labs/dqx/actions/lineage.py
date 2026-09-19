@@ -54,9 +54,10 @@ LINEAGE_COLUMN_LINEAGE = "system.access.column_lineage"
 
 # Default names of the DQX-appended result columns on the output / quarantine tables. These are
 # the column names DQX writes when no engine-level rename is configured; both *_errors* and
-# *_warnings* are ARRAY<STRUCT<..., columns ARRAY<STRING>, ...>>.
-_ERRORS_COLUMN = "_errors"
-_WARNINGS_COLUMN = "_warnings"
+# *_warnings* are ARRAY<STRUCT<..., columns ARRAY<STRING>, ...>>. Callers who renamed these at
+# the engine level should override *errors_column* / *warnings_column* on *LineageActionConfig*.
+_DEFAULT_ERRORS_COLUMN = "_errors"
+_DEFAULT_WARNINGS_COLUMN = "_warnings"
 
 # Schema of the failed-columns DataFrame threaded between *extract_failed_columns* and
 # *_collect_column_lineage_df*. A single STRING column keeps the join predicate trivial.
@@ -192,19 +193,47 @@ class LineageSearchConfig(BaseModel):
         return value
 
 
+FailuresSource = Literal["output", "quarantine", "both"]
+
+
 class LineageActionConfig(BaseModel):
     """Top-level configuration for *CollectLineageAction*.
 
-    Composes three independent sub-configs — *upstream*, *downstream*, *columns*. Each defaults
-    to a fresh *LineageSearchConfig* (direction on by default); set any field to *None* to
-    disable that direction — this replaces the old per-config *enabled* flag.
+    Composes four independent sub-configs — *upstream*, *downstream*, *column_upstream*,
+    *column_downstream* — plus a *failures_source* selector that picks which sink to read
+    per-failed-column lineage seeds from.
+
+    Each sub-config defaults to a fresh *LineageSearchConfig* (direction on by default); set
+    any field to *None* to disable that direction. Table and column directions are symmetric:
+    the four fields let a caller collect, e.g., only table-upstream + column-downstream if
+    that is all they need.
+
+    *failures_source* controls where *extract_failed_columns* reads issue structs from at
+    execute time:
+
+      * ``"output"`` — only *context.output_location* (skips column lineage when the location
+        is missing or has no failures).
+      * ``"quarantine"`` — only *context.quarantine_location*.
+      * ``"both"`` (default) — read from whichever of the two locations are present and union
+        their distinct failed columns. DQX writes failures to *quarantine_location* in
+        split-run mode and to *output_location* in non-split mode, so *"both"* makes the
+        action work in either configuration without extra wiring.
+
+    *errors_column* and *warnings_column* name the two ARRAY<STRUCT> columns DQX appends to
+    the output / quarantine tables. Defaults match DQX's built-in names (``_errors`` /
+    ``_warnings``); override them when the engine's error / warning column renames have been
+    applied so this action can still locate the issue structs.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     upstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
     downstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
-    columns: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
+    column_upstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
+    column_downstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
+    failures_source: FailuresSource = "both"
+    errors_column: str = _DEFAULT_ERRORS_COLUMN
+    warnings_column: str = _DEFAULT_WARNINGS_COLUMN
 
 
 @register_action
@@ -212,10 +241,12 @@ class CollectLineageAction(Action):
     """Collect table / column lineage into a Delta table.
 
     On every run, gathers upstream/downstream tables (recursive-CTE walk bounded by *depth*)
-    and recursive per-failed-column lineage, and writes one row per edge to the Delta table
-    specified by *output_config*. The action never fails the pipeline — collection errors are
-    logged and turned into *CONFIG_ERROR* results. To disable a specific direction, set the
-    corresponding sub-config on *LineageActionConfig* (*upstream*, *downstream*, or *columns*)
+    and recursive per-failed-column lineage (upstream and downstream, seeded from failure
+    records in *output_location* and/or *quarantine_location* per *config.failures_source*),
+    and writes one row per edge to the Delta table specified by *output_config*. The action
+    never fails the pipeline — collection errors are logged and turned into *CONFIG_ERROR*
+    results. To disable a specific direction, set the corresponding sub-config on
+    *LineageActionConfig* (*upstream*, *downstream*, *column_upstream*, *column_downstream*)
     to *None*.
 
     Attributes:
@@ -230,7 +261,10 @@ class CollectLineageAction(Action):
     type: Literal["collect_lineage"] = "collect_lineage"
     name: str = "collect_lineage"
     output_config: OutputConfig
-    config: LineageActionConfig = Field(default_factory=LineageActionConfig)
+    # Bare BaseModel default (not Field(default_factory=...)) so pylint's type inference on
+    # `self.config` produces LineageActionConfig instead of FieldInfo. Pydantic v2 deep-copies
+    # mutable defaults per instance, so this is safe against cross-instance mutation.
+    config: LineageActionConfig = LineageActionConfig()
 
     @field_validator("output_config", mode="before")
     @classmethod
@@ -282,7 +316,14 @@ class CollectLineageAction(Action):
 
     def _execute(self, context: ActionContext, safe_name: str, source_table: str, spark: SparkSession) -> ActionResult:
         failed_columns_df = _resolve_failed_columns(
-            spark=spark, output_location=context.output_location, safe_name=safe_name, run_id=context.run_id
+            spark=spark,
+            output_location=context.output_location,
+            quarantine_location=context.quarantine_location,
+            failures_source=self.config.failures_source,
+            errors_column=self.config.errors_column,
+            warnings_column=self.config.warnings_column,
+            safe_name=safe_name,
+            run_id=context.run_id,
         )
         # The failed-columns set is exposed to the recursive column-lineage CTE as a session
         # temp view (see *_column_direction_df*). The view must outlive *save_dataframe_as_table*
@@ -312,32 +353,44 @@ class CollectLineageAction(Action):
                 spark.catalog.dropTempView(failed_columns_view)
 
 
-def extract_failed_columns(spark: SparkSession, output_location: str, run_id: str) -> DataFrame:
+def extract_failed_columns(
+    spark: SparkSession,
+    output_location: str,
+    run_id: str,
+    errors_column: str = _DEFAULT_ERRORS_COLUMN,
+    warnings_column: str = _DEFAULT_WARNINGS_COLUMN,
+) -> DataFrame:
     """Read *output_location* and return a DataFrame of distinct column names that failed a check
     **for the current DQX run**.
 
-    DQX appends two ARRAY<STRUCT> columns to the output table — *_errors* and *_warnings* — and
-    every struct exposes a *run_id* STRING plus a *columns* ARRAY<STRING> listing the column(s)
-    the check flagged. In append-mode writes the same table accumulates rows from many runs, so
-    this helper explodes both arrays, keeps only issues whose ``issue.run_id`` matches the
-    supplied *run_id*, then explodes the inner *columns* field, unions the two, filters nulls,
-    and returns the distinct set as a one-column DataFrame (schema *_FAILED_COLUMNS_SCHEMA* with
-    a single ``col_name STRING`` column). Without the run-id filter a prior run's failure could
-    seed column-lineage rows stamped with the current *run_id*.
+    DQX appends two ARRAY<STRUCT> columns to the output table (default names ``_errors`` /
+    ``_warnings`` — override via *errors_column* / *warnings_column* when the DQX engine has
+    renamed them) and every struct exposes a *run_id* STRING plus a *columns* ARRAY<STRING>
+    listing the column(s) the check flagged. In append-mode writes the same table accumulates
+    rows from many runs, so this helper explodes both arrays, keeps only issues whose
+    ``issue.run_id`` matches the supplied *run_id*, then explodes the inner *columns* field,
+    unions the two, filters nulls, and returns the distinct set as a one-column DataFrame
+    (schema *_FAILED_COLUMNS_SCHEMA* with a single ``col_name STRING`` column). Without the
+    run-id filter a prior run's failure could seed column-lineage rows stamped with the
+    current *run_id*.
 
-    The DataFrame shape is deliberate: the downstream *_collect_column_lineage_df* joins it into
-    *system.access.column_lineage* rather than iterating one query per name, so the full pipeline
-    stays lazy and Spark can broadcast the (small) failed-columns set.
+    The DataFrame shape is deliberate: the downstream column-lineage CTE joins it via a
+    session temp view rather than iterating one query per name, so the full pipeline stays
+    lazy and Spark can broadcast the (small) failed-columns set.
 
-    A missing table, a customised error/warning column name, or a read failure returns an empty
-    DataFrame with the same schema and logs a sanitised warning — the join then produces zero
-    rows and column lineage becomes a natural no-op.
+    A missing table, an issue-column name that is not present on the output, or a read
+    failure returns an empty DataFrame with the same schema and logs a sanitised warning —
+    the join then produces zero rows and column lineage becomes a natural no-op.
 
     Args:
         spark: Active *SparkSession* used to read *output_location*.
         output_location: 3-level UC name of the DQX output (or quarantine) table.
         run_id: Current DQX run identifier — only issue structs whose ``issue.run_id`` equals
             this value contribute to the returned column set.
+        errors_column: Name of the ARRAY<STRUCT> column that carries error-level issues
+            (default ``_errors``).
+        warnings_column: Name of the ARRAY<STRUCT> column that carries warning-level issues
+            (default ``_warnings``).
 
     Returns:
         DataFrame with a single ``col_name STRING`` column, distinct-only, non-null-only.
@@ -351,7 +404,7 @@ def extract_failed_columns(spark: SparkSession, output_location: str, run_id: st
 
     present_columns = set(df.columns)
     issue_frames: list[DataFrame] = []
-    for issues_col in (_ERRORS_COLUMN, _WARNINGS_COLUMN):
+    for issues_col in (errors_column, warnings_column):
         if issues_col not in present_columns:
             continue
         exploded = df.select(F.explode(F.col(issues_col)).alias("issue")).where(F.col("issue.run_id") == F.lit(run_id))
@@ -368,23 +421,52 @@ def extract_failed_columns(spark: SparkSession, output_location: str, run_id: st
 
 
 def _resolve_failed_columns(
-    *, spark: SparkSession, output_location: str | None, safe_name: str, run_id: str
+    *,
+    spark: SparkSession,
+    output_location: str | None,
+    quarantine_location: str | None,
+    failures_source: FailuresSource,
+    errors_column: str,
+    warnings_column: str,
+    safe_name: str,
+    run_id: str,
 ) -> DataFrame:
-    """Wrap *extract_failed_columns* with the *output_location=None* guard.
+    """Read failed-column names from the sinks selected by *failures_source* and union them.
 
-    Column lineage requires a table to read the failed-check items from. When *output_location*
-    is absent on the context (e.g. an in-memory run), a warning is logged and an empty
-    failed-columns DataFrame is returned so the join downstream produces no rows. *run_id* is
-    forwarded to *extract_failed_columns* so only issues emitted by the current run seed
-    column-lineage — see that function's docstring for why the filter is required in append mode.
+    *failures_source* controls which sinks are consulted:
+
+      * ``"output"``   — only *output_location*.
+      * ``"quarantine"`` — only *quarantine_location*.
+      * ``"both"``     — read from whichever of the two is non-*None* and union the distinct
+        column names. DQX writes failures to *quarantine_location* in split-run mode and to
+        *output_location* in non-split mode; ``"both"`` therefore ensures column-lineage seeds
+        are populated regardless of routing.
+
+    *errors_column* / *warnings_column* are the names of the ARRAY<STRUCT> issue columns on
+    the sinks — forwarded to *extract_failed_columns* so custom engine renames are honoured.
+
+    When no configured sink is available a sanitised warning is logged and an empty
+    *_FAILED_COLUMNS_SCHEMA* DataFrame is returned so column lineage becomes a natural no-op.
+    *run_id* is forwarded to *extract_failed_columns* so only issues emitted by the current
+    run seed column-lineage — see that function's docstring for why the filter is required in
+    append mode.
     """
-    if output_location is None:
+    locations: list[str] = []
+    if failures_source in {"output", "both"} and output_location is not None:
+        locations.append(output_location)
+    if failures_source in {"quarantine", "both"} and quarantine_location is not None:
+        locations.append(quarantine_location)
+    if not locations:
         logger.warning(
-            f"CollectLineageAction '{safe_name}' has no output_location on the context; "
-            "column lineage will be skipped."
+            f"CollectLineageAction '{safe_name}' has no readable failures source "
+            f"(failures_source='{failures_source}', output_location={output_location!r}, "
+            f"quarantine_location={quarantine_location!r}); column lineage will be skipped."
         )
         return spark.createDataFrame([], _FAILED_COLUMNS_SCHEMA)
-    return extract_failed_columns(spark, output_location, run_id)
+    result = extract_failed_columns(spark, locations[0], run_id, errors_column, warnings_column)
+    for location in locations[1:]:
+        result = result.unionByName(extract_failed_columns(spark, location, run_id, errors_column, warnings_column))
+    return result.distinct()
 
 
 def _register_failed_columns_view(failed_columns_df: DataFrame) -> str | None:
@@ -485,15 +567,16 @@ def _collect_lineage_rows(
 ) -> DataFrame:
     """Collect all lineage rows for *source_table* into a single DataFrame with *LINEAGE_TABLE_SCHEMA*.
 
-    Each enabled branch (*upstream*, *downstream*, *columns*) returns its own
-    *LINEAGE_TABLE_SCHEMA*-shaped DataFrame; the composition is a plain *unionByName* over an
-    empty-schema seed, so downstream writes are well-formed Delta writes even when no branch
-    contributed rows.
+    Each enabled branch (*upstream*, *downstream*, *column_upstream*, *column_downstream*)
+    returns its own *LINEAGE_TABLE_SCHEMA*-shaped DataFrame; the composition is a plain
+    *unionByName* over an empty-schema seed, so downstream writes are well-formed Delta writes
+    even when no branch contributed rows.
 
     *failed_columns_view* is the name of a session temp view (registered by
     *_register_failed_columns_view*) with a single ``col_name STRING`` column, or *None* when
     the failed-columns set is empty / column lineage is skipped. It is referenced by the
-    recursive column-lineage CTE via ``IN (SELECT col_name FROM <view>)``.
+    recursive column-lineage CTE via ``IN (SELECT col_name FROM <view>)``. When *None*, both
+    column-lineage branches are skipped regardless of their sub-configs.
     """
     common: dict[str, Any] = {
         "run_id": run_id,
@@ -510,16 +593,29 @@ def _collect_lineage_rows(
         result = result.unionByName(
             _collect_downstream_df(spark=spark, source_table=source_table, search=config.downstream, common=common)
         )
-    if config.columns is not None:
-        result = result.unionByName(
-            _collect_column_lineage_df(
-                spark=spark,
-                source_table=source_table,
-                failed_columns_view=failed_columns_view,
-                search=config.columns,
-                common=common,
+    if failed_columns_view is not None:
+        if config.column_upstream is not None:
+            result = result.unionByName(
+                _column_direction_df(
+                    spark=spark,
+                    source_table=source_table,
+                    failed_columns_view=failed_columns_view,
+                    edge_type=_EDGE_COLUMN_UPSTREAM,
+                    search=config.column_upstream,
+                    common=common,
+                )
             )
-        )
+        if config.column_downstream is not None:
+            result = result.unionByName(
+                _column_direction_df(
+                    spark=spark,
+                    source_table=source_table,
+                    failed_columns_view=failed_columns_view,
+                    edge_type=_EDGE_COLUMN_DOWNSTREAM,
+                    search=config.column_downstream,
+                    common=common,
+                )
+            )
     return _resolve_target_delta_versions(spark, result)
 
 
@@ -644,6 +740,7 @@ def _walk_lineage(
     # are validated Pydantic ints (>= 1) interpolated as bare constants.
     query = (
         "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ("
+        " ("
         f"  SELECT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
         f"         array({table_literal}, {key_other}) AS path, event_time "
         f"  FROM {LINEAGE_TABLE_LINEAGE} "
@@ -652,7 +749,9 @@ def _walk_lineage(
         f"    AND {key_other} <> {table_literal} "
         f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f"  LIMIT {max_nodes} "
+        " )"
         "  UNION ALL "
+        f" ("
         f"  SELECT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
         f"         array_append(e.path, t.{key_other}), t.event_time "
         f"  FROM edges e JOIN {LINEAGE_TABLE_LINEAGE} t "
@@ -662,10 +761,10 @@ def _walk_lineage(
         f"    AND NOT array_contains(e.path, t.{key_other}) "
         f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f"  LIMIT {max_nodes} "
+        " )"
         ") "
         "SELECT DISTINCT anchor, neighbour, depth "
-        "FROM edges "
-        f"LIMIT {max_nodes}"
+        f"FROM edges LIMIT {max_nodes}"
     )
     try:
         walk_df = spark.sql(query)
@@ -681,52 +780,6 @@ def _walk_lineage(
         target_column_col=F.lit(None).cast("string"),
         common=common,
     )
-
-
-def _collect_column_lineage_df(
-    *,
-    spark: SparkSession,
-    source_table: str,
-    failed_columns_view: str | None,
-    search: LineageSearchConfig,
-    common: dict[str, Any],
-) -> DataFrame:
-    """Column-lineage rows for *source_table* — recursive-CTE walks in both directions.
-
-    Threads the session temp view name registered by *_register_failed_columns_view* into each
-    direction query so the recursive CTEs reference it via ``IN (SELECT col_name FROM <view>)``.
-    Each direction issues its own ``WITH RECURSIVE`` walk mirroring *_walk_lineage* — bounded
-    by *search.depth* and capped by ``LIMIT {search.max_nodes}``.
-
-    The DataFrame stays lazy end-to-end: the view is owned by *_execute*, which drops it after
-    *save_dataframe_as_table* has materialised the write. No driver collect is needed here.
-
-    Args:
-        spark: Active *SparkSession*.
-        source_table: 3-level UC anchor.
-        failed_columns_view: Name of the session temp view holding failed column names, or
-            *None* when the failed-columns set is empty — an empty *LINEAGE_TABLE_SCHEMA*
-            DataFrame is returned without issuing any query.
-        search: Per-direction bound on recursion depth (*depth*), lookback window
-            (*lookback_days*), and post-CTE row cap (*max_nodes*).
-        common: Constants added to each emitted row.
-    """
-    if failed_columns_view is None:
-        return _empty_lineage_df(spark)
-
-    result = _empty_lineage_df(spark)
-    for edge_type in (_EDGE_COLUMN_UPSTREAM, _EDGE_COLUMN_DOWNSTREAM):
-        result = result.unionByName(
-            _column_direction_df(
-                spark=spark,
-                source_table=source_table,
-                failed_columns_view=failed_columns_view,
-                edge_type=edge_type,
-                search=search,
-                common=common,
-            )
-        )
-    return result
 
 
 def _column_direction_df(

@@ -294,7 +294,8 @@ lineage_action = CollectLineageAction(
     config=LineageActionConfig(
         upstream=LineageSearchConfig(depth=3, lookback_days=7),
         downstream=LineageSearchConfig(depth=3, lookback_days=7),
-        columns=LineageSearchConfig(depth=1, lookback_days=7),
+        column_upstream=LineageSearchConfig(depth=1, lookback_days=7),
+        column_downstream=LineageSearchConfig(depth=1, lookback_days=7),
     ),
 )
 

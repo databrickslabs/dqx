@@ -37,8 +37,9 @@ def test_action_round_trip_via_model_dump() -> None:
 def test_metadata_dict_resolves_to_action() -> None:
     """A dict with type='collect_lineage' + nested output_config resolves via the registry.
 
-    *downstream=None* exercises the "disable a direction by setting its sub-config to null"
-    contract that replaces the old per-config *enabled* flag.
+    *downstream=None* / *column_upstream=None* exercises the "disable a direction by setting
+    its sub-config to null" contract that replaces the old per-config *enabled* flag; the
+    top-level *failures_source* is also parsed off the metadata dict.
     """
     metadata: dict = {
         "action": {
@@ -47,7 +48,9 @@ def test_metadata_dict_resolves_to_action() -> None:
             "config": {
                 "upstream": {"depth": 2, "lookback_days": 7, "max_nodes": 100},
                 "downstream": None,
-                "columns": {"depth": 1},
+                "column_upstream": None,
+                "column_downstream": {"depth": 1},
+                "failures_source": "quarantine",
             },
         },
     }
@@ -60,7 +63,10 @@ def test_metadata_dict_resolves_to_action() -> None:
     assert action.config.upstream.depth == 2
     assert action.config.upstream.max_nodes == 100
     assert action.config.downstream is None
-    assert isinstance(action.config.columns, LineageSearchConfig)
+    assert action.config.column_upstream is None
+    assert isinstance(action.config.column_downstream, LineageSearchConfig)
+    assert action.config.column_downstream.depth == 1
+    assert action.config.failures_source == "quarantine"
 
 
 def test_metadata_dict_disables_direction_via_null() -> None:
@@ -69,14 +75,22 @@ def test_metadata_dict_disables_direction_via_null() -> None:
         "action": {
             "type": "collect_lineage",
             "output_config": {"location": "cat.sch.lin"},
-            "config": {"upstream": None, "downstream": None, "columns": None},
+            "config": {
+                "upstream": None,
+                "downstream": None,
+                "column_upstream": None,
+                "column_downstream": None,
+            },
         },
     }
     dq_action = ActionSerializer.from_dict(metadata)
     assert isinstance(dq_action.action, CollectLineageAction)
     assert dq_action.action.config.upstream is None
     assert dq_action.action.config.downstream is None
-    assert dq_action.action.config.columns is None
+    assert dq_action.action.config.column_upstream is None
+    assert dq_action.action.config.column_downstream is None
+    # failures_source defaults to "both" when omitted.
+    assert dq_action.action.config.failures_source == "both"
 
 
 def test_missing_output_config_raises_at_construction() -> None:
@@ -103,10 +117,36 @@ def test_lineage_search_config_field_validators(field: str, bad_value: int, mess
 
 
 def test_lineage_action_config_defaults_are_isolated() -> None:
-    """Each LineageActionConfig field defaults to a fresh instance (default_factory)."""
+    """Each LineageActionConfig sub-config defaults to a fresh instance (default_factory);
+    *failures_source* defaults to *"both"* and the error / warning column names default to
+    DQX's built-in *_errors* / *_warnings*.
+    """
     cfg = LineageActionConfig()
     assert isinstance(cfg.upstream, LineageSearchConfig)
     assert isinstance(cfg.downstream, LineageSearchConfig)
-    assert isinstance(cfg.columns, LineageSearchConfig)
+    assert isinstance(cfg.column_upstream, LineageSearchConfig)
+    assert isinstance(cfg.column_downstream, LineageSearchConfig)
+    assert cfg.failures_source == "both"
+    assert cfg.errors_column == "_errors"
+    assert cfg.warnings_column == "_warnings"
     other = LineageActionConfig()
     assert cfg.upstream is not other.upstream
+    assert cfg.column_upstream is not other.column_upstream
+
+
+def test_metadata_dict_overrides_errors_and_warnings_columns() -> None:
+    """Custom *errors_column* / *warnings_column* names round-trip through the serializer."""
+    metadata: dict = {
+        "action": {
+            "type": "collect_lineage",
+            "output_config": {"location": "cat.sch.lin"},
+            "config": {
+                "errors_column": "dq_errors",
+                "warnings_column": "dq_warnings",
+            },
+        },
+    }
+    dq_action = ActionSerializer.from_dict(metadata)
+    assert isinstance(dq_action.action, CollectLineageAction)
+    assert dq_action.action.config.errors_column == "dq_errors"
+    assert dq_action.action.config.warnings_column == "dq_warnings"
