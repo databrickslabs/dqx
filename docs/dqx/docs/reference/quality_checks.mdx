@@ -2002,8 +2002,16 @@ does not search for the pairing that produces the fewest differences. Unique-key
 
 When a `filter` (`row_filter`) is present, lazy pairing first matches in-scope rows with equal compared values. Remaining
 rows are paired positionally with in-scope source rows first. This prevents filtered-out rows from consuming reference
-positions needed by in-scope rows while preserving available exact matches. The extra matching phase applies only to
-filtered comparisons.
+positions needed by in-scope rows while preserving available exact matches. The filter applies only to source rows;
+all reference rows remain eligible for residual pairing. Consequently, an unmatched in-scope duplicate can be paired
+with a reference value equal to a filtered-out source row and reported as changed. A present source row whose filter
+evaluates to NULL is out of scope, matching Spark `WHERE` semantics. Genuinely reference-only rows are still reported
+when `check_missing_records` is enabled.
+
+The exact-value phase runs for every filtered lazy comparison that has compared columns, even when the matching keys
+are unique. It adds two value-group aggregations, two joins, and exact and residual ranking to the physical plan. For
+large inputs with known-unique keys, use `raise_on_duplicate_keys: true` to trade an eager uniqueness check for the
+simpler single-join comparison.
 
 Set `raise_on_duplicate_keys: true` to require unique matching keys in both datasets. This opt-in validation eagerly
 executes Spark jobs and raises `InvalidParameterError` if either dataset contains duplicate matching-key combinations.

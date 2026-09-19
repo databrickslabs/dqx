@@ -3489,9 +3489,6 @@ def compare_datasets(
         *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
         by compared values using per-group row-number windows; this is robust to duplicates but sorts both
         datasets on the compared columns.
-        When *row_filter* is set, uniqueness is validated only over the rows that pass the filter; duplicate
-        matching keys among filtered-out rows do not raise, because in-scope rows are given priority for
-        reference pairing and filtered-out rows only fill any pairing slots left over.
 
 
     Returns:
@@ -3601,7 +3598,7 @@ def compare_datasets(
                 ("source", df, pk_column_names),
                 ("reference", ref_df, ref_pk_column_names),
             ):
-                matchable_rows = dataset.where(F.col(pairing_scope_col))
+                matchable_rows = dataset
                 if not null_safe_row_matching:
                     matchable_rows = matchable_rows.dropna(subset=matching_columns)
                 duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
@@ -3612,12 +3609,6 @@ def compare_datasets(
                     )
             # Matching keys are unique here, so every group's sequence number is 1; a constant non-null
             # marker gives _add_row_diffs the same present-vs-missing signal without a window shuffle.
-            #
-            # Uniqueness is validated over in-scope rows only (above), so an out-of-scope source row that
-            # shares a key with an in-scope row also gets sequence number 1 and joins the same reference row.
-            # This is a known internal quirk: a reference row can be represented in more than one output row
-            # in this path. It is not user-visible - out-of-scope violations are suppressed and, with
-            # check_missing_records disabled, no reference-only rows are added - so it is left as-is.
             df = df.withColumn(row_number_col, F.lit(1))
             ref_df = ref_df.withColumn(row_number_col, F.lit(1))
 
@@ -4554,27 +4545,31 @@ def _add_exact_value_pairing_columns(
         F.count("*").alias(source_count_col)
     )
     ref_counts = ref_count_input.groupBy(*dict.fromkeys(ref_value_columns)).agg(F.count("*").alias(ref_count_col))
-    df = _match_rows(
-        df.alias("df"),
-        ref_counts.alias("ref_df"),
-        source_value_columns,
-        ref_value_columns,
-        check_missing_records=False,
-        null_safe_row_matching=True,
-    ).select(
-        "df.*",
-        F.coalesce(F.col(f"ref_df.{ref_count_col}"), F.lit(0)).alias(opposite_count_col),
+    df = (
+        df.alias("df")
+        .join(
+            ref_counts.alias("ref_df"),
+            on=_build_join_condition(pk_column_names, ref_pk_column_names, null_safe_row_matching)
+            & _build_join_condition(compare_columns, compare_columns, True),
+            how="left_outer",
+        )
+        .select(
+            "df.*",
+            F.coalesce(F.col(f"ref_df.{ref_count_col}"), F.lit(0)).alias(opposite_count_col),
+        )
     )
-    ref_df = _match_rows(
-        ref_df.alias("df"),
-        source_counts.alias("ref_df"),
-        ref_value_columns,
-        source_value_columns,
-        check_missing_records=False,
-        null_safe_row_matching=True,
-    ).select(
-        "df.*",
-        F.coalesce(F.col(f"ref_df.{source_count_col}"), F.lit(0)).alias(opposite_count_col),
+    ref_df = (
+        ref_df.alias("df")
+        .join(
+            source_counts.alias("ref_df"),
+            on=_build_join_condition(ref_pk_column_names, pk_column_names, null_safe_row_matching)
+            & _build_join_condition(compare_columns, compare_columns, True),
+            how="left_outer",
+        )
+        .select(
+            "df.*",
+            F.coalesce(F.col(f"ref_df.{source_count_col}"), F.lit(0)).alias(opposite_count_col),
+        )
     )
 
     exact_rank_col = f"__exact_match_rank_{unique_id}"
@@ -4631,12 +4626,7 @@ def _match_paired_rows(
     if pairing_phase_col is None:
         return _match_rows(df, ref_df, join_columns, ref_join_columns, check_missing_records, null_safe_row_matching)
 
-    join_condition = F.lit(True)
-    for column, ref_column in zip(pk_column_names, ref_pk_column_names):
-        if null_safe_row_matching:
-            join_condition &= F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
-        else:
-            join_condition &= F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}")
+    join_condition = _build_join_condition(pk_column_names, ref_pk_column_names, null_safe_row_matching)
     join_condition &= F.col(f"df.{pairing_phase_col}") == F.col(f"ref_df.{pairing_phase_col}")
     join_condition &= F.col(f"df.{row_number_col}") == F.col(f"ref_df.{row_number_col}")
     for column in compare_columns:
@@ -4644,6 +4634,18 @@ def _match_paired_rows(
             F.col(f"ref_df.{column}")
         )
     return df.join(ref_df, on=join_condition, how="full_outer" if check_missing_records else "left_outer")
+
+
+def _build_join_condition(
+    column_names: list[str], ref_column_names: list[str], null_safe_matching: bool | None
+) -> Column:
+    join_condition = F.lit(True)
+    for column, ref_column in zip(column_names, ref_column_names):
+        if null_safe_matching:
+            join_condition &= F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+        else:
+            join_condition &= F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}")
+    return join_condition
 
 
 def _match_rows(
@@ -4673,12 +4675,7 @@ def _match_rows(
     Returns:
         A DataFrame with the results of the join.
     """
-    join_condition = F.lit(True)
-    for column, ref_column in zip(pk_column_names, ref_pk_column_names):
-        if null_safe_row_matching:
-            join_condition = join_condition & F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
-        else:
-            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
+    join_condition = _build_join_condition(pk_column_names, ref_pk_column_names, null_safe_row_matching)
 
     results = df.join(
         ref_df,

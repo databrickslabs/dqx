@@ -2917,10 +2917,7 @@ def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSe
     }
 
 
-@pytest.mark.parametrize("raise_on_duplicate_keys", [False, True])
-def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(
-    spark: SparkSession, raise_on_duplicate_keys: bool
-):
+def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(spark: SparkSession):
     df = spark.createDataFrame(
         [(1, "A", False), (1, "B", True), (1, "C", None)],
         "id int, value string, in_scope boolean",
@@ -2931,7 +2928,6 @@ def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(
         ref_columns=["id"],
         ref_df_name="ref_df",
         row_filter="in_scope",
-        raise_on_duplicate_keys=raise_on_duplicate_keys,
     )
 
     rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
@@ -2939,6 +2935,24 @@ def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(
 
     assert len(rows) == 3
     assert actual == {"A": None, "B": None, "C": None}
+
+
+def test_compare_datasets_strict_mode_rejects_duplicate_keys_outside_filter(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A", False), (1, "B", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    _, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        raise_on_duplicate_keys=True,
+    )
+
+    with pytest.raises(
+        InvalidParameterError,
+        match=r"The source dataset contains duplicate matching keys for columns: id\.",
+    ):
+        apply(df, spark, {"ref_df": ref_df})
 
 
 def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSession):
@@ -2991,6 +3005,31 @@ def test_compare_datasets_filter_duplicate_keys_preserves_exact_matches(spark: S
     assert len(actual) == 2
     assert in_scope_row["violation"] is None
     assert excluded_row["violation"] is None
+
+
+def test_compare_datasets_filter_compares_residual_in_scope_rows_to_full_reference(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "X", True), (1, "X", True), (1, "Y", False)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (1, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    in_scope_rows = [row for row in rows if row["in_scope"] is True]
+
+    assert len(rows) == 3
+    assert sum(row["violation"] is None for row in in_scope_rows) == 1
+    assert {
+        json.loads(row["violation"])["changed"]["value"]["ref"] for row in in_scope_rows if row["violation"] is not None
+    } == {"Y"}
+    assert next(row for row in rows if row["in_scope"] is False)["violation"] is None
 
 
 def test_compare_datasets_filter_prioritizes_tolerant_in_scope_match(spark: SparkSession):
