@@ -79,6 +79,11 @@ class ActionContext:
         condition: The gating condition expression of the action being executed, or *None* when the
             action fires unconditionally. Set per-action by the evaluator so an action (e.g. an alert
             message) can report *why* it fired; the engine leaves it *None* on the shared run context.
+        extras: Mapping keyed by producing action name to the *dict[str, str]* payload that action
+            returned via *ActionResult.extras*, or *None* when no producer has contributed yet.
+            Populated by the evaluator as each action completes: the payload is copied before
+            insertion, and the outer *ActionContext* is rebuilt via *dataclasses.replace* for the
+            next action, so downstream actions cannot observe post-execute mutations by the producer.
     """
 
     metrics: dict[str, object]
@@ -92,6 +97,26 @@ class ActionContext:
     rule_set_fingerprint: str | None = None
     user_metadata: dict[str, str] | None = None
     condition: str | None = None
+    extras: dict[str, dict[str, str]] | None = None
+
+    def get_extras(self, action_name: str) -> dict[str, str]:
+        """Return the *extras* payload produced by *action_name*, or an empty dict if absent.
+
+        Both levels of the *extras* structure are optional (outer ``None`` = no producer has run
+        yet; missing key = that producer did not contribute). This accessor collapses both cases
+        into an empty ``dict[str, str]`` so callers can write
+        ``context.get_extras("collect_lineage").get("lineage_location")`` without the
+        ``(context.extras or {}).get(...) or {}`` dance.
+
+        Args:
+            action_name: The producing action's *name* to look up.
+
+        Returns:
+            The producer's *dict[str, str]* payload, or an empty dict when there is none.
+        """
+        if self.extras is None:
+            return {}
+        return self.extras.get(action_name) or {}
 
 
 # ---------------------------------------------------------------------------
@@ -110,12 +135,18 @@ class ActionResult:
         status: Aggregate outcome of the action execution.
         destination_errors: Mapping of destination name to error message for
             any delivery failures.  Empty when all deliveries succeeded.
+        extras: Optional *dict[str, str]* payload produced by this action for consumption by later
+            actions in the evaluator loop. *None* (the default) means the action produced no
+            payload. The evaluator copies this value before inserting it into the next
+            *ActionContext.extras* under the action's name, so authors do not need to defensively
+            copy the payload themselves.
     """
 
     action_name: str
     fired: bool
     status: ActionStatus
     destination_errors: dict[str, str] = field(default_factory=dict)
+    extras: dict[str, str] | None = None
 
 
 # ---------------------------------------------------------------------------

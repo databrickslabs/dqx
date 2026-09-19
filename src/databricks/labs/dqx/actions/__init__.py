@@ -23,6 +23,11 @@ from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.noop import NoOpAction
+from databricks.labs.dqx.actions.lineage import (
+    CollectLineageAction,
+    LineageActionConfig,
+    LineageSearchConfig,
+)
 from databricks.labs.dqx.actions.destinations import (
     AlertDestination,
     DQCallbackAlertDestination,
@@ -49,6 +54,7 @@ __all__ = [
     "ActionStatus",
     "AlertDestination",
     "AlertEvent",
+    "CollectLineageAction",
     "DQAction",
     "DQActionManager",
     "DQAlert",
@@ -59,6 +65,8 @@ __all__ = [
     "DQTeamsAlertDestination",
     "DQWebhookAlertDestination",
     "FailPipeline",
+    "LineageActionConfig",
+    "LineageSearchConfig",
     "NoOpAction",
     "NotifyOn",
     "WebhookAlertDestination",
