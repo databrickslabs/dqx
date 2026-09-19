@@ -507,10 +507,10 @@ audit = DQAction(
   <AvailableSinceVersion productName="DQX" version="<next>" heading={false} />
 </FeatureTags>
 
-`CollectLineageAction` collects the upstream, downstream, per-failed-column, and last-modifier lineage
+`CollectLineageAction` collects the upstream, downstream, and per-failed-column lineage
 for the run's *input_location* and persists it into a Delta table. It is intended to be paired with
 alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can
-answer *"what feeds this table and who wrote it last?"* directly from a DQ alert.
+answer *"what feeds this table?"* directly from a DQ alert.
 
 See the end-to-end walkthrough in
 [demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_lineage_action.py)
@@ -529,13 +529,18 @@ lineage collection is affected.
 
 **Configuration:**
 
-- *LineageSearchConfig* (used for *upstream*, *downstream*, *columns*): *enabled* (bool, default `True`),
-  *depth* (int ≥ 0, default `1`), *lookback_days* (int ≥ 1, default `30`), *max_nodes* (int ≥ 1,
-  default `500`, hard cap on nodes visited per direction).
-- *LineageEntitySearchConfig* (used for *entities*): *enabled* (bool, default `True`), *lookback_days*
-  (int ≥ 1, default `1`), *max_last_runs* (int ≥ 1, default `1`).
-- *LineageActionConfig* composes those four sub-configs — *upstream*, *downstream*, *columns*, *entities*
-  — each defaulting to its type's default.
+- *LineageSearchConfig* (used for *upstream*, *downstream*, *columns*): *depth* (int ≥ 1,
+  default `1`), *lookback_days* (int ≥ 1, default `30`), *max_nodes* (int ≥ 1, default `100`).
+  Both the table-lineage and column-lineage walks are recursive and honour *depth* and
+  *max_nodes* identically. *max_nodes* is a **guardrail** applied as a ``LIMIT`` inside each
+  member of the recursive CTE (bounding the frontier per hop, so intermediate expansion is
+  capped per iteration) and once more at the tail (bounding total output). Together with
+  *depth* this bounds the traversal's materialised row count to ``O(depth * max_nodes)``.
+  It does **not** guarantee which rows survive when the graph produces more edges than the
+  cap (no ordering contract); treat it as a safety limit.
+- *LineageActionConfig* composes three optional sub-configs — *upstream*, *downstream*,
+  *columns*. Each defaults to a fresh *LineageSearchConfig* (direction on by default); set any
+  field to `null` (YAML) / `None` (Python) to disable that direction.
 - *output_config* (required *OutputConfig*): the Delta destination for the persisted lineage rows.
   Fully configurable — *location*, *format*, *mode*, *options*, *partition_by*, *cluster_by*.
 
@@ -555,19 +560,12 @@ when they need the full structure — see [Passing data between actions (extras)
 | *run_id*               | STRING       | every row (from `context.run_id`)                |
 | *run_time*             | TIMESTAMP    | every row (from `context.run_time`)              |
 | *source_table*         | STRING       | every row (`context.input_location`)             |
-| *edge_type*            | STRING       | every row — *upstream* / *downstream* / *column_upstream* / *column_downstream* / *last_modifier* |
-| *depth*                | BIGINT       | edge rows (BFS depth); null for last-modifier    |
+| *edge_type*            | STRING       | every row — *upstream* / *downstream* / *column_upstream* / *column_downstream* |
+| *depth*                | BIGINT       | edge rows (BFS depth)                            |
 | *target_table*         | STRING       | edge rows                                        |
 | *target_delta_version* | BIGINT       | edge rows (when known)                           |
 | *source_column*        | STRING       | column-lineage rows                              |
 | *target_column*        | STRING       | column-lineage rows                              |
-| *modifier_job_id*      | BIGINT       | last-modifier rows                               |
-| *modifier_run_id*      | BIGINT       | last-modifier rows                               |
-| *modifier_job_name*    | STRING       | last-modifier rows                               |
-| *modifier_status*      | STRING       | last-modifier rows                               |
-| *modifier_start_ms*    | BIGINT       | last-modifier rows                               |
-| *modifier_end_ms*      | BIGINT       | last-modifier rows                               |
-| *modifier_url*         | STRING       | last-modifier rows                               |
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
@@ -585,8 +583,9 @@ lineage = DQAction(
     action=CollectLineageAction(
         output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
         config=LineageActionConfig(
-            upstream=LineageSearchConfig(depth=2, lookback_days=30, max_nodes=200),
+            upstream=LineageSearchConfig(depth=2, lookback_days=30, max_nodes=100),
             downstream=LineageSearchConfig(depth=1),
+            columns=None,  # disable per-failed-column lineage for this action
         ),
     ),
 )
@@ -605,9 +604,10 @@ lineage = DQAction(
       upstream:
         depth: 2
         lookback_days: 30
-        max_nodes: 200
+        max_nodes: 100
       downstream:
         depth: 1
+      columns: null   # disable per-failed-column lineage for this action
 ```
 
   </TabItem>

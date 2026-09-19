@@ -25,6 +25,7 @@ for the recursive-CTE SQL feature.
 """
 
 import logging
+import uuid
 from typing import Any, Literal
 
 from pydantic import (
@@ -150,28 +151,30 @@ class LineageSearchConfig(BaseModel):
     """Search parameters for one lineage traversal direction (upstream, downstream, or columns).
 
     Attributes:
-        enabled: When *False*, the corresponding walk is skipped entirely.
-        depth: Maximum walk depth from the source table. Must be ``>= 0``. A value of *0* means
-            "no traversal" (equivalent to *enabled=False* but kept explicit for callers who prefer
-            numeric knobs).
+        depth: Maximum walk depth from the source table in hops. Must be ``>= 1``. Bounds the
+            recursion depth for both the table-lineage and column-lineage walks.
         lookback_days: How far back to consider lineage entries in *system.access.table_lineage*
             / *system.access.column_lineage*. Must be ``>= 1``.
-        max_nodes: Hard cap on the number of distinct nodes visited per direction; guards against
-            unbounded fan-out on dense graphs. Must be ``>= 1``.
+        max_nodes: Guardrail row cap applied both **inside** each member of the recursive
+            lineage CTE (bounding the frontier per hop, so intermediate expansion is capped
+            per iteration) and once at the tail (bounding total output). Must be ``>= 1``
+            (default 100). Together with *depth* this bounds the traversal's materialised
+            row count to ``O(depth * max_nodes)``. This is a safety limit — it does **not**
+            guarantee which rows survive when the graph produces more edges than the cap
+            (no ordering contract).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
     depth: int = 1
     lookback_days: int = 30
-    max_nodes: int = 500
+    max_nodes: int = 100
 
     @field_validator("depth")
     @classmethod
     def _validate_depth(cls, value: int) -> int:
-        if value < 0:
-            raise InvalidActionError(f"LineageSearchConfig.depth must be >= 0, got {value}.")
+        if value < 1:
+            raise InvalidActionError(f"LineageSearchConfig.depth must be >= 1, got {value}.")
         return value
 
     @field_validator("lookback_days")
@@ -192,25 +195,28 @@ class LineageSearchConfig(BaseModel):
 class LineageActionConfig(BaseModel):
     """Top-level configuration for *CollectLineageAction*.
 
-    Composes three independent knobs — upstream, downstream, columns — each defaulting to its
-    type's default. Any direction can be disabled individually.
+    Composes three independent sub-configs — *upstream*, *downstream*, *columns*. Each defaults
+    to a fresh *LineageSearchConfig* (direction on by default); set any field to *None* to
+    disable that direction — this replaces the old per-config *enabled* flag.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    upstream: LineageSearchConfig = Field(default_factory=LineageSearchConfig)
-    downstream: LineageSearchConfig = Field(default_factory=LineageSearchConfig)
-    columns: LineageSearchConfig = Field(default_factory=LineageSearchConfig)
+    upstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
+    downstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
+    columns: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
 
 
 @register_action
 class CollectLineageAction(Action):
     """Collect table / column lineage into a Delta table.
 
-    On every run, gathers upstream/downstream tables (recursive-CTE walk bounded by *depth* +
-    *max_nodes*) and per-failed-column lineage, and writes one row per edge to the Delta table
+    On every run, gathers upstream/downstream tables (recursive-CTE walk bounded by *depth*)
+    and recursive per-failed-column lineage, and writes one row per edge to the Delta table
     specified by *output_config*. The action never fails the pipeline — collection errors are
-    logged and turned into *CONFIG_ERROR* results.
+    logged and turned into *CONFIG_ERROR* results. To disable a specific direction, set the
+    corresponding sub-config on *LineageActionConfig* (*upstream*, *downstream*, or *columns*)
+    to *None*.
 
     Attributes:
         type: Discriminator literal, always *"collect_lineage"*.
@@ -276,34 +282,48 @@ class CollectLineageAction(Action):
 
     def _execute(self, context: ActionContext, safe_name: str, source_table: str, spark: SparkSession) -> ActionResult:
         failed_columns_df = _resolve_failed_columns(
-            spark=spark, output_location=context.output_location, safe_name=safe_name
+            spark=spark, output_location=context.output_location, safe_name=safe_name, run_id=context.run_id
         )
-        df = _collect_lineage_rows(
-            spark=spark,
-            source_table=source_table,
-            run_id=context.run_id,
-            run_time_iso=context.run_time.isoformat(),
-            failed_columns_df=failed_columns_df,
-            config=self.config,
-        )
-        save_dataframe_as_table(df, self.output_config)
-        _document_table(spark=spark, location=self.output_config.location, safe_name=safe_name)
-        return ActionResult(
-            action_name=self.name,
-            fired=True,
-            status=ActionStatus.HEALTHY,
-            extras={"lineage_location": self.output_config.location},
-        )
+        # The failed-columns set is exposed to the recursive column-lineage CTE as a session
+        # temp view (see *_column_direction_df*). The view must outlive *save_dataframe_as_table*
+        # because the returned DataFrame is lazy — the write is the point at which the CTE
+        # actually executes. Scoping the create/drop pair around the write keeps the DataFrame
+        # lazy end-to-end without leaking the view.
+        failed_columns_view = _register_failed_columns_view(failed_columns_df)
+        try:
+            df = _collect_lineage_rows(
+                spark=spark,
+                source_table=source_table,
+                run_id=context.run_id,
+                run_time_iso=context.run_time.isoformat(),
+                failed_columns_view=failed_columns_view,
+                config=self.config,
+            )
+            save_dataframe_as_table(df, self.output_config)
+            _document_table(spark=spark, location=self.output_config.location, safe_name=safe_name)
+            return ActionResult(
+                action_name=self.name,
+                fired=True,
+                status=ActionStatus.HEALTHY,
+                extras={"lineage_location": self.output_config.location},
+            )
+        finally:
+            if failed_columns_view is not None:
+                spark.catalog.dropTempView(failed_columns_view)
 
 
-def extract_failed_columns(spark: SparkSession, output_location: str) -> DataFrame:
-    """Read *output_location* and return a DataFrame of distinct column names that failed a check.
+def extract_failed_columns(spark: SparkSession, output_location: str, run_id: str) -> DataFrame:
+    """Read *output_location* and return a DataFrame of distinct column names that failed a check
+    **for the current DQX run**.
 
     DQX appends two ARRAY<STRUCT> columns to the output table — *_errors* and *_warnings* — and
-    every struct exposes a *columns* ARRAY<STRING> listing the column(s) the check flagged. This
-    helper explodes both arrays and then their inner *columns* field, unions the two, filters
-    nulls, and returns the distinct set as a one-column DataFrame (schema *_FAILED_COLUMNS_SCHEMA*
-    with a single ``col_name STRING`` column).
+    every struct exposes a *run_id* STRING plus a *columns* ARRAY<STRING> listing the column(s)
+    the check flagged. In append-mode writes the same table accumulates rows from many runs, so
+    this helper explodes both arrays, keeps only issues whose ``issue.run_id`` matches the
+    supplied *run_id*, then explodes the inner *columns* field, unions the two, filters nulls,
+    and returns the distinct set as a one-column DataFrame (schema *_FAILED_COLUMNS_SCHEMA* with
+    a single ``col_name STRING`` column). Without the run-id filter a prior run's failure could
+    seed column-lineage rows stamped with the current *run_id*.
 
     The DataFrame shape is deliberate: the downstream *_collect_column_lineage_df* joins it into
     *system.access.column_lineage* rather than iterating one query per name, so the full pipeline
@@ -316,6 +336,8 @@ def extract_failed_columns(spark: SparkSession, output_location: str) -> DataFra
     Args:
         spark: Active *SparkSession* used to read *output_location*.
         output_location: 3-level UC name of the DQX output (or quarantine) table.
+        run_id: Current DQX run identifier — only issue structs whose ``issue.run_id`` equals
+            this value contribute to the returned column set.
 
     Returns:
         DataFrame with a single ``col_name STRING`` column, distinct-only, non-null-only.
@@ -332,7 +354,7 @@ def extract_failed_columns(spark: SparkSession, output_location: str) -> DataFra
     for issues_col in (_ERRORS_COLUMN, _WARNINGS_COLUMN):
         if issues_col not in present_columns:
             continue
-        exploded = df.select(F.explode(F.col(issues_col)).alias("issue"))
+        exploded = df.select(F.explode(F.col(issues_col)).alias("issue")).where(F.col("issue.run_id") == F.lit(run_id))
         issue_frames.append(exploded.select(F.explode(F.col("issue.columns")).alias(_FAILED_COLUMN_NAME)))
 
     if not issue_frames:
@@ -345,12 +367,16 @@ def extract_failed_columns(spark: SparkSession, output_location: str) -> DataFra
     return unioned.where(F.col(_FAILED_COLUMN_NAME).isNotNull()).select(_FAILED_COLUMN_NAME).distinct()
 
 
-def _resolve_failed_columns(*, spark: SparkSession, output_location: str | None, safe_name: str) -> DataFrame:
+def _resolve_failed_columns(
+    *, spark: SparkSession, output_location: str | None, safe_name: str, run_id: str
+) -> DataFrame:
     """Wrap *extract_failed_columns* with the *output_location=None* guard.
 
     Column lineage requires a table to read the failed-check items from. When *output_location*
     is absent on the context (e.g. an in-memory run), a warning is logged and an empty
-    failed-columns DataFrame is returned so the join downstream produces no rows.
+    failed-columns DataFrame is returned so the join downstream produces no rows. *run_id* is
+    forwarded to *extract_failed_columns* so only issues emitted by the current run seed
+    column-lineage — see that function's docstring for why the filter is required in append mode.
     """
     if output_location is None:
         logger.warning(
@@ -358,7 +384,23 @@ def _resolve_failed_columns(*, spark: SparkSession, output_location: str | None,
             "column lineage will be skipped."
         )
         return spark.createDataFrame([], _FAILED_COLUMNS_SCHEMA)
-    return extract_failed_columns(spark, output_location)
+    return extract_failed_columns(spark, output_location, run_id)
+
+
+def _register_failed_columns_view(failed_columns_df: DataFrame) -> str | None:
+    """Register *failed_columns_df* as a session temp view and return its name; *None* if empty.
+
+    The view carries a single ``col_name STRING`` column and is referenced by the recursive
+    column-lineage CTE via ``IN (SELECT col_name FROM <view>)``. The name is UUID-suffixed to
+    avoid collisions when multiple actions share a Spark session; lifecycle (drop) is owned
+    by *_execute*.
+    """
+    non_null = failed_columns_df.where(F.col(_FAILED_COLUMN_NAME).isNotNull())
+    if non_null.limit(1).count() == 0:
+        return None
+    name = f"_dqx_failed_columns_{uuid.uuid4().hex[:12]}"
+    non_null.createOrReplaceTempView(name)
+    return name
 
 
 def _empty_lineage_df(spark: SparkSession) -> DataFrame:
@@ -438,19 +480,20 @@ def _collect_lineage_rows(
     source_table: str,
     run_id: str,
     run_time_iso: str,
-    failed_columns_df: DataFrame,
+    failed_columns_view: str | None,
     config: LineageActionConfig,
 ) -> DataFrame:
     """Collect all lineage rows for *source_table* into a single DataFrame with *LINEAGE_TABLE_SCHEMA*.
 
-    Each enabled branch (*upstream*, *downstream*, *columns*, *entities*) returns its own
+    Each enabled branch (*upstream*, *downstream*, *columns*) returns its own
     *LINEAGE_TABLE_SCHEMA*-shaped DataFrame; the composition is a plain *unionByName* over an
     empty-schema seed, so downstream writes are well-formed Delta writes even when no branch
     contributed rows.
 
-    *failed_columns_df* is a DataFrame with a single ``col_name STRING`` column produced by
-    *extract_failed_columns* — it is inner-joined into the column-lineage read rather than
-    iterated one column at a time, so the whole pipeline stays lazy.
+    *failed_columns_view* is the name of a session temp view (registered by
+    *_register_failed_columns_view*) with a single ``col_name STRING`` column, or *None* when
+    the failed-columns set is empty / column lineage is skipped. It is referenced by the
+    recursive column-lineage CTE via ``IN (SELECT col_name FROM <view>)``.
     """
     common: dict[str, Any] = {
         "run_id": run_id,
@@ -459,20 +502,20 @@ def _collect_lineage_rows(
         "source_table": source_table,
     }
     result = _empty_lineage_df(spark)
-    if config.upstream.enabled:
+    if config.upstream is not None:
         result = result.unionByName(
             _collect_upstream_df(spark=spark, source_table=source_table, search=config.upstream, common=common)
         )
-    if config.downstream.enabled:
+    if config.downstream is not None:
         result = result.unionByName(
             _collect_downstream_df(spark=spark, source_table=source_table, search=config.downstream, common=common)
         )
-    if config.columns.enabled:
+    if config.columns is not None:
         result = result.unionByName(
             _collect_column_lineage_df(
                 spark=spark,
                 source_table=source_table,
-                failed_columns_df=failed_columns_df,
+                failed_columns_view=failed_columns_view,
                 search=config.columns,
                 common=common,
             )
@@ -489,8 +532,7 @@ def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -
     field NULL and log a sanitised warning — the pipeline never fails on a single-table lookup.
 
     The output preserves *LINEAGE_TABLE_SCHEMA* column order so downstream *save_dataframe_as_table*
-    writes remain schema-stable. Modifier rows carry *target_table=NULL* and the left-join naturally
-    leaves their *target_delta_version* NULL.
+    writes remain schema-stable.
     """
     distinct_targets = lineage_df.select("target_table").where(F.col("target_table").isNotNull()).distinct().collect()
     if not distinct_targets:
@@ -575,10 +617,17 @@ def _walk_lineage(
     sanitised warning is logged.
 
     *table_full_name* is inlined as a single-quoted SQL string literal via *_sql_str_literal*
-    (escapes embedded quotes). *search.depth*, *search.max_nodes*, and *search.lookback_days*
-    are validated Pydantic ints (>= 0 / >= 1) and interpolated as bare constants. Spark SQL
-    does not accept parameter markers inside ``INTERVAL n DAYS`` literals or after ``LIMIT``,
-    so the whole query is built via Python string interpolation rather than ``spark.sql`` args.
+    (escapes embedded quotes). *search.depth*, *search.lookback_days*, and *search.max_nodes*
+    are validated Pydantic ints (>= 1) and interpolated as bare constants. Spark SQL does not
+    accept parameter markers inside ``INTERVAL n DAYS`` literals or after ``LIMIT``, so the
+    whole query is built via Python string interpolation rather than ``spark.sql`` args.
+
+    *search.max_nodes* is applied as a ``LIMIT`` inside **both** the anchor and the recursive
+    members of the CTE (bounding the frontier per hop, so intermediate expansion cannot exceed
+    ``max_nodes`` rows per iteration) and once more at the tail (bounding the total output).
+    Combined with the depth cap this yields an ``O(max_depth * max_nodes)`` upper bound on the
+    row count Spark has to materialise. This is a *guardrail* — it does **not** guarantee which
+    rows survive when the graph produces more edges than the cap (no ordering contract).
 
     Returns:
         DataFrame conforming to *LINEAGE_TABLE_SCHEMA* — one row per discovered edge, with the
@@ -587,11 +636,12 @@ def _walk_lineage(
     key_source = "target_table_full_name" if direction == _EDGE_UPSTREAM else "source_table_full_name"
     key_other = "source_table_full_name" if direction == _EDGE_UPSTREAM else "target_table_full_name"
     max_depth = int(search.depth)
-    max_nodes = int(search.max_nodes)
     lookback_days = int(search.lookback_days)
+    max_nodes = int(search.max_nodes)
     table_literal = _sql_str_literal(table_full_name)
     # nosec B608: identifiers + validated ints only; the anchor table name is escaped and wrapped
-    # by *_sql_str_literal* before interpolation.
+    # by *_sql_str_literal* before interpolation. *max_depth*, *lookback_days*, and *max_nodes*
+    # are validated Pydantic ints (>= 1) interpolated as bare constants.
     query = (
         "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ("
         f"  SELECT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
@@ -601,6 +651,7 @@ def _walk_lineage(
         f"    AND {key_other} IS NOT NULL "
         f"    AND {key_other} <> {table_literal} "
         f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
+        f"  LIMIT {max_nodes} "
         "  UNION ALL "
         f"  SELECT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
         f"         array_append(e.path, t.{key_other}), t.event_time "
@@ -610,6 +661,7 @@ def _walk_lineage(
         f"    AND t.{key_other} IS NOT NULL "
         f"    AND NOT array_contains(e.path, t.{key_other}) "
         f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
+        f"  LIMIT {max_nodes} "
         ") "
         "SELECT DISTINCT anchor, neighbour, depth "
         "FROM edges "
@@ -635,36 +687,41 @@ def _collect_column_lineage_df(
     *,
     spark: SparkSession,
     source_table: str,
-    failed_columns_df: DataFrame,
+    failed_columns_view: str | None,
     search: LineageSearchConfig,
     common: dict[str, Any],
 ) -> DataFrame:
-    """Column-lineage rows for *source_table* — join-based, DataFrame-only.
+    """Column-lineage rows for *source_table* — recursive-CTE walks in both directions.
 
-    Both directions read *LINEAGE_COLUMN_LINEAGE* filtered by *source_table* + lookback window,
-    then broadcast-join the (small) *failed_columns_df* on ``target_column`` (upstream) or
-    ``source_column`` (downstream) so the per-column filter is a single join, not a loop.
+    Threads the session temp view name registered by *_register_failed_columns_view* into each
+    direction query so the recursive CTEs reference it via ``IN (SELECT col_name FROM <view>)``.
+    Each direction issues its own ``WITH RECURSIVE`` walk mirroring *_walk_lineage* — bounded
+    by *search.depth* and capped by ``LIMIT {search.max_nodes}``.
+
+    The DataFrame stays lazy end-to-end: the view is owned by *_execute*, which drops it after
+    *save_dataframe_as_table* has materialised the write. No driver collect is needed here.
 
     Args:
         spark: Active *SparkSession*.
         source_table: 3-level UC anchor.
-        failed_columns_df: DataFrame with a single ``col_name STRING`` column (from
-            *extract_failed_columns*). May be empty — the join then yields no rows.
-        search: Per-direction cap on emitted rows.
+        failed_columns_view: Name of the session temp view holding failed column names, or
+            *None* when the failed-columns set is empty — an empty *LINEAGE_TABLE_SCHEMA*
+            DataFrame is returned without issuing any query.
+        search: Per-direction bound on recursion depth (*depth*), lookback window
+            (*lookback_days*), and post-CTE row cap (*max_nodes*).
         common: Constants added to each emitted row.
     """
+    if failed_columns_view is None:
+        return _empty_lineage_df(spark)
+
     result = _empty_lineage_df(spark)
-    for edge_type, filter_column in (
-        (_EDGE_COLUMN_UPSTREAM, "target_column"),
-        (_EDGE_COLUMN_DOWNSTREAM, "source_column"),
-    ):
+    for edge_type in (_EDGE_COLUMN_UPSTREAM, _EDGE_COLUMN_DOWNSTREAM):
         result = result.unionByName(
             _column_direction_df(
                 spark=spark,
                 source_table=source_table,
-                failed_columns_df=failed_columns_df,
+                failed_columns_view=failed_columns_view,
                 edge_type=edge_type,
-                filter_column=filter_column,
                 search=search,
                 common=common,
             )
@@ -676,51 +733,100 @@ def _column_direction_df(
     *,
     spark: SparkSession,
     source_table: str,
-    failed_columns_df: DataFrame,
+    failed_columns_view: str,
     edge_type: str,
-    filter_column: str,
     search: LineageSearchConfig,
     common: dict[str, Any],
 ) -> DataFrame:
-    """Single-direction column-lineage read joined against the failed-columns DataFrame."""
-    lookback_days = int(search.lookback_days)
-    table_literal = _sql_str_literal(source_table)
-    # nosec B608: identifiers + validated int only; the anchor table name is escaped and wrapped
-    # by *_sql_str_literal* before interpolation.
+    """Recursive column-lineage walk for one direction, seeded from the failed-columns temp view.
+
+    Mirrors *_walk_lineage*: a single ``WITH RECURSIVE`` query against
+    *LINEAGE_COLUMN_LINEAGE* with in-CTE full-path cycle detection carried as a ``path
+    ARRAY<STRING>`` of ``<table>.<column>`` identifiers. *search.depth*, *search.lookback_days*,
+    and *search.max_nodes* are validated Pydantic ints (>= 1) and interpolated as bare
+    constants. *failed_columns_view* is the name of a session-scoped temp view (registered by
+    *_collect_column_lineage_df*) with a single ``col_name STRING`` column; the CTE references
+    it via ``IN (SELECT col_name FROM <view>)`` rather than inlining a driver-collected literal.
+
+    *search.max_nodes* is applied as a ``LIMIT`` inside **both** the anchor and the recursive
+    members of the CTE (bounding the frontier per hop) and once more at the tail (bounding
+    total output) — same ``O(max_depth * max_nodes)`` bound and same "no ordering contract"
+    semantics as *_walk_lineage*.
+
+    The recursive member also drops any hop that would return to an originally-failed
+    ``(anchor_table, failed_col)`` pair — ``NOT (t.frontier_table = <anchor> AND
+    t.frontier_col IN (SELECT col_name FROM <view>))``. The check is scoped to the anchor
+    table so unrelated tables that happen to have a column with the same name still surface;
+    only cycles back to the seed pair itself are rejected, since those are already covered by
+    the depth-1 seed and re-visiting them would inflate the walk with redundant paths.
+    """
     if edge_type == _EDGE_COLUMN_UPSTREAM:
-        query = (
-            "SELECT source_table_full_name AS neighbour, source_column, target_column "
-            f"FROM {LINEAGE_COLUMN_LINEAGE} "
-            f"WHERE target_table_full_name = {table_literal} "
-            f"AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS"
-        )
+        anchor_key, anchor_col_key = "target_table_full_name", "target_column"
+        frontier_key, frontier_col_key = "source_table_full_name", "source_column"
     else:
-        query = (
-            "SELECT target_table_full_name AS neighbour, source_column, target_column "
-            f"FROM {LINEAGE_COLUMN_LINEAGE} "
-            f"WHERE source_table_full_name = {table_literal} "
-            f"AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS"
-        )
+        anchor_key, anchor_col_key = "source_table_full_name", "source_column"
+        frontier_key, frontier_col_key = "target_table_full_name", "target_column"
+
+    max_depth = int(search.depth)
+    lookback_days = int(search.lookback_days)
+    max_nodes = int(search.max_nodes)
+    table_literal = _sql_str_literal(source_table)
+    failed_in_subquery = f"SELECT {_FAILED_COLUMN_NAME} FROM {failed_columns_view}"
+    # nosec B608: identifiers + validated ints only; the anchor table name is escaped and
+    # wrapped by *_sql_str_literal* before interpolation, the failed-columns view name is a
+    # UUID-suffixed identifier generated internally by *_collect_column_lineage_df* (never
+    # user input), and *max_depth*, *lookback_days*, and *max_nodes* are validated Pydantic
+    # ints (>= 1).
+    query = (
+        "WITH RECURSIVE edges("
+        "frontier_table, frontier_column, neighbour, source_column, target_column, "
+        "depth, path, event_time) AS ("
+        f"  SELECT {frontier_key} AS frontier_table, {frontier_col_key} AS frontier_column, "
+        f"         {frontier_key} AS neighbour, source_column, target_column, "
+        f"         1 AS depth, "
+        f"         array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path, "
+        f"         event_time "
+        f"  FROM {LINEAGE_COLUMN_LINEAGE} "
+        f"  WHERE {anchor_key} = {table_literal} "
+        f"    AND {anchor_col_key} IN ({failed_in_subquery}) "
+        f"    AND {frontier_key} IS NOT NULL "
+        f"    AND {frontier_col_key} IS NOT NULL "
+        f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
+        f"  LIMIT {max_nodes} "
+        "  UNION ALL "
+        f"  SELECT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
+        f"         t.{frontier_key} AS neighbour, t.source_column, t.target_column, "
+        f"         e.depth + 1 AS depth, "
+        f"         array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path, "
+        f"         t.event_time "
+        f"  FROM edges e JOIN {LINEAGE_COLUMN_LINEAGE} t "
+        f"    ON t.{anchor_key} = e.frontier_table "
+        f"   AND t.{anchor_col_key} = e.frontier_column "
+        f"  WHERE e.depth < {max_depth} "
+        f"    AND t.{frontier_key} IS NOT NULL "
+        f"    AND t.{frontier_col_key} IS NOT NULL "
+        f"    AND NOT array_contains(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) "
+        f"    AND NOT (t.{frontier_key} = {table_literal} "
+        f"             AND t.{frontier_col_key} IN ({failed_in_subquery})) "
+        f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
+        f"  LIMIT {max_nodes} "
+        ") "
+        "SELECT DISTINCT neighbour, source_column, target_column, depth "
+        "FROM edges "
+        "LIMIT {max_nodes}"
+    )
     try:
-        neighbours = spark.sql(query)
+        walk_df = spark.sql(query)
     except Exception as exc:  # broad catch: system-table read errors are non-fatal for lineage
         logger.warning(
             f"Column lineage read failed for '{_sanitize(source_table)}' ({edge_type}): {_sanitize(str(exc))}"
         )
         return _empty_lineage_df(spark)
-    # Broadcast the (small) failed-columns DataFrame into the join so filtering happens in one
-    # shot on the workers. If *failed_columns_df* is empty the inner-join yields zero rows.
-    filtered = neighbours.join(
-        F.broadcast(failed_columns_df),
-        neighbours[filter_column] == failed_columns_df[_FAILED_COLUMN_NAME],
-        "inner",
-    ).drop(_FAILED_COLUMN_NAME)
-    deduped = filtered.dropDuplicates(["neighbour", "source_column", "target_column"]).limit(int(search.max_nodes))
     return _project_edge_rows(
-        deduped,
+        walk_df,
         edge_type=edge_type,
         target_table_col=F.col("neighbour"),
-        depth_col=F.lit(1).cast("long"),
+        depth_col=F.col("depth").cast("long"),
         source_column_col=F.col("source_column"),
         target_column_col=F.col("target_column"),
         common=common,

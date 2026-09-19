@@ -22,10 +22,9 @@ from databricks.labs.dqx.errors import InvalidActionError
 
 @pytest.mark.parametrize("field", ["depth", "lookback_days", "max_nodes"])
 def test_lineage_search_config_rejects_out_of_range(field: str) -> None:
-    """Each numeric bound on *LineageSearchConfig* rejects sub-minimum values with InvalidActionError."""
-    invalid = -1 if field == "depth" else 0
+    """*depth*, *lookback_days*, and *max_nodes* each require ``>= 1`` — sub-minimum values raise."""
     with pytest.raises(InvalidActionError):
-        LineageSearchConfig.model_validate({field: invalid})
+        LineageSearchConfig.model_validate({field: 0})
 
 
 def _make_context(input_location: str | None) -> ActionContext:

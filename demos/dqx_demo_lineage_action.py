@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC This demo walks through a compact **bronze → silver → gold** invoice pipeline (star schema)
 # MAGIC and shows how `CollectLineageAction` persists upstream and downstream table lineage from
-# MAGIC `system.access.table_lineage`, plus per-failed-column lineage and the last-modifier job runs.
+# MAGIC `system.access.table_lineage`, plus recursive per-failed-column lineage.
 # MAGIC
 # MAGIC The lineage sink is a plain Delta table with a stable, documented schema
 # MAGIC (`LINEAGE_TABLE_SCHEMA`), so it can be queried, joined, or dashboarded like any other DQX
@@ -286,17 +286,15 @@ from databricks.labs.dqx.actions import (
 from databricks.labs.dqx.actions.lineage import (
     LineageActionConfig,
     LineageSearchConfig,
-    LineageEntitySearchConfig,
 )
 from databricks.labs.dqx.config import OutputConfig
 
 lineage_action = CollectLineageAction(
     output_config=OutputConfig(location=lineage_sink_table, mode="append"),
     config=LineageActionConfig(
-        upstream=LineageSearchConfig(enabled=True, depth=3, lookback_days=7, max_nodes=100),
-        downstream=LineageSearchConfig(enabled=True, depth=3, lookback_days=7, max_nodes=100),
-        columns=LineageSearchConfig(enabled=True, depth=1, lookback_days=7, max_nodes=100),
-        entities=LineageEntitySearchConfig(enabled=True, lookback_days=1, max_last_runs=1),
+        upstream=LineageSearchConfig(depth=3, lookback_days=7),
+        downstream=LineageSearchConfig(depth=3, lookback_days=7),
+        columns=LineageSearchConfig(depth=1, lookback_days=7),
     ),
 )
 

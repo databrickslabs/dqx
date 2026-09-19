@@ -191,12 +191,16 @@ _OUTPUT_TABLE_SCHEMA = StructType(
 )
 
 
-def _issue_row(*, name: str, message: str, columns: list[str], function: str) -> dict[str, Any]:
+def _issue_row(
+    *, name: str, message: str, columns: list[str], function: str, run_id: str = "integration-lineage-run"
+) -> dict[str, Any]:
     """Build one *_errors*/*_warnings* struct row for use in *createDataFrame*.
 
     Fields match *dq_result_item_schema*; the *skipped* flag is set to *False* to reflect a
     genuine failure (an entry with *skipped=True* would represent a check that ran but did not
-    produce an issue).
+    produce an issue). *run_id* defaults to the shared integration run identifier used by
+    *_make_context*; override it to fabricate rows from *other* runs (e.g. verifying that
+    *extract_failed_columns* filters prior-run failures out of the current run's column lineage).
     """
     return {
         "name": name,
@@ -205,7 +209,7 @@ def _issue_row(*, name: str, message: str, columns: list[str], function: str) ->
         "filter": None,
         "function": function,
         "run_time": datetime.now(timezone.utc),
-        "run_id": "integration-lineage-run",
+        "run_id": run_id,
         "user_metadata": None,
         "rule_fingerprint": "fp1",
         "rule_set_fingerprint": "rsfp1",
@@ -288,13 +292,17 @@ def _run_action(
 
 
 def _table_only_action(lineage_location: str, *, downstream: bool = False, depth: int = 3) -> CollectLineageAction:
-    """Configure the action with only one directional walk enabled; column phase off."""
+    """Configure the action with only one directional walk enabled; disabled directions use *None*.
+
+    *max_nodes=100* is passed explicitly on the enabled direction — it matches the default but
+    keeps intent visible for scenarios that exercise a deep walk (e.g. *depth=5*).
+    """
     return CollectLineageAction(
         output_config=OutputConfig(location=lineage_location, mode="append"),
         config=LineageActionConfig(
-            upstream=LineageSearchConfig(enabled=not downstream, depth=depth, lookback_days=30, max_nodes=100),
-            downstream=LineageSearchConfig(enabled=downstream, depth=depth, lookback_days=30, max_nodes=100),
-            columns=LineageSearchConfig(enabled=False),
+            upstream=LineageSearchConfig(depth=depth, lookback_days=30, max_nodes=100) if not downstream else None,
+            downstream=LineageSearchConfig(depth=depth, lookback_days=30, max_nodes=100) if downstream else None,
+            columns=None,
         ),
     )
 
@@ -499,3 +507,233 @@ def test_recursive_job_self_write(
     # guard rejects the b→a hop, so no descendant path reintroduces node_c.
     reached_c_depths = {depth for depth, target in edges_from_a if target == node_c}
     assert reached_c_depths == {1}, f"node_c must only appear at depth 1; observed depths: {reached_c_depths}"
+
+
+def test_column_lineage_ignores_prior_run_failures(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+    make_schema,
+    make_random,
+) -> None:
+    """Prior-run failures accumulated in an append-mode output table must not seed the current
+    run's column lineage.
+
+    Seeds the output table with two *_errors* rows: one stamped with ``run_id='prior-run'`` failing
+    on column *value*, and one stamped with the current run's id failing on column *other*. Seeds
+    the stub *column_lineage* with rows for both columns so the join would match either. Asserts
+    that only the *other* edge is persisted — the *value* edge would only appear if
+    *extract_failed_columns* leaked the prior-run failure.
+    """
+    source = "cat.sch.two_run_src"
+    downstream_table = "cat.sch.two_run_dst"
+
+    schema = make_schema()
+    output_location = f"{schema.full_name}.two_run_out_{make_random(6).lower()}"
+    rows = [
+        {
+            "id": 1,
+            "value": "a",
+            "_errors": [
+                _issue_row(
+                    name="prior_check",
+                    message="'value' failed in a prior run",
+                    columns=["value"],
+                    function="is_not_null",
+                    run_id="prior-run",
+                )
+            ],
+            "_warnings": [],
+        },
+        {
+            "id": 2,
+            "value": "b",
+            "_errors": [
+                _issue_row(
+                    name="current_check",
+                    message="'other' failed in the current run",
+                    columns=["other"],
+                    function="is_not_null",
+                )
+            ],
+            "_warnings": [],
+        },
+    ]
+    spark.createDataFrame(rows, _OUTPUT_TABLE_SCHEMA).write.mode("overwrite").format("delta").saveAsTable(
+        output_location
+    )
+
+    # Seed column_lineage stub with edges for both columns so the join *would* match either;
+    # the run-id filter must be the only reason 'value' is absent from the persisted output.
+    column_lineage = patched_lineage_constants.column_lineage
+    spark.sql(
+        f"INSERT INTO {column_lineage} "
+        f"(source_table_full_name, target_table_full_name, source_column, target_column, event_time) "
+        f"VALUES "
+        f"('{source}', '{downstream_table}', 'value', 'value_dst', current_timestamp()), "
+        f"('{source}', '{downstream_table}', 'other', 'other_dst', current_timestamp())"
+    )
+
+    lineage_location = make_lineage_sink()
+    action = CollectLineageAction(
+        output_config=OutputConfig(location=lineage_location, mode="append"),
+        config=LineageActionConfig(
+            upstream=None,
+            downstream=None,
+            columns=LineageSearchConfig(depth=1, lookback_days=30),
+        ),
+    )
+    try:
+        _, persisted = _run_action(
+            action=action,
+            context=_make_context(source, output_location=output_location),
+            services=_make_services(spark, ws),
+            lineage_location=lineage_location,
+            spark=spark,
+        )
+        column_rows = persisted.where(persisted["edge_type"].isin("column_upstream", "column_downstream")).collect()
+        source_columns = {row["source_column"] for row in column_rows}
+        assert (
+            "value" not in source_columns
+        ), f"prior-run failure leaked into current-run column lineage: {source_columns}"
+        assert "other" in source_columns, f"current-run failure missing from column lineage: {source_columns}"
+    finally:
+        spark.sql(f"DROP TABLE IF EXISTS {output_location}")
+
+
+def _seed_column_lineage(
+    spark: SparkSession,
+    column_lineage: str,
+    edges: list[tuple[str, str, str, str]],
+) -> None:
+    """Insert (source_table, source_column, target_table, target_column) edges with a fresh event_time."""
+    if not edges:
+        return
+    values = ", ".join(f"('{st}', '{tt}', '{sc}', '{tc}', current_timestamp())" for st, sc, tt, tc in edges)
+    spark.sql(
+        f"INSERT INTO {column_lineage} "
+        f"(source_table_full_name, target_table_full_name, source_column, target_column, event_time) "
+        f"VALUES {values}"
+    )
+
+
+def test_column_lineage_recurses_across_two_hops(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+    make_output_table,
+) -> None:
+    """Column lineage walks recursively — a two-hop bronze.col_a → silver.col_b → gold.col_c chain
+    surfaces both depths in each direction.
+
+    Upstream walk (anchor = gold, failed column = col_c) should reach col_b at depth 1 and col_a
+    at depth 2. Downstream walk (anchor = bronze, failed column = col_a) is symmetric — col_b at
+    depth 1, col_c at depth 2.
+    """
+    bronze = "cat.sch.col_bronze"
+    silver = "cat.sch.col_silver"
+    gold = "cat.sch.col_gold"
+    _seed_column_lineage(
+        spark,
+        patched_lineage_constants.column_lineage,
+        [
+            (bronze, "col_a", silver, "col_b"),
+            (silver, "col_b", gold, "col_c"),
+        ],
+    )
+
+    # Upstream direction: anchor gold, failure on col_c → walks back to col_b then col_a.
+    upstream_output = make_output_table(failed_column="col_c", name_prefix="col_up_out")
+    lineage_up = make_lineage_sink()
+    action_up = CollectLineageAction(
+        output_config=OutputConfig(location=lineage_up, mode="append"),
+        config=LineageActionConfig(
+            upstream=None,
+            downstream=None,
+            columns=LineageSearchConfig(depth=2, lookback_days=30),
+        ),
+    )
+    _, persisted_up = _run_action(
+        action=action_up,
+        context=_make_context(gold, output_location=upstream_output),
+        services=_make_services(spark, ws),
+        lineage_location=lineage_up,
+        spark=spark,
+    )
+    upstream_edges = {
+        (row["depth"], row["source_column"], row["target_column"])
+        for row in persisted_up.where(persisted_up["edge_type"] == "column_upstream").collect()
+    }
+    assert (1, "col_b", "col_c") in upstream_edges, upstream_edges
+    assert (2, "col_a", "col_b") in upstream_edges, upstream_edges
+
+    # Downstream direction: anchor bronze, failure on col_a → walks forward to col_b then col_c.
+    downstream_output = make_output_table(failed_column="col_a", name_prefix="col_down_out")
+    lineage_down = make_lineage_sink()
+    action_down = CollectLineageAction(
+        output_config=OutputConfig(location=lineage_down, mode="append"),
+        config=LineageActionConfig(
+            upstream=None,
+            downstream=None,
+            columns=LineageSearchConfig(depth=2, lookback_days=30),
+        ),
+    )
+    _, persisted_down = _run_action(
+        action=action_down,
+        context=_make_context(bronze, output_location=downstream_output),
+        services=_make_services(spark, ws),
+        lineage_location=lineage_down,
+        spark=spark,
+    )
+    downstream_edges = {
+        (row["depth"], row["source_column"], row["target_column"])
+        for row in persisted_down.where(persisted_down["edge_type"] == "column_downstream").collect()
+    }
+    assert (1, "col_a", "col_b") in downstream_edges, downstream_edges
+    assert (2, "col_b", "col_c") in downstream_edges, downstream_edges
+
+
+def test_max_nodes_caps_dense_table_lineage(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+    make_output_table,
+) -> None:
+    """A fan-out that exceeds *max_nodes* is truncated to exactly *max_nodes* rows.
+
+    Note: which subset survives is not part of the contract — *max_nodes* is a guardrail, not an
+    ordering promise. The test only asserts the row count.
+    """
+    anchor = "cat.sch.fanout_anchor"
+    fanout_targets = [f"cat.sch.fanout_target_{i}" for i in range(5)]
+    _seed_table_lineage(
+        spark,
+        patched_lineage_constants.table_lineage,
+        [(anchor, target) for target in fanout_targets],
+    )
+    output_location = make_output_table(failed_column="value", name_prefix="fanout_out")
+
+    lineage_location = make_lineage_sink()
+    action = CollectLineageAction(
+        output_config=OutputConfig(location=lineage_location, mode="append"),
+        config=LineageActionConfig(
+            upstream=None,
+            downstream=LineageSearchConfig(depth=1, lookback_days=30, max_nodes=3),
+            columns=None,
+        ),
+    )
+    _, persisted = _run_action(
+        action=action,
+        context=_make_context(anchor, output_location=output_location),
+        services=_make_services(spark, ws),
+        lineage_location=lineage_location,
+        spark=spark,
+    )
+    downstream_rows = persisted.where(persisted["edge_type"] == "downstream").collect()
+    assert len(downstream_rows) == 3, (
+        f"expected max_nodes=3 downstream rows, got {len(downstream_rows)}: "
+        f"{[row['target_table'] for row in downstream_rows]}"
+    )
