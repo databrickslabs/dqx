@@ -834,6 +834,7 @@ def _column_direction_df(
         "WITH RECURSIVE edges("
         "frontier_table, frontier_column, neighbour, source_column, target_column, "
         "depth, path, event_time) AS ("
+        " ("
         f"  SELECT {frontier_key} AS frontier_table, {frontier_col_key} AS frontier_column, "
         f"         {frontier_key} AS neighbour, source_column, target_column, "
         f"         1 AS depth, "
@@ -846,7 +847,9 @@ def _column_direction_df(
         f"    AND {frontier_col_key} IS NOT NULL "
         f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f"  LIMIT {max_nodes} "
+        " )"
         "  UNION ALL "
+        " ("
         f"  SELECT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
         f"         t.{frontier_key} AS neighbour, t.source_column, t.target_column, "
         f"         e.depth + 1 AS depth, "
@@ -863,10 +866,11 @@ def _column_direction_df(
         f"             AND t.{frontier_col_key} IN ({failed_in_subquery})) "
         f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f"  LIMIT {max_nodes} "
+        " )"
         ") "
         "SELECT DISTINCT neighbour, source_column, target_column, depth "
         "FROM edges "
-        "LIMIT {max_nodes}"
+        f"LIMIT {max_nodes}"
     )
     try:
         walk_df = spark.sql(query)

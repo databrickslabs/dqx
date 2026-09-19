@@ -79,7 +79,7 @@ print(
 # MAGIC
 # MAGIC Ten thousand rows on the schema
 # MAGIC `(invoice_id STRING, invoice_timestamp TIMESTAMP, client_id STRING, client_name STRING,
-# MAGIC service_id STRING, service_name STRING, amount DECIMAL(18,2), currency_code STRING,
+# MAGIC service_id STRING, service_name STRING, amount INTEGER, currency_code STRING,
 # MAGIC signed BOOLEAN)`. Defects are injected so every bronze DQX check has at least one row to
 # MAGIC flag: future timestamps, null client IDs, negative amounts, and invalid ISO-4217 codes
 # MAGIC (e.g. `"ZZZ"`).
@@ -109,9 +109,9 @@ generator = (
     .withColumn("service_name", "string", values=[" widgets ", "Support", "consulting"], random=True)
     .withColumn(
         "amount",
-        "decimal(18,2)",
-        minValue=Decimal("-50.00"),  # ← some negative amounts
-        maxValue=Decimal("5000.00"),
+        "integer",
+        minValue=-50,  # ← some negative amounts
+        maxValue=5000,
         random=True,
     )
     .withColumn(
