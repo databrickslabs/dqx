@@ -10,7 +10,6 @@ from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.lineage import (
     CollectLineageAction,
     LineageActionConfig,
-    LineageEntitySearchConfig,
     LineageSearchConfig,
 )
 from databricks.labs.dqx.actions.serializer import ActionSerializer
@@ -45,7 +44,6 @@ def test_metadata_dict_resolves_to_action() -> None:
                 "upstream": {"enabled": True, "depth": 2, "lookback_days": 7, "max_nodes": 100},
                 "downstream": {"enabled": False},
                 "columns": {"enabled": True},
-                "entities": {"enabled": True, "lookback_days": 2, "max_last_runs": 3},
             },
         },
     }
@@ -56,7 +54,7 @@ def test_metadata_dict_resolves_to_action() -> None:
     assert action.output_config.mode == "overwrite"
     assert action.config.upstream.depth == 2
     assert action.config.downstream.enabled is False
-    assert action.config.entities.max_last_runs == 3
+    assert action.config.columns.enabled is True
 
 
 def test_missing_output_config_raises_at_construction() -> None:
@@ -88,6 +86,5 @@ def test_lineage_action_config_defaults_are_isolated() -> None:
     assert isinstance(cfg.upstream, LineageSearchConfig)
     assert isinstance(cfg.downstream, LineageSearchConfig)
     assert isinstance(cfg.columns, LineageSearchConfig)
-    assert isinstance(cfg.entities, LineageEntitySearchConfig)
     other = LineageActionConfig()
     assert cfg.upstream is not other.upstream

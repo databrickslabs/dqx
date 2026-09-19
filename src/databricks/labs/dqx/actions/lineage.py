@@ -1,10 +1,10 @@
 """Lineage collection action for the DQX actions & alerting subsystem.
 
-*CollectLineageAction* persists upstream and downstream table lineage, per-failed-column
-lineage, and last-modifier metadata for the source table of a DQX run. Each lineage
-edge / last-modifier record is emitted as a row in a single Delta table (schema declared
-in *LINEAGE_TABLE_SCHEMA*) via the same *io.save_dataframe_as_table* helper DQX uses for
-failed-check output — so the write mode / format / options semantics are handled identically.
+*CollectLineageAction* persists upstream and downstream table lineage and per-failed-column
+lineage for the source table of a DQX run. Each lineage edge is emitted as a row in a single
+Delta table (schema declared in *LINEAGE_TABLE_SCHEMA*) via the same *io.save_dataframe_as_table*
+helper DQX uses for failed-check output — so the write mode / format / options semantics are
+handled identically.
 
 The action never fails the pipeline: collection errors are logged (via the *_sanitize*
 helper, per CWE-117) and swallowed so a stale system-table read cannot mask check results.
@@ -34,23 +34,22 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
-from pyspark.sql import DataFrame, SparkSession, Window
+from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.registry import register_action
-from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.config import TABLE_PATTERN, OutputConfig
 from databricks.labs.dqx.errors import InvalidActionError
 from databricks.labs.dqx.io import save_dataframe_as_table
+from databricks.labs.dqx.utils import quote_column_name
 
 logger = logging.getLogger(__name__)
 
 LINEAGE_TABLE_LINEAGE = "system.access.table_lineage"
 LINEAGE_COLUMN_LINEAGE = "system.access.column_lineage"
-LINEAGE_JOBS_RUNS = "system.workflow.job_run_timeline"
-LINEAGE_WORKSPACES = "system.access.workspaces"
 
 # Default names of the DQX-appended result columns on the output / quarantine tables. These are
 # the column names DQX writes when no engine-level rename is configured; both *_errors* and
@@ -64,38 +63,87 @@ _FAILED_COLUMN_NAME = "col_name"
 _FAILED_COLUMNS_SCHEMA = StructType([StructField(_FAILED_COLUMN_NAME, StringType(), nullable=True)])
 
 # Persisted lineage-table schema. Declared as an explicit *StructType* (not schema-on-write
-# inference) so downstream consumers see the same contract on empty runs.
+# inference) so downstream consumers see the same contract on empty runs. Each field carries a
+# ``comment`` metadata entry — Delta / UC persists these as column comments on write, so consumers
+# see the same documentation via ``DESCRIBE TABLE`` that the code declares here.
 LINEAGE_TABLE_SCHEMA = StructType(
     [
-        StructField("run_id", StringType(), nullable=False),
-        StructField("run_time", TimestampType(), nullable=False),
-        StructField("source_table", StringType(), nullable=False),
-        StructField("edge_type", StringType(), nullable=False),
-        StructField("depth", LongType(), nullable=True),
-        StructField("target_table", StringType(), nullable=True),
-        StructField("target_delta_version", LongType(), nullable=True),
-        StructField("source_column", StringType(), nullable=True),
-        StructField("target_column", StringType(), nullable=True),
-        StructField("modifier_job_id", LongType(), nullable=True),
-        StructField("modifier_run_id", LongType(), nullable=True),
-        StructField("modifier_job_name", StringType(), nullable=True),
-        StructField("modifier_status", StringType(), nullable=True),
-        StructField("modifier_start_ms", LongType(), nullable=True),
-        StructField("modifier_end_ms", LongType(), nullable=True),
-        StructField("modifier_url", StringType(), nullable=True),
+        StructField(
+            "run_id",
+            StringType(),
+            nullable=False,
+            metadata={"comment": "DQX run identifier that produced this lineage row."},
+        ),
+        StructField(
+            "run_time",
+            TimestampType(),
+            nullable=False,
+            metadata={"comment": "Timestamp at which the DQX run producing this lineage row started."},
+        ),
+        StructField(
+            "source_table",
+            StringType(),
+            nullable=False,
+            metadata={"comment": "3-level UC name of the anchor table for which lineage was collected."},
+        ),
+        StructField(
+            "edge_type",
+            StringType(),
+            nullable=False,
+            metadata={
+                "comment": (
+                    "Kind of lineage edge: 'upstream' / 'downstream' for table-graph walks, "
+                    "'column_upstream' / 'column_downstream' for per-failed-column lineage."
+                )
+            },
+        ),
+        StructField(
+            "depth",
+            LongType(),
+            nullable=True,
+            metadata={"comment": "Distance from *source_table* in hops (1 = direct neighbour)."},
+        ),
+        StructField(
+            "target_table",
+            StringType(),
+            nullable=True,
+            metadata={"comment": "3-level UC name of the neighbour table reached by this edge."},
+        ),
+        StructField(
+            "target_delta_version",
+            LongType(),
+            nullable=True,
+            metadata={
+                "comment": (
+                    "Latest Delta version of *target_table* at action run time, resolved via "
+                    "DESCRIBE HISTORY. NULL if the table is not a Delta table or lookup failed."
+                )
+            },
+        ),
+        StructField(
+            "source_column",
+            StringType(),
+            nullable=True,
+            metadata={"comment": "Source column of a column-lineage edge; NULL for table-lineage rows."},
+        ),
+        StructField(
+            "target_column",
+            StringType(),
+            nullable=True,
+            metadata={"comment": "Target column of a column-lineage edge; NULL for table-lineage rows."},
+        ),
     ]
+)
+
+LINEAGE_TABLE_COMMENT = (
+    "DQX lineage records emitted by CollectLineageAction: one row per upstream/downstream table edge "
+    "or per-failed-column edge derived from system.access lineage tables at action run time."
 )
 
 _EDGE_UPSTREAM = "upstream"
 _EDGE_DOWNSTREAM = "downstream"
 _EDGE_COLUMN_UPSTREAM = "column_upstream"
 _EDGE_COLUMN_DOWNSTREAM = "column_downstream"
-_EDGE_LAST_MODIFIER = "last_modifier"
-
-
-# ---------------------------------------------------------------------------
-# Configuration classes
-# ---------------------------------------------------------------------------
 
 
 class LineageSearchConfig(BaseModel):
@@ -141,41 +189,11 @@ class LineageSearchConfig(BaseModel):
         return value
 
 
-class LineageEntitySearchConfig(BaseModel):
-    """Search parameters for last-modifier (entity) resolution.
-
-    Attributes:
-        enabled: When *False*, last-modifier resolution is skipped.
-        lookback_days: How far back to consider modifier events. Must be ``>= 1``.
-        max_last_runs: Maximum number of most-recent job runs to emit as last-modifier rows.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    lookback_days: int = 1
-    max_last_runs: int = 1
-
-    @field_validator("lookback_days")
-    @classmethod
-    def _validate_lookback(cls, value: int) -> int:
-        if value < 1:
-            raise InvalidActionError(f"LineageEntitySearchConfig.lookback_days must be >= 1, got {value}.")
-        return value
-
-    @field_validator("max_last_runs")
-    @classmethod
-    def _validate_max_last_runs(cls, value: int) -> int:
-        if value < 1:
-            raise InvalidActionError(f"LineageEntitySearchConfig.max_last_runs must be >= 1, got {value}.")
-        return value
-
-
 class LineageActionConfig(BaseModel):
     """Top-level configuration for *CollectLineageAction*.
 
-    Composes four independent knobs — upstream, downstream, columns, entities — each defaulting to
-    its type's default. Any direction can be disabled individually.
+    Composes three independent knobs — upstream, downstream, columns — each defaulting to its
+    type's default. Any direction can be disabled individually.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -183,17 +201,16 @@ class LineageActionConfig(BaseModel):
     upstream: LineageSearchConfig = Field(default_factory=LineageSearchConfig)
     downstream: LineageSearchConfig = Field(default_factory=LineageSearchConfig)
     columns: LineageSearchConfig = Field(default_factory=LineageSearchConfig)
-    entities: LineageEntitySearchConfig = Field(default_factory=LineageEntitySearchConfig)
 
 
 @register_action
 class CollectLineageAction(Action):
-    """Collect table / column lineage and last-modifier metadata into a Delta table.
+    """Collect table / column lineage into a Delta table.
 
     On every run, gathers upstream/downstream tables (recursive-CTE walk bounded by *depth* +
-    *max_nodes*), per-failed-column lineage, and the most recent modifier job runs, and writes
-    one row per edge / modifier to the Delta table specified by *output_config*. The action never
-    fails the pipeline — collection errors are logged and turned into *CONFIG_ERROR* results.
+    *max_nodes*) and per-failed-column lineage, and writes one row per edge to the Delta table
+    specified by *output_config*. The action never fails the pipeline — collection errors are
+    logged and turned into *CONFIG_ERROR* results.
 
     Attributes:
         type: Discriminator literal, always *"collect_lineage"*.
@@ -252,33 +269,31 @@ class CollectLineageAction(Action):
             spark = services.spark
             if spark is None:
                 raise InvalidActionError("CollectLineageAction requires SparkSession in ActionServices.spark.")
-
-            failed_columns_df = _resolve_failed_columns(
-                spark=spark, output_location=context.output_location, safe_name=safe_name
-            )
-            df = _collect_lineage_rows(
-                spark=spark,
-                source_table=source_table,
-                run_id=context.run_id,
-                run_time_iso=context.run_time.isoformat(),
-                failed_columns_df=failed_columns_df,
-                config=self.config,
-            )
-            save_dataframe_as_table(df, self.output_config)
-            return ActionResult(
-                action_name=self.name,
-                fired=True,
-                status=ActionStatus.HEALTHY,
-                extras={"lineage_location": self.output_config.location},
-            )
+            return self._execute(context, safe_name, source_table, spark)
         except Exception as exc:  # broad catch: lineage failures must not break the run
             logger.warning(f"CollectLineageAction '{safe_name}' failed and was skipped: {_sanitize(str(exc))}")
             return ActionResult(action_name=self.name, fired=True, status=ActionStatus.CONFIG_ERROR, extras=None)
 
-
-# ---------------------------------------------------------------------------
-# Helpers — failed-columns extraction, empty-schema seed
-# ---------------------------------------------------------------------------
+    def _execute(self, context: ActionContext, safe_name: str, source_table: str, spark: SparkSession) -> ActionResult:
+        failed_columns_df = _resolve_failed_columns(
+            spark=spark, output_location=context.output_location, safe_name=safe_name
+        )
+        df = _collect_lineage_rows(
+            spark=spark,
+            source_table=source_table,
+            run_id=context.run_id,
+            run_time_iso=context.run_time.isoformat(),
+            failed_columns_df=failed_columns_df,
+            config=self.config,
+        )
+        save_dataframe_as_table(df, self.output_config)
+        _document_table(spark=spark, location=self.output_config.location, safe_name=safe_name)
+        return ActionResult(
+            action_name=self.name,
+            fired=True,
+            status=ActionStatus.HEALTHY,
+            extras={"lineage_location": self.output_config.location},
+        )
 
 
 def extract_failed_columns(spark: SparkSession, output_location: str) -> DataFrame:
@@ -351,6 +366,72 @@ def _empty_lineage_df(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame([], LINEAGE_TABLE_SCHEMA)
 
 
+def _sql_str_literal(value: str) -> str:
+    """Escape a Python string for safe inclusion as a single-quoted SQL string literal.
+
+    Doubles any embedded single quotes (the SQL escape for a literal quote inside a string
+    literal). Used by the lineage queries where parameter markers cannot be applied — e.g.
+    inside ``INTERVAL n DAYS`` — and the table name has to be inlined as a literal.
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _fully_qualified_identifier(name: str) -> str:
+    """Backtick-quote each dot-separated segment of a UC name for use as a SQL identifier.
+
+    Used where the anchor table has to appear as an identifier (e.g. ``DESCRIBE HISTORY <ident>``)
+    rather than a string literal — each segment is escaped via *quote_column_name* so embedded
+    backticks or reserved words are handled the same way as elsewhere in the codebase.
+    """
+    return ".".join(quote_column_name(segment) for segment in name.split("."))
+
+
+_VERSION_LOOKUP_SCHEMA = StructType(
+    [
+        StructField("target_table", StringType(), nullable=False),
+        StructField("resolved_delta_version", LongType(), nullable=True),
+    ]
+)
+
+
+def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> None:
+    """Attach *LINEAGE_TABLE_COMMENT* and each column's declared comment to the persisted lineage
+    table via ``COMMENT ON TABLE`` / ``COMMENT ON COLUMN``
+    (https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-comment).
+
+    Column comments are declared in *LINEAGE_TABLE_SCHEMA* as ``StructField`` metadata and are
+    re-asserted explicitly here so the persisted table always exposes them via ``DESCRIBE TABLE``,
+    independent of whether the underlying writer propagated the schema metadata.
+
+    Only applies when *location* is a UC table name (matches *TABLE_PATTERN*) — path-based sinks
+    (``/Volumes/…``, ``s3://…`` etc.) don't accept these DDL statements. Table- and per-column
+    failures are logged and swallowed independently so the action never breaks on a missing
+    catalog privilege or on a single-column error.
+    """
+    if not TABLE_PATTERN.match(location):
+        return
+    table_ident = _fully_qualified_identifier(location)
+    try:
+        spark.sql(f"COMMENT ON TABLE {table_ident} IS {_sql_str_literal(LINEAGE_TABLE_COMMENT)}")
+    except Exception as exc:  # broad catch: table-comment application is best-effort
+        logger.warning(
+            f"CollectLineageAction '{safe_name}' failed to set table comment on "
+            f"'{_sanitize(location)}': {_sanitize(str(exc))}"
+        )
+    for field in LINEAGE_TABLE_SCHEMA.fields:
+        comment = field.metadata.get("comment")
+        if not comment:
+            continue
+        column_ident = f"{table_ident}.{quote_column_name(field.name)}"
+        try:
+            spark.sql(f"COMMENT ON COLUMN {column_ident} IS {_sql_str_literal(comment)}")
+        except Exception as exc:  # broad catch: per-column comment application is best-effort
+            logger.warning(
+                f"CollectLineageAction '{safe_name}' failed to set column comment on "
+                f"'{_sanitize(location)}.{_sanitize(field.name)}': {_sanitize(str(exc))}"
+            )
+
+
 def _collect_lineage_rows(
     *,
     spark: SparkSession,
@@ -396,11 +477,44 @@ def _collect_lineage_rows(
                 common=common,
             )
         )
-    if config.entities.enabled:
-        result = result.unionByName(
-            _collect_modifier_df(spark=spark, source_table=source_table, entities_cfg=config.entities, common=common)
-        )
-    return result
+    return _resolve_target_delta_versions(spark, result)
+
+
+def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -> DataFrame:
+    """Populate *target_delta_version* with the latest Delta version of each *target_table*.
+
+    Collects the distinct non-null *target_table* values from *lineage_df*, runs
+    ``DESCRIBE HISTORY <ident> LIMIT 1`` per name, and left-joins the resulting version onto the
+    input. Failures (missing table, non-Delta table, access denied, malformed name) leave the
+    field NULL and log a sanitised warning — the pipeline never fails on a single-table lookup.
+
+    The output preserves *LINEAGE_TABLE_SCHEMA* column order so downstream *save_dataframe_as_table*
+    writes remain schema-stable. Modifier rows carry *target_table=NULL* and the left-join naturally
+    leaves their *target_delta_version* NULL.
+    """
+    distinct_targets = lineage_df.select("target_table").where(F.col("target_table").isNotNull()).distinct().collect()
+    if not distinct_targets:
+        return lineage_df
+
+    resolved: list[tuple[str, int | None]] = []
+    for row in distinct_targets:
+        table = row["target_table"]
+        try:
+            history_row = (
+                spark.sql(f"DESCRIBE HISTORY {_fully_qualified_identifier(table)} LIMIT 1").select("version").first()
+            )
+        except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
+            logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")
+            resolved.append((table, None))
+            continue
+        version = int(history_row["version"]) if history_row is not None else None
+        resolved.append((table, version))
+
+    lookup = spark.createDataFrame(resolved, _VERSION_LOOKUP_SCHEMA)
+    joined = lineage_df.drop("target_delta_version").join(lookup, on="target_table", how="left")
+    return joined.withColumnRenamed("resolved_delta_version", "target_delta_version").select(
+        *[F.col(field.name) for field in LINEAGE_TABLE_SCHEMA.fields]
+    )
 
 
 def _collect_upstream_df(
@@ -460,30 +574,33 @@ def _walk_lineage(
     failure the caller-visible result is an empty *LINEAGE_TABLE_SCHEMA* DataFrame and a
     sanitised warning is logged.
 
-    *table_full_name* and *search.lookback_days* are passed via ``args={...}`` (parameterised).
-    *search.depth* and *search.max_nodes* are validated Pydantic ints and interpolated as bare
-    constants; Spark SQL does not accept parameter markers for ``LIMIT`` / plain integer
-    comparisons on all supported DBR versions, and the values come from a validated schema so
-    interpolation is safe.
+    *table_full_name* is inlined as a single-quoted SQL string literal via *_sql_str_literal*
+    (escapes embedded quotes). *search.depth*, *search.max_nodes*, and *search.lookback_days*
+    are validated Pydantic ints (>= 0 / >= 1) and interpolated as bare constants. Spark SQL
+    does not accept parameter markers inside ``INTERVAL n DAYS`` literals or after ``LIMIT``,
+    so the whole query is built via Python string interpolation rather than ``spark.sql`` args.
 
     Returns:
         DataFrame conforming to *LINEAGE_TABLE_SCHEMA* — one row per discovered edge, with the
         constant columns from *common* prefixed and unrelated columns set to typed NULLs.
     """
-    key_source = "source_table_full_name" if direction == _EDGE_UPSTREAM else "target_table_full_name"
-    key_other = "target_table_full_name" if direction == _EDGE_UPSTREAM else "source_table_full_name"
+    key_source = "target_table_full_name" if direction == _EDGE_UPSTREAM else "source_table_full_name"
+    key_other = "source_table_full_name" if direction == _EDGE_UPSTREAM else "target_table_full_name"
     max_depth = int(search.depth)
     max_nodes = int(search.max_nodes)
-    # nosec B608: identifiers only; user input flows through :table_name / :lookback below.
+    lookback_days = int(search.lookback_days)
+    table_literal = _sql_str_literal(table_full_name)
+    # nosec B608: identifiers + validated ints only; the anchor table name is escaped and wrapped
+    # by *_sql_str_literal* before interpolation.
     query = (
         "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ("
-        f"  SELECT :table_name AS anchor, {key_other} AS neighbour, 1 AS depth, "
-        f"         array(:table_name, {key_other}) AS path, event_time "
+        f"  SELECT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
+        f"         array({table_literal}, {key_other}) AS path, event_time "
         f"  FROM {LINEAGE_TABLE_LINEAGE} "
-        f"  WHERE {key_source} = :table_name "
+        f"  WHERE {key_source} = {table_literal} "
         f"    AND {key_other} IS NOT NULL "
-        f"    AND {key_other} <> :table_name "
-        "    AND event_time >= current_timestamp() - INTERVAL :lookback DAYS "
+        f"    AND {key_other} <> {table_literal} "
+        f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         "  UNION ALL "
         f"  SELECT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
         f"         array_append(e.path, t.{key_other}), t.event_time "
@@ -492,14 +609,14 @@ def _walk_lineage(
         f"  WHERE e.depth < {max_depth} "
         f"    AND t.{key_other} IS NOT NULL "
         f"    AND NOT array_contains(e.path, t.{key_other}) "
-        "    AND t.event_time >= current_timestamp() - INTERVAL :lookback DAYS "
+        f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         ") "
         "SELECT DISTINCT anchor, neighbour, depth "
         "FROM edges "
         f"LIMIT {max_nodes}"
     )
     try:
-        walk_df = spark.sql(query, args={"table_name": table_full_name, "lookback": search.lookback_days})
+        walk_df = spark.sql(query)
     except Exception as exc:  # broad catch: system-table read errors are non-fatal for lineage
         logger.warning(f"Lineage read failed for '{_sanitize(table_full_name)}' ({direction}): {_sanitize(str(exc))}")
         return _empty_lineage_df(spark)
@@ -566,25 +683,26 @@ def _column_direction_df(
     common: dict[str, Any],
 ) -> DataFrame:
     """Single-direction column-lineage read joined against the failed-columns DataFrame."""
+    lookback_days = int(search.lookback_days)
+    table_literal = _sql_str_literal(source_table)
+    # nosec B608: identifiers + validated int only; the anchor table name is escaped and wrapped
+    # by *_sql_str_literal* before interpolation.
     if edge_type == _EDGE_COLUMN_UPSTREAM:
         query = (
-            "SELECT source_table_full_name AS neighbour, source_column, target_column "  # nosec B608
+            "SELECT source_table_full_name AS neighbour, source_column, target_column "
             f"FROM {LINEAGE_COLUMN_LINEAGE} "
-            "WHERE target_table_full_name = :table_name "
-            "AND event_time >= current_timestamp() - INTERVAL :lookback DAYS"
+            f"WHERE target_table_full_name = {table_literal} "
+            f"AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS"
         )
     else:
         query = (
-            "SELECT target_table_full_name AS neighbour, source_column, target_column "  # nosec B608
+            "SELECT target_table_full_name AS neighbour, source_column, target_column "
             f"FROM {LINEAGE_COLUMN_LINEAGE} "
-            "WHERE source_table_full_name = :table_name "
-            "AND event_time >= current_timestamp() - INTERVAL :lookback DAYS"
+            f"WHERE source_table_full_name = {table_literal} "
+            f"AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS"
         )
     try:
-        neighbours = spark.sql(
-            query,
-            args={"table_name": source_table, "lookback": search.lookback_days},
-        )
+        neighbours = spark.sql(query)
     except Exception as exc:  # broad catch: system-table read errors are non-fatal for lineage
         logger.warning(
             f"Column lineage read failed for '{_sanitize(source_table)}' ({edge_type}): {_sanitize(str(exc))}"
@@ -606,128 +724,6 @@ def _column_direction_df(
         source_column_col=F.col("source_column"),
         target_column_col=F.col("target_column"),
         common=common,
-    )
-
-
-def _collect_modifier_df(
-    *,
-    spark: SparkSession,
-    source_table: str,
-    entities_cfg: LineageEntitySearchConfig,
-    common: dict[str, Any],
-) -> DataFrame:
-    """Resolve the most recent JOB modifier runs for *source_table* as a DataFrame.
-
-    The pipeline filters *LINEAGE_TABLE_LINEAGE* to *JOB* modifier events targeting *source_table* within the
-    configured lookback window, keeps the *max_last_runs* most recent by *event_time*, joins the
-    latest run per *job_id* from *LINEAGE_JOBS_RUNS*, and left-joins *LINEAGE_WORKSPACES* on
-    *workspace_id* so the modifier URL is composed against the workspace where the job actually
-    ran (not the current *WorkspaceClient*'s workspace, which may differ).
-
-    Args:
-        spark: Active *SparkSession*.
-        source_table: 3-level UC name whose modifier history is being resolved.
-        entities_cfg: Lookback / row-cap knobs.
-        common: Constants added to each emitted row.
-
-    Returns:
-        DataFrame conforming to *LINEAGE_TABLE_SCHEMA*, empty on failure.
-    """
-    try:
-        return _build_modifier_df(spark=spark, source_table=source_table, entities_cfg=entities_cfg, common=common)
-    except Exception as exc:  # broad catch: modifier lookup is best-effort
-        logger.warning(f"Last-modifier read failed for '{_sanitize(source_table)}': {_sanitize(str(exc))}")
-        return _empty_lineage_df(spark)
-
-
-def _build_modifier_df(
-    *,
-    spark: SparkSession,
-    source_table: str,
-    entities_cfg: LineageEntitySearchConfig,
-    common: dict[str, Any],
-) -> DataFrame:
-    """DataFrame-only body of *_collect_modifier_df*, extracted to keep the outer try small."""
-    lookback_days = int(entities_cfg.lookback_days)
-    max_last_runs = int(entities_cfg.max_last_runs)
-    lookback_expr = F.expr(f"INTERVAL {lookback_days} DAYS")
-
-    lineage = spark.table(LINEAGE_TABLE_LINEAGE)
-    runs = spark.table(LINEAGE_JOBS_RUNS)
-    workspaces = spark.table(LINEAGE_WORKSPACES)
-
-    # `Window.orderBy` without a partition triggers a Spark warning about performance — unavoidable
-    # here since we want a global "most-recent-N" across events, but the window is tiny (bounded by
-    # DAG size) so this is fine.
-    event_window = Window.orderBy(F.col("event_time").desc())
-    modifier_events = (
-        lineage.filter(F.col("target_table_full_name") == F.lit(source_table))
-        .filter(F.col("event_time") >= F.current_timestamp() - lookback_expr)
-        .filter(F.col("entity_type") == F.lit("JOB"))
-        .filter(F.col("entity_id").isNotNull())
-        .withColumn("_rn", F.row_number().over(event_window))
-        .filter(F.col("_rn") <= max_last_runs)
-        .drop("_rn")
-        .select(F.col("entity_id").alias("mod_job_id"))
-    )
-
-    run_window = Window.partitionBy("job_id").orderBy(F.col("period_start_time").desc())
-    latest_runs = (
-        runs.filter(F.col("period_start_time") >= F.current_timestamp() - lookback_expr)
-        .withColumn("_rn", F.row_number().over(run_window))
-        .filter(F.col("_rn") == 1)
-        .drop("_rn")
-        .select(
-            F.col("job_id").alias("run_job_id"),
-            F.col("run_id").alias("run_run_id"),
-            F.col("job_name").alias("run_job_name"),
-            F.col("period_start_time").alias("run_period_start_time"),
-            F.col("period_end_time").alias("run_period_end_time"),
-            F.col("result_state").alias("run_result_state"),
-            F.col("workspace_id").alias("run_workspace_id"),
-        )
-    )
-
-    workspaces_slim = workspaces.select(
-        F.col("workspace_id").alias("ws_workspace_id"),
-        F.col("workspace_url").alias("ws_workspace_url"),
-    )
-
-    joined = modifier_events.join(latest_runs, modifier_events["mod_job_id"] == latest_runs["run_job_id"], "left").join(
-        workspaces_slim,
-        latest_runs["run_workspace_id"] == workspaces_slim["ws_workspace_id"],
-        "left",
-    )
-
-    url_expr = F.when(
-        F.col("ws_workspace_url").isNotNull() & F.col("mod_job_id").isNotNull() & F.col("run_run_id").isNotNull(),
-        F.concat(
-            F.lit("https://"),
-            F.col("ws_workspace_url"),
-            F.lit("/jobs/"),
-            F.col("mod_job_id").cast("string"),
-            F.lit("/runs/"),
-            F.col("run_run_id").cast("string"),
-        ),
-    ).otherwise(F.lit(None).cast("string"))
-
-    return joined.select(
-        F.lit(common["run_id"]).cast("string").alias("run_id"),
-        F.to_timestamp(F.lit(common["run_time"])).alias("run_time"),
-        F.lit(common["source_table"]).cast("string").alias("source_table"),
-        F.lit(_EDGE_LAST_MODIFIER).cast("string").alias("edge_type"),
-        F.lit(None).cast("long").alias("depth"),
-        F.lit(None).cast("string").alias("target_table"),
-        F.lit(None).cast("long").alias("target_delta_version"),
-        F.lit(None).cast("string").alias("source_column"),
-        F.lit(None).cast("string").alias("target_column"),
-        F.col("mod_job_id").cast("long").alias("modifier_job_id"),
-        F.col("run_run_id").cast("long").alias("modifier_run_id"),
-        F.col("run_job_name").cast("string").alias("modifier_job_name"),
-        F.col("run_result_state").cast("string").alias("modifier_status"),
-        (F.unix_timestamp(F.col("run_period_start_time")) * F.lit(1000)).cast("long").alias("modifier_start_ms"),
-        (F.unix_timestamp(F.col("run_period_end_time")) * F.lit(1000)).cast("long").alias("modifier_end_ms"),
-        url_expr.alias("modifier_url"),
     )
 
 
@@ -762,21 +758,14 @@ def _project_edge_rows(
         F.lit(None).cast("long").alias("target_delta_version"),
         source_column_col.alias("source_column"),
         target_column_col.alias("target_column"),
-        F.lit(None).cast("long").alias("modifier_job_id"),
-        F.lit(None).cast("long").alias("modifier_run_id"),
-        F.lit(None).cast("string").alias("modifier_job_name"),
-        F.lit(None).cast("string").alias("modifier_status"),
-        F.lit(None).cast("long").alias("modifier_start_ms"),
-        F.lit(None).cast("long").alias("modifier_end_ms"),
-        F.lit(None).cast("string").alias("modifier_url"),
     )
 
 
 __all__ = [
     "CollectLineageAction",
+    "LINEAGE_TABLE_COMMENT",
     "LINEAGE_TABLE_SCHEMA",
     "LineageActionConfig",
-    "LineageEntitySearchConfig",
     "LineageSearchConfig",
     "extract_failed_columns",
 ]

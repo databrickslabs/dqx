@@ -1,8 +1,8 @@
 """Unit tests for *CollectLineageAction* — pure-logic scope only.
 
-System-table read paths, recursive-CTE walks, and modifier joins are exercised by the
-integration suite (see *tests/integration/actions/test_lineage_action.py*). Anything that
-would require a live Spark session or fabricated *spark.sql* results has been moved there.
+System-table read paths and recursive-CTE walks are exercised by the integration suite (see
+*tests/integration/actions/test_lineage_action.py*). Anything that would require a live Spark
+session or fabricated *spark.sql* results has been moved there.
 """
 
 from datetime import datetime, timezone
@@ -14,16 +14,10 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.lineage import (
     CollectLineageAction,
-    LineageEntitySearchConfig,
     LineageSearchConfig,
 )
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.errors import InvalidActionError
-
-
-# ---------------------------------------------------------------------------
-# Config validators — pure Pydantic, no Spark
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("field", ["depth", "lookback_days", "max_nodes"])
@@ -32,18 +26,6 @@ def test_lineage_search_config_rejects_out_of_range(field: str) -> None:
     invalid = -1 if field == "depth" else 0
     with pytest.raises(InvalidActionError):
         LineageSearchConfig.model_validate({field: invalid})
-
-
-@pytest.mark.parametrize("field", ["lookback_days", "max_last_runs"])
-def test_lineage_entity_search_config_rejects_out_of_range(field: str) -> None:
-    """Each numeric bound on *LineageEntitySearchConfig* rejects sub-minimum values."""
-    with pytest.raises(InvalidActionError):
-        LineageEntitySearchConfig.model_validate({field: 0})
-
-
-# ---------------------------------------------------------------------------
-# execute() guard clauses — no query issued, no Spark session required
-# ---------------------------------------------------------------------------
 
 
 def _make_context(input_location: str | None) -> ActionContext:

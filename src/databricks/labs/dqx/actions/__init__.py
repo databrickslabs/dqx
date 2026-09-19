@@ -26,7 +26,6 @@ from databricks.labs.dqx.actions.noop import NoOpAction
 from databricks.labs.dqx.actions.lineage import (
     CollectLineageAction,
     LineageActionConfig,
-    LineageEntitySearchConfig,
     LineageSearchConfig,
 )
 from databricks.labs.dqx.actions.destinations import (
@@ -67,7 +66,6 @@ __all__ = [
     "DQWebhookAlertDestination",
     "FailPipeline",
     "LineageActionConfig",
-    "LineageEntitySearchConfig",
     "LineageSearchConfig",
     "NoOpAction",
     "NotifyOn",
