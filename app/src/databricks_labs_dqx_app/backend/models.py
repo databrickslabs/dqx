@@ -414,6 +414,12 @@ class FilterTablesByColumnsOut(BaseModel):
     errors: list[dict[str, str]] = Field(default_factory=list, description="Tables that failed column lookup")
 
 
+class TablePreviewOut(BaseModel):
+    columns: list[str] = Field(description="Column names in the order returned by the warehouse")
+    rows: list[dict[str, str | None]] = Field(description="Sample rows as column-name-keyed dicts")
+    row_count: int = Field(description="Number of rows returned")
+
+
 class SetStatusIn(BaseModel):
     status: RuleStatus = Field(description="New status: draft | pending_approval | approved | rejected")
     expected_version: int | None = Field(
@@ -1422,6 +1428,33 @@ class DryRunIn(BaseModel):
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
     sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
     skip_history: bool = Field(default=False, description="If true, do not record this run in the history table")
+
+
+class PreviewDryRunIn(BaseModel):
+    table_fqn: str = Field(description="Original table FQN (informational label only)")
+    checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
+    rows: list[dict[str, Any]] = Field(description="Preview rows as column-name-keyed dicts")
+
+
+class TableDryRunIn(BaseModel):
+    table_fqn: str = Field(description="Fully qualified table name to read via Spark (catalog.schema.table)")
+    checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
+    sample_size: int = Field(default=100, ge=1, le=10_000, description="Number of rows to sample from the table")
+
+
+class PreviewRowResult(BaseModel):
+    row: dict[str, Any] = Field(description="Original row values")
+    errors: list[str] = Field(default_factory=list, description="Check names that failed with error criticality")
+    warnings: list[str] = Field(default_factory=list, description="Check names that failed with warn criticality")
+
+
+class PreviewDryRunOut(BaseModel):
+    table_fqn: str
+    total_rows: int
+    error_rows: int
+    warning_rows: int
+    pass_rows: int
+    rows: list[PreviewRowResult] = Field(description="Per-row results with error/warning annotations")
 
 
 class DryRunSubmitOut(BaseModel):

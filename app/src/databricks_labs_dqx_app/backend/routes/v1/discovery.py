@@ -1,9 +1,12 @@
 import asyncio
+import re
 from typing import Annotated
 
+from databricks.labs.dqx.utils import is_sql_query_safe
+from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.dependencies import get_discovery_service
+from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_obo_sql_executor, get_obo_ws
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CatalogOut,
@@ -14,10 +17,18 @@ from databricks_labs_dqx_app.backend.models import (
     GovernedTagsOut,
     SchemaOut,
     TableOut,
+    TablePreviewOut,
     TableSchemaDdlOut,
     TableTagsOut,
 )
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
+
+# A generated filter query must be a single read-only SELECT/WITH statement — mirrors the
+# rail table_data_service.py applies to its AI-generated queries (AGENTS.md LLM-output rule).
+_READ_ONLY_PREFIX_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+_NL_FILTER_MODEL = "databricks-claude-sonnet-4-5"
 
 # No router-level role guard: OBO auth via get_discovery_service rejects
 # unauthenticated callers, and Unity Catalog OBO permissions enforce what each
@@ -152,6 +163,114 @@ async def get_table_tags(
     except Exception as e:
         logger.error(f"Failed to get tags for {catalog}.{schema}.{table}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get table tags: {e}")
+
+
+def _generate_filter_sql(ws: WorkspaceClient, nl_query: str, quoted_fqn: str, limit: int, columns: list[str]) -> str:
+    """Call a Databricks Foundation Model to convert a natural-language filter into SQL.
+
+    Returns a complete SELECT statement. Falls back to a plain SELECT on any error, and the
+    generated statement is re-validated by the caller before it is ever executed — this
+    function's output is untrusted LLM output, not a query to run as-is (AGENTS.md).
+    """
+    col_list = ", ".join(columns) if columns else "(columns unknown)"
+    prompt = (
+        f"You are a SQL expert. Generate a valid Spark SQL SELECT statement for the table {quoted_fqn}.\n\n"
+        f"The table has EXACTLY these columns (use no others): {col_list}\n\n"
+        f"User request: {nl_query}\n\n"
+        "Rules:\n"
+        "1. Return ONLY the raw SQL — no markdown, no code fences.\n"
+        f"2. Always include LIMIT {limit}.\n"
+        "3. ONLY use column names from the list above — never infer or guess column names.\n"
+        "4. Return a single read-only SELECT (or WITH ... SELECT) statement — never DDL/DML.\n"
+        f"5. If the request is unclear default to: SELECT * FROM {quoted_fqn} LIMIT {limit}"
+    )
+    payload = {
+        "messages": [
+            {"role": "system", "content": "You are a SQL generator for Databricks Spark SQL."},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 512,
+        "temperature": 0,
+    }
+    fallback = f"SELECT * FROM {quoted_fqn} LIMIT {limit}"
+    try:
+        resp = ws.api_client.do("POST", f"/serving-endpoints/{_NL_FILTER_MODEL}/invocations", body=payload)
+        sql = resp["choices"][0]["message"]["content"].strip()  # type: ignore[index]
+        sql = re.sub(r"```[a-z]*|```", "", sql).strip().rstrip(";").strip()
+        return sql or fallback
+    except Exception as exc:
+        logger.warning("NL filter SQL generation failed, falling back to plain SELECT: %s", exc)
+        return fallback
+
+
+def _validate_generated_filter_sql(sql: str, fallback: str) -> str:
+    """Validate LLM-generated filter SQL before execution, or fall back to a plain SELECT.
+
+    Security rail (AGENTS.md): LLM-generated SQL must be a single read-only SELECT/WITH
+    statement and must pass ``is_sql_query_safe`` before it is ever run against a warehouse.
+    Rather than surfacing an error to the user for a merely-decorative filter box, an unsafe
+    or malformed statement silently degrades to the unfiltered preview.
+    """
+    if ";" in sql or not _READ_ONLY_PREFIX_RE.match(sql) or not is_sql_query_safe(sql):
+        logger.warning("Generated filter SQL failed validation, falling back to plain SELECT")
+        return fallback
+    return sql
+
+
+@router.get(
+    "/catalogs/{catalog}/schemas/{schema}/tables/{table}/preview",
+    response_model=TablePreviewOut,
+    operation_id="get_table_preview",
+)
+async def get_table_preview(
+    catalog: str,
+    schema: str,
+    table: str,
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    limit: int = 10,
+    filter_query: str | None = Query(default=None, description="Natural-language filter applied via AI-generated SQL"),
+) -> TablePreviewOut:
+    """Return up to *limit* sample rows from the table for UI preview.
+
+    When *filter_query* is provided the AI converts it to a SQL WHERE clause first; the
+    generated statement is validated (single read-only SELECT, ``is_sql_query_safe``) before
+    it is run, falling back to a plain unfiltered preview if it fails that check.
+    Runs as the calling user (OBO) so Unity Catalog row filters and column masks apply.
+    """
+    limit = max(1, min(limit, 10_000))
+    fqn = f"{catalog}.{schema}.{table}"
+    try:
+        validate_fqn(fqn)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    quoted = quote_fqn(fqn)
+    fallback_sql = f"SELECT * FROM {quoted} LIMIT {limit}"
+    try:
+        if filter_query and filter_query.strip():
+            try:
+                desc_rows = await asyncio.to_thread(obo_sql.query_dicts, f"DESCRIBE TABLE {quoted}")
+                # DESCRIBE TABLE returns col_name / data_type / comment; skip partition headers (start with #)
+                columns = [
+                    r["col_name"] for r in desc_rows
+                    if r.get("col_name") and not str(r["col_name"]).startswith("#")
+                ]
+            except Exception:
+                columns = []
+            generated = await asyncio.to_thread(
+                _generate_filter_sql, obo_ws, filter_query.strip(), quoted, limit, columns
+            )
+            sql = _validate_generated_filter_sql(generated, fallback_sql)
+        else:
+            sql = fallback_sql
+        rows = await asyncio.to_thread(obo_sql.query_dicts, sql)
+        cols = list(rows[0].keys()) if rows else []
+        return TablePreviewOut(columns=cols, rows=rows, row_count=len(rows))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Preview failed for %s: %s", fqn, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load preview: {e}")
 
 
 @router.get(
