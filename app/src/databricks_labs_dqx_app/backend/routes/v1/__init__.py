@@ -36,6 +36,7 @@ from .permissions import router as permissions_router
 from .admin import router as admin_router
 from .marketplace import router as marketplace_router
 from .schedule_grants import router as schedule_grants_router
+from .remediation_playbook import router as remediation_playbook_router
 
 v1_router = APIRouter()
 v1_router.include_router(me_router, tags=["meta"])
@@ -74,3 +75,4 @@ v1_router.include_router(permissions_router, prefix="/permissions", tags=["permi
 v1_router.include_router(admin_router, prefix="/admin", tags=["admin"])
 v1_router.include_router(marketplace_router, prefix="/marketplace", tags=["marketplace"])
 v1_router.include_router(schedule_grants_router, prefix="/schedule-grants", tags=["schedule-grants"])
+v1_router.include_router(remediation_playbook_router, prefix="/remediation-playbook", tags=["remediation-playbook"])

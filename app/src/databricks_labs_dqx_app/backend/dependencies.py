@@ -65,6 +65,7 @@ from .services.tag_mapping_service import ColumnInfo
 from .services.tag_reconcile_service import TagReconcileService
 from .services.tag_suggestion_service import TagSuggestionService
 from .services.ai_bootstrap import AiBootstrap
+from .services.remediation_playbook_service import RemediationPlaybookService
 from .services.view_service import ViewService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -763,6 +764,20 @@ async def get_schedule_config_service(
 ) -> ScheduleConfigService:
     """Create a ScheduleConfigService routed at the OLTP executor."""
     return ScheduleConfigService(sql=sql)
+
+
+async def get_remediation_playbook_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> RemediationPlaybookService:
+    """Create a RemediationPlaybookService.
+
+    Uses the SP's WorkspaceClient (Files API, for the Volume) and the
+    Delta SqlExecutor (for the governance schema/volume bootstrap DDL) —
+    never the Lakebase-optional OLTP executor, since this isn't a
+    database-backed service at all. See the service module docstring.
+    """
+    return RemediationPlaybookService(ws=sp_ws, sql=sql, catalog=conf.catalog)
 
 
 def get_conf() -> AppConfig:

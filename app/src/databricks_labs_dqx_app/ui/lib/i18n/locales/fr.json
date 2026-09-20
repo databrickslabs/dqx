@@ -130,7 +130,8 @@
     "monitoredTables": "Tables",
     "importRules": "Importer des règles",
     "results": "Résultats",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "remediationPlaybook": "Manuel de Remédiation"
   },
   "userMenu": {
     "profile": "Profil",

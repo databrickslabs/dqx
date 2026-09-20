@@ -130,7 +130,8 @@
     "monitoredTables": "Tables",
     "importRules": "Import Rules",
     "results": "Results",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "remediationPlaybook": "Remediation Playbook"
   },
   "userMenu": {
     "profile": "Profile",
@@ -2974,5 +2975,43 @@
     },
     "instructions": "How to resolve this",
     "diagnosticCode": "Code: {{code}}"
+  },
+  "remediationPlaybook": {
+    "breadcrumb": "Remediation Playbook",
+    "title": "Remediation Playbook",
+    "subtitle": "One YAML runbook per dataset, deciding how the automated re-ingestion pipeline fixes that table's quarantined data-quality failures.",
+    "addEntry": "Add Runbook",
+    "noEntries": "No runbooks configured",
+    "noEntriesDescription": "Add a runbook for a table to have its matching quarantined rows fixed automatically instead of falling through to LLM review.",
+    "colFile": "File",
+    "colSize": "Size",
+    "colUpdated": "Last updated",
+    "colActions": "Actions",
+    "edit": "Edit",
+    "view": "View",
+    "deleteEntry": "Delete",
+    "addEntryTitle": "Add Runbook",
+    "editEntryTitle": "Edit Runbook",
+    "viewEntryTitle": "View Runbook",
+    "dialogDescription": "Write or upload the ordered list of remediation rules for this table, in whatever YAML shape your re-ingestion pipeline expects. Saving writes the file straight to the remediation-playbook Volume — whatever's there is what the pipeline uses, the app never validates its contents beyond valid YAML syntax.",
+    "viewDialogDescription": "Read-only — the ordered list of remediation rules for this table, as currently stored on the remediation-playbook Volume.",
+    "fieldTable": "Table",
+    "fieldRunbookYaml": "Runbook (YAML)",
+    "fieldRunbookYamlHint": "Only checked for valid YAML syntax — its structure and any strategies it uses are entirely up to your pipeline.",
+    "uploadYaml": "Upload file",
+    "uploadFailed": "Could not read the uploaded file",
+    "validationTableRequired": "Select a table",
+    "entrySaved": "Runbook saved",
+    "failedSave": "Failed to save runbook",
+    "failedLoadEntry": "Failed to load runbook contents",
+    "entryDeleted": "Runbook deleted",
+    "failedDelete": "Failed to delete runbook",
+    "failedLoad": "Failed to load remediation runbooks",
+    "deleteConfirmTitle": "Delete this runbook?",
+    "deleteConfirmBody": "This permanently removes the runbook file from the Volume — the re-ingestion pipeline will no longer find it for this table.",
+    "cancel": "Cancel",
+    "close": "Close",
+    "save": "Save",
+    "confirmDelete": "Delete"
   }
 }

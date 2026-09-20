@@ -130,7 +130,8 @@
     "monitoredTables": "Tabelle",
     "importRules": "Importa Regole",
     "results": "Risultati",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "remediationPlaybook": "Manuale di Remediation"
   },
   "userMenu": {
     "profile": "Profilo",
@@ -2974,5 +2975,43 @@
     },
     "instructions": "Come risolvere",
     "diagnosticCode": "Codice: {{code}}"
+  },
+  "remediationPlaybook": {
+    "breadcrumb": "Manuale di Remediation",
+    "title": "Manuale di Remediation",
+    "subtitle": "Un runbook YAML per dataset, che decide come la pipeline di re-ingestione automatizzata corregge gli errori di qualità dei dati in quarantena di quella tabella.",
+    "addEntry": "Aggiungi Runbook",
+    "noEntries": "Nessun runbook configurato",
+    "noEntriesDescription": "Aggiungi un runbook per una tabella affinché le sue righe in quarantena corrispondenti vengano corrette automaticamente invece di passare alla revisione LLM.",
+    "colFile": "File",
+    "colSize": "Dimensione",
+    "colUpdated": "Ultimo aggiornamento",
+    "colActions": "Azioni",
+    "edit": "Modifica",
+    "view": "Visualizza",
+    "deleteEntry": "Elimina",
+    "addEntryTitle": "Aggiungi Runbook",
+    "editEntryTitle": "Modifica Runbook",
+    "viewEntryTitle": "Visualizza Runbook",
+    "dialogDescription": "Scrivi o carica l'elenco ordinato delle regole di remediation per questa tabella, nella forma YAML attesa dalla tua pipeline di re-ingestione. Salvando si scrive il file direttamente sul Volume del manuale di remediation — ciò che è presente lì è ciò che usa la pipeline; l'app verifica solo che sia YAML valido, non ne valida mai il contenuto.",
+    "viewDialogDescription": "Sola lettura — l'elenco ordinato delle regole di remediation per questa tabella, così come attualmente memorizzato sul Volume del manuale di remediation.",
+    "fieldTable": "Tabella",
+    "fieldRunbookYaml": "Runbook (YAML)",
+    "fieldRunbookYamlHint": "Viene verificato solo che sia YAML valido — la struttura e le strategie utilizzate dipendono interamente dalla tua pipeline.",
+    "uploadYaml": "Carica file",
+    "uploadFailed": "Impossibile leggere il file caricato",
+    "validationTableRequired": "Seleziona una tabella",
+    "entrySaved": "Runbook salvato",
+    "failedSave": "Salvataggio del runbook non riuscito",
+    "failedLoadEntry": "Caricamento del contenuto del runbook non riuscito",
+    "entryDeleted": "Runbook eliminato",
+    "failedDelete": "Eliminazione del runbook non riuscita",
+    "failedLoad": "Caricamento dei runbook di remediation non riuscito",
+    "deleteConfirmTitle": "Eliminare questo runbook?",
+    "deleteConfirmBody": "Questo rimuove definitivamente il file del runbook dal Volume — la pipeline di re-ingestione non lo troverà più per questa tabella.",
+    "cancel": "Annulla",
+    "close": "Chiudi",
+    "save": "Salva",
+    "confirmDelete": "Elimina"
   }
 }

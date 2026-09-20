@@ -11,6 +11,7 @@ import {
   Table2,
   Boxes,
   Store,
+  Wrench,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -117,6 +118,23 @@ function Layout() {
                 <Link to="/collections">
                   <Boxes />
                   <span>{t("sidebar.dataProducts")}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            {/* Remediation Playbook — per-dataset YAML runbooks (Volume-backed)
+                that tell the external re-ingestion pipeline how to fix a
+                table's quarantined rows deterministically. Grouped with the
+                other rule-adjacent authoring surfaces. */}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/remediation-playbook")}
+                tooltip={t("sidebar.remediationPlaybook")}
+              >
+                <Link to="/remediation-playbook">
+                  <Wrench />
+                  <span>{t("sidebar.remediationPlaybook")}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

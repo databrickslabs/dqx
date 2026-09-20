@@ -130,7 +130,8 @@
     "monitoredTables": "Tabelas",
     "importRules": "Importar Regras",
     "results": "Resultados",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "remediationPlaybook": "Manual de Remediação"
   },
   "userMenu": {
     "profile": "Perfil",
@@ -2974,5 +2975,43 @@
     },
     "instructions": "Como resolver",
     "diagnosticCode": "Código: {{code}}"
+  },
+  "remediationPlaybook": {
+    "breadcrumb": "Manual de Remediação",
+    "title": "Manual de Remediação",
+    "subtitle": "Um runbook YAML por dataset, decidindo como o pipeline de reingestão automatizado corrige as falhas de qualidade de dados em quarentena daquela tabela.",
+    "addEntry": "Adicionar Runbook",
+    "noEntries": "Nenhum runbook configurado",
+    "noEntriesDescription": "Adicione um runbook para uma tabela para que suas linhas em quarentena correspondentes sejam corrigidas automaticamente, em vez de passarem para revisão por LLM.",
+    "colFile": "Arquivo",
+    "colSize": "Tamanho",
+    "colUpdated": "Última atualização",
+    "colActions": "Ações",
+    "edit": "Editar",
+    "view": "Ver",
+    "deleteEntry": "Excluir",
+    "addEntryTitle": "Adicionar Runbook",
+    "editEntryTitle": "Editar Runbook",
+    "viewEntryTitle": "Ver Runbook",
+    "dialogDescription": "Escreva ou envie a lista ordenada de regras de remediação para esta tabela, no formato YAML esperado pelo seu pipeline de reingestão. Salvar grava o arquivo diretamente no Volume do manual de remediação — o que estiver lá é o que o pipeline usa; o app apenas verifica se é YAML válido, nunca valida seu conteúdo.",
+    "viewDialogDescription": "Somente leitura — a lista ordenada de regras de remediação para esta tabela, como está atualmente armazenada no Volume do manual de remediação.",
+    "fieldTable": "Tabela",
+    "fieldRunbookYaml": "Runbook (YAML)",
+    "fieldRunbookYamlHint": "Apenas verificamos se é YAML válido — a estrutura e quaisquer estratégias usadas dependem inteiramente do seu pipeline.",
+    "uploadYaml": "Enviar arquivo",
+    "uploadFailed": "Não foi possível ler o arquivo enviado",
+    "validationTableRequired": "Selecione uma tabela",
+    "entrySaved": "Runbook salvo",
+    "failedSave": "Falha ao salvar o runbook",
+    "failedLoadEntry": "Falha ao carregar o conteúdo do runbook",
+    "entryDeleted": "Runbook excluído",
+    "failedDelete": "Falha ao excluir o runbook",
+    "failedLoad": "Falha ao carregar os runbooks de remediação",
+    "deleteConfirmTitle": "Excluir este runbook?",
+    "deleteConfirmBody": "Isso remove permanentemente o arquivo do runbook do Volume — o pipeline de reingestão não o encontrará mais para esta tabela.",
+    "cancel": "Cancelar",
+    "close": "Fechar",
+    "save": "Salvar",
+    "confirmDelete": "Excluir"
   }
 }

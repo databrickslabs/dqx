@@ -2982,3 +2982,42 @@ class DemoContentStatusOut(BaseModel):
     message: str
     started_at: str
     updated_at: str
+
+
+class RemediationPlaybookEntryIn(BaseModel):
+    """Create/replace body for a dataset's remediation runbook.
+
+    Deliberately schema-light: this is a thin passthrough onto a Unity
+    Catalog Volume file, not a database row. ``runbook_yaml`` is written
+    to the Volume as-is — the app only checks that it parses as YAML (see
+    ``services/remediation_playbook_service.py``), never its strategy
+    shape, so a new remediation strategy never requires an app change.
+    Whatever's in the Volume is what the external pipeline uses; there is
+    no separate draft/approved app-side state.
+    """
+
+    table_fqn: str = Field(description="The single dataset this runbook applies to")
+    runbook_yaml: str = Field(
+        default="",
+        description="Ordered list of remediation rules for this table, in the pipeline team's own YAML shape",
+    )
+
+
+class RemediationPlaybookEntryOut(RemediationPlaybookEntryIn):
+    """A dataset's runbook file, as stored on the Volume."""
+
+    filename: str = Field(description="File name on the Volume, e.g. schema_table.yaml")
+    modified_at: str | None = Field(default=None, description="Last-modified timestamp, ISO 8601")
+    size_bytes: int | None = None
+
+
+class RemediationPlaybookContentIn(BaseModel):
+    """Update body for an *existing* runbook's content, keyed by filename.
+
+    Deliberately has no ``table_fqn`` — the filename's ``schema_table``
+    stem isn't losslessly reversible back to a real table_fqn, so an edit
+    must never round-trip through one. Use ``RemediationPlaybookEntryIn``
+    (with a real ``table_fqn``) only when creating a new runbook.
+    """
+
+    runbook_yaml: str = Field(default="", description="Replacement content for this runbook")
