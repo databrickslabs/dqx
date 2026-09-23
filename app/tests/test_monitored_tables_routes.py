@@ -7,7 +7,7 @@ routes themselves are thin adapters over ``MonitoredTableService``, whose
 behaviour is already covered by ``test_monitored_table_service.py``.
 """
 
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
@@ -590,6 +590,44 @@ class TestUpdateSchedule:
         svc.update_schedule.assert_called_once_with(
             "b1", None, None, "alice@x", schedule_kind="dq_only", schedule_sample_size=None
         )
+
+    def test_setting_schedule_notifies_scheduler(self):
+        # A cron on an approved table activates it immediately (orthogonal to the
+        # review lifecycle), so the scheduler must be woken rather than waiting
+        # out the idle poll interval for first pickup.
+        svc = MagicMock()
+        svc.update_schedule.return_value = _table(status="approved")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC")
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            update_monitored_table_schedule(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                grant_svc=MagicMock(),
+            )
+        notify.assert_called_once()
+
+    def test_clearing_schedule_does_not_notify_scheduler(self):
+        # Clearing a cron activates nothing — the scheduler need not be woken.
+        svc = MagicMock()
+        svc.update_schedule.return_value = _table(status="approved")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron=None, schedule_tz=None)
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            update_monitored_table_schedule(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                grant_svc=MagicMock(),
+            )
+        notify.assert_not_called()
 
     def test_missing_raises_404(self):
         svc = MagicMock()
