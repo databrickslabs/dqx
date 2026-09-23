@@ -465,29 +465,52 @@ class TestMaybeRefreshMetadataDims:
         dim.refresh.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_advances_timer_before_running_and_refreshes(self, make_scheduler):
+    async def test_refreshes_then_reconciles_and_advances_timer(self, make_scheduler):
+        events: list[str] = []
         dim = create_autospec(MetadataDimService, instance=True)
-        svc, _ = make_scheduler(metadata_dim_service=dim)
+        dim.refresh.side_effect = lambda: events.append("refresh")
+
+        def reconcile() -> None:
+            events.append("reconcile")
+
+        svc, _ = make_scheduler(
+            metadata_dim_service=dim,
+            metadata_dim_tag_reconcile=reconcile,
+        )
         due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
         svc._next_metadata_dim_refresh_at = due
 
         fire = due + timedelta(seconds=1)
         await svc._maybe_refresh_metadata_dims(fire)
 
-        dim.refresh.assert_called_once_with()
+        assert events == ["refresh", "reconcile"]
         # Timer advanced by exactly the interval from ``now``.
         assert svc._next_metadata_dim_refresh_at == fire + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
 
     @pytest.mark.asyncio
     async def test_refresh_failure_does_not_propagate(self, make_scheduler):
+        events: list[str] = []
         dim = create_autospec(MetadataDimService, instance=True)
-        dim.refresh.side_effect = RuntimeError("warehouse down")
-        svc, _ = make_scheduler(metadata_dim_service=dim)
+
+        def fail_refresh() -> None:
+            events.append("refresh")
+            raise RuntimeError("warehouse down")
+
+        dim.refresh.side_effect = fail_refresh
+
+        def reconcile() -> None:
+            events.append("reconcile")
+
+        svc, _ = make_scheduler(
+            metadata_dim_service=dim,
+            metadata_dim_tag_reconcile=reconcile,
+        )
         due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
         svc._next_metadata_dim_refresh_at = due
 
         # Must not raise; just log and reschedule.
         await svc._maybe_refresh_metadata_dims(due + timedelta(minutes=1))
+        assert events == ["refresh"]
         assert svc._next_metadata_dim_refresh_at > due
 
 

@@ -135,6 +135,8 @@ variables:
           value_from: "dqx-task-runner-job"
         - name: "DQX_REQUIRE_TASK_RUNNER"
           value: "1"
+        - name: "DQX_TAG_BUNDLE_OWNED_RESOURCES"
+          value: "1"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
         - name: "DQX_ADMIN_GROUP"
@@ -235,6 +237,10 @@ resources:
   sql_warehouses:
     dqx_sql_warehouse:
       name: ${var.sql_warehouse_name}
+      tags:
+        custom_tags:
+          - key: app
+            value: dqx-studio
       cluster_size: ${var.sql_warehouse_size}
       max_num_clusters: 1
       auto_stop_mins: 30
@@ -372,6 +378,9 @@ resources:
     dqx_studio:
       project_id: ${var.lakebase_project_id}
       display_name: "dqx-studio"
+      custom_tags:
+        - key: app
+          value: dqx-studio
       pg_version: 16
       default_branch: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}"
       default_endpoint_settings:
@@ -423,7 +432,7 @@ resources:
       name: "dqx-studio-task-runner"
       max_concurrent_runs: 10
       tags:
-        app: "dqx"
+        app: "dqx-studio"
       run_as:
         service_principal_name: ${var.dqx_service_principal_application_id}
       tasks:

@@ -19,6 +19,20 @@ def test_admin_group_rejects_whitespace_only_value() -> None:
         AppConfig(_env_file=None, admin_group="   ")
 
 
+def test_bundle_resource_tagging_defaults_off(monkeypatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_TAG_BUNDLE_OWNED_RESOURCES", raising=False)
+    assert AppConfig(_env_file=None).tag_bundle_owned_resources is False
+
+
+def test_bundle_resource_tagging_accepts_dab_opt_in(monkeypatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_TAG_BUNDLE_OWNED_RESOURCES", "1")
+    assert AppConfig(_env_file=None).tag_bundle_owned_resources is True
+
+
 def test_genie_schema_name_default_and_env(monkeypatch):
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
     # Re-import so pydantic-settings picks up the cleared env.

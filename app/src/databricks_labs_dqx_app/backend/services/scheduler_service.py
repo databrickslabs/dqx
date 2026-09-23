@@ -22,6 +22,7 @@ import asyncio
 import calendar
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -246,6 +247,7 @@ class SchedulerService:
         score_cache_service: ScoreCacheService | None = None,
         monitored_table_service: MonitoredTableService | None = None,
         metadata_dim_service: MetadataDimService | None = None,
+        metadata_dim_tag_reconcile: Callable[[], None] | None = None,
         tag_reconcile_service: TagReconcileService | None = None,
         reconcile_scores_on_start: bool = False,
     ) -> None:
@@ -303,6 +305,11 @@ class SchedulerService:
             reach Genie without a redeploy. When ``None`` (legacy
             deployments, unit tests) the tick is a no-op — a fourth,
             independent timer that touches no state the other ticks read.
+        metadata_dim_tag_reconcile:
+            Optional callback that restores ownership tags after a successful
+            metadata-dimension replacement. It runs off the async loop after
+            *metadata_dim_service.refresh* completes. When ``None``, refresh
+            retains its legacy behavior.
         tag_reconcile_service:
             Optional apply-on-tag orchestrator (Task 7). When set,
             :meth:`_maybe_run_tag_reconcile` runs a full reconcile sweep once
@@ -356,6 +363,7 @@ class SchedulerService:
         self._score_cache_service = score_cache_service
         self._monitored_table_service = monitored_table_service
         self._metadata_dim_service = metadata_dim_service
+        self._metadata_dim_tag_reconcile = metadata_dim_tag_reconcile
         self._tag_reconcile_service = tag_reconcile_service
         # Scheduler-launched runs awaiting their dq_validation_runs
         # terminal row, run_id -> launch time (UTC). In-memory only:
@@ -2408,6 +2416,13 @@ class SchedulerService:
             await asyncio.to_thread(self._metadata_dim_service.refresh)
         except Exception:
             logger.exception("Metadata-dim refresh failed (non-fatal)")
+            return
+        if self._metadata_dim_tag_reconcile is None:
+            return
+        try:
+            await asyncio.to_thread(self._metadata_dim_tag_reconcile)
+        except Exception:
+            logger.exception("Metadata-dim ownership-tag reconciliation failed (non-fatal)")
 
     def _run_retention(self) -> None:
         """DELETE rows older than ``retention_days`` from each high-volume table.

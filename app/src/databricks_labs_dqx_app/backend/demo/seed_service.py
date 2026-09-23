@@ -100,6 +100,10 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
+    ResourceTaggingService,
+    demo_tag_targets,
+)
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
@@ -174,6 +178,7 @@ class DemoSeedService:
         app_sql: SqlExecutor,
         oltp: OltpExecutorProtocol,
         sp_ws: WorkspaceClient,
+        resource_tagger: ResourceTaggingService,
         registry: RegistryService,
         monitored_tables: MonitoredTableService,
         apply_rules: ApplyRulesService,
@@ -195,6 +200,7 @@ class DemoSeedService:
         self._app_sql = app_sql
         self._oltp = oltp
         self._sp_ws = sp_ws
+        self._resource_tagger = resource_tagger
         self._registry = registry
         self._monitored_tables = monitored_tables
         self._apply_rules = apply_rules
@@ -326,10 +332,17 @@ class DemoSeedService:
     # ------------------------------------------------------------------
 
     def _build_source_data(self) -> None:
-        """Create the demo schema, the source tables, and the governed column tags."""
+        """Create the demo schema, source tables, ownership tag, and governed column tags."""
         self._demo_sql.execute(datagen.create_schema_sql(self._catalog, self._schema))
         for table in manifest.TABLES:
             self._demo_sql.execute(datagen.build_create_table_sql(table.name, self._catalog, self._schema))
+        self._resource_tagger.reconcile(
+            demo_tag_targets(
+                self._catalog,
+                self._schema,
+                tuple(table.name for table in manifest.TABLES),
+            )
+        )
         # Governed column tags are a best-effort showcase, not core demo state.
         # Assigning a governed tag needs the ASSIGN privilege on that tag AND a
         # metastore that defines it; either can be absent in a given workspace.

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -210,14 +211,25 @@ async def test_post_migration_startup_does_not_grant_catalog_privileges(
     monkeypatch.setattr(startup, "_start_scheduler", start_scheduler)
     monkeypatch.setattr(startup, "_maybe_start_ai_bootstrap", lambda *_args: None)
 
-    await startup._run_post_migration_startup(app, workspace, delta_sql, oltp, resources)
+    await startup._run_post_migration_startup(
+        app,
+        workspace,
+        delta_sql,
+        oltp,
+        resources,
+        resource_tagger=MagicMock(),
+    )
 
     statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
     assert not any("GRANT USE CATALOG" in statement for statement in statements)
 
 
-@pytest.mark.asyncio
-async def test_startup_exposes_orchestrator_for_setup_routes(resources: ActiveResources, monkeypatch) -> None:
+async def _start_and_activate_with_resource_tagger(
+    resources: ActiveResources,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    include_bundle_resources: bool,
+) -> tuple[StartupContext, MagicMock, MagicMock, FastAPI]:
     from databricks_labs_dqx_app.backend import startup
 
     app = FastAPI()
@@ -229,6 +241,7 @@ async def test_startup_exposes_orchestrator_for_setup_routes(resources: ActiveRe
     compute.sp_application_id.return_value = "app-sp"
     orchestrator = MagicMock()
     orchestrator.reconcile = AsyncMock()
+    tagger = MagicMock()
 
     async def get_workspace() -> MagicMock:
         return workspace
@@ -244,11 +257,66 @@ async def test_startup_exposes_orchestrator_for_setup_routes(resources: ActiveRe
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
+    monkeypatch.setattr(startup, "ResourceTaggingService", lambda _workspace: tagger, raising=False)
+    monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_metadata_dims", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
+    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup.conf, "tag_bundle_owned_resources", include_bundle_resources)
 
     context = await startup.start_studio(app)
-
     assert context is not None
-    assert app.state.setup_orchestrator is orchestrator
+    return context, tagger, orchestrator, app
+
+
+@pytest.mark.asyncio
+async def test_startup_exposes_orchestrator_and_reconciles_persistent_resources(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from databricks_labs_dqx_app.backend.services.resource_tagging_service import startup_tag_targets
+
+    context, tagger, orchestrator, app = await _start_and_activate_with_resource_tagger(
+        resources,
+        monkeypatch,
+        include_bundle_resources=False,
+    )
+
+    try:
+        activation_thread = get_ident()
+        reconcile_threads: list[int] = []
+
+        def record_reconcile(_targets: object) -> None:
+            reconcile_threads.append(get_ident())
+
+        tagger.reconcile.side_effect = record_reconcile
+        await activate_studio(context)
+        targets = startup_tag_targets(resources, include_bundle_resources=False)
+        assert app.state.setup_orchestrator is orchestrator
+        assert reconcile_threads and reconcile_threads[0] != activation_thread
+        tagger.reconcile.assert_called_once_with(targets)
+    finally:
+        await deactivate_studio(context)
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciles_bundle_resources_when_dab_opted_in(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from databricks_labs_dqx_app.backend.services.resource_tagging_service import startup_tag_targets
+
+    context, tagger, _, _ = await _start_and_activate_with_resource_tagger(
+        resources,
+        monkeypatch,
+        include_bundle_resources=True,
+    )
+
+    try:
+        await activate_studio(context)
+        tagger.reconcile.assert_called_once_with(startup_tag_targets(resources, include_bundle_resources=True))
+    finally:
+        await deactivate_studio(context)
 
 
 @pytest.mark.asyncio

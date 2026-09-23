@@ -38,6 +38,7 @@ from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.permissions_service import PermissionsService
 from .services.registry_service import RegistryService
+from .services.resource_tagging_service import ResourceTaggingService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.pending_application_service import PendingApplicationService
@@ -1041,6 +1042,7 @@ async def get_demo_seed_service(
         app_sql=sp_sql,
         oltp=oltp,
         sp_ws=sp_ws,
+        resource_tagger=ResourceTaggingService(sp_ws),
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,

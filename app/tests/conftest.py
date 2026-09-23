@@ -286,6 +286,7 @@ def make_scheduler():
         score_cache_service: Any | None = None,
         monitored_table_service: Any | None = None,
         metadata_dim_service: Any | None = None,
+        metadata_dim_tag_reconcile: Any | None = None,
         tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
     ) -> tuple[Any, SimpleNamespace]:
@@ -339,6 +340,7 @@ def make_scheduler():
             score_cache_service=score_cache_service,
             monitored_table_service=monitored_table_service,
             metadata_dim_service=metadata_dim_service,
+            metadata_dim_tag_reconcile=metadata_dim_tag_reconcile,
             tag_reconcile_service=tag_reconcile_service,
             reconcile_scores_on_start=reconcile_scores_on_start,
         )
