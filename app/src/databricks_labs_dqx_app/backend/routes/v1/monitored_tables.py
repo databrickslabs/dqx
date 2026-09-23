@@ -12,6 +12,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
@@ -511,6 +512,11 @@ def update_monitored_table_schedule(
             schedule_kind=body.schedule_kind,
             schedule_sample_size=body.schedule_sample_size,
         )
+        # Setting a cron on an approved table activates it immediately (the
+        # schedule is orthogonal to the review lifecycle) — wake the scheduler
+        # so its first run does not wait out the idle poll interval.
+        if (body.schedule_cron or "").strip():
+            scheduler_registry.notify_scheduler()
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
