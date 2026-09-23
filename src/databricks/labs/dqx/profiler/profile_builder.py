@@ -958,7 +958,11 @@ def _compute_geospatial_stats(
         A dictionary of statistics about the geometry values in the profiled column.
     """
     column_label = df.columns[0]
-    geom = f"try_to_geometry(`{column_label}`)"
+    # The column is already a native GEOMETRY/GEOGRAPHY type (guaranteed by the is_geospatial gate in
+    # make_geospatial_profile), so reference it directly. Wrapping it in try_to_geometry() — which only
+    # accepts STRING/BINARY — throws a type-mismatch AnalysisException on classic runtimes, which is then
+    # mislabelled below as "spatial functions unavailable" and produces no profiles.
+    geom = f"`{column_label}`"
     srid = profiler_options.get(PROFILE_OPTION_GEOSPATIAL_SRID, None)
     # Match the area expression used by the geospatial area checks so profiled areas and generated
     # rules are computed in the same units of measure (see geo/check_funcs.py).
