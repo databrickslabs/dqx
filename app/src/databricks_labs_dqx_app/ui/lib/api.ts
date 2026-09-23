@@ -179,7 +179,7 @@ export interface AiGenerateRuleOut {
 export type AiImproveSqlInColumns = string[] | null;
 
 /**
- * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax.
+ * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax.
  */
 export type AiImproveSqlInGranularity = 'row' | 'dataset' | null;
 
@@ -201,7 +201,7 @@ export interface AiImproveSqlIn {
   instruction: string;
   /** Declared reusable slot names ({{slot}}) the predicate may reference */
   columns?: AiImproveSqlInColumns;
-  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax. */
+  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax. */
   granularity?: AiImproveSqlInGranularity;
 }
 
@@ -290,7 +290,7 @@ export type AiWriteSqlInColumns = string[] | null;
 export type AiWriteSqlInTableFqn = string | null;
 
 /**
- * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax.
+ * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax.
  */
 export type AiWriteSqlInGranularity = 'row' | 'dataset' | null;
 
@@ -308,7 +308,7 @@ export interface AiWriteSqlIn {
   columns?: AiWriteSqlInColumns;
   /** Optional fully qualified table name for schema context */
   table_fqn?: AiWriteSqlInTableFqn;
-  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax. */
+  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax. */
   granularity?: AiWriteSqlInGranularity;
 }
 

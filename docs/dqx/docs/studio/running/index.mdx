@@ -10,9 +10,9 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Review results
 
 After a [run](/docs/studio/monitoring/run-and-schedule) finishes, its results
-show up here — the place to see how your data is doing, find what's failing, and
-decide what to do about it. Every monitored table and collection has a
-**Results** view.
+show up here — where you read the quality score, see which checks failed, and
+drill into the failing rows to decide what to fix. Every monitored table and
+collection has a **Results** view.
 
 ## Read the score
 
@@ -34,8 +34,8 @@ The breakdowns are interactive: select a **dimension**, **severity**, **rule**,
 or **column** to filter down to just those results, and on a collection you can
 **drill into a member table** to open its own Results and keep going. To see what
 actually went wrong, open the **Failed records** table and **hover a failing
-cell** — a popup lists every check that row failed, each with its severity and
-reason.
+cell** — a popup lists every check that flagged the row, each with its severity
+and reason.
 
 <ThemedImage
   alt="Failed records table with a hovered row showing a popup of the checks that row failed, each with severity and reason"
@@ -45,7 +45,7 @@ reason.
   }}
 />
 
-A failing check is a prompt to act, not always a problem with the rule. You can
+A failing check is a signal to act, not always a problem with the rule. You can
 **fix the data at source**, **adjust the threshold** if the target was
 unrealistic, **change the severity** to reprioritize, **refine the rule**, or
 **escalate** to the team that owns the data. The **Show comments** control opens

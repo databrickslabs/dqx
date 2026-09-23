@@ -182,7 +182,7 @@ class AiWriteSqlIn(BaseModel):
         default=None,
         description=(
             "Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' "
-            "(one table-level verdict). When omitted, the model defaults to row-level syntax."
+            "(one dataset-level verdict). When omitted, the model defaults to row-level syntax."
         ),
     )
 
@@ -205,7 +205,7 @@ class AiImproveSqlIn(BaseModel):
         default=None,
         description=(
             "Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' "
-            "(one table-level verdict). When omitted, the model defaults to row-level syntax."
+            "(one dataset-level verdict). When omitted, the model defaults to row-level syntax."
         ),
     )
 
