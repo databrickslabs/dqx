@@ -297,9 +297,12 @@ def _read_manifest_config(
         try:
             rows = spark.sql(query).collect()
             if rows:
-                parsed = json.loads(rows[0].asDict().get("config"))
-                if not parsed:
+                value = rows[0].asDict().get("config")
+                if not value:
                     raise RuntimeError(f"Manifest run config is empty for {run_id}")
+                if not isinstance(value, str):
+                    raise RuntimeError(f"Manifest run config is non-string for {run_id}")
+                parsed = json.loads(value)
                 if not isinstance(parsed, dict):
                     raise RuntimeError(f"Manifest run config for {run_id} is not a JSON object")
                 return parsed

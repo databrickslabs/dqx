@@ -604,9 +604,7 @@ class TestResolveRunConfig:
         spark = MagicMock(name="spark")
         full = {"checks": [{"name": "c1"}], "sample_size": 50}
         spark.sql.return_value.collect.return_value = [[json.dumps(full)]]
-        config, cleanup = runner_module._resolve_run_config(
-            ws, spark, {"__manifest__": True}, "cat", "sch", "run1"
-        )
+        config, cleanup = runner_module._resolve_run_config(ws, spark, {"__manifest__": True}, "cat", "sch", "run1")
         assert config == full
         assert cleanup == ("manifest", None)
 

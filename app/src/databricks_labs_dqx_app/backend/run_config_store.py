@@ -35,8 +35,7 @@ class RunConfigTooLargeError(RuntimeError):
         self.size = size
         self.limit = limit
         super().__init__(
-            f"The run configuration is too large to submit ({size} characters in job "
-            f"parameters; limit is {limit})."
+            f"The run configuration is too large to submit ({size} characters in job " f"parameters; limit is {limit})."
         )
 
 
