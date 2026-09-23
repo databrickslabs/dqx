@@ -89,13 +89,12 @@ def test_engine_core_suppress_skipped_enabled():
     assert engine_core.suppress_skipped is True
 
 
-def test_engine_creation_no_workspace_connection(mock_workspace_client, mock_spark):
-    mock_workspace_client.clusters.select_spark_version.side_effect = DatabricksError()
+def test_engine_creation_no_workspace_connection(mock_spark):
+    ws = create_autospec(WorkspaceClient)
+    ws.clusters.select_spark_version.side_effect = DatabricksError("Workspace unavailable")
 
-    with pytest.raises(DatabricksError):
-        DQEngine(spark=mock_spark, workspace_client=mock_workspace_client)
-    with pytest.raises(DatabricksError):
-        DQEngineCore(spark=mock_spark, workspace_client=mock_workspace_client)
+    assert DQEngine(spark=mock_spark, workspace_client=ws)
+    assert DQEngineCore(spark=mock_spark, workspace_client=ws)
 
 
 def test_get_streaming_metrics_listener_invalid_engine(mock_workspace_client, mock_spark):
@@ -112,7 +111,7 @@ def test_get_streaming_metrics_listener_no_observer(mock_workspace_client, mock_
         engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))
 
 
-def test_verify_workspace_client_with_null_product_info(mock_spark):
+def test_configure_workspace_client_with_null_product_info(mock_spark):
     ws = create_autospec(WorkspaceClient)
     mock_config = Mock()
     setattr(mock_config, "_product_info", None)
@@ -123,7 +122,7 @@ def test_verify_workspace_client_with_null_product_info(mock_spark):
     assert getattr(mock_config, "_product_info") == ('dqx', __version__)
 
 
-def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
+def test_configure_workspace_client_with_non_dqx_product_info(mock_spark):
     ws = create_autospec(WorkspaceClient)
     mock_config = Mock()
     setattr(mock_config, "_product_info", ('other-product', '1.0.0'))

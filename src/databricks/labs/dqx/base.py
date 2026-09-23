@@ -14,31 +14,31 @@ from databricks.sdk import WorkspaceClient
 
 class DQEngineBase(abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient):
-        self._workspace_client = self._verify_workspace_client(workspace_client)
+        self._workspace_client = self._configure_workspace_client(workspace_client)
 
     @cached_property
     def ws(self) -> WorkspaceClient:
-        """Return a verified *WorkspaceClient* configured for DQX.
+        """Return the *WorkspaceClient* configured for DQX.
 
-        Ensures workspace connectivity and sets the product info used for
-        telemetry so that requests are attributed to *dqx*.
+        The client carries the product info used for telemetry so that requests are
+        attributed to *dqx*. No network call is made when the engine is created;
+        workspace API errors surface when a workspace feature is first used.
         """
         return self._workspace_client
 
     @staticmethod
     @final
-    def _verify_workspace_client(ws: WorkspaceClient) -> WorkspaceClient:
+    def _configure_workspace_client(ws: WorkspaceClient) -> WorkspaceClient:
         """
-        Verify the Databricks WorkspaceClient configuration and connectivity.
+        Set the product info on the WorkspaceClient so requests are attributed to *dqx*.
+
+        This makes no network call, so the engine can be created without workspace
+        connectivity (e.g. local PySpark).
         """
         # Using reflection to set right value for _product_info as dqx for telemetry
         product_info = getattr(ws.config, '_product_info')
         if product_info is None or product_info[0] != "dqx":
             setattr(ws.config, '_product_info', ('dqx', __version__))
-
-        # make sure Databricks workspace is accessible
-        # use api that works on all workspaces and clusters including group assigned clusters
-        ws.clusters.select_spark_version()
         return ws
 
 
