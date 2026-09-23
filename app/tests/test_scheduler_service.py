@@ -32,14 +32,12 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
-from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _CRON_WEEKDAY_NAMES,
     _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
-    _METADATA_DIM_REFRESH_INTERVAL_HOURS,
     _PROFILE_SAMPLE_LIMIT,
     _RUN_SET_SWEEP_MAX_RUNS,
     _RUN_SET_SWEEP_WINDOW_DAYS,
@@ -55,6 +53,10 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import Mon
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.scheduler_service import logger as scheduler_logger
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+
+
+def test_stale_tmp_view_sweep_runs_daily() -> None:
+    assert _TMP_VIEW_SWEEP_INTERVAL_HOURS == 24
 
 
 @pytest.fixture
@@ -435,60 +437,6 @@ class TestSweepStaleTmpViews:
         await svc._maybe_sweep_stale_tmp_views(now)
 
         assert svc._next_tmp_view_sweep_at == now + timedelta(hours=_TMP_VIEW_SWEEP_INTERVAL_HOURS)
-
-
-# ---------------------------------------------------------------------------
-# _maybe_refresh_metadata_dims — hourly metadata-dim refresh tick (P8.1)
-# ---------------------------------------------------------------------------
-
-
-class TestMaybeRefreshMetadataDims:
-    @pytest.mark.asyncio
-    async def test_noop_and_timer_untouched_when_collaborator_absent(self, make_scheduler):
-        svc, _ = make_scheduler()  # no metadata_dim_service
-        assert svc._metadata_dim_service is None
-        before = svc._next_metadata_dim_refresh_at
-        # Even long past the timer, a None collaborator does nothing.
-        await svc._maybe_refresh_metadata_dims(before + timedelta(hours=5))
-        assert svc._next_metadata_dim_refresh_at == before
-
-    @pytest.mark.asyncio
-    async def test_skips_when_not_yet_due(self, make_scheduler):
-        dim = create_autospec(MetadataDimService, instance=True)
-        svc, _ = make_scheduler(metadata_dim_service=dim)
-        future = datetime(2099, 1, 1, tzinfo=timezone.utc)
-        svc._next_metadata_dim_refresh_at = future
-
-        await svc._maybe_refresh_metadata_dims(future - timedelta(seconds=1))
-
-        assert svc._next_metadata_dim_refresh_at == future
-        dim.refresh.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_advances_timer_before_running_and_refreshes(self, make_scheduler):
-        dim = create_autospec(MetadataDimService, instance=True)
-        svc, _ = make_scheduler(metadata_dim_service=dim)
-        due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
-        svc._next_metadata_dim_refresh_at = due
-
-        fire = due + timedelta(seconds=1)
-        await svc._maybe_refresh_metadata_dims(fire)
-
-        dim.refresh.assert_called_once_with()
-        # Timer advanced by exactly the interval from ``now``.
-        assert svc._next_metadata_dim_refresh_at == fire + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
-
-    @pytest.mark.asyncio
-    async def test_refresh_failure_does_not_propagate(self, make_scheduler):
-        dim = create_autospec(MetadataDimService, instance=True)
-        dim.refresh.side_effect = RuntimeError("warehouse down")
-        svc, _ = make_scheduler(metadata_dim_service=dim)
-        due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
-        svc._next_metadata_dim_refresh_at = due
-
-        # Must not raise; just log and reschedule.
-        await svc._maybe_refresh_metadata_dims(due + timedelta(minutes=1))
-        assert svc._next_metadata_dim_refresh_at > due
 
 
 # ---------------------------------------------------------------------------

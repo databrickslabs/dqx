@@ -597,12 +597,6 @@ async def _start_scheduler(
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=delta_sql)
         registry = RegistryService(sql=oltp)
         settings = AppSettingsService(sql=oltp)
-        metadata_dims = MetadataDimService(
-            sp_sql=delta_sql,
-            registry=registry,
-            monitored_tables=monitored_tables,
-            genie_schema=resources.genie_schema,
-        )
         tag_reconcile = TagReconcileService(
             registry=registry,
             monitored_tables=monitored_tables,
@@ -620,7 +614,6 @@ async def _start_scheduler(
             oltp_sql=oltp,
             data_product_service=data_products,
             binding_run_service=binding_runs,
-            metadata_dim_service=metadata_dims,
             score_cache_service=ScoreCacheService(
                 oltp=oltp,
                 warehouse_sql=delta_sql,

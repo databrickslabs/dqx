@@ -31,8 +31,8 @@ from escaped literals. Table FQNs are backtick-quoted per part via
 writes go through the SP ``SqlExecutor`` (``sp_sql``).
 
 Not best-effort internally: :meth:`refresh` lets exceptions propagate to
-its callers (``app._ensure_metadata_dims`` at startup and the scheduler's
-hourly tick), both of which are best-effort — mirroring how
+its callers (``app._ensure_metadata_dims`` at startup and Genie conversation
+startup), both of which are best-effort — mirroring how
 :class:`ScoreViewService.ensure_views` raises and ``_ensure_score_views``
 catches.
 """
