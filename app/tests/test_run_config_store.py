@@ -1,20 +1,17 @@
 """Tests for oversized run-config staging (Databricks 10k job-parameter limit)."""
 
-import io
 import json
-from unittest.mock import MagicMock
-
-import pytest
+from unittest.mock import create_autospec
 
 from databricks_labs_dqx_app.backend.run_config_store import (
     JOB_PARAMETERS_CHAR_LIMIT,
-    STAGED_CONFIG_KEY,
+    MANIFEST_CONFIG_KEY,
     RunConfigTooLargeError,
     job_parameters_size,
     prepare_config_json,
-    resolve_config,
-    staged_config_path,
+    stage_config_to_table,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
 def _base_params() -> dict[str, str]:
@@ -29,6 +26,12 @@ def _base_params() -> dict[str, str]:
     }
 
 
+def _sql_mock():
+    sql = create_autospec(SqlExecutor, instance=True)
+    sql.fqn.return_value = "`cat`.`sch`.dq_run_configs"
+    return sql
+
+
 class TestJobParametersSize:
     def test_counts_json_representation(self) -> None:
         params = {**_base_params(), "config_json": '{"checks":[]}'}
@@ -37,20 +40,20 @@ class TestJobParametersSize:
 
 class TestPrepareConfigJson:
     def test_inline_when_under_limit(self) -> None:
-        ws = MagicMock()
+        sql = _sql_mock()
         config = {"checks": [{"name": "c1"}]}
         result = prepare_config_json(
-            ws,
-            wheels_volume="/Volumes/cat/sch/wheels",
+            sql,
             run_id="run123",
             config=config,
             job_parameters_without_config=_base_params(),
         )
-        assert STAGED_CONFIG_KEY not in json.loads(result)
-        ws.files.upload.assert_not_called()
+        assert MANIFEST_CONFIG_KEY not in json.loads(result)
+        assert json.loads(result) == config
+        sql.execute.assert_not_called()
 
     def test_stages_when_over_limit(self) -> None:
-        ws = MagicMock()
+        sql = _sql_mock()
         big_checks = [
             {"name": f"rule_{i}", "check": {"function": "is_not_null", "arguments": {"col": "x"}}} for i in range(200)
         ]
@@ -60,47 +63,44 @@ class TestPrepareConfigJson:
         assert job_parameters_size({**base, "config_json": inline}) > JOB_PARAMETERS_CHAR_LIMIT
 
         result = prepare_config_json(
-            ws,
-            wheels_volume="/Volumes/cat/sch/wheels",
+            sql,
             run_id="run123",
             config=config,
             job_parameters_without_config=base,
         )
         stub = json.loads(result)
-        assert STAGED_CONFIG_KEY in stub
-        assert stub[STAGED_CONFIG_KEY] == staged_config_path("/Volumes/cat/sch/wheels", "run123")
-        ws.files.upload.assert_called_once()
-        upload_path = ws.files.upload.call_args.args[0]
-        assert upload_path.endswith("/run-configs/run123.json")
-        uploaded = ws.files.upload.call_args.args[1].read().decode()
-        assert json.loads(uploaded)["checks"][0]["name"] == "rule_0"
+        assert stub == {MANIFEST_CONFIG_KEY: True}
+        sql.execute.assert_called_once()
 
-    def test_raises_when_over_limit_and_no_volume(self) -> None:
-        ws = MagicMock()
-        big_checks = [{"name": f"rule_{i}", "payload": "x" * 80} for i in range(200)]
-        config = {"checks": big_checks}
-        with pytest.raises(RunConfigTooLargeError):
-            prepare_config_json(
-                ws,
-                wheels_volume="",
-                run_id="run123",
-                config=config,
-                job_parameters_without_config=_base_params(),
-            )
+        stmt = sql.execute.call_args.args[0]
+        assert stmt.startswith("INSERT INTO `cat`.`sch`.dq_run_configs")
+        assert "run123" in stmt
+        assert "rule_0" in stmt
+
+    def test_stub_stays_within_the_job_parameter_limit(self) -> None:
+        sql = _sql_mock()
+        config = {"checks": [{"name": f"rule_{i}"} for i in range(500)]}
+        result = prepare_config_json(
+            sql,
+            run_id="run123",
+            config=config,
+            job_parameters_without_config=_base_params(),
+        )
+        assert job_parameters_size({**_base_params(), "config_json": result}) <= JOB_PARAMETERS_CHAR_LIMIT
 
 
-class TestResolveConfig:
-    def test_passthrough_inline_config(self) -> None:
-        ws = MagicMock()
-        config = {"checks": [], "sample_size": 100}
-        resolved, path = resolve_config(ws, config)
-        assert resolved == config
-        assert path is None
+class TestStageConfigToTable:
+    def test_writes_escaped_json_payload(self) -> None:
+        sql = _sql_mock()
+        config = {"checks": [{"name": "it's", "pattern": "\\d+"}]}
+        stage_config_to_table(sql, "run123", config)
+        stmt = sql.execute.call_args.args[0]
+        assert "\\\\d+" in stmt  # backslash doubled
+        assert "it''s" in stmt  # single-quote doubled
 
-    def test_loads_staged_config(self) -> None:
-        ws = MagicMock()
-        full = {"checks": [{"name": "c1"}], "sample_size": 50}
-        ws.files.download.return_value.contents = io.BytesIO(json.dumps(full).encode())
-        resolved, path = resolve_config(ws, {STAGED_CONFIG_KEY: "/Volumes/c/s/w/run-configs/r1.json"})
-        assert resolved == full
-        assert path == "/Volumes/c/s/w/run-configs/r1.json"
+
+class TestRunConfigTooLargeError:
+    def test_message_reports_size_and_limit(self) -> None:
+        err = RunConfigTooLargeError(12345)
+        assert "12345" in str(err)
+        assert str(JOB_PARAMETERS_CHAR_LIMIT) in str(err)

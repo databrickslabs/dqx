@@ -576,3 +576,88 @@ class TestIsPermissionDenied:
 
     def test_unrelated_error_is_not_permission_denied(self, runner_module):
         assert runner_module._is_permission_denied(RuntimeError("connection reset by peer")) is False
+
+
+# ---------------------------------------------------------------------------
+# Run-config resolution — inline / manifest-table / legacy-volume branches
+# ---------------------------------------------------------------------------
+
+
+class TestResolveRunConfig:
+    """The runner loads its config three ways: inlined in ``config_json``, from
+    the ``dq_run_configs`` manifest table (oversized configs), or (for backwards
+    compatibility) from a legacy volume file stub.
+    """
+
+    def test_inline_config_passes_through_untouched(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        raw = {"checks": [{"name": "c1"}], "sample_size": 100}
+        config, cleanup = runner_module._resolve_run_config(ws, spark, raw, "cat", "sch", "run1")
+        assert config == raw
+        assert cleanup is None
+        spark.sql.assert_not_called()
+        ws.files.download.assert_not_called()
+
+    def test_manifest_stub_reads_from_the_table(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        full = {"checks": [{"name": "c1"}], "sample_size": 50}
+        spark.sql.return_value.collect.return_value = [[json.dumps(full)]]
+        config, cleanup = runner_module._resolve_run_config(
+            ws, spark, {"__manifest__": True}, "cat", "sch", "run1"
+        )
+        assert config == full
+        assert cleanup == ("manifest", None)
+
+        query = spark.sql.call_args.args[0]
+        assert "dq_run_configs" in query
+        assert "run1" in query
+
+    def test_legacy_volume_stub_reads_from_file(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        full = {"checks": [], "sample_size": 5}
+        ws.files.download.return_value.contents.read.return_value = json.dumps(full).encode()
+        path = "/Volumes/c/s/w/run-configs/run1.json"
+        config, cleanup = runner_module._resolve_run_config(ws, spark, {"__staged__": path}, "cat", "sch", "run1")
+        assert config == full
+        assert cleanup == ("volume", path)
+
+    def test_run_configs_table_fqn_is_quoted(self, runner_module):
+        fqn = runner_module._run_configs_table_fqn("cat", "sch")
+        assert fqn == "`cat`.`sch`.`dq_run_configs`"
+
+
+class TestCleanupRunConfig:
+    def test_manifest_cleanup_deletes_the_row(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        runner_module._cleanup_run_config(ws, spark, ("manifest", None), "cat", "sch", "run1")
+        stmt = spark.sql.call_args.args[0]
+        assert stmt.startswith("DELETE FROM `cat`.`sch`.`dq_run_configs`")
+        assert "run1" in stmt
+        ws.files.delete.assert_not_called()
+
+    def test_volume_cleanup_deletes_the_file(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        path = "/Volumes/c/s/w/run-configs/run1.json"
+        runner_module._cleanup_run_config(ws, spark, ("volume", path), "cat", "sch", "run1")
+        ws.files.delete.assert_called_once_with(path)
+        spark.sql.assert_not_called()
+
+    def test_none_cleanup_is_a_noop(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        runner_module._cleanup_run_config(ws, spark, None, "cat", "sch", "run1")
+        ws.files.delete.assert_not_called()
+        spark.sql.assert_not_called()
+
+    def test_manifest_delete_failure_is_swallowed(self, runner_module):
+        # Cleanup is best-effort — the retention sweep is the backstop. Any
+        # DELETE failure must not propagate out of the runner's finally block.
+        ws = MagicMock(name="ws")
+        spark = MagicMock(name="spark")
+        spark.sql.side_effect = RuntimeError("permission denied")
+        runner_module._cleanup_run_config(ws, spark, ("manifest", None), "cat", "sch", "run1")

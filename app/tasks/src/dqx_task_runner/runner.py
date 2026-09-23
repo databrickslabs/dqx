@@ -42,7 +42,15 @@ _BUILTIN_METRIC_NAMES = frozenset(
 # real violation count remains accurate in ``dq_metrics.error_row_count``.
 _SQL_QUARANTINE_MAX_ROWS = 100_000
 
-# Inline stub key when the app stages an oversized config on the wheels volume.
+# Inline stub key when the app stages an oversized config in a run config table.
+_MANIFEST_CONFIG_KEY = "__manifest__"
+
+# Delta table holding run configs that are too large to inline.
+_RUN_CONFIGS_TABLE = "dq_run_configs"
+
+# Legacy inline stub key: the app used to stage oversized configs as a JSON
+# file on the wheels volume. Superseded by the manifest table, but still read
+# here so any in-flight job submitted by an older app keeps working.
 _STAGED_CONFIG_KEY = "__staged__"
 
 # User-facing observer names written to ``dq_metrics.run_name``. The
@@ -264,12 +272,98 @@ def _read_staged_config(ws: WorkspaceClient, path: str) -> dict[str, Any]:
     return parsed
 
 
-def _resolve_run_config(ws: WorkspaceClient, config_raw: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+def _run_configs_table_fqn(result_catalog: str, result_schema: str) -> str:
+    """Return the backtick-quoted FQN of the run-config manifest table."""
+    fqn = f"{result_catalog}.{result_schema}.{_RUN_CONFIGS_TABLE}"
+    _validate_fqn(fqn)
+    return _quote_fqn(fqn)
+
+
+def _read_manifest_config(
+    spark: SparkSession,
+    result_catalog: str,
+    result_schema: str,
+    run_id: str,
+    max_retries: int = 10,
+    initial_delay: float = 2.0,
+    max_delay: float = 15.0,
+) -> dict[str, Any]:
+    """Load the staged run config for *run_id* from the ``dq_run_configs`` table."""
+    table = _run_configs_table_fqn(result_catalog, result_schema)
+    query = f"SELECT config FROM {table} WHERE run_id = '{run_id}' ORDER BY created_at DESC LIMIT 1"  # noqa: S608
+    last_error: Exception | None = None
+    delay = initial_delay
+    for attempt in range(max_retries):
+        try:
+            rows = spark.sql(query).collect()
+            if rows:
+                parsed = json.loads(rows[0].asDict().get("config"))
+                if not parsed:
+                    raise RuntimeError(f"Manifest run config is empty for {run_id}")
+                if not isinstance(parsed, dict):
+                    raise RuntimeError(f"Manifest run config for {run_id} is not a JSON object")
+                return parsed
+            last_error = RuntimeError(f"No manifest run config row for run_id={run_id}")
+        except Exception as e:
+            last_error = e
+        if attempt < max_retries - 1:
+            logger.warning(
+                "Manifest run config for %s not ready (attempt %d/%d), retrying in %.1fs: %s",
+                run_id,
+                attempt + 1,
+                max_retries,
+                delay,
+                last_error,
+            )
+            time.sleep(delay)
+            delay = min(delay * 1.5, max_delay)
+    raise last_error or RuntimeError(f"Manifest run config for {run_id} not found")
+
+
+def _resolve_run_config(
+    ws: WorkspaceClient,
+    spark: SparkSession,
+    config_raw: dict[str, Any],
+    result_catalog: str,
+    result_schema: str,
+    run_id: str,
+) -> tuple[dict[str, Any], tuple[str, str | None] | None]:
+    """Resolve the full run config from an inline manifest stub."""
+    if config_raw.get(_MANIFEST_CONFIG_KEY):
+        config = _read_manifest_config(spark, result_catalog, result_schema, run_id)
+        return config, ("manifest", None)
     staged = config_raw.get(_STAGED_CONFIG_KEY)
     if isinstance(staged, str) and staged.strip():
         path = staged.strip()
-        return _read_staged_config(ws, path), path
+        return _read_staged_config(ws, path), ("volume", path)
     return config_raw, None
+
+
+def _cleanup_run_config(
+    ws: WorkspaceClient,
+    spark: SparkSession,
+    cleanup: tuple[str, str | None] | None,
+    result_catalog: str,
+    result_schema: str,
+    run_id: str,
+) -> None:
+    """Best-effort removal of a staged run config once the run has finished."""
+    if not cleanup:
+        return
+    kind, path = cleanup
+    if kind == "manifest":
+        _delete_manifest_config(spark, result_catalog, result_schema, run_id)
+    elif kind == "volume" and path:
+        _delete_staged_config(ws, path)
+
+
+def _delete_manifest_config(spark: SparkSession, result_catalog: str, result_schema: str, run_id: str) -> None:
+    try:
+        table = _run_configs_table_fqn(result_catalog, result_schema)
+        spark.sql(f"DELETE FROM {table} WHERE run_id = '{run_id}'")  # noqa: S608
+        logger.info("Deleted manifest run config for %s", run_id)
+    except Exception as exc:
+        logger.debug("Could not delete manifest run config for %s: %s", run_id, exc)
 
 
 def _delete_staged_config(ws: WorkspaceClient, path: str) -> None:
@@ -1325,11 +1419,12 @@ def main() -> None:
     _validate_run_id(args.run_id)
     config_raw = json.loads(args.config_json)
     ws = WorkspaceClient()
-    config, staged_config_path = _resolve_run_config(ws, config_raw)
+    spark = SparkSession.builder.getOrCreate()
+    config, config_cleanup = _resolve_run_config(
+        ws, spark, config_raw, args.result_catalog, args.result_schema, args.run_id
+    )
     source_table_fqn = config.get("source_table_fqn", "")
     job_run_id = _parse_job_run_id(args.job_run_id)
-
-    spark = SparkSession.builder.getOrCreate()
 
     try:
         if args.task_type == "profile":
@@ -1390,8 +1485,7 @@ def main() -> None:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
-        if staged_config_path:
-            _delete_staged_config(ws, staged_config_path)
+        _cleanup_run_config(ws, spark, config_cleanup, args.result_catalog, args.result_schema, args.run_id)
         # Best-effort belt-and-suspenders cleanup of the OBO-created temp view.
         #
         # The authoritative cleanup is the app's OBO ``drop_view`` (run as the

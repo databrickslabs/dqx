@@ -794,7 +794,6 @@ async def get_job_service(
         job_id=str(_require_resolved_job_id()),
         sql=sql,
         warehouse_id=resolve_warehouse_id(app_settings),
-        wheels_volume=rt.require_resources().volume.path,
     )
 
 

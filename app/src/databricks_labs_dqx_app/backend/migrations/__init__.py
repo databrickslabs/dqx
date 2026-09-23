@@ -12,7 +12,7 @@ The Delta schema contains only the high-volume analytical tables:
 - **v1 — Delta analytical baseline.** Holds the
   Spark-written tables: ``dq_validation_runs``,
   ``dq_profiling_results``, ``dq_quarantine_records``,
-  ``dq_metrics``.
+  ``dq_metrics``, and ``dq_run_configs``.
 
 Transactional application state is always created by
 :mod:`backend.migrations.postgres` in Lakebase. There is no Delta OLTP
@@ -366,14 +366,29 @@ _V1_ANALYTICAL_BASELINE = (
     "  error_column_name STRING,"
     "  warning_column_name STRING,"
     "  user_metadata MAP<STRING, STRING>"
-    ") CLUSTER BY (input_location, run_id, run_time)"
+    ") CLUSTER BY (input_location, run_id, run_time);"
+    #
+    # Run-config manifest — one row per submitted task-runner run. The app
+    # writes the fully-resolved run config here (keyed by ``run_id``) when it
+    # is too large to inline in the job's ``config_json`` parameter (Databricks
+    # caps job parameters at 10,000 chars); the runner reads it back via Spark.
+    # ``config`` is the compact JSON payload stored as text. Rows are deleted by
+    # the runner once read and swept by the retention job as a backstop, so this
+    # table stays small. Clustered by ``run_id`` (the runner's point lookup) then
+    # ``created_at`` (the retention sweep's cutoff column).
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_configs ("
+    "  run_id STRING NOT NULL,"
+    "  config STRING NOT NULL,"
+    "  created_at TIMESTAMP NOT NULL,"
+    "  CONSTRAINT pk_dq_run_configs PRIMARY KEY (run_id) RELY"
+    ") CLUSTER BY (run_id, created_at)"
 )
 
 
 MIGRATIONS: list[Migration] = [
     Migration(
         version=1,
-        description="Delta analytical baseline (validation, profiling, quarantine, metrics)",
+        description="Delta analytical baseline (validation, profiling, quarantine, metrics, run configs)",
         sql_template=_V1_ANALYTICAL_BASELINE,
     ),
 ]

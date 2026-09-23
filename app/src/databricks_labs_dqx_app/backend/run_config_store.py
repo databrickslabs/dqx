@@ -1,19 +1,20 @@
-"""Stage oversized task-runner configs on a UC volume.
+"""Stage oversized task-runner configs in a Delta manifest table.
 
 Databricks Jobs reject ``run_now`` payloads whose job parameters exceed
 10,000 characters (JSON representation). Monitored tables with many applied
 rules can exceed that limit when the full ``checks`` list is inlined in
-``config_json``. When ``DQX_WHEELS_VOLUME`` is configured we write the
-config to ``{volume}/run-configs/{run_id}.json`` and pass a tiny stub
-``{"__staged__": "<path>"}`` instead.
+``config_json``. When that happens the app writes the config to the
+``dq_run_configs`` Delta table keyed by ``run_id`` and passes a tiny stub
+``{"__manifest__": true}`` instead. The task runner reads the row back via
+Spark using the ``run_id``.
 """
 
-import io
 import json
 import logging
 from typing import Any
 
-from databricks.sdk import WorkspaceClient
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -21,41 +22,26 @@ logger = logging.getLogger(__name__)
 JOB_PARAMETERS_CHAR_LIMIT = 10_000
 
 # Marker key in the inline stub passed to the task runner.
-STAGED_CONFIG_KEY = "__staged__"
+MANIFEST_CONFIG_KEY = "__manifest__"
 
-_RUN_CONFIGS_DIR = "run-configs"
+# Delta table holding run configs that are too large to inline.
+RUN_CONFIGS_TABLE = "dq_run_configs"
 
 
 class RunConfigTooLargeError(RuntimeError):
-    """Raised when a run config cannot be submitted inline or staged."""
+    """Raised when a run config cannot be submitted even as a manifest stub."""
 
-    def __init__(self, size: int, *, limit: int = JOB_PARAMETERS_CHAR_LIMIT, staged: bool = False) -> None:
+    def __init__(self, size: int, *, limit: int = JOB_PARAMETERS_CHAR_LIMIT) -> None:
         self.size = size
         self.limit = limit
-        self.staged = staged
-        if staged:
-            msg = (
-                f"The run configuration is too large to submit even after staging "
-                f"({size} characters in job parameters; limit is {limit})."
-            )
-        else:
-            msg = (
-                f"The run configuration is too large to submit ({size} characters in job "
-                f"parameters; limit is {limit}). Configure DQX_WHEELS_VOLUME so configs can "
-                f"be staged, or reduce the number of applied rules."
-            )
-        super().__init__(msg)
+        super().__init__(
+            f"The run configuration is too large to submit ({size} characters in job "
+            f"parameters; limit is {limit})."
+        )
 
 
 def _compact_json(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"))
-
-
-def staged_config_path(wheels_volume: str, run_id: str) -> str:
-    base = (wheels_volume or "").rstrip("/")
-    if not base:
-        raise ValueError("wheels_volume is required to stage a run config")
-    return f"{base}/{_RUN_CONFIGS_DIR}/{run_id}.json"
 
 
 def job_parameters_size(job_parameters: dict[str, str]) -> int:
@@ -63,81 +49,50 @@ def job_parameters_size(job_parameters: dict[str, str]) -> int:
     return len(_compact_json(job_parameters))
 
 
-def stage_config_to_volume(ws: WorkspaceClient, wheels_volume: str, run_id: str, config: dict[str, Any]) -> str:
-    """Persist *config* on the wheels volume and return its UC path."""
-    path = staged_config_path(wheels_volume, run_id)
-    payload = _compact_json(config).encode("utf-8")
-    ws.files.upload(path, io.BytesIO(payload), overwrite=True)
-    logger.info("Staged run config for %s at %s (%d bytes)", run_id, path, len(payload))
-    return path
-
-
 def build_inline_config_payload(config: dict[str, Any]) -> str:
     """Serialize *config* for inline job submission."""
     return _compact_json(config)
 
 
-def build_staged_config_payload(staged_path: str) -> str:
-    """Serialize the stub the task runner uses to load a staged config."""
-    return _compact_json({STAGED_CONFIG_KEY: staged_path})
+def build_manifest_config_payload() -> str:
+    """Serialize the stub the task runner uses to load a staged config from the table."""
+    return _compact_json({MANIFEST_CONFIG_KEY: True})
+
+
+def stage_config_to_table(sql: SqlExecutor, run_id: str, config: dict[str, Any]) -> None:
+    """Persist *config* as one row in the ``dq_run_configs`` manifest table.
+
+    The runner reads the row back by *run_id* (already a job parameter), so an oversized
+    rule set never travels through job parameters. The JSON is stored as text and escaped
+    for the Delta string-literal path (backslash then quote doubling) so regex/multiline
+    check bodies round-trip intact.
+    """
+    table = sql.fqn(RUN_CONFIGS_TABLE)
+    compacted_run_config = _compact_json(config)
+    escaped_run_id = escape_sql_string(run_id)
+    escaped_run_config = escape_json_for_sql_string_literal(compacted_run_config)
+    stmt = f"INSERT INTO {table} (run_id, config, created_at) VALUES ('{escaped_run_id}', '{escaped_run_config}', current_timestamp())"  # noqa: S608
+    sql.execute(stmt)
+    logger.info("Staged run config for %s in %s (%d chars)", run_id, table, len(compacted_run_config))
 
 
 def prepare_config_json(
-    ws: WorkspaceClient,
+    sql: SqlExecutor,
     *,
-    wheels_volume: str,
     run_id: str,
     config: dict[str, Any],
     job_parameters_without_config: dict[str, str],
 ) -> str:
-    """Return ``config_json`` for job submission, staging to volume when needed."""
+    """Return ``config_json`` for job submission, staging to the manifest table when needed."""
     inline = build_inline_config_payload(config)
     params = {**job_parameters_without_config, "config_json": inline}
     if job_parameters_size(params) <= JOB_PARAMETERS_CHAR_LIMIT:
         return inline
 
-    volume = (wheels_volume or "").strip()
-    if not volume:
-        raise RunConfigTooLargeError(job_parameters_size(params))
-
-    staged_path = stage_config_to_volume(ws, volume, run_id, config)
-    staged = build_staged_config_payload(staged_path)
-    staged_params = {**job_parameters_without_config, "config_json": staged}
-    staged_size = job_parameters_size(staged_params)
-    if staged_size > JOB_PARAMETERS_CHAR_LIMIT:
-        raise RunConfigTooLargeError(staged_size, staged=True)
-    return staged
-
-
-def read_volume_json(ws: WorkspaceClient, path: str) -> dict[str, Any]:
-    """Load a JSON object previously written by :func:`stage_config_to_volume`."""
-    resp = ws.files.download(path)
-    if not resp.contents:
-        raise RuntimeError(f"Staged run config is empty at {path}")
-    raw = resp.contents.read().decode("utf-8")
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise RuntimeError(f"Staged run config at {path} is not a JSON object")
-    return parsed
-
-
-def resolve_config(ws: WorkspaceClient, config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    """Expand a staged stub into the full config dict.
-
-      Returns ``(config, staged_path)`` where *staged_path* is set when the
-    config was loaded from a volume (for post-run cleanup).
-    """
-    staged = config.get(STAGED_CONFIG_KEY)
-    if isinstance(staged, str) and staged.strip():
-        path = staged.strip()
-        return read_volume_json(ws, path), path
-    return config, None
-
-
-def delete_staged_config(ws: WorkspaceClient, path: str) -> None:
-    """Best-effort removal of a staged config file."""
-    try:
-        ws.files.delete(path)
-        logger.info("Deleted staged run config at %s", path)
-    except Exception as exc:
-        logger.debug("Could not delete staged run config at %s: %s", path, exc)
+    stage_config_to_table(sql, run_id, config)
+    manifest = build_manifest_config_payload()
+    manifest_params = {**job_parameters_without_config, "config_json": manifest}
+    manifest_size = job_parameters_size(manifest_params)
+    if manifest_size > JOB_PARAMETERS_CHAR_LIMIT:
+        raise RunConfigTooLargeError(manifest_size)
+    return manifest
