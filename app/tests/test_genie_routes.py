@@ -239,15 +239,18 @@ def test_start_continues_when_metadata_refresh_fails(
     settings_store: dict[str, str],
     obo_ws_mock: MagicMock,
     metadata_dims_mock: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     provision(settings_store)
-    metadata_dims_mock.refresh.side_effect = RuntimeError("warehouse unavailable")
+    metadata_dims_mock.refresh.side_effect = RuntimeError("sensitive rule description")
     obo_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m1"}
 
-    resp = client.post("/api/v1/genie/start", json={"question": "q"})
+    with caplog.at_level("WARNING"):
+        resp = client.post("/api/v1/genie/start", json={"question": "q"})
 
     assert resp.status_code == 200
     assert resp.json()["conversation_id"] == "c1"
+    assert "sensitive rule description" not in caplog.text
 
 
 def test_start_falls_back_to_sp_when_obo_is_rejected(

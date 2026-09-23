@@ -95,7 +95,7 @@ class MetadataDimService:
         Each dim is dropped-and-recreated (``CREATE OR REPLACE TABLE``) and
         repopulated in one ``INSERT``. Raises on failure — the caller decides
         whether that is fatal (it is best-effort both at startup and on the
-        scheduler tick).
+        start of a Genie conversation).
         """
         self._refresh_rules()
         self._refresh_monitored_tables()

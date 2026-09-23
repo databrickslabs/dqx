@@ -90,7 +90,7 @@ async def _maybe_refresh_metadata_dims(conversation_id: str | None, metadata_dim
     try:
         await refresh_metadata_dims_for_new_conversation(metadata_dims)
     except Exception:
-        logger.warning("Could not refresh Genie metadata dimensions before starting a conversation", exc_info=True)
+        logger.warning("Could not refresh Genie metadata dimensions before starting a conversation")
 
 
 def _to_answer(state: GenieChatState) -> GenieAnswerOut:
