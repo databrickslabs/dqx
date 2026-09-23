@@ -22,7 +22,6 @@ import asyncio
 import calendar
 import json
 import re
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -40,7 +39,6 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
-from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
@@ -163,10 +161,10 @@ _GC_HOUR_UTC = 1
 _GC_AGE_HOURS = 48
 _GC_MAX_DROPS_PER_RUN = 500
 
-# Hourly sweep for tmp views whose runs finished (or were abandoned) but
+# Daily sweep for tmp views whose runs finished (or were abandoned) but
 # whose per-run status poll never fired ``drop_view``. This is the main
 # safety net — the weekly age-based GC below is belt-and-braces.
-_TMP_VIEW_SWEEP_INTERVAL_HOURS = 1
+_TMP_VIEW_SWEEP_INTERVAL_HOURS = 24
 _TMP_VIEW_SWEEP_MAX_RUNS = 50
 
 # Retention sweep — daily DELETE pass against the high-volume tables to
@@ -190,14 +188,6 @@ _RETENTION_INTERVAL_HOURS = 24
 # in ``dq_app_settings``; falls back here when unset.
 _QUARANTINE_RETENTION_DAYS_DEFAULT = 30
 _QUARANTINE_TABLE_NAME = "dq_quarantine_records"
-
-# The rule + monitored-table metadata dims (``dim_dq_rules`` /
-# ``dim_dq_monitored_tables``) are full-refreshed from the Rules Registry
-# once per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so the Genie space's
-# authoring/ownership data sources stay current between deploys. Hourly
-# (vs. retention's daily) because registry edits are user-facing and cheap
-# to re-materialize at page scale.
-_METADATA_DIM_REFRESH_INTERVAL_HOURS = 1
 
 # Apply-on-tag reconcile sweep (Task 7): a low-frequency pass that re-attaches
 # every published tag-mapped rule across all monitored tables, catching tag
@@ -246,8 +236,6 @@ class SchedulerService:
         binding_run_service: BindingRunService | None = None,
         score_cache_service: ScoreCacheService | None = None,
         monitored_table_service: MonitoredTableService | None = None,
-        metadata_dim_service: MetadataDimService | None = None,
-        metadata_dim_tag_reconcile: Callable[[], None] | None = None,
         tag_reconcile_service: TagReconcileService | None = None,
         reconcile_scores_on_start: bool = False,
     ) -> None:
@@ -296,27 +284,13 @@ class SchedulerService:
             "Last run" column and table-space last-run stay current for runs
             no browser observed, without the list path ever touching the
             warehouse. When ``None`` the timestamp write is skipped.
-        metadata_dim_service:
-            Optional collaborator that full-refreshes the rule +
-            monitored-table metadata dims (``dim_dq_rules`` /
-            ``dim_dq_monitored_tables``) the Genie space queries. When set,
-            :meth:`_maybe_refresh_metadata_dims` re-materializes them once
-            per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so registry edits
-            reach Genie without a redeploy. When ``None`` (legacy
-            deployments, unit tests) the tick is a no-op — a fourth,
-            independent timer that touches no state the other ticks read.
-        metadata_dim_tag_reconcile:
-            Optional callback that restores ownership tags after a successful
-            metadata-dimension replacement. It runs off the async loop after
-            *metadata_dim_service.refresh* completes. When ``None``, refresh
-            retains its legacy behavior.
         tag_reconcile_service:
             Optional apply-on-tag orchestrator (Task 7). When set,
             :meth:`_maybe_run_tag_reconcile` runs a full reconcile sweep once
             per ``_TAG_RECONCILE_INTERVAL_HOURS`` so tag changes on
             already-monitored tables re-attach their matching published rules
             without a publish/register event. When ``None`` (legacy
-            deployments, unit tests) the tick is a no-op — a fifth independent
+            deployments, unit tests) the tick is a no-op — a fourth independent
             timer that touches no state the other ticks read. The sweep is
             itself a no-op when the ``tag_auto_apply`` setting is off.
         reconcile_scores_on_start:
@@ -362,8 +336,6 @@ class SchedulerService:
         self._binding_run_service = binding_run_service
         self._score_cache_service = score_cache_service
         self._monitored_table_service = monitored_table_service
-        self._metadata_dim_service = metadata_dim_service
-        self._metadata_dim_tag_reconcile = metadata_dim_tag_reconcile
         self._tag_reconcile_service = tag_reconcile_service
         # Scheduler-launched runs awaiting their dq_validation_runs
         # terminal row, run_id -> launch time (UTC). In-memory only:
@@ -397,7 +369,7 @@ class SchedulerService:
         # and orphans only accumulate slowly.
         self._next_view_gc_at: datetime = self._next_saturday_01_utc(datetime.now(timezone.utc))
 
-        # Hourly tmp-view sweep: drops views for terminal/abandoned runs.
+        # Daily tmp-view sweep: drops views for terminal/abandoned runs.
         # Fires on the first scheduler tick after boot so a redeploy
         # quickly reaps anything a browser never polled to completion.
         self._next_tmp_view_sweep_at: datetime = datetime.now(timezone.utc)
@@ -406,14 +378,6 @@ class SchedulerService:
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
-
-        # Metadata-dim refresh: fires every
-        # ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` (default 1h). Held in
-        # process memory like the retention sweep; the app also refreshes once
-        # at startup, so a missed tick is harmless.
-        self._next_metadata_dim_refresh_at: datetime = datetime.now(timezone.utc) + timedelta(
-            hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS
-        )
 
         # Apply-on-tag reconcile sweep: fires every
         # ``_TAG_RECONCILE_INTERVAL_HOURS`` (default 6h). Held in process
@@ -466,7 +430,6 @@ class SchedulerService:
                 await self._maybe_sweep_stale_tmp_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
                 await self._maybe_run_tag_reconcile(datetime.now(timezone.utc))
-                await self._maybe_refresh_metadata_dims(datetime.now(timezone.utc))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -2054,7 +2017,7 @@ class SchedulerService:
         return None
 
     # ------------------------------------------------------------------
-    # Stale tmp-view sweep (hourly)
+    # Stale tmp-view sweep (daily)
     # ------------------------------------------------------------------
 
     async def _maybe_sweep_stale_tmp_views(self, now: datetime) -> None:
@@ -2390,39 +2353,6 @@ class SchedulerService:
             await asyncio.to_thread(self._tag_reconcile_service.sweep, _SCHEDULER_SYSTEM_USER)
         except Exception:
             logger.exception("Tag-reconcile sweep failed (non-fatal)")
-
-    async def _maybe_refresh_metadata_dims(self, now: datetime) -> None:
-        """Full-refresh the metadata dims if the hourly timer has elapsed.
-
-        No-op when no ``metadata_dim_service`` was wired (legacy deployments,
-        unit tests). Cheap to skip (one comparison) and runs in a background
-        thread so it doesn't block the loop. Failures are logged but never
-        fatal — the next tick re-tries.
-        """
-        if self._metadata_dim_service is None:
-            return
-        if now < self._next_metadata_dim_refresh_at:
-            return
-
-        scheduled_for = self._next_metadata_dim_refresh_at
-        # Advance the timer first so a slow refresh can't double-fire.
-        self._next_metadata_dim_refresh_at = now + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
-        logger.info(
-            "Metadata-dim refresh: triggering hourly rebuild (was due at %s); next run scheduled for %s",
-            scheduled_for.isoformat(),
-            self._next_metadata_dim_refresh_at.isoformat(),
-        )
-        try:
-            await asyncio.to_thread(self._metadata_dim_service.refresh)
-        except Exception:
-            logger.exception("Metadata-dim refresh failed (non-fatal)")
-            return
-        if self._metadata_dim_tag_reconcile is None:
-            return
-        try:
-            await asyncio.to_thread(self._metadata_dim_tag_reconcile)
-        except Exception:
-            logger.exception("Metadata-dim ownership-tag reconciliation failed (non-fatal)")
 
     def _run_retention(self) -> None:
         """DELETE rows older than ``retention_days`` from each high-volume table.
