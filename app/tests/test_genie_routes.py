@@ -119,11 +119,11 @@ async def test_metadata_dims_refresh_once_per_hour(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr("databricks_labs_dqx_app.backend.cache.time.monotonic", lambda: now)
     metadata_dims = create_autospec(MetadataDimService, instance=True)
 
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims)
+    await genie.refresh_metadata_dims(metadata_dims)
     now += 3_599
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims)
+    await genie.refresh_metadata_dims(metadata_dims)
     now += 2
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims)
+    await genie.refresh_metadata_dims(metadata_dims)
 
     assert metadata_dims.refresh.call_count == 2
 
@@ -136,8 +136,8 @@ async def test_failed_metadata_dims_refresh_is_retried() -> None:
     metadata_dims.refresh.side_effect = [RuntimeError("warehouse unavailable"), None]
 
     with pytest.raises(RuntimeError, match="warehouse unavailable"):
-        await genie.refresh_metadata_dims_for_new_conversation(metadata_dims)
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims)
+        await genie.refresh_metadata_dims(metadata_dims)
+    await genie.refresh_metadata_dims(metadata_dims)
 
     assert metadata_dims.refresh.call_count == 2
 
@@ -197,7 +197,7 @@ def test_start_proxies_to_genie_as_the_caller(
     async def record_refresh(metadata_dims: MetadataDimService) -> None:
         refreshes.append(metadata_dims)
 
-    monkeypatch.setattr(genie, "refresh_metadata_dims_for_new_conversation", record_refresh)
+    monkeypatch.setattr(genie, "refresh_metadata_dims", record_refresh)
     obo_ws_mock.api_client.do.return_value = {
         "conversation_id": "c1",
         "message_id": "m1",
@@ -231,7 +231,7 @@ def test_start_continues_existing_conversation(
     obo_ws_mock.api_client.do.assert_called_once_with(
         "POST", f"{BASE}/conversations/c1/messages", body={"content": "and now?"}
     )
-    metadata_dims_mock.refresh.assert_not_called()
+    metadata_dims_mock.refresh.assert_called_once_with()
 
 
 def test_start_continues_when_metadata_refresh_fails(
@@ -311,7 +311,7 @@ def test_ask_blocking_flow(
     async def record_refresh(metadata_dims: MetadataDimService) -> None:
         refreshes.append(metadata_dims)
 
-    monkeypatch.setattr(genie, "refresh_metadata_dims_for_new_conversation", record_refresh)
+    monkeypatch.setattr(genie, "refresh_metadata_dims", record_refresh)
     obo_ws_mock.api_client.do.side_effect = [
         {"conversation_id": "c1", "message_id": "m1", "status": "SUBMITTED"},
         {"status": "COMPLETED", "attachments": [{"text": {"content": "All good."}}]},
