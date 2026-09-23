@@ -3427,9 +3427,9 @@ def compare_datasets(
     Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
     Cartesian fan-out but does not attempt to minimize the number of reported column changes.
 
-    When *row_filter* is set, exact-value in-scope rows are paired first. Remaining rows are
-    paired positionally with in-scope source rows first, so filtered-out rows cannot consume a
-    reference position needed by an in-scope row or disturb an available exact match.
+    When *row_filter* is set, exact-value in-scope rows are paired first. Remaining in-scope rows
+    are paired positionally. Filtered-out rows can pair with reference rows only for keys with no
+    in-scope source rows, so they cannot consume a surplus reference row or disturb an exact match.
 
     Unfiltered lazy pairing adds two *row_number* window computations (one per dataset) that sort
     both datasets on the compared columns. Filtered comparisons add value-group counts and exact
@@ -3483,9 +3483,10 @@ def compare_datasets(
       rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
         For example, abs(a - b) <= rel_tolerance * max(abs(a), abs(b)). With rel_tolerance=0.01 (1%), values 100 and 101 are equal (diff=1), but 100 and 102 are not (diff=2).
       raise_on_duplicate_keys: Controls duplicate-key handling, which is also a performance trade-off.
-        If True, require unique matching keys in both datasets: uniqueness is validated with a lightweight
-        aggregation (an eager Spark job) and rows are then paired with a single join, avoiding the per-group
-        row-number windows. This is the more efficient option when keys are known to be unique, but raises
+        If True, require unique matching keys among in-scope source rows and all reference rows:
+        uniqueness is validated with a lightweight aggregation (an eager Spark job) and rows are
+        then paired with a single join, avoiding the per-group row-number windows. This is the more
+        efficient option when keys are known to be unique, but raises
         *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
         by compared values using per-group row-number windows; this is robust to duplicates but sorts both
         datasets on the compared columns.
@@ -3563,9 +3564,9 @@ def compare_datasets(
 
         # Keep rows outside the check filter in the output while giving in-scope rows priority for reference
         # pairing, so an excluded row cannot consume the reference slot that an in-scope row needs (issue
-        # #1504). Coalesce NULL to false to match Spark filter semantics. The scope is used only to order
-        # pairing (below) - it is deliberately kept out of the join keys so an out-of-scope source row still
-        # pairs with its reference counterpart instead of splitting into phantom missing/extra rows.
+        # #1504). Coalesce NULL to false to match Spark filter semantics. The scope controls pairing
+        # below. An out-of-scope row can pair with a reference only when its key has no
+        # in-scope source rows, preserving the existing behavior for wholly excluded key groups.
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
         pairing_scope_col = f"__match_scope_{unique_id}"
         df, ref_df = (
@@ -3590,7 +3591,7 @@ def compare_datasets(
                 row_number_col,
                 unique_id,
                 null_safe_row_matching,
-                exact_value_pairing=bool(row_filter and compare_columns),
+                exact_value_pairing=bool(row_filter),
             )
         else:
             match_count_col = f"__match_count_{unique_id}"
@@ -3598,7 +3599,7 @@ def compare_datasets(
                 ("source", df, pk_column_names),
                 ("reference", ref_df, ref_pk_column_names),
             ):
-                matchable_rows = dataset
+                matchable_rows = dataset.where(F.col(pairing_scope_col)) if dataset_name == "source" else dataset
                 if not null_safe_row_matching:
                     matchable_rows = matchable_rows.dropna(subset=matching_columns)
                 duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
@@ -3612,10 +3613,7 @@ def compare_datasets(
             df = df.withColumn(row_number_col, F.lit(1))
             ref_df = ref_df.withColumn(row_number_col, F.lit(1))
 
-        # row_number_col pairs duplicate keys positionally after in-scope rows have claimed the low sequence
-        # numbers (see the ordering above), so an out-of-filter source row still matches its reference
-        # counterpart rather than splitting into phantom missing/extra rows. The source and reference key
-        # lists stay symmetric so the join keys line up.
+        # The source and reference key lists stay symmetric so the join keys line up.
         join_columns = [*pk_column_names, row_number_col]
         ref_join_columns = [*ref_pk_column_names, row_number_col]
 
@@ -3628,6 +3626,8 @@ def compare_datasets(
             pk_column_names,
             ref_pk_column_names,
             compare_columns,
+            pairing_scope_col,
+            f"__in_scope_key_{unique_id}",
             row_number_col,
             pairing_phase_col,
             check_missing_records,
@@ -4576,6 +4576,11 @@ def _add_exact_value_pairing_columns(
     exact_pair_col = f"__is_exact_match_{unique_id}"
     residual_rank_col = f"__residual_match_rank_{unique_id}"
     pairing_phase_col = f"__match_phase_{unique_id}"
+    in_scope_key_col = f"__in_scope_key_{unique_id}"
+    df = df.withColumn(
+        in_scope_key_col,
+        F.max(F.col(pairing_scope_col).cast("int")).over(Window.partitionBy(*pk_column_names)),
+    )
     df = df.withColumn(
         exact_rank_col,
         F.row_number().over(
@@ -4616,6 +4621,8 @@ def _match_paired_rows(
     pk_column_names: list[str],
     ref_pk_column_names: list[str],
     compare_columns: list[str],
+    pairing_scope_col: str,
+    in_scope_key_col: str,
     row_number_col: str,
     pairing_phase_col: str | None,
     check_missing_records: bool | None,
@@ -4629,6 +4636,8 @@ def _match_paired_rows(
     join_condition = _build_join_condition(pk_column_names, ref_pk_column_names, null_safe_row_matching)
     join_condition &= F.col(f"df.{pairing_phase_col}") == F.col(f"ref_df.{pairing_phase_col}")
     join_condition &= F.col(f"df.{row_number_col}") == F.col(f"ref_df.{row_number_col}")
+    # Excluded rows may absorb references only for keys with no in-scope source rows.
+    join_condition &= F.col(f"df.{pairing_scope_col}") | (F.col(f"df.{in_scope_key_col}") == 0)
     for column in compare_columns:
         join_condition &= (F.col(f"df.{pairing_phase_col}") == 0) | F.col(f"df.{column}").eqNullSafe(
             F.col(f"ref_df.{column}")

@@ -2937,10 +2937,12 @@ def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(spark: Spa
     assert actual == {"A": None, "B": None, "C": None}
 
 
-def test_compare_datasets_strict_mode_rejects_duplicate_keys_outside_filter(spark: SparkSession):
-    df = spark.createDataFrame([(1, "A", False), (1, "B", True)], "id int, value string, in_scope boolean")
+def test_compare_datasets_strict_mode_ignores_duplicate_keys_outside_filter(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "A", False), (1, "B", True), (1, "C", None)], "id int, value string, in_scope boolean"
+    )
     ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
-    _, apply = compare_datasets(
+    condition, apply = compare_datasets(
         columns=["id"],
         ref_columns=["id"],
         ref_df_name="ref_df",
@@ -2948,10 +2950,19 @@ def test_compare_datasets_strict_mode_rejects_duplicate_keys_outside_filter(spar
         raise_on_duplicate_keys=True,
     )
 
-    with pytest.raises(
-        InvalidParameterError,
-        match=r"The source dataset contains duplicate matching keys for columns: id\.",
-    ):
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_strict_mode_rejects_in_scope_duplicate_keys(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A", True), (1, "B", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    _, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", row_filter="in_scope", raise_on_duplicate_keys=True
+    )
+
+    with pytest.raises(InvalidParameterError, match="source dataset contains duplicate matching keys"):
         apply(df, spark, {"ref_df": ref_df})
 
 
@@ -2985,6 +2996,48 @@ def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSe
         "row_extra": False,
         "changed": {"value": {"ref": "C"}},
     }
+
+
+@pytest.mark.parametrize("excluded_scope", [False, None])
+def test_compare_datasets_filter_reports_surplus_reference_with_duplicate_key(
+    spark: SparkSession, excluded_scope: bool | None
+):
+    df = spark.createDataFrame([(1, "X", True), (1, "Z", excluded_scope)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "X"), (1, "X")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert next(row for row in rows if row["in_scope"] is True)["violation"] is None
+    assert next(row for row in rows if row["value"] == "Z")["violation"] is None
+    assert json.loads(next(row for row in rows if row["value"] is None)["violation"]) == {
+        "row_missing": True,
+        "row_extra": False,
+        "changed": {"value": {"ref": "X"}},
+    }
+
+
+def test_compare_datasets_filter_reports_surplus_reference_without_compared_columns(spark: SparkSession):
+    df = spark.createDataFrame([(1, True), (1, False)], "id int, in_scope boolean")
+    ref_df = spark.createDataFrame([(1,), (1,)], "id int")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows if row["in_scope"] is not None)
+    assert json.loads(next(row for row in rows if row["in_scope"] is None)["violation"])["row_missing"] is True
 
 
 def test_compare_datasets_filter_duplicate_keys_preserves_exact_matches(spark: SparkSession):
