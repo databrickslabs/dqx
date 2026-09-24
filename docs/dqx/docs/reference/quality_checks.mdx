@@ -1994,11 +1994,17 @@ The top-level `filter` condition is pushed down as `row_filter` to the check fun
 
 **Compare datasets check**
 
-By default, duplicate-key groups are paired lazily: rows within each group are ordered by the string representation of
-their compared values with nulls first, assigned a row number, and joined on the matching keys plus that row number.
-Numeric values sort lexically (for example, `"10"` before `"2"`), while the comparison itself uses the original values.
+By default, duplicate-key groups are paired lazily: rows within each group are ordered by their compared
+values with nulls first, assigned a row number, and joined on the matching keys plus that row number.
+Numeric columns are ordered by their native value (so magnitude ordering is preserved); other types are ordered by
+their string representation, while the comparison itself uses the original values.
 This avoids Cartesian fan-out without triggering eager validation jobs. It adds window partitioning and sorting, and
 does not search for the pairing that produces the fewest differences. Unique-key groups still match one-to-one.
+
+With `abs_tolerance`/`rel_tolerance`, only exactly-equal values are paired up front; values that match solely within a
+tolerance fall to positional pairing, which is a greedy heuristic rather than an optimal tolerance matching. For
+duplicate matching keys whose within-tolerance partners interleave, deduplicate the matching keys first if you need
+exact one-to-one tolerance pairing.
 
 When a `filter` (`row_filter`) is present, lazy pairing first matches in-scope rows with equal compared values. Remaining
 in-scope rows are paired positionally. Filtered-out rows can pair with reference rows only for keys with no in-scope
