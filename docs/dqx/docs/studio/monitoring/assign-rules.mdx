@@ -10,7 +10,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Assign rules
 
 Assigning rules is where the reusable definitions in your
-[Rules Registry](/docs/studio/) start doing work: you
+[Rules Registry](/docs/studio/authoring/create-a-rule) start doing work: you
 attach them to a [monitored table](/docs/studio/monitoring/)'s columns and tune
 them for that table. Each rule you apply to a column becomes a **check** — a
 single rule can become many checks across your tables and columns.
@@ -59,9 +59,9 @@ sensitive one steady.
 
 ## Quality thresholds {#quality-thresholds}
 
-Real data is rarely perfect. By default a check is either passing or failing — but
-if a column is 88% clean and you demand 100%, that check stays red forever, and a
-check that's always red is one everyone learns to ignore. A **pass threshold**
+Real data is rarely perfect. By default a check either passes or fails, so a
+column that's 88% clean fails a check that demands 100% — and may stay red forever.
+A check that's always red is one people learn to ignore. A **pass threshold**
 sets how many rows must pass for the check to count as green. Set it to `< 90%`
 and the check needs 90% of rows to pass; a small badge on the check shows the bar.
 
@@ -111,13 +111,13 @@ See [Governed tags](/docs/studio/authoring/create-a-rule#governed-tags).
 
 <Admonition type="info" title="Your data is never changed">
 Applying rules and running checks only reads and evaluates your data. A failing
-check never deletes or modifies the table — failing rows are sampled into a
-quarantine view for triage.
+check never deletes or modifies the table — the failing rows are copied to a
+quarantine table for triage.
 </Admonition>
 
 ## Save as draft, or submit for review
 
-When you've applied the checks you want, you can **save as a draft** to keep
+When you've applied the checks you want, you can click **save as a draft** to keep
 working, or **submit for review**. Once your changes are approved, the table is
 actively monitored and its checks run on the schedule set for it.
 
