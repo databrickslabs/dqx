@@ -42,6 +42,7 @@ from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
+from .services.metadata_dim_service import MetadataDimService
 from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
@@ -871,6 +872,20 @@ async def get_score_cache_service(
     return ScoreCacheService(
         oltp=oltp,
         warehouse_sql=warehouse_sql,
+        genie_schema=rt.require_resources().genie_schema,
+    )
+
+
+async def get_metadata_dim_service(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+) -> MetadataDimService:
+    """Create the materializer for the Genie metadata dimensions."""
+    return MetadataDimService(
+        sp_sql=sp_sql,
+        registry=registry,
+        monitored_tables=monitored_tables,
         genie_schema=rt.require_resources().genie_schema,
     )
 
