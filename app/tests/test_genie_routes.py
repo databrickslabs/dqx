@@ -36,10 +36,7 @@ from databricks_labs_dqx_app.backend.services.genie_space_service import (
     SETTING_STATUS,
 )
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
-from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
-    ResourceTaggingService,
-    TagTarget,
-)
+from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService, TagTarget
 
 SPACE = "space-1"
 BASE = f"/api/2.0/genie/spaces/{SPACE}"
@@ -130,35 +127,48 @@ async def test_metadata_dims_refresh_once_per_hour(monkeypatch: pytest.MonkeyPat
     now = 100.0
     monkeypatch.setattr("databricks_labs_dqx_app.backend.cache.time.monotonic", lambda: now)
     metadata_dims = create_autospec(MetadataDimService, instance=True)
-    resource_tagger = create_autospec(ResourceTaggingService, instance=True)
 
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
+    await genie.refresh_metadata_dims(metadata_dims)
     now += 3_599
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
+    await genie.refresh_metadata_dims(metadata_dims)
     now += 2
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
+    await genie.refresh_metadata_dims(metadata_dims)
 
     assert metadata_dims.refresh.call_count == 2
-    assert resource_tagger.reconcile.call_count == 2
 
 
 @pytest.mark.asyncio
-async def test_metadata_dims_refresh_reconciles_only_replaced_dimensions() -> None:
+async def test_metadata_dim_tags_are_restored_only_after_a_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
     from databricks_labs_dqx_app.backend.routes.v1 import genie
 
-    events: list[str] = []
+    now = 100.0
+    monkeypatch.setattr("databricks_labs_dqx_app.backend.cache.time.monotonic", lambda: now)
     metadata_dims = create_autospec(MetadataDimService, instance=True)
-    metadata_dims.refresh.side_effect = lambda: events.append("refresh")
     resource_tagger = create_autospec(ResourceTaggingService, instance=True)
-    resource_tagger.reconcile.side_effect = lambda targets: events.append("reconcile")
+    targets = (TagTarget("tables", "main.genie.dim_dq_rules"),)
 
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
+    await genie.refresh_metadata_dims(metadata_dims, resource_tagger, targets)
+    now += 3_599
+    await genie.refresh_metadata_dims(metadata_dims, resource_tagger, targets)
+    now += 2
+    await genie.refresh_metadata_dims(metadata_dims, resource_tagger, targets)
 
-    assert events == ["refresh", "reconcile"]
-    assert resource_tagger.reconcile.call_args.args[0] == (
-        TagTarget("tables", "dqx_test.genie.dim_dq_monitored_tables"),
-        TagTarget("tables", "dqx_test.genie.dim_dq_rules"),
-    )
+    assert metadata_dims.refresh.call_count == 2
+    assert resource_tagger.reconcile.call_count == 2
+    assert all(call.args[0] == targets for call in resource_tagger.reconcile.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_metadata_dim_tagging_failure_does_not_fail_refresh() -> None:
+    from databricks_labs_dqx_app.backend.routes.v1 import genie
+
+    metadata_dims = create_autospec(MetadataDimService, instance=True)
+    resource_tagger = create_autospec(ResourceTaggingService, instance=True)
+    resource_tagger.reconcile.side_effect = RuntimeError("tag API unavailable")
+
+    await genie.refresh_metadata_dims(metadata_dims, resource_tagger, (TagTarget("tables", "main.genie.dim_dq_rules"),))
+
+    metadata_dims.refresh.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -167,27 +177,12 @@ async def test_failed_metadata_dims_refresh_is_retried() -> None:
 
     metadata_dims = create_autospec(MetadataDimService, instance=True)
     metadata_dims.refresh.side_effect = [RuntimeError("warehouse unavailable"), None]
-    resource_tagger = create_autospec(ResourceTaggingService, instance=True)
 
     with pytest.raises(RuntimeError, match="warehouse unavailable"):
-        await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
+        await genie.refresh_metadata_dims(metadata_dims)
+    await genie.refresh_metadata_dims(metadata_dims)
 
     assert metadata_dims.refresh.call_count == 2
-    resource_tagger.reconcile.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_metadata_dim_tagging_failure_is_best_effort() -> None:
-    from databricks_labs_dqx_app.backend.routes.v1 import genie
-
-    metadata_dims = create_autospec(MetadataDimService, instance=True)
-    resource_tagger = create_autospec(ResourceTaggingService, instance=True)
-    resource_tagger.reconcile.side_effect = RuntimeError("tag API unavailable")
-
-    await genie.refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
-
-    metadata_dims.refresh.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +230,6 @@ def test_start_proxies_to_genie_as_the_caller(
     settings_store: dict[str, str],
     obo_ws_mock: MagicMock,
     sp_ws_mock: MagicMock,
-    resource_tagger_mock: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from databricks_labs_dqx_app.backend.routes.v1 import genie
@@ -245,12 +239,12 @@ def test_start_proxies_to_genie_as_the_caller(
 
     async def record_refresh(
         metadata_dims: MetadataDimService,
-        resource_tagger: ResourceTaggingService,
+        _resource_tagger: ResourceTaggingService,
+        _targets: tuple[TagTarget, ...],
     ) -> None:
         refreshes.append(metadata_dims)
-        assert resource_tagger is resource_tagger_mock
 
-    monkeypatch.setattr(genie, "refresh_metadata_dims_for_new_conversation", record_refresh)
+    monkeypatch.setattr(genie, "refresh_metadata_dims", record_refresh)
     obo_ws_mock.api_client.do.return_value = {
         "conversation_id": "c1",
         "message_id": "m1",
@@ -271,12 +265,31 @@ def test_start_proxies_to_genie_as_the_caller(
     sp_ws_mock.api_client.do.assert_not_called()
 
 
+def test_start_retags_refreshed_genie_dimensions(
+    client: TestClient,
+    settings_store: dict[str, str],
+    obo_ws_mock: MagicMock,
+    resource_tagger_mock: MagicMock,
+) -> None:
+    provision(settings_store)
+    obo_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m1"}
+
+    response = client.post("/api/v1/genie/start", json={"question": "q"})
+
+    assert response.status_code == 200
+    resource_tagger_mock.reconcile.assert_called_once_with(
+        (
+            TagTarget("tables", "dqx_test.genie.dim_dq_monitored_tables"),
+            TagTarget("tables", "dqx_test.genie.dim_dq_rules"),
+        )
+    )
+
+
 def test_start_continues_existing_conversation(
     client: TestClient,
     settings_store: dict[str, str],
     obo_ws_mock: MagicMock,
     metadata_dims_mock: MagicMock,
-    resource_tagger_mock: MagicMock,
 ) -> None:
     provision(settings_store)
     obo_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m2"}
@@ -285,8 +298,7 @@ def test_start_continues_existing_conversation(
     obo_ws_mock.api_client.do.assert_called_once_with(
         "POST", f"{BASE}/conversations/c1/messages", body={"content": "and now?"}
     )
-    metadata_dims_mock.refresh.assert_not_called()
-    resource_tagger_mock.reconcile.assert_not_called()
+    metadata_dims_mock.refresh.assert_called_once_with()
 
 
 def test_start_continues_when_metadata_refresh_fails(
@@ -294,7 +306,6 @@ def test_start_continues_when_metadata_refresh_fails(
     settings_store: dict[str, str],
     obo_ws_mock: MagicMock,
     metadata_dims_mock: MagicMock,
-    resource_tagger_mock: MagicMock,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     provision(settings_store)
@@ -306,7 +317,6 @@ def test_start_continues_when_metadata_refresh_fails(
 
     assert resp.status_code == 200
     assert resp.json()["conversation_id"] == "c1"
-    resource_tagger_mock.reconcile.assert_not_called()
     assert "sensitive rule description" not in caplog.text
 
 
@@ -358,7 +368,6 @@ def test_ask_blocking_flow(
     client: TestClient,
     settings_store: dict[str, str],
     obo_ws_mock: MagicMock,
-    resource_tagger_mock: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from databricks_labs_dqx_app.backend.routes.v1 import genie
@@ -368,12 +377,12 @@ def test_ask_blocking_flow(
 
     async def record_refresh(
         metadata_dims: MetadataDimService,
-        resource_tagger: ResourceTaggingService,
+        _resource_tagger: ResourceTaggingService,
+        _targets: tuple[TagTarget, ...],
     ) -> None:
         refreshes.append(metadata_dims)
-        assert resource_tagger is resource_tagger_mock
 
-    monkeypatch.setattr(genie, "refresh_metadata_dims_for_new_conversation", record_refresh)
+    monkeypatch.setattr(genie, "refresh_metadata_dims", record_refresh)
     obo_ws_mock.api_client.do.side_effect = [
         {"conversation_id": "c1", "message_id": "m1", "status": "SUBMITTED"},
         {"status": "COMPLETED", "attachments": [{"text": {"content": "All good."}}]},

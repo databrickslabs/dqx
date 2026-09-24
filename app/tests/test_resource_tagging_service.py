@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+import pytest
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import EntityTagAssignment
 
@@ -91,6 +92,22 @@ def test_reconcile_continues_after_one_target_fails() -> None:
 
     assert workspace.entity_tag_assignments.get.call_count == 2
     assert workspace.entity_tag_assignments.create.call_count == 1
+
+
+def test_reconcile_warning_identifies_target_without_logging_control_characters(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workspace = MagicMock()
+    workspace.entity_tag_assignments.get.side_effect = RuntimeError("sensitive API detail")
+
+    ResourceTaggingService(workspace).reconcile((TagTarget("schemas", "main.bad\nschema"),))
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].message
+    assert "main.bad\\nschema" in message
+    assert "RuntimeError" in message
+    assert "\n" not in message
+    assert "sensitive API detail" not in message
 
 
 def test_startup_targets_respect_bundle_boundary() -> None:

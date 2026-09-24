@@ -31,7 +31,6 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends
 
-from databricks_labs_dqx_app.backend.cache import app_cache
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
@@ -57,6 +56,7 @@ from databricks_labs_dqx_app.backend.services import genie_chat_service
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.genie_chat_service import GenieChatState
+from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
     ResourceTaggingService,
@@ -82,35 +82,16 @@ OboWsDep = Annotated[WorkspaceClient, Depends(get_obo_ws)]
 MetadataDimsDep = Annotated[MetadataDimService, Depends(get_metadata_dim_service)]
 ResourceTaggerDep = Annotated[ResourceTaggingService, Depends(get_resource_tagging_service)]
 
-_METADATA_DIM_REFRESH_TTL_SECONDS = 60 * 60
-
-
-@app_cache.cached("genie:metadata-dims", ttl=_METADATA_DIM_REFRESH_TTL_SECONDS, reliable=True)
-async def refresh_metadata_dims_for_new_conversation(
-    metadata_dims: MetadataDimService,
-    resource_tagger: ResourceTaggingService,
-) -> None:
-    """Refresh and retag Genie metadata at most once per TTL window."""
-    await asyncio.to_thread(metadata_dims.refresh)
-    resources = rt.require_resources()
-    targets = metadata_dimension_tag_targets(resources.volume.catalog, resources.genie_schema)
-    try:
-        await asyncio.to_thread(resource_tagger.reconcile, targets)
-    except Exception:
-        logger.warning("Could not restore DQX Studio ownership tags on Genie metadata dimensions")
-
 
 async def _maybe_refresh_metadata_dims(
-    conversation_id: str | None,
-    metadata_dims: MetadataDimService,
-    resource_tagger: ResourceTaggingService,
+    metadata_dims: MetadataDimService, resource_tagger: ResourceTaggingService
 ) -> None:
-    if conversation_id is not None:
-        return
     try:
-        await refresh_metadata_dims_for_new_conversation(metadata_dims, resource_tagger)
+        resources = rt.require_resources()
+        targets = metadata_dimension_tag_targets(resources.volume.catalog, resources.genie_schema)
+        await refresh_metadata_dims(metadata_dims, resource_tagger, targets)
     except Exception:
-        logger.warning("Could not refresh Genie metadata dimensions before starting a conversation")
+        logger.warning("Could not refresh Genie metadata dimensions before handling a message")
 
 
 def _to_answer(state: GenieChatState) -> GenieAnswerOut:
@@ -154,7 +135,7 @@ async def ask_genie(
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
-    await _maybe_refresh_metadata_dims(body.conversation_id, metadata_dims, resource_tagger)
+    await _maybe_refresh_metadata_dims(metadata_dims, resource_tagger)
     state = await asyncio.to_thread(
         genie_chat_service.ask, obo_ws, space_id, body.question, body.conversation_id, sp_ws=sp_ws
     )
@@ -181,7 +162,7 @@ async def start_genie_message(
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
-    await _maybe_refresh_metadata_dims(body.conversation_id, metadata_dims, resource_tagger)
+    await _maybe_refresh_metadata_dims(metadata_dims, resource_tagger)
     state = await asyncio.to_thread(
         genie_chat_service.start, obo_ws, space_id, body.question, body.conversation_id, sp_ws=sp_ws
     )

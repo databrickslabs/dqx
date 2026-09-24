@@ -12,7 +12,7 @@
  *   Also includes `user_metadata` — the rule's reserved tags
  *   (name/description/dimension/severity) plus any free-text tags — since
  *   that dict IS what `render_check` stamps into the materialized
- *   `dq_quality_rules.check` row (minus the per-application provenance keys
+ *   `dq_resolved_rules.check` row (minus the per-application provenance keys
  *   — `registry_rule_id`, `registry_version`, `applied_rule_id`,
  *   `polarity` — that only exist once a rule is applied to a table and
  *   therefore have no meaning on a still-unattached registry rule).
@@ -473,7 +473,7 @@ export interface MaterializableRule {
  * substitution, since a registry rule is table-agnostic). Includes
  * `user_metadata` — *rule*'s own tags dict, unchanged — so the JSON shown
  * to the user faithfully mirrors what flows into the materialized
- * `dq_quality_rules.check` row (see the module docstring for exactly which
+ * `dq_resolved_rules.check` row (see the module docstring for exactly which
  * per-application keys are intentionally excluded).
  *
  * Pass *severityCriticality* (see {@link severityValueCriticality}) so the

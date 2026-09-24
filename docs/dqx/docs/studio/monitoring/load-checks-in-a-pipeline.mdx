@@ -1,0 +1,89 @@
+---
+sidebar_position: 6
+title: Load and run checks in a pipeline
+---
+
+import Admonition from '@theme/Admonition';
+import { FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Load and run checks in a pipeline
+
+You author and approve rules in DQX Studio, but you don't have to run them there.
+Studio keeps its rules in your own workspace, so they can be loaded and run outside
+the app with DQX Core — no export needed.
+
+Studio exposes its **approved** rules through a dqx-core-compatible view,
+`dq_rules_core`, that the standard [DQX Core](/docs/guide/) `DQEngine.load_checks`
+API reads directly.
+
+## Load approved rules
+
+Point `LakebaseChecksStorageConfig` at the view and pass the table you want the
+rules for as `run_config_name`:
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import LakebaseChecksStorageConfig
+
+engine = DQEngine(WorkspaceClient())
+
+checks: list[dict] = engine.load_checks(
+    LakebaseChecksStorageConfig(
+        # <lakebase-database>.<studio-schema>.dq_rules_core
+        location="databricks_postgres.dqx_studio.dq_rules_core",
+        instance_name="<your-lakebase-instance>",   # Studio's Lakebase instance
+        run_config_name="main.sales.orders",        # the table the rules apply to
+    )
+)
+
+# Run the Studio-authored rules against your own DataFrame
+checked_df = engine.apply_checks_by_metadata(df, checks)
+```
+
+Only **approved** rules are loaded — drafts and rejected rules are never returned. You get the
+table's current approved set, so no version pinning is needed. There's no argument for loading a single
+rule; if you want just one, filter the returned list in your own code. 
+
+Cross-table SQL checks have no single home table and appear under `__sql_check__/<name>` instead
+of a table name.
+
+<Admonition type="note" title="Access you'll need">
+`dq_rules_core` lives in Studio's **Lakebase Postgres** database, so a reader
+outside the app — an engineer, or a pipeline's service principal — needs an
+administrator to grant two things:
+
+- **`CAN_USE`** on the Lakebase database instance, so the reader can connect to it
+  (see the Databricks [database instance permissions](https://docs.databricks.com/aws/en/oltp/) docs).
+- A Postgres `SELECT` on the view:
+
+  ```sql
+  GRANT USAGE ON SCHEMA dqx_studio TO "<principal>";
+  GRANT SELECT ON dqx_studio.dq_rules_core TO "<principal>";
+  ```
+
+`<principal>` is the Postgres role for the reader's identity — for a service
+principal, its **application id**. `SELECT` on the view is enough; readers don't need
+access to the underlying `dq_resolved_rules` table.
+
+When a **service principal** does the reading (for example a scheduled pipeline), also
+set `client_id` to its application id on the `LakebaseChecksStorageConfig` so the
+connection authenticates as that SP — `client_id="<service-principal-application-id>"`.
+A user running `load_checks` interactively omits `client_id`, and the connection uses
+their own identity.
+</Admonition>
+
+## Notes and limits
+
+- **Approved only.** The view excludes drafts and rejected rules by design — approve
+  a rule in Studio before a pipeline can load it.
+- **Read-only.** `dq_rules_core` is a view: author and manage rules in the app;
+  pipelines only read.
+- **No version pinning.** The `dq_rules_core` view exposes only the currently approved
+  rules and recomputes `rule_set_fingerprint` from them, so a table has just one
+  fingerprint at any moment — there's no history to load. Passing an older
+  `rule_set_fingerprint` to `load_checks` returns an empty list, so it's only useful
+  to confirm the set hasn't changed since you last loaded it, not to retrieve a past
+  version. (Version pinning does work when dqx-core owns the rules table directly,
+  rather than through Studio's view.)
+

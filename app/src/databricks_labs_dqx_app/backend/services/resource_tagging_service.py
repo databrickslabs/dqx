@@ -62,10 +62,10 @@ class ResourceTaggingService:
         for target in targets:
             try:
                 self._reconcile_target(target)
-            except Exception:
+            except Exception as error:
                 logger.warning(
-                    "Could not apply the DQX Studio ownership tag to a Unity Catalog %s resource",
-                    target.entity_type,
+                    f"Could not apply the DQX Studio ownership tag to Unity Catalog "
+                    f"{target.entity_type} resource {ascii(target.entity_name)} ({type(error).__name__})"
                 )
 
     def _reconcile_target(self, target: TagTarget) -> None:
