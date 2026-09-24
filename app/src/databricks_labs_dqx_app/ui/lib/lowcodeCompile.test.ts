@@ -701,7 +701,7 @@ describe("sqlEditorShape", () => {
 });
 
 describe("queryOmitsInputView", () => {
-  // The exact shape a table-level author lands on: a dataset verdict over a
+  // The exact shape a dataset-level author lands on: a dataset verdict over a
   // column of the monitored table, with nothing to read it from. Both DQX and
   // the Test tab fail it with UNRESOLVED_COLUMN.
   test("a SELECT over a column slot with no FROM is flagged", () => {

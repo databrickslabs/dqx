@@ -9,8 +9,8 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Profiling
 
-If you know a table matters but you're not sure what rules it needs, let the data
-tell you. **Profiling** scans a table, measures the shape of what's actually in
+If you're not sure what rules a particular table needs, let DQX profile the data
+and suggest them. **Profiling** scans a table, measures the shape of what's actually in
 it, and suggests candidate rules based on what it finds. You review the
 suggestions and keep the ones that make sense.
 
@@ -31,21 +31,21 @@ to run it.
 Profiling reads a sample of the table and computes statistics for each column,
 such as:
 
-- how many rows there are,
-- how often a column is blank or empty,
-- how many distinct values a column has,
-- the minimum and maximum values,
+- how many rows there are
+- how often a column is blank or empty
+- how many distinct values a column has
+- the minimum and maximum values
 - the most common values, and
 - patterns it detects in the values (for example, values that look like email
-  addresses).
+  addresses)
 
 From those statistics it proposes **candidate rules** — draft rule ideas drawn
-from the data:
+from the data, e.g.:
 
-- a column that's never blank becomes a suggested **"is not null"** check,
-- values that all match an email shape become a suggested **pattern** check,
+- a column that's never blank becomes a suggested **"is not null"** check
+- values that all match an email shape become a suggested **pattern** check
 - a column with a small set of repeated values becomes a suggested
-  **"is in list"** check.
+  **"is in list"** check
 
 These are suggestions, not decisions. You decide which ones to keep.
 
@@ -53,15 +53,15 @@ These are suggestions, not decisions. You decide which ones to keep.
 
 1. Open the table's **Profile** tab. You can only profile tables you already have
    access to in Unity Catalog.
-2. Run the profiler. It runs as you, reads a sample of the data, and computes the
+2. Run the profiler. It runs on behalf of you (OBO), reads a sample of the data, and computes the
    statistics above.
 3. Review the results. You'll see two things: the **profiler statistics** (the
    measured shape of each column) and the **suggested candidate rules** drawn from
    them. Read the statistics to sanity-check each suggestion — a "never blank"
    column is only worth an "is not null" check if that will stay true.
-4. Keep the suggestions you want. Kept suggestions are saved as **drafts** so you
+4. Keep the suggestions you want. Retained suggestions are saved as **drafts** so you
    can refine them before they go live.
-5. Discard the rest.
+5. You can discard the rest.
 
 <Admonition type="info" title="Your data isn't touched">
 Profiling only reads a sample and computes statistics — it never changes,
@@ -81,12 +81,3 @@ Both help you write rules faster, in different ways:
   reads the table's columns and data and proposes a tailored set of checks
   directly on the Apply Rules tab. Use it when you want the fastest path to a
   sensible starting set.
-
-## Next steps
-
-- [Assign rules](/docs/studio/monitoring/assign-rules) — apply your kept rules to
-  the table and start tracking its quality.
-- [Create a rule](/docs/studio/authoring/create-a-rule) — refine a draft
-  suggestion or write one by hand.
-- [DQX data profiling](/docs/guide/data_profiling) — the deeper technical
-  reference behind profiling.
