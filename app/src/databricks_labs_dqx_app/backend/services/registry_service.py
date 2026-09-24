@@ -13,7 +13,7 @@ by ``ApplyRulesService``).
 Mirrors :class:`~databricks_labs_dqx_app.backend.services.rules_catalog_service.RulesCatalogService`'s
 shape (status machine, history recording, dialect-portable SQL via the
 executor helpers) but operates on the registry tables instead of
-per-table ``dq_quality_rules``.
+per-table ``dq_resolved_rules``.
 """
 
 import json
