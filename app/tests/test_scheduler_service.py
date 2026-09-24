@@ -40,7 +40,6 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
     _IDLE_POLL_SECONDS,
-    _METADATA_DIM_REFRESH_INTERVAL_HOURS,
     _PROFILE_SAMPLE_LIMIT,
     _RUN_SET_SWEEP_MAX_RUNS,
     _RUN_SET_SWEEP_WINDOW_DAYS,
