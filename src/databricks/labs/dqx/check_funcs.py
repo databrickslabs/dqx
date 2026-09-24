@@ -3423,13 +3423,21 @@ def compare_datasets(
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
     By default, duplicate matching-key groups are paired lazily using a per-group row number.
-    Rows are ordered by the string representation of their compared values, with nulls first.
-    Numeric values therefore sort lexically (e.g. "10" before "2"). This pairing prevents
-    Cartesian fan-out but does not attempt to minimize the number of reported column changes.
+    Rows are ordered by their compared values, with nulls first — numeric columns by their native
+    value (so magnitude ordering is preserved) and other types by their string representation. This
+    pairing prevents Cartesian fan-out but does not attempt to minimize the number of reported column
+    changes.
 
     When *row_filter* is set, exact-value in-scope rows are paired first. Remaining in-scope rows
     are paired positionally. Filtered-out rows can pair with reference rows only for keys with no
     in-scope source rows, so they cannot consume a surplus reference row or disturb an exact match.
+
+    With *abs_tolerance* / *rel_tolerance*, only exactly-equal values are paired up front; values that
+    match solely within a tolerance fall to positional pairing, which is a greedy heuristic rather than
+    an optimal tolerance matching. For duplicate matching keys whose within-tolerance partners
+    interleave, this can pair a row with a different but still-tolerant reference row, or flag a
+    tolerant row when an unmatched row shifts the positional order. The pairing is deterministic;
+    when exact one-to-one tolerance matching matters, deduplicate the matching keys first.
 
     Unfiltered lazy pairing adds two *row_number* window computations (one per dataset) that sort
     both datasets on the compared columns. Filtered comparisons add value-group counts and exact
@@ -4481,6 +4489,32 @@ def _generate_field_presence_checks(
     return validations
 
 
+def _pairing_value_order(df: DataFrame, ref_df: DataFrame, compare_columns: list[str]) -> list[Column]:
+    """Build the ascending sort key over compared values used to rank rows for per-key pairing.
+
+    Numeric columns are ordered by their native value so magnitude ordering is preserved. Casting them
+    to string first would sort lexicographically (e.g. "10.0" < "2.0"), which reorders the two sides
+    differently and misaligns the per-key row numbers that pair source and reference rows; that mispairs
+    rows which only match within *abs_tolerance*/*rel_tolerance* (see issue #1504 follow-up). A column is
+    ordered natively only when it is numeric on *both* sides, so mixed-type compares fall back to the
+    stable cast. Non-numeric columns keep the string cast: it is an always-orderable key whose lexical
+    order matches the natural order for the types compared here (dates/timestamps as ISO text, booleans,
+    strings) and gives a uniform key for complex types (arrays, structs, binary). Nulls sort first on
+    both sides. Falls back to a constant when there are no compared columns so the window still has an
+    ordering.
+    """
+    order = [
+        (
+            F.col(col).asc_nulls_first()
+            if isinstance(df.schema[col].dataType, types.NumericType)
+            and isinstance(ref_df.schema[col].dataType, types.NumericType)
+            else F.col(col).cast("string").asc_nulls_first()
+        )
+        for col in compare_columns
+    ]
+    return order or [F.lit(1)]
+
+
 def _add_lazy_pairing_columns(
     df: DataFrame,
     ref_df: DataFrame,
@@ -4536,7 +4570,7 @@ def _add_lazy_pairing_columns(
         "exact_value_pairing must equal row_filter_active: a filtered comparison must use exact-value "
         "pairing to preserve in-scope pairing priority (issue #1504)"
     )
-    value_order = [F.col(col).cast("string").asc_nulls_first() for col in compare_columns] or [F.lit(1)]
+    value_order = _pairing_value_order(df, ref_df, compare_columns)
     if exact_value_pairing:
         # In-scope rows sort first (scope desc) so they claim exact/positional matches ahead of
         # excluded rows; ties break on the compared values.

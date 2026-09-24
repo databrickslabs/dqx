@@ -3102,6 +3102,31 @@ def test_compare_datasets_filter_prioritizes_tolerant_in_scope_match(spark: Spar
     assert all(row["violation"] is None for row in rows)
 
 
+def test_compare_datasets_filter_tolerant_match_survives_interleaved_values(spark: SparkSession):
+    # Regression (#1504 follow-up): residual pairing ranks rows by their compared values so the n-th
+    # source row pairs with the n-th reference row. Ordering numeric values by their string cast sorted
+    # "10.0" before "2.0", reordering the two sides differently and pairing 2.0<->9.7 and 10.0<->2.3 --
+    # both flagged even though each in-scope row is within abs_tolerance of a reference partner
+    # (2.0~2.3, 10.0~9.7). Native numeric ordering keeps the sides aligned so neither is flagged.
+    df = spark.createDataFrame(
+        [(1, 2.0, True), (1, 10.0, True)],
+        "id int, value double, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, 2.3), (1, 9.7)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        abs_tolerance=0.5,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
 def test_compare_datasets_filter_null_values_not_flagged_without_null_safe_matching(spark: SparkSession):
     # Regression: the filtered exact-value pairing path (triggered by row_filter) groups compared
     # values null-safely, but change detection with null_safe_column_value_matching=False uses `!=`,
