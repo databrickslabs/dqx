@@ -3600,7 +3600,6 @@ def compare_datasets(
                 row_number_col,
                 unique_id,
                 null_safe_row_matching,
-                exact_value_pairing=bool(row_filter),
                 row_filter_active=bool(row_filter),
             )
         else:
@@ -4526,21 +4525,23 @@ def _add_lazy_pairing_columns(
     unique_id: str,
     null_safe_row_matching: bool | None,
     *,
-    exact_value_pairing: bool,
     row_filter_active: bool,
 ) -> tuple[DataFrame, DataFrame, str | None, str | None]:
     """Add per-key sequence numbers so duplicate matching keys pair without a cartesian fan-out.
 
     Adds *row_number_col* to both frames so _match_paired_rows can pair the n-th source row of a key
-    with the n-th reference row. Two strategies:
+    with the n-th reference row. *row_filter_active* selects between two strategies (a filtered
+    comparison must use exact-value pairing, so the single flag drives both the ordering below and the
+    branch, and the two cannot diverge):
 
-    * exact_value_pairing (filtered comparisons): in-scope rows first claim reference rows with
-      identical compared values, then remaining rows pair positionally. See
-      _add_exact_value_pairing_columns; the phase and in-scope-key column names it created are
-      returned so the caller need not reconstruct them.
-    * otherwise (unfiltered comparisons): a plain positional row_number per key. Every row is in
-      scope here, so *pairing_scope_col* is constant and is left out of the ordering (it would only
-      add a no-op sort term). Returns None for both the phase and in-scope-key column names.
+    * filtered comparisons (*row_filter_active* True): in-scope rows first claim reference rows with
+      identical compared values, then remaining rows pair positionally. This preserves in-scope pairing
+      priority so an excluded row cannot consume a reference an in-scope row needs (issue #1504). See
+      _add_exact_value_pairing_columns; the phase and in-scope-key column names it created are returned
+      so the caller need not reconstruct them.
+    * unfiltered comparisons (*row_filter_active* False): a plain positional row_number per key. Every
+      row is in scope here, so *pairing_scope_col* is constant and is left out of the ordering (it would
+      only add a no-op sort term). Returns None for both the phase and in-scope-key column names.
 
     Args:
         df: The source DataFrame.
@@ -4552,26 +4553,17 @@ def _add_lazy_pairing_columns(
         row_number_col: Name of the per-key sequence column to add to both frames.
         unique_id: Run-unique suffix for helper column names.
         null_safe_row_matching: Whether matching keys treat nulls as equal.
-        exact_value_pairing: Whether to run the exact-value pairing phase (filtered comparisons).
         row_filter_active: Whether a row_filter is set, i.e. *pairing_scope_col* is a real predicate
-            rather than a constant. Must equal *exact_value_pairing*; see the guard below.
+            rather than a constant. True runs exact-value pairing to keep in-scope pairing priority
+            (issue #1504); False uses plain positional pairing.
 
     Returns:
         The source and reference frames with pairing columns added, the pairing-phase column name (or
         None), and the in-scope-key column name (or None). The latter two are set together only for
         the exact-value strategy.
     """
-    # Exact-value pairing is used exactly for filtered comparisons, and the positional branch below
-    # omits pairing_scope_col from the ordering because, without a row_filter, scope is constant-true
-    # and the term is a no-op. Guard that coupling so a future caller that runs the positional path
-    # with a real (non-constant) scope fails loudly here instead of silently dropping in-scope pairing
-    # priority and reintroducing #1504.
-    assert exact_value_pairing == row_filter_active, (
-        "exact_value_pairing must equal row_filter_active: a filtered comparison must use exact-value "
-        "pairing to preserve in-scope pairing priority (issue #1504)"
-    )
     value_order = _pairing_value_order(df, ref_df, compare_columns)
-    if exact_value_pairing:
+    if row_filter_active:
         # In-scope rows sort first (scope desc) so they claim exact/positional matches ahead of
         # excluded rows; ties break on the compared values.
         return _add_exact_value_pairing_columns(

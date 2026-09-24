@@ -3127,6 +3127,96 @@ def test_compare_datasets_filter_tolerant_match_survives_interleaved_values(spar
     assert all(row["violation"] is None for row in rows)
 
 
+def test_compare_datasets_unfiltered_tolerant_match_survives_interleaved_values(spark: SparkSession):
+    # The native-numeric ordering fix also feeds the unfiltered positional path (no row_filter), which
+    # orders duplicate-key rows purely by their compared values. With the old string cast, "10.0" < "2.0"
+    # reordered the two sides and mispaired 2.0<->9.7 and 10.0<->2.3 -- flagging both rows even though each
+    # is within abs_tolerance of a reference partner (2.0~2.3, 10.0~9.7). Native ordering keeps them aligned.
+    df = spark.createDataFrame([(1, 2.0), (1, 10.0)], "id int, value double")
+    ref_df = spark.createDataFrame([(1, 2.3), (1, 9.7)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        abs_tolerance=0.5,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_strict_mode_non_null_safe_excludes_null_keys_from_uniqueness(spark: SparkSession):
+    # Strict mode (raise_on_duplicate_keys=True) + null_safe_row_matching=False + row_filter: null matching
+    # keys are dropped before the scope-aware uniqueness aggregation, so two in-scope null-key rows are not
+    # counted as duplicate keys and do NOT raise. The non-null in-scope key stays unique and matches exactly.
+    df = spark.createDataFrame(
+        [(1, "A", True), (None, "B", True), (None, "C", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "A")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_row_matching=False,
+        raise_on_duplicate_keys=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+
+    assert len(rows) == 3  # no InvalidParameterError: null-key in-scope rows are excluded from the check
+    assert next(row for row in rows if row["id"] == 1)["violation"] is None
+
+
+def test_compare_datasets_null_filter_present_row_with_diff_is_suppressed(spark: SparkSession):
+    # A present source row whose row_filter evaluates to NULL (in_scope is NULL) is treated as out-of-scope
+    # and suppressed even when it genuinely differs from its reference on a compared column:
+    # (row_missing | filter_col) & ~all_is_ok -> NULL & True -> NULL. An in-scope row with a real diff is
+    # still flagged. Guards the intended behavior change from `filter_col.isNull() | filter_col`.
+    df = spark.createDataFrame(
+        [(1, "A", True), (2, "X", None)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "B"), (2, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+    null_filter_row = next(row for row in rows if row["id"] == 2)
+    in_scope_row = next(row for row in rows if row["id"] == 1)
+
+    # NULL-evaluating filter suppresses the change on the present row, despite value X != ref Y.
+    assert null_filter_row["violation"] is None
+    # The genuinely in-scope diff is still reported.
+    assert json.loads(in_scope_row["violation"])["changed"]["value"] == {"df": "A", "ref": "B"}
+
+
+def test_compare_datasets_filter_default_drops_surplus_reference(spark: SparkSession):
+    # With check_missing_records unset (default False), a surplus reference row on a filtered exact-value
+    # pairing key must be silently dropped, not surfaced as missing. The single in-scope X pairs with one
+    # reference X; the extra reference X does not appear in the output.
+    df = spark.createDataFrame([(1, "X", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "X"), (1, "X")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+
+    assert len(rows) == 1  # the surplus reference row is not reported
+    assert rows[0]["violation"] is None
+
+
 def test_compare_datasets_filter_null_values_not_flagged_without_null_safe_matching(spark: SparkSession):
     # Regression: the filtered exact-value pairing path (triggered by row_filter) groups compared
     # values null-safely, but change detection with null_safe_column_value_matching=False uses `!=`,
