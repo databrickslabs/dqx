@@ -54,7 +54,8 @@ keeps its author and timestamp.
 
 <Admonition type="info" title="Your data is never changed">
 Failing a check never deletes or edits your data. The failing rows shown here are
-a **sample** copied into a quarantine view purely so you can inspect them.
+copied into a quarantine table purely so you can inspect them — you can also
+[query that table directly](#analyse-in-lakehouse).
 </Admonition>
 
 ## Ask Genie {#ask-genie}
@@ -70,3 +71,30 @@ you're trying to do — Basic stats, Drilldown, Trends over time, and Diagnose.
 Every conversation stays with the table or collection you opened it from, and you
 can start a **New conversation** or revisit an earlier one from **History** at
 any time.
+
+## Analyse in Lakehouse {#analyse-in-lakehouse}
+
+Failing rows captured by Studio's runs land in a Delta table in your Studio catalog, which
+you can query outside the app from SQL, a notebook, or an alerting job:
+
+```sql
+SELECT quarantine_id, run_id, created_at, row_data, errors, warnings
+FROM <catalog>.dqx_studio.dq_quarantine_records
+WHERE source_table_fqn = 'main.sales.orders'
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+`row_data` holds the full source row and `errors` / `warnings` the checks it failed, all as
+[`VARIANT`](https://docs.databricks.com/aws/en/semi-structured/variant). Because the rows
+are real source data, treat the table as a possible PII surface and grant access
+accordingly. Records are deleted after `quarantine_retention_days` (default 30).
+
+The table may not hold **every** failing row: draft runs evaluate only a sample of the
+source table, and cross-table SQL checks cap their quarantine at 100,000 rows. Row-level
+checks on a full or scheduled run write the complete invalid set. Keep that in mind when
+building alerting or triage jobs on it.
+
+For more recipes — reading fields out of the source row, exploding failed checks into
+rows, counting failures by check, and joining to run details — see the
+[Query Results Cookbook](/docs/reference/query_results_cookbook#dqx-studio-quarantine-records).

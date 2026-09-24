@@ -1,16 +1,16 @@
 ---
 sidebar_position: 6
-title: Load checks outside the app
+title: Load and run checks in a pipeline
 ---
 
 import Admonition from '@theme/Admonition';
 import { FeatureLifecycleStage, FeatureTags } from '@site/src/components/FeatureTags';
 
-# Load checks outside the app
+# Load and run checks in a pipeline
 
 You author and approve rules in DQX Studio, but you don't have to run them there.
-Studio keeps its rules in own catalog, so they can be loaded and run outside
-the app — no export needed.
+Studio keeps its rules in your own workspace, so they can be loaded and run outside
+the app with DQX Core — no export needed.
 
 Studio exposes its **approved** rules through a dqx-core-compatible view,
 `dq_rules_core`, that the standard [DQX Core](/docs/guide/) `DQEngine.load_checks`

@@ -157,7 +157,7 @@ The minimal schema for manual creation has no versioning columns. When you first
 You can load quality checks from various storage locations. You can then apply the loaded checks using the methods described [here](/docs/guide/quality_checks_apply).
 
 <Admonition type="tip" title="Loading rules authored in DQX Studio">
-Rules you author and approve in [DQX Studio](/docs/studio) can also be loaded with `load_checks`. Studio publishes a dqx-core-compatible view (`dq_rules_core`) over its approved rules, so you can point `load_checks` at it and run the rules in your own pipelines. See [Load approved rules](/docs/studio/integrations#load-approved-rules) for details.
+Rules you author and approve in [DQX Studio](/docs/studio) can also be loaded with `load_checks` and run in your own pipelines. See [Load checks in a pipeline](/docs/studio/monitoring/load-checks-in-a-pipeline) for details.
 </Admonition>
 
 <Admonition type="tip" title="Checks definition">
