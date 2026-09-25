@@ -10,7 +10,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import register_rule, requires_dbr_version
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.utils import safe_filter_expr
+from databricks.labs.dqx.utils import is_spark_column, safe_filter_expr
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -1010,7 +1010,7 @@ def _prepare_geo_operands(
     otherwise the operand is assumed to already hold a native GEOMETRY value.
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    ref_expr = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
+    ref_expr = reference_geometry if is_spark_column(reference_geometry) else F.lit(reference_geometry)
     col_geom = F.call_function("try_to_geometry", col_expr) if convert_column else col_expr
     ref_geom = F.call_function("try_to_geometry", ref_expr) if convert_reference_geometry else ref_expr
     return _GeoOperands(col_str_norm, col_expr_str, col_expr, ref_expr, col_geom, ref_geom)
@@ -1070,7 +1070,7 @@ def _validate_distance(distance: int | float | str | Column) -> None:
     as a number are held to the same rule as numeric literals, so *"-100"* and *-100* behave alike;
     other strings are SQL expressions and pass through untouched.
     """
-    if isinstance(distance, Column):
+    if is_spark_column(distance):
         return
     # *bool* is a subclass of *int*, so it would otherwise slip through as a 0/1 metre radius.
     if isinstance(distance, bool):
@@ -1080,8 +1080,10 @@ def _validate_distance(distance: int | float | str | Column) -> None:
             value: float = float(distance)
         except ValueError:
             return
-    else:
+    elif isinstance(distance, (int, float)):
         value = distance
+    else:  # a Column variant that returned early above; nothing to range-check
+        return
     try:
         is_finite = math.isfinite(value)
     except OverflowError:  # an int too large to represent as a float
@@ -1134,7 +1136,7 @@ def _has_topological_relationship_approximate(
     resolution: int | Column,
     topological_relationship: Literal["COVERS", "INTERSECTS"] = "COVERS",
 ) -> Column:
-    if not (isinstance(resolution, Column) or (isinstance(resolution, int) and 0 <= resolution <= 15)):
+    if not (is_spark_column(resolution) or (isinstance(resolution, int) and 0 <= resolution <= 15)):
         raise InvalidParameterError("'resolution' must be between 0 and 15.")
 
     if topological_relationship not in _APPROXIMATE_TOPOLOGICAL_RELATIONSHIPS:
@@ -1143,8 +1145,8 @@ def _has_topological_relationship_approximate(
         )
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    ref_col = reference_geometry if isinstance(reference_geometry, Column) else F.lit(reference_geometry)
-    resolution_col = resolution if isinstance(resolution, Column) else F.lit(resolution)
+    ref_col = reference_geometry if is_spark_column(reference_geometry) else F.lit(reference_geometry)
+    resolution_col = resolution if is_spark_column(resolution) else F.lit(resolution)
 
     def _h3_cells(geom_expr: Column) -> Column:
         # `h3_try_coverash3` returns NULL for point geometries (no areal coverage) and for
