@@ -4,6 +4,17 @@ import pyspark.sql.types as T
 import pytest
 
 from databricks.labs.dqx.profiler.profile_builder import make_has_no_outliers_profile
+from databricks.labs.dqx.profiler.semantic import DQProfileContext
+
+
+def _ctx(df, column_type, metrics, options):
+    return DQProfileContext(
+        df=df,
+        column_name="col",
+        column_type=column_type,
+        metrics=metrics,
+        options=options,
+    )
 
 
 @pytest.mark.parametrize(
@@ -21,9 +32,7 @@ from databricks.labs.dqx.profiler.profile_builder import make_has_no_outliers_pr
 def test_make_has_no_outliers_profile_empty_data_frame(spark, col_type):
     """No profile when count_non_null is zero (early-exit path)."""
     df = spark.createDataFrame([], T.StructType([T.StructField("col", col_type)]))
-    profiler_metrics = {"count_non_null": 0}
-    profiler_options = {"outliers_ratio": 0.01}
-    profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(_ctx(df, col_type, {"count_non_null": 0}, {"outliers_ratio": 0.01}))
     assert profile is None
 
 
@@ -34,9 +43,7 @@ def test_make_has_no_outliers_profile_bounds_none(spark):
     calculate_median_absolute_deviation_bounds return None, exercising the bounds=None path.
     """
     df = spark.createDataFrame([], T.StructType([T.StructField("col", T.IntegerType())]))
-    profiler_metrics = {"count_non_null": 5}
-    profiler_options = {"outliers_ratio": 0.01}
-    profile = make_has_no_outliers_profile(df, "col", T.IntegerType(), profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(_ctx(df, T.IntegerType(), {"count_non_null": 5}, {"outliers_ratio": 0.01}))
     assert profile is None
 
 
@@ -74,9 +81,7 @@ def test_make_has_no_outliers_profile_outliers_below_threshold(spark, col_type, 
     MAD bounds: median=6; MAD=3; lower=-4.5; upper=16.5; Hence only 1000 is an outlier.
     """
     df = spark.createDataFrame(data, T.StructType([T.StructField("col", col_type)]))
-    profiler_metrics = {"count_non_null": len(data)}
-    profiler_options = {"outliers_ratio": 0.1}
-    profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(_ctx(df, col_type, {"count_non_null": len(data)}, {"outliers_ratio": 0.1}))
     assert profile is not None
     assert profile.name == "has_no_outliers"
     assert profile.column == "col"
@@ -115,9 +120,7 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark, col_type, 
     # [1..4] + three extreme values → 3 outliers out of 7 ≈ 43 %, threshold 10 % → None
     # MAD bounds: median=4, MAD=3 → lower=-6.5, upper=14.5 → 100, 200, 300 are outliers
     df = spark.createDataFrame(data, T.StructType([T.StructField("col", col_type)]))
-    profiler_metrics = {"count_non_null": len(data)}
-    profiler_options = {"outliers_ratio": 0.1}
-    profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(_ctx(df, col_type, {"count_non_null": len(data)}, {"outliers_ratio": 0.1}))
     assert profile is None
 
 
@@ -130,9 +133,9 @@ def test_make_has_no_outliers_profile_bounds_equal(spark):
     """
     data = [(5,), (5,), (5,), (5,), (5,)]
     df = spark.createDataFrame(data, T.StructType([T.StructField("col", T.IntegerType())]))
-    profiler_metrics = {"count_non_null": len(data)}
-    profiler_options = {"outliers_ratio": 0.1}
-    profile = make_has_no_outliers_profile(df, "col", T.IntegerType(), profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(
+        _ctx(df, T.IntegerType(), {"count_non_null": len(data)}, {"outliers_ratio": 0.1})
+    )
     assert profile is None
 
 
@@ -154,7 +157,5 @@ def test_make_has_no_outliers_profile_outliers_null_values(spark, col_type):
     """
     data = [(None,), (None,)]
     df = spark.createDataFrame(data, T.StructType([T.StructField("col", col_type)]))
-    profiler_metrics = {"count_non_null": 0}
-    profiler_options = {"outliers_ratio": 0.1}
-    profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(_ctx(df, col_type, {"count_non_null": 0}, {"outliers_ratio": 0.1}))
     assert profile is None
