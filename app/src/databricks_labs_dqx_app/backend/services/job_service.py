@@ -378,3 +378,24 @@ class JobService:
         sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
         rows = self._sql.query_dicts(sql)
         return rows[0] if rows else None
+
+    def get_latest_run_result_row(self, table: str, source_table_fqn: str) -> dict[str, str | None] | None:
+        """Read the most recent completed, non-preview run row for a table.
+
+        Ad-hoc preview runs (``run_type = 'preview'``) are excluded so a
+        throwaway preview never stands in for the table's real health.
+
+        Uses the SP WorkspaceClient and SQL Statement Execution API.
+        Returns a dict keyed by column name, or None if no run was ever
+        recorded for this table.
+        """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        ef = escape_sql_string(source_table_fqn)
+        sql = (
+            f"SELECT * FROM {table} WHERE source_table_fqn = '{ef}' "  # noqa: S608
+            f"AND status != 'RUNNING' AND COALESCE(run_type, 'dryrun') != 'preview' "
+            f"ORDER BY created_at DESC LIMIT 1"
+        )
+        rows = self._sql.query_dicts(sql)
+        return rows[0] if rows else None
