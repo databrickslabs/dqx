@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeVar, overload, Annotated
+from typing import Any, TypeGuard, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -48,16 +48,26 @@ def to_utc(value: datetime.datetime) -> datetime.datetime:
     return value.astimezone(datetime.timezone.utc)
 
 
+def is_spark_column(value: object) -> TypeGuard[Column]:
+    """Return True if *value* is a PySpark Column, including the Spark Connect variant.
+
+    In environments using Spark Connect (e.g. Databricks serverless / Python 3.10–3.11 CI),
+    *F.col()* / *F.lit()* return *pyspark.sql.connect.column.Column*, which is not an *isinstance* of
+    the classic *pyspark.sql.Column*. Checking both keeps column detection correct in either runtime.
+    Reading ConnectColumn at call time (not at import time) means monkeypatching in tests works.
+
+    Returns a *TypeGuard[Column]* so callers keep the type narrowing a bare *isinstance* would give.
+    """
+    valid_types: tuple = (Column,) if ConnectColumn is None else (Column, ConnectColumn)
+    return isinstance(value, valid_types)
+
+
 def _validate_spark_column(value: Any) -> Any:
     """Accept both classic pyspark.sql.Column and the Spark Connect variant.
 
-    In environments using Spark Connect (e.g. Databricks serverless / Python 3.10–3.11 CI),
-    ``F.col()`` / ``F.lit()`` return ``pyspark.sql.connect.column.Column``, which is not an
-    ``isinstance`` of the classic ``pyspark.sql.Column``.  Reading ConnectColumn at call time
-    (not at import time) means monkeypatching in tests works correctly.
+    See *is_spark_column* for why both variants must be accepted.
     """
-    _valid_types: tuple = (Column,) if ConnectColumn is None else (Column, ConnectColumn)
-    if isinstance(value, _valid_types):
+    if is_spark_column(value):
         return value
     raise ValueError(f"Expected a PySpark Column, got {type(value).__name__}")
 
