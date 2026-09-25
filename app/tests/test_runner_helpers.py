@@ -576,3 +576,36 @@ class TestIsPermissionDenied:
 
     def test_unrelated_error_is_not_permission_denied(self, runner_module):
         assert runner_module._is_permission_denied(RuntimeError("connection reset by peer")) is False
+
+
+# ---------------------------------------------------------------------------
+# _detect_time_column — pinned / candidate-list semantics
+# ---------------------------------------------------------------------------
+
+
+class TestDetectTimeColumn:
+    @pytest.fixture
+    def schema(self):
+        from pyspark.sql.types import StringType, StructField, StructType, TimestampType
+
+        return StructType(
+            [
+                StructField("event_ts", TimestampType()),
+                StructField("created_at", TimestampType()),
+                StructField("name", StringType()),
+            ]
+        )
+
+    def test_pinned_column_wins(self, runner_module, schema):
+        assert runner_module._detect_time_column(schema, pinned="created_at") == ("created_at", False)
+
+    def test_missing_pinned_column_does_not_guess(self, runner_module, schema):
+        assert runner_module._detect_time_column(schema, pinned="ingest_time") is None
+
+    def test_empty_candidate_list_uses_type_only_detection(self, runner_module, schema):
+        # With no name matching, the first date/timestamp-typed column is used —
+        # not "created_at" from the built-in priority list.
+        assert runner_module._detect_time_column(schema, name_priority=[]) == ("event_ts", False)
+
+    def test_default_candidate_list_matches_by_name(self, runner_module, schema):
+        assert runner_module._detect_time_column(schema) == ("created_at", False)

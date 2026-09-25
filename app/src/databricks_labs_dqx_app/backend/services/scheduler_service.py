@@ -1835,6 +1835,12 @@ class SchedulerService:
             return [f"No approved rules matched scope for schedule '{schedule_name}'"]
 
         sample_size = cfg.get("sample_size") or 0
+        sample_interval_minutes = cfg.get("sample_interval_minutes") or None
+        sample_interval_timezone = cfg.get("sample_interval_timezone") or None
+        # ``None`` = not customized (runner uses its default name list); an
+        # explicit ``[]`` = type-only detection — don't collapse the two.
+        sample_interval_columns = cfg.get("sample_interval_columns")
+        sample_interval_selected_column = cfg.get("sample_interval_selected_column") or None
         errors: list[str] = []
 
         # Fetch custom metrics once per schedule tick — they apply
@@ -1868,6 +1874,10 @@ class SchedulerService:
                 config = {
                     "checks": entry["checks"],
                     "sample_size": sample_size,
+                    "sample_interval_minutes": sample_interval_minutes,
+                    "sample_interval_timezone": sample_interval_timezone,
+                    "sample_interval_columns": sample_interval_columns,
+                    "sample_interval_selected_column": sample_interval_selected_column,
                     "source_table_fqn": table_fqn,
                     # Only cross-table SQL queries take the SQL fast-path in
                     # the runner; everything else uses the row-level engine.
