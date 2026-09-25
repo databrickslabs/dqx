@@ -8,14 +8,18 @@ from pyspark.sql import functions as F
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     PROFILE_COLUMN_METRIC_REGISTRY,
     RESERVED_PROFILE_COLUMN_METRIC_KEYS,
     register_profile_column_metric,
 )
+from databricks.labs.dqx.profiler.common import is_geospatial
 from databricks.labs.dqx.profiler.profile_builder import (
+    GEOSPATIAL_PROFILE_NAMES,
     PROFILE_BUILDER_REGISTRY,
     register_profile_builder,
 )
@@ -2614,6 +2618,71 @@ def test_profiler_no_has_no_outliers_when_outliers_exceed_threshold(spark, ws):
     assert len(has_no_outliers_profiles) == 0
 
 
+
+def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_geo_compatible, spark, ws):
+    geom_df = _geometry_dataframe(spark)
+    assert is_geospatial(geom_df.schema["geom"].dataType)
+
+    profiler = DQProfiler(ws)
+    options = {
+        "profile_geospatial": True,
+        "sample_fraction": None,
+        "limit": None,
+        "llm_primary_key_detection": False,
+    }
+    stats, profiles = profiler.profile(geom_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    assert geo_profile_names == set(GEOSPATIAL_PROFILE_NAMES)
+
+    geometry_type_profile = next(p for p in profiles if p.name == "geometry_type")
+    assert geometry_type_profile.parameters == {"type": "ST_Polygon"}
+
+    geom_stats = stats["geom"]
+    for key in ("min_x_coordinate", "max_x_coordinate", "min_area", "max_area", "min_num_points", "max_num_points"):
+        assert key in geom_stats
+    assert geom_stats["geometry_types"] == ["ST_Polygon"]
+    assert geom_stats["min_x_coordinate"] <= 0 <= geom_stats["max_x_coordinate"]
+
+    checks = DQGenerator(ws).generate_dq_rules(profiles)
+    checked_df = DQEngine(ws).apply_checks_by_metadata(geom_df, checks)
+    assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
+    assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
+
+
+def test_profiler_geospatial_disabled_by_default(skip_if_runtime_not_geo_compatible, spark, ws):
+    geom_df = _geometry_dataframe(spark)
+    profiler = DQProfiler(ws)
+    stats, profiles = profiler.profile(
+        geom_df, options={"sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    )
+
+    assert not any(p.name in GEOSPATIAL_PROFILE_NAMES for p in profiles)
+
+    assert stats["geom"]["count"] == 3
+    assert stats["geom"]["count_null"] == 1
+    assert "min_x_coordinate" not in stats["geom"]
+
+
+def test_profiler_geospatial_skips_all_null_column(skip_if_runtime_not_geo_compatible, spark, ws):
+    null_geom_df = spark.createDataFrame(
+        [[None], [None]], schema=T.StructType([T.StructField("wkt", T.StringType())])
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {
+        "profile_geospatial": True,
+        "sample_fraction": None,
+        "limit": None,
+        "llm_primary_key_detection": False,
+    }
+    stats, profiles = profiler.profile(null_geom_df, options=options)
+
+    assert not any(p.name in GEOSPATIAL_PROFILE_NAMES for p in profiles)
+    assert stats["geom"]["count_non_null"] == 0
+    assert "min_x_coordinate" not in stats["geom"]
+
+
 def _round_stats(
     stats: dict[str, dict[str, int | float | None]], precision: int = 10
 ) -> dict[str, dict[str, int | float | None]]:
@@ -2625,3 +2694,13 @@ def _round_stats(
         }
         for column_name, column_stats in stats.items()
     }
+
+
+def _geometry_dataframe(spark):
+    wkts = [
+        ["POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))"],
+        ["POLYGON((0 0, 0 2, 2 2, 2 0, 0 0))"],
+        [None],
+    ]
+    string_df = spark.createDataFrame(wkts, schema=T.StructType([T.StructField("wkt", T.StringType())]))
+    return string_df.selectExpr("try_to_geometry(wkt) AS geom")
