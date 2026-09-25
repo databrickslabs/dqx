@@ -36,6 +36,14 @@ def test_node_runners_pick_platform_shim(monkeypatch, runner, tool, extra_args, 
     assert cmd[1:] == extra_args
 
 
+def test_openapi_dump_uses_the_frozen_app_lock(tmp_path):
+    build_app = _load_build_app()
+
+    command = build_app.openapi_dump_command(tmp_path / "openapi.json")
+
+    assert command[:5] == ["uv", "run", "--frozen", "--exact", "--all-extras"]
+
+
 def test_local_dqx_path_reads_the_uv_source():
     build_app = _load_build_app()
 

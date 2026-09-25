@@ -1,26 +1,106 @@
 import json
 import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Literal
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
+_SETUP_JOB_ID_KEY = "setup_task_runner_job_id"
+_SETUP_COMPLETED_AT_KEY = "setup_completed_at"
+_SETUP_COMPLETED_BY_KEY = "setup_completed_by"
 
 # Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
 # row cap applied to DRAFT monitored-table runs when the admin has not
-# configured one. 0 means unlimited. Shared by ``BindingRunService`` and
-# the ``/config/draft-run-sample-limit`` admin endpoints.
-DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
+# configured one. 0 means unlimited, so out of the box a draft run scans the
+# whole table, matching approved runs; a pass rate measured on a subset is not
+# the table's pass rate. Shared by ``BindingRunService`` and the
+# ``/config/draft-run-sample-limit`` admin endpoints.
+DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 0
 
 # Compiled-in fallback for the ``default_pass_threshold`` setting — the
 # org-wide minimum pass rate (%) below which a check warns. Shared by
 # the breach evaluator (results service) and the admin settings endpoint.
 DEFAULT_PASS_THRESHOLD_DEFAULT = 70
+
+# Compiled-in fallbacks for the profiler sampling setting — how much of a
+# source table the profiler reads. ``kind`` is one of ``full`` (whole
+# table), ``records`` (a random row cap) or ``percent`` (a random
+# fraction); ``value`` is the row count or the percentage respectively
+# and is ignored for ``full``. Shared by the profiler routes and the
+# ``/compute/profiler-sample`` admin endpoints.
+ProfilerSampleKind = Literal["full", "records", "percent"]
+PROFILER_SAMPLE_KIND_FULL: ProfilerSampleKind = "full"
+PROFILER_SAMPLE_KIND_RECORDS: ProfilerSampleKind = "records"
+PROFILER_SAMPLE_KIND_PERCENT: ProfilerSampleKind = "percent"
+PROFILER_SAMPLE_KIND_DEFAULT: ProfilerSampleKind = PROFILER_SAMPLE_KIND_PERCENT
+PROFILER_SAMPLE_VALUE_DEFAULT = 10
+# Per-kind fallback when the kind is set but the value is missing or corrupt.
+# A single global fallback is unsafe across units: 50,000 as a *percentage*
+# clamps to 100, which silently means "whole table" — the opposite of a cap.
+PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND: dict[str, int] = {
+    PROFILER_SAMPLE_KIND_PERCENT: 10,
+    PROFILER_SAMPLE_KIND_RECORDS: 50_000,
+}
+# Sanity ceiling for the ``records`` form. Admins who genuinely want the
+# whole table pick ``full`` rather than an enormous row count.
+PROFILER_SAMPLE_RECORDS_MAX = 10_000_000
+
+
+@dataclass(frozen=True)
+class ProfilerSample:
+    """Resolved profiler sampling policy.
+
+    Attributes:
+        kind: One of ``full``, ``records`` or ``percent``.
+        value: Row count when *kind* is ``records``, percentage 1-100 when
+            *kind* is ``percent``, and 0 when *kind* is ``full``.
+    """
+
+    kind: ProfilerSampleKind
+    value: int
+
+    @property
+    def is_full_table(self) -> bool:
+        """Whether the profiler should read the whole table."""
+        return self.kind == PROFILER_SAMPLE_KIND_FULL
+
+
+def parse_profiler_sample_kind(raw: str | None) -> ProfilerSampleKind | None:
+    """Narrow *raw* to a known sampling kind, or ``None`` if unrecognised.
+
+    Explicit literal returns so the type checker can prove the result is a
+    :data:`ProfilerSampleKind` rather than a bare ``str``.
+    """
+    kind = (raw or "").strip().lower()
+    if kind == "full":
+        return "full"
+    if kind == "records":
+        return "records"
+    if kind == "percent":
+        return "percent"
+    return None
+
+
+def clamp_profiler_sample_value(kind: ProfilerSampleKind, value: int) -> int:
+    """Clamp *value* into the range valid for *kind*.
+
+    Percentages clamp to 1-100; row counts clamp to
+    1-:data:`PROFILER_SAMPLE_RECORDS_MAX`. Callers rely on this so a
+    corrupt or hostile stored value can never widen the scan.
+    """
+    if kind == PROFILER_SAMPLE_KIND_PERCENT:
+        return max(1, min(100, int(value)))
+    return max(1, min(PROFILER_SAMPLE_RECORDS_MAX, int(value)))
+
 
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
@@ -48,8 +128,7 @@ class AppSettingsService:
     user's OBO token.
 
     The ``dq_app_settings`` table is one of the OLTP tables that lives
-    in Lakebase Postgres when ``conf.lakebase_enabled`` is true and in
-    Delta otherwise. The injected executor decides which.
+    in Lakebase Postgres.
     """
 
     def __init__(self, sql: OltpExecutorProtocol) -> None:
@@ -133,6 +212,34 @@ class AppSettingsService:
         )
         logger.info("Saved setting: %s (by=%s)", key, user_email or "system")
 
+    def record_setup_completion(
+        self,
+        job_id: int,
+        completed_at: datetime,
+        user_name: str | None,
+    ) -> None:
+        """Persist setup runtime state and a sanitized completion audit.
+
+        This method is called only after Postgres migrations have made the
+        application-settings table available. It stores no credentials or
+        platform error details.
+
+        Args:
+            job_id: Setup-resolved task-runner job identifier.
+            completed_at: Setup completion timestamp.
+            user_name: Optional setup administrator identity.
+        """
+        if job_id <= 0:
+            raise ValueError("The setup task-runner job ID must be positive.")
+        timestamp = completed_at.astimezone(timezone.utc).isoformat()
+        actor = _sanitize_audit_identity(user_name)
+        for key, value in (
+            (_SETUP_JOB_ID_KEY, str(job_id)),
+            (_SETUP_COMPLETED_AT_KEY, timestamp),
+            (_SETUP_COMPLETED_BY_KEY, actor or "system"),
+        ):
+            self.save_setting(key, value, user_email=actor)
+
     # ------------------------------------------------------------------
     # Custom metrics — global SQL-expression list passed to DQMetricsObserver.
     # Stored as a JSON array of strings under ``custom_metrics_v1``. Each
@@ -203,9 +310,10 @@ class AppSettingsService:
         return int(days)
 
     # ------------------------------------------------------------------
-    # Draft-run sampling (legacy admin setting) — kept for API compatibility.
-    # The UI no longer exposes this; draft runs take an optional per-request
-    # ``sample_size`` (default 1000) on the run endpoints. See
+    # Draft-run sampling. Surfaced to admins under Settings -> Compute ->
+    # Draft runs, and honoured by the run endpoints when the request omits
+    # ``sample_size``. The compiled-in fallback is
+    # :data:`DRAFT_RUN_SAMPLE_LIMIT_DEFAULT` (0 = whole table). See
     # ``BindingRunService.run_binding``.
     # ------------------------------------------------------------------
 
@@ -228,6 +336,73 @@ class AppSettingsService:
         """Persist the draft-run sample limit (0 = unlimited). Returns the saved value."""
         self.save_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY, str(int(limit)), user_email=user_email)
         return int(limit)
+
+    # ------------------------------------------------------------------
+    # Profiler sampling — how much of a source table the profiler reads.
+    # Stored as two keys so the shape stays greppable in dq_app_settings
+    # and a corrupt value in one cannot silently change the other:
+    #   * ``profiler_sample_kind``  — ``full`` | ``records`` | ``percent``
+    #   * ``profiler_sample_value`` — row count (records) or 1-100 (percent)
+    # The two forms are mutually exclusive by construction: ``kind`` picks
+    # which one ``value`` means. An unset or unparseable pair reads back as
+    # the compiled-in default so profiling always has a bounded default.
+    # ------------------------------------------------------------------
+
+    _PROFILER_SAMPLE_KIND_KEY = "profiler_sample_kind"
+    _PROFILER_SAMPLE_VALUE_KEY = "profiler_sample_value"
+
+    def get_profiler_sample(self) -> ProfilerSample:
+        """Return the configured profiler sampling policy, falling back to the default.
+
+        Never raises: an unset, unknown or out-of-range stored value is
+        logged and replaced by the compiled-in default so a corrupt row
+        cannot make profiling read an unbounded table by accident.
+        """
+        raw_kind = self.get_setting(self._PROFILER_SAMPLE_KIND_KEY)
+        parsed = parse_profiler_sample_kind(raw_kind)
+        if parsed is None:
+            if raw_kind:
+                logger.warning(
+                    "Setting %s is not a known kind (%r); using default",
+                    self._PROFILER_SAMPLE_KIND_KEY,
+                    replace_control_characters(str(raw_kind)),
+                )
+            parsed = PROFILER_SAMPLE_KIND_DEFAULT
+        kind = parsed
+
+        if kind == PROFILER_SAMPLE_KIND_FULL:
+            return ProfilerSample(kind=kind, value=0)
+
+        value = self._get_int_setting(self._PROFILER_SAMPLE_VALUE_KEY)
+        if value is None:
+            # Fall back in the unit the kind actually uses — see
+            # PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND for why this must not be a
+            # single global default.
+            value = PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND.get(kind, PROFILER_SAMPLE_VALUE_DEFAULT)
+        return ProfilerSample(kind=kind, value=clamp_profiler_sample_value(kind, value))
+
+    def save_profiler_sample(self, kind: str, value: int, *, user_email: str | None = None) -> ProfilerSample:
+        """Persist the profiler sampling policy. Returns the saved value.
+
+        Args:
+            kind: One of ``full``, ``records`` or ``percent``.
+            value: Row count (*records*) or percentage 1-100 (*percent*).
+                Ignored when *kind* is ``full``.
+            user_email: Acting admin, recorded for audit.
+
+        Raises:
+            ValueError: If *kind* is not a known sampling kind.
+        """
+        cleaned_kind = parse_profiler_sample_kind(kind)
+        if cleaned_kind is None:
+            raise ValueError(f"Unknown profiler sample kind: {kind!r}")
+
+        stored_value = (
+            0 if cleaned_kind == PROFILER_SAMPLE_KIND_FULL else clamp_profiler_sample_value(cleaned_kind, value)
+        )
+        self.save_setting(self._PROFILER_SAMPLE_KIND_KEY, cleaned_kind, user_email=user_email)
+        self.save_setting(self._PROFILER_SAMPLE_VALUE_KEY, str(stored_value), user_email=user_email)
+        return ProfilerSample(kind=cleaned_kind, value=stored_value)
 
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)
@@ -709,6 +884,24 @@ class AppSettingsService:
                 "High": "error",
                 "Critical": "error",
             },
+            # One-line explanations shown alongside each severity wherever the
+            # value is surfaced (admin editor, label picker tooltip) — parallel
+            # to the dimension seed's ``value_descriptions`` above.
+            "value_descriptions": {
+                "Critical": (
+                    "Blocking issues with severe impact on pipelines, use-case outcomes, or regulatory "
+                    "requirements — must be resolved before the data is trusted or consumed."
+                ),
+                "High": (
+                    "Serious issues that significantly undermine data reliability or downstream decisions "
+                    "and should be addressed promptly."
+                ),
+                "Medium": (
+                    "Moderate issues worth investigating that may affect some consumers but don't block "
+                    "usage of the data."
+                ),
+                "Low": "Minor issues with limited impact — track and address opportunistically.",
+            },
         },
     ]
 
@@ -753,6 +946,50 @@ class AppSettingsService:
         updated = existing + [json.loads(json.dumps(seed)) for seed in missing]
         self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(updated), user_email=user_email)
         logger.info("Seeded reserved label definition(s): %s", [s["key"] for s in missing])
+        return True
+
+    def backfill_reserved_value_descriptions_if_missing(self, *, user_email: str | None = None) -> bool:
+        """Fill in seed ``value_descriptions`` for already-seeded reserved keys.
+
+        The seed above is only applied to keys that don't yet exist
+        (:meth:`seed_reserved_label_definitions_if_absent`), so a deployment
+        that was seeded before a description was added to the seed never picks
+        it up. This closes that gap: for each stored reserved definition, it
+        copies over any ``value_descriptions`` entry the seed defines but the
+        stored definition is missing.
+
+        Safe and non-destructive: an existing (admin-authored) description is
+        never overwritten, descriptions are only added for values the stored
+        definition still lists, and no other field or user-created definition
+        is touched. Idempotent — returns ``True`` iff a write happened.
+        """
+        seeds_by_key = {seed["key"]: seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS}
+        existing = self.get_label_definitions()
+        changed = False
+
+        for definition in existing:
+            seed = seeds_by_key.get(definition.get("key"))
+            if seed is None:
+                continue
+            seed_descriptions = seed.get("value_descriptions")
+            if not seed_descriptions:
+                continue
+            current = definition.get("value_descriptions")
+            if not isinstance(current, dict):
+                current = {}
+            defined_values = set(definition.get("values") or seed.get("values") or [])
+            for value, description in seed_descriptions.items():
+                if value in defined_values and not current.get(value):
+                    current[value] = description
+                    changed = True
+            if current:
+                definition["value_descriptions"] = current
+
+        if not changed:
+            return False
+
+        self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(existing), user_email=user_email)
+        logger.info("Backfilled reserved label value_descriptions for keys: %s", list(seeds_by_key))
         return True
 
     # ------------------------------------------------------------------
@@ -1047,3 +1284,10 @@ class AppSettingsService:
             "color": color.strip(),
             "is_default": bool(item.get("is_default")),
         }
+
+
+def _sanitize_audit_identity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    sanitized = replace_control_characters(value)
+    return sanitized.strip() or None

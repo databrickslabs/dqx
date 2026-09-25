@@ -22,8 +22,10 @@ class _AppConf:
         self.schema_name = "dqx"
 
 
-def _sql(count: int = 0, rows: list | None = None):
+def _sql(count: int = 0, rows: list | None = None, *, catalog: str = "main", schema: str = "dqx"):
     sql = MagicMock()
+    sql.catalog = catalog
+    sql.schema = schema
     sql.query.return_value = [[count]]
     sql.query_dicts.return_value = rows or []
     return sql
@@ -122,7 +124,7 @@ class TestQueryQuarantine:
 
 class TestHyphenatedAppCatalog:
     """The dq_quarantine_records read FQNs must backtick-quote the
-    config-sourced catalog/schema (quote_object_fqn) so a hyphenated app
+    activated catalog/schema (quote_object_fqn) so a hyphenated app
     catalog stays parseable — same convention as the dq_results reads."""
 
     QUOTED_TABLE = "`prod-east`.`dqx-studio`.dq_quarantine_records"
@@ -133,7 +135,7 @@ class TestHyphenatedAppCatalog:
             self.schema_name = "dqx-studio"
 
     def test_query_quarantine_reads_are_quoted(self):
-        sql = _sql(count=0)
+        sql = _sql(count=0, catalog="prod-east", schema="dqx-studio")
         _query_quarantine(sql, self._HyphenConf(), "run-1", offset=0, limit=10)
         assert self.QUOTED_TABLE in sql.query.call_args.args[0]
         assert self.QUOTED_TABLE in sql.query_dicts.call_args.args[0]
@@ -154,6 +156,8 @@ class TestHyphenatedAppCatalog:
         from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
         sql = create_autospec(SqlExecutor, instance=True)
+        sql.catalog = "prod-east"
+        sql.schema = "dqx-studio"
         sql.query_dicts.return_value = []
         app = FastAPI()
         app.include_router(router, prefix="/api/v1/quarantine")

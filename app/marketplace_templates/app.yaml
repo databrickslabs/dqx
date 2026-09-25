@@ -1,0 +1,21 @@
+command:
+  - uv
+  - run
+  - --no-dev
+  - uvicorn
+  - databricks_labs_dqx_app.backend.app:app
+  - --workers
+  - "1"
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: dqx-sql-warehouse
+  - name: DQX_WHEELS_VOLUME
+    valueFrom: dqx-wheels-volume
+  - name: DQX_TMP_SCHEMA
+    value: dqx_studio_tmp
+  - name: DQX_GENIE_SCHEMA
+    value: genie
+  - name: DQX_LAKEBASE_SCHEMA
+    value: dqx_studio
+  - name: DQX_ADMIN_GROUP
+    value: admins

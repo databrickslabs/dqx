@@ -1,4 +1,4 @@
-"""Tests for ``backend.app._maybe_start_ai_bootstrap``.
+"""Tests for ``backend.startup._maybe_start_ai_bootstrap``.
 
 Wires ``AiBootstrap.ensure_ai_ready`` at app startup: fire-and-forget via
 ``asyncio.create_task`` when AI is enabled, a no-op when it isn't, and
@@ -12,7 +12,7 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI
 
-from databricks_labs_dqx_app.backend.app import _maybe_start_ai_bootstrap
+from databricks_labs_dqx_app.backend.startup import _maybe_start_ai_bootstrap
 from databricks_labs_dqx_app.backend.services.ai_bootstrap import AiBootstrap
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -45,11 +45,11 @@ class TestStartsWhenAiEnabled:
 
         bootstrap.ensure_ai_ready.side_effect = _record
         monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.app.AiBootstrap",
+            "databricks_labs_dqx_app.backend.startup.AiBootstrap",
             lambda **_kwargs: bootstrap,
         )
 
-        _maybe_start_ai_bootstrap(app, sp_ws=sp_ws, sp_sql=sql_executor_mock, pg_executor=None)
+        _maybe_start_ai_bootstrap(app, sp_ws, sql_executor_mock, sql_executor_mock)
 
         assert hasattr(app.state, "ai_bootstrap_startup_task")
         await asyncio.wait_for(done.wait(), timeout=2)
@@ -72,11 +72,11 @@ class TestStartsWhenAiEnabled:
 
         bootstrap.ensure_ai_ready.side_effect = _noop
         monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.app.AiBootstrap",
+            "databricks_labs_dqx_app.backend.startup.AiBootstrap",
             lambda **_kwargs: bootstrap,
         )
 
-        _maybe_start_ai_bootstrap(app, sp_ws=sp_ws, sp_sql=sql_executor_mock, pg_executor=pg_executor)
+        _maybe_start_ai_bootstrap(app, sp_ws, sql_executor_mock, pg_executor)
 
         assert hasattr(app.state, "ai_bootstrap_startup_task")
         await app.state.ai_bootstrap_startup_task
@@ -89,11 +89,11 @@ class TestSkipsWhenAiDisabled:
 
         bootstrap = create_autospec(AiBootstrap, instance=True)
         monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.app.AiBootstrap",
+            "databricks_labs_dqx_app.backend.startup.AiBootstrap",
             lambda **_kwargs: bootstrap,
         )
 
-        _maybe_start_ai_bootstrap(app, sp_ws=sp_ws, sp_sql=sql_executor_mock, pg_executor=None)
+        _maybe_start_ai_bootstrap(app, sp_ws, sql_executor_mock, sql_executor_mock)
 
         assert not hasattr(app.state, "ai_bootstrap_startup_task")
         bootstrap.ensure_ai_ready.assert_not_called()
@@ -106,7 +106,7 @@ class TestNeverRaisesOrBlocksStartup:
         sql_executor_mock.query.side_effect = RuntimeError("warehouse unreachable")
 
         # Must not raise — startup has to continue regardless.
-        _maybe_start_ai_bootstrap(app, sp_ws=sp_ws, sp_sql=sql_executor_mock, pg_executor=None)
+        _maybe_start_ai_bootstrap(app, sp_ws, sql_executor_mock, sql_executor_mock)
 
         assert not hasattr(app.state, "ai_bootstrap_startup_task")
 
@@ -120,13 +120,13 @@ class TestNeverRaisesOrBlocksStartup:
 
         bootstrap.ensure_ai_ready.side_effect = _boom
         monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.app.AiBootstrap",
+            "databricks_labs_dqx_app.backend.startup.AiBootstrap",
             lambda **_kwargs: bootstrap,
         )
 
         # Synchronous call returns cleanly even though the task it kicked
         # off will fail once the event loop gets around to it.
-        _maybe_start_ai_bootstrap(app, sp_ws=sp_ws, sp_sql=sql_executor_mock, pg_executor=None)
+        _maybe_start_ai_bootstrap(app, sp_ws, sql_executor_mock, sql_executor_mock)
 
         with pytest.raises(RuntimeError, match="Serving control plane unreachable"):
             await app.state.ai_bootstrap_startup_task

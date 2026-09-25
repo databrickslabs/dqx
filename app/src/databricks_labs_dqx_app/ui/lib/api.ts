@@ -179,7 +179,7 @@ export interface AiGenerateRuleOut {
 export type AiImproveSqlInColumns = string[] | null;
 
 /**
- * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax.
+ * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax.
  */
 export type AiImproveSqlInGranularity = 'row' | 'dataset' | null;
 
@@ -201,7 +201,7 @@ export interface AiImproveSqlIn {
   instruction: string;
   /** Declared reusable slot names ({{slot}}) the predicate may reference */
   columns?: AiImproveSqlInColumns;
-  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax. */
+  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax. */
   granularity?: AiImproveSqlInGranularity;
 }
 
@@ -290,7 +290,7 @@ export type AiWriteSqlInColumns = string[] | null;
 export type AiWriteSqlInTableFqn = string | null;
 
 /**
- * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax.
+ * Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax.
  */
 export type AiWriteSqlInGranularity = 'row' | 'dataset' | null;
 
@@ -308,7 +308,7 @@ export interface AiWriteSqlIn {
   columns?: AiWriteSqlInColumns;
   /** Optional fully qualified table name for schema context */
   table_fqn?: AiWriteSqlInTableFqn;
-  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one table-level verdict). When omitted, the model defaults to row-level syntax. */
+  /** Applies-to toggle from the SQL editor: 'row' (per-row verdict) or 'dataset' (one dataset-level verdict). When omitted, the model defaults to row-level syntax. */
   granularity?: AiWriteSqlInGranularity;
 }
 
@@ -558,6 +558,16 @@ export interface BatchProfileRunFailure {
   error_code?: BatchProfileRunFailureErrorCode;
 }
 
+/**
+ * Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.
+ */
+export type BatchProfileRunInSampleKind = 'full' | 'records' | 'percent' | null;
+
+/**
+ * Row count when sample_kind is records, 1-100 when percent. Ignored for full.
+ */
+export type BatchProfileRunInSampleValue = number | null;
+
 export type BatchProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 
 /**
@@ -566,13 +576,12 @@ export type BatchProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 export type BatchProfileRunInProfileOptions = BatchProfileRunInProfileOptionsAnyOf | null;
 
 export interface BatchProfileRunIn {
+  /** Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting. */
+  sample_kind?: BatchProfileRunInSampleKind;
+  /** Row count when sample_kind is records, 1-100 when percent. Ignored for full. */
+  sample_value?: BatchProfileRunInSampleValue;
   /** List of fully qualified table names to profile */
   table_fqns: string[];
-  /**
-   * Max rows to sample per table
-   * @maximum 100000
-   */
-  sample_limit?: number;
   /** Advanced profiler options applied to all tables */
   profile_options?: BatchProfileRunInProfileOptions;
 }
@@ -1884,6 +1893,8 @@ export type GroupRowOutTotalTests = number | null;
 
 export type GroupRowOutBreachCriticality = string | null;
 
+export type GroupRowOutPassThreshold = number | null;
+
 /**
  * One breakdown row (by dimension / severity / rule / column / table).
 
@@ -1898,6 +1909,12 @@ by_rule axis only (additive — the frozen registry rule id the group
 is keyed on, so the UI can facet-filter by rule IDENTITY across
 renames; None for legacy/untagged name-keyed groups and on every
 other axis).
+
+*pass_threshold* is the frozen per-run pass threshold (%) in effect for
+the group — the value stamped on the NEWEST run pooled into the group
+(mirroring how the by-rule label is taken from the newest run). None when
+no contributing run carried a frozen threshold (legacy runs predating the
+stamp). Surfaced so the UI can show "threshold used" in the drilldown.
  */
 export interface GroupRowOut {
   label?: GroupRowOutLabel;
@@ -1910,6 +1927,7 @@ export interface GroupRowOut {
   total_tests?: GroupRowOutTotalTests;
   breached?: boolean;
   breach_criticality?: GroupRowOutBreachCriticality;
+  pass_threshold?: GroupRowOutPassThreshold;
 }
 
 export interface HTTPValidationError {
@@ -2097,6 +2115,16 @@ export type LifecycleRationaleInRationale = string | null;
 export interface LifecycleRationaleIn {
   /** Change rationale: author's reason on submit, approver's reason on approve/reject. */
   rationale?: LifecycleRationaleInRationale;
+}
+
+/**
+ * A user or group that can grant on a table (holds MANAGE or is an owner).
+ */
+export interface ManageHolderOut {
+  /** User name / email or group name that can grant on the table */
+  principal: string;
+  /** Best-effort classification: 'user' or 'group' */
+  type: string;
 }
 
 export interface MarketplacePackOut {
@@ -2408,7 +2436,7 @@ export type MonitoredTableReviewOutNewVersion = number | null;
  * Response for the submit/approve/reject monitored-table lifecycle routes.
 
 ``table`` carries the binding with its new roll-up status; ``affected_check_count``
-is how many materialized ``dq_quality_rules`` rows changed status in this
+is how many materialized ``dq_resolved_rules`` rows changed status in this
 transition (submitted, approved, or rejected respectively).
  */
 export interface MonitoredTableReviewOut {
@@ -2706,6 +2734,16 @@ export interface ProfileResultsOut {
 }
 
 /**
+ * Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting.
+ */
+export type ProfileRunInSampleKind = 'full' | 'records' | 'percent' | null;
+
+/**
+ * Row count when sample_kind is records, 1-100 when percent. Ignored for full.
+ */
+export type ProfileRunInSampleValue = number | null;
+
+/**
  * Specific columns to profile (all if None)
  */
 export type ProfileRunInColumns = string[] | null;
@@ -2718,13 +2756,12 @@ export type ProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
 export type ProfileRunInProfileOptions = ProfileRunInProfileOptionsAnyOf | null;
 
 export interface ProfileRunIn {
+  /** Sampling kind: full (whole table), records (row cap) or percent. None = use admin setting. */
+  sample_kind?: ProfileRunInSampleKind;
+  /** Row count when sample_kind is records, 1-100 when percent. Ignored for full. */
+  sample_value?: ProfileRunInSampleValue;
   /** Fully qualified table name to profile */
   table_fqn: string;
-  /**
-   * Max rows to sample
-   * @maximum 100000
-   */
-  sample_limit?: number;
   /** Specific columns to profile (all if None) */
   columns?: ProfileRunInColumns;
   /** Advanced profiler options: filter (SQL WHERE), max_null_ratio, max_empty_ratio, max_in_count, distinct_ratio, remove_outliers, num_sigmas, llm_primary_key_detection */
@@ -2739,6 +2776,10 @@ export interface ProfileRunOut {
 }
 
 export type ProfileRunSummaryOutStatus = string | null;
+
+export type ProfileRunSummaryOutSampleLimit = number | null;
+
+export type ProfileRunSummaryOutSampleKind = string | null;
 
 export type ProfileRunSummaryOutRowsProfiled = number | null;
 
@@ -2762,6 +2803,8 @@ export interface ProfileRunSummaryOut {
   run_id: string;
   source_table_fqn: string;
   status?: ProfileRunSummaryOutStatus;
+  sample_limit?: ProfileRunSummaryOutSampleLimit;
+  sample_kind?: ProfileRunSummaryOutSampleKind;
   rows_profiled?: ProfileRunSummaryOutRowsProfiled;
   columns_profiled?: ProfileRunSummaryOutColumnsProfiled;
   duration_seconds?: ProfileRunSummaryOutDurationSeconds;
@@ -2805,6 +2848,61 @@ export interface ProfilerConfig {
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
   outliers_ratio?: ProfilerConfigOutliersRatio;
+}
+
+export type ProfilerSampleInSampleKind = typeof ProfilerSampleInSampleKind[keyof typeof ProfilerSampleInSampleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilerSampleInSampleKind = {
+  full: 'full',
+  records: 'records',
+  percent: 'percent',
+} as const;
+
+export type ProfilerSampleInSampleValue = number | null;
+
+/**
+ * New profiler sampling policy.
+
+*sample_value* is required for ``records`` and ``percent`` and ignored for
+``full``. The kind decides which unit the value carries, so a row cap and a
+percentage can never both be active.
+ */
+export interface ProfilerSampleIn {
+  sample_kind: ProfilerSampleInSampleKind;
+  sample_value?: ProfilerSampleInSampleValue;
+}
+
+export type ProfilerSampleOutSampleKind = typeof ProfilerSampleOutSampleKind[keyof typeof ProfilerSampleOutSampleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilerSampleOutSampleKind = {
+  full: 'full',
+  records: 'records',
+  percent: 'percent',
+} as const;
+
+export type ProfilerSampleOutDefaultKind = typeof ProfilerSampleOutDefaultKind[keyof typeof ProfilerSampleOutDefaultKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilerSampleOutDefaultKind = {
+  full: 'full',
+  records: 'records',
+  percent: 'percent',
+} as const;
+
+/**
+ * Current profiler sampling policy plus the bounds the UI needs.
+ */
+export interface ProfilerSampleOut {
+  sample_kind: ProfilerSampleOutSampleKind;
+  sample_value: number;
+  records_max?: number;
+  default_kind?: ProfilerSampleOutDefaultKind;
+  default_value?: number;
 }
 
 /**
@@ -3106,18 +3204,30 @@ export interface ResetDatabaseIn {
   confirmation_phrase: string;
 }
 
-export type ResetDatabaseOutFailedTables = {[key: string]: string};
-
 /**
- * Result of a database reset — what was cleared, kept, and by whom.
+ * Acknowledgement that a database reset was launched on a background thread.
+
+The reset clears 32 cross-backend tables and reprovisions the Ask-Genie
+space, which can outlive the Databricks Apps gateway idle timeout — so this
+endpoint fires the work on a named daemon thread and returns immediately with
+the initial ``running`` state. Progress (and the terminal ``succeeded`` /
+``failed`` outcome, with counts) is polled via ``GET /admin/reset-status``.
  */
 export interface ResetDatabaseOut {
-  status: string;
-  performed_by: string;
-  performed_at: string;
-  cleared_tables?: string[];
-  failed_tables?: ResetDatabaseOutFailedTables;
-  preserved_note?: string;
+  state: string;
+  started_at: string;
+}
+
+/**
+ * Current state of the long-running database-reset job.
+ */
+export interface ResetStatusOut {
+  state: string;
+  message: string;
+  started_at: string;
+  updated_at: string;
+  cleared_count?: number;
+  failed_count?: number;
 }
 
 export type RetentionSettingsInRetentionDays = number | null;
@@ -3261,12 +3371,12 @@ export interface RuleCatalogEntryOut {
 export type RuleDefinitionBody = { [key: string]: unknown };
 
 /**
- * Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ * Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty.
  */
 export type RuleDefinitionErrorMessage = string | null;
 
 /**
- * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty.
  */
 export type RuleDefinitionFilter = string | null;
 
@@ -3285,9 +3395,9 @@ export interface RuleDefinition {
   body?: RuleDefinitionBody;
   slots?: RuleSlot[];
   parameters?: RuleParameter[];
-  /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
   error_message?: RuleDefinitionErrorMessage;
-  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
   filter?: RuleDefinitionFilter;
 }
 
@@ -3318,7 +3428,7 @@ export type RuleHistoryEntryOutChangedAt = string | null;
 export type RuleHistoryEntryOutRationale = string | null;
 
 /**
- * One recorded change from the ``dq_quality_rules_history`` audit log.
+ * One recorded change from the ``dq_resolved_rules_history`` audit log.
 
 Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
 Review show a previous-vs-proposed diff for a per-table rule draft. Each
@@ -4018,6 +4128,35 @@ export interface ScheduleConfigOut {
   updated_at?: ScheduleConfigOutUpdatedAt;
 }
 
+/**
+ * Body of ``POST /schedule-grants/preflight`` — the table(s) about to be scheduled.
+ */
+export interface SchedulePreflightIn {
+  /** Fully qualified table names the schedule will run against */
+  table_fqns: string[];
+}
+
+/**
+ * Response of the schedule preflight — one entry per requested table.
+ */
+export interface SchedulePreflightOut {
+  tables?: SchedulePreflightTableOut[];
+}
+
+/**
+ * Per-table grantability for the schedule editor.
+
+``can_manage`` is ``True`` when the caller can grant SELECT to the scheduler
+service principals (they own the table/schema/catalog or hold MANAGE,
+directly or via a group). When ``False`` the schedule save is hard-blocked
+and ``manage_holders`` names who to ask instead.
+ */
+export interface SchedulePreflightTableOut {
+  fqn: string;
+  can_manage: boolean;
+  manage_holders?: ManageHolderOut[];
+}
+
 export type SchemaOutComment = string | null;
 
 export interface SchemaOut {
@@ -4112,6 +4251,84 @@ export interface SetStatusIn {
 }
 
 /**
+ * Retry-safe actions advertised by setup reports.
+ */
+export type SetupActionId = typeof SetupActionId[keyof typeof SetupActionId];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupActionId = {
+  reconcile: 'reconcile',
+  verify_again: 'verify_again',
+} as const;
+
+export type SetupReportCurrentStep = SetupStepId | null;
+
+/**
+ * Current ordered setup state published to request handlers.
+ */
+export interface SetupReport {
+  state: SetupState;
+  steps: SetupStep[];
+  current_step?: SetupReportCurrentStep;
+}
+
+/**
+ * Process-wide setup lifecycle states.
+ */
+export type SetupState = typeof SetupState[keyof typeof SetupState];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupState = {
+  checking: 'checking',
+  setup_required: 'setup_required',
+  initializing: 'initializing',
+  ready: 'ready',
+} as const;
+
+/**
+ * Setup report projected with caller-specific management access.
+ */
+export interface SetupStatusResponse {
+  report: SetupReport;
+  can_manage: boolean;
+  admin_group: string;
+}
+
+/**
+ * Sanitized status for one setup step.
+ */
+export interface SetupStep {
+  id: SetupStepId;
+  state: StepState;
+  code?: string;
+  summary?: string;
+  instructions?: string[];
+  actions?: SetupActionId[];
+}
+
+/**
+ * Stable identifiers for the ordered setup workflow.
+ */
+export type SetupStepId = typeof SetupStepId[keyof typeof SetupStepId];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupStepId = {
+  identity: 'identity',
+  volume: 'volume',
+  unity_catalog: 'unity_catalog',
+  schemas: 'schemas',
+  lakebase: 'lakebase',
+  warehouse: 'warehouse',
+  task_runner: 'task_runner',
+  wheels: 'wheels',
+  migrations: 'migrations',
+  activation: 'activation',
+} as const;
+
+/**
  * One severity registry entry derived from the reserved label definition.
  */
 export interface SeverityOut {
@@ -4139,6 +4356,21 @@ export interface SlotIn {
   name: string;
   family?: string;
 }
+
+/**
+ * State of one ordered setup capability or action.
+ */
+export type StepState = typeof StepState[keyof typeof StepState];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepState = {
+  pending: 'pending',
+  running: 'running',
+  passed: 'passed',
+  action_required: 'action_required',
+  failed: 'failed',
+} as const;
 
 /**
  * Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
@@ -5704,6 +5936,215 @@ export function useCurrentUserRoleSuspense<TData = Awaited<ReturnType<typeof cur
 
 
 
+/**
+ * Return readiness and the caller's bootstrap setup-management access.
+ * @summary Get Setup Status
+ */
+export const getSetupStatus = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupStatusResponse>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/setup/status`,options
+    );
+  }
+
+
+
+
+export const getGetSetupStatusQueryKey = () => {
+    return [
+    `/api/v1/setup/status`
+    ] as const;
+    }
+
+    
+export const getGetSetupStatusQueryOptions = <TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetupStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupStatus>>> = ({ signal }) => getSetupStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSetupStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getSetupStatus>>>
+export type GetSetupStatusQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Setup Status
+ */
+
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSetupStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetSetupStatusSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetupStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupStatus>>> = ({ signal }) => getSetupStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSetupStatusSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getSetupStatus>>>
+export type GetSetupStatusSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Setup Status
+ */
+
+export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSetupStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Run the serialized setup workflow as a bootstrap administrator.
+ * @summary Reconcile Setup
+ */
+export const reconcileSetup = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/reconcile`,undefined,options
+    );
+  }
+
+
+
+export const getReconcileSetupMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileSetup>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof reconcileSetup>>, TError,void, TContext> => {
+
+const mutationKey = ['reconcileSetup'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reconcileSetup>>, void> = () => {
+          
+
+          return  reconcileSetup(axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReconcileSetupMutationResult = NonNullable<Awaited<ReturnType<typeof reconcileSetup>>>
+    
+    export type ReconcileSetupMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Reconcile Setup
+ */
+export const useReconcileSetup = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileSetup>>, TError,void, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof reconcileSetup>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getReconcileSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Load workspace config from application state (admin only).
  * @summary Get Config
@@ -9427,6 +9868,13 @@ export function useListSchedulesSuspense<TData = Awaited<ReturnType<typeof listS
 
 /**
  * Create or update a schedule configuration.
+
+When the schedule is enabled, the caller must be able to grant the scheduler
+service principals SELECT on every table the schedule's scope resolves to —
+scheduled runs read those tables as the SPs, without an OBO token. Tables the
+caller can grant on are granted (idempotently) before saving; if they lack
+MANAGE on any, the save is hard-blocked (403) naming the blocked tables and,
+for each, the users/groups that hold MANAGE (Task 12).
  * @summary Save Schedule
  */
 export const saveSchedule = (
@@ -12738,7 +13186,7 @@ export const useSaveRules = <TError = AxiosError<HTTPValidationError>,
  * Return a per-table rule's recorded change history (newest first).
 
 Backs the Drafts & Review change-diff popout: reads the
-``dq_quality_rules_history`` audit trail so the UI can diff the two most
+``dq_resolved_rules_history`` audit trail so the UI can diff the two most
 recent recorded ``check`` payloads (previous vs proposed). Declared BEFORE
 the ``/{table_fqn:path}`` catch-all so the more-specific pattern wins.
 
@@ -14388,14 +14836,14 @@ and swallows call failures internally, so in practice this can never
 turn a successful publish into a 500.
 
 Also re-materializes every FOLLOWING (unpinned) application of this
-rule (design spec §5) so their ``dq_quality_rules`` copies pick up the
+rule (design spec §5) so their ``dq_resolved_rules`` copies pick up the
 new version — see ``Materializer.rematerialize_for_rule``. PINNED
 applications are untouched by a publish; they only change via a
 direct edit.
 
 Data Products Task 2 re-freeze hook (design spec §3.2 (a)): when
 ``auto_upgrade_without_approval`` is ON, a follower's approved
-``dq_quality_rules`` row silently picks up the new content and STAYS
+``dq_resolved_rules`` row silently picks up the new content and STAYS
 approved, changing the binding's approved rule set without a table
 re-approval — so each re-materialized binding's current version snapshot
 is re-frozen in place. When auto-upgrade is OFF the changed rows drop to
@@ -15156,7 +15604,7 @@ Requires ``MODIFY`` on the monitored table (direct/inherited/owner) unless
 the caller is an admin/approver.
 
 TODO(Phase 3C): once the materializer exists, block/handle
-de-materialization of any ``dq_quality_rules`` rows tied to this
+de-materialization of any ``dq_resolved_rules`` rows tied to this
 binding's applications before allowing deletion.
  * @summary Delete Monitored Table
  */
@@ -15365,6 +15813,12 @@ export const useUpdateMonitoredTableOwner = <TError = AxiosError<HTTPValidationE
 Requires ``MODIFY`` on the monitored table unless the caller is an
 admin/approver. Orthogonal to the review lifecycle — does NOT flip the
 binding's status. An approved table with a cron fires on the in-app scheduler.
+
+When a schedule is being *set* (a non-empty cron), the caller must be able to
+grant the scheduler service principals SELECT on the source table — scheduled
+runs have no OBO token and read as those SPs. If the caller can grant we do so
+(idempotently) before saving; if not, the save is hard-blocked (403) naming
+the users/groups that hold MANAGE (Task 12).
  * @summary Update Monitored Table Schedule
  */
 export const updateMonitoredTableSchedule = (
@@ -16336,7 +16790,7 @@ export function useListPendingApplicationsSuspense<TData = Awaited<ReturnType<ty
 
 
 /**
- * Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+ * Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
 Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
  * @summary Remove Applied Rule
@@ -16537,7 +16991,7 @@ export const useSetAppliedRuleSeverityOverride = <TError = AxiosError<HTTPValida
 /**
  * Submit a monitored table for review.
 
-Materializes the binding's applied rules into ``dq_quality_rules`` (the
+Materializes the binding's applied rules into ``dq_resolved_rules`` (the
 UI has already persisted any staged edits via ``saveAppliedRules``), then
 submits every freshly-materialized ``draft`` check for approval — reusing
 the same per-rule transition the Drafts & Review queue uses — and rolls
@@ -16621,7 +17075,7 @@ export const useSubmitMonitoredTable = <TError = AxiosError<HTTPValidationError>
 Reuses the per-rule approve transition so each check's audit trail is
 identical to a hand-approval, then rolls the binding up to ``approved``.
 From here the scheduler picks the checks up (it runs only ``approved``
-``dq_quality_rules`` rows).
+``dq_resolved_rules`` rows).
 
 Table approval is the ONLY event that bumps the monitored-table version:
 after the binding rolls up to ``approved`` the newly-approved rule set is
@@ -23929,6 +24383,13 @@ export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getD
 
 Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
 caller is an admin/approver.
+
+When a schedule is being *set* (a non-empty cron), the caller must be able to
+grant the scheduler service principals SELECT on *every* member table —
+scheduled runs have no OBO token and read as those SPs. If the caller can
+grant on all members we do so (idempotently) before saving; if they lack
+MANAGE on any member the save is hard-blocked (403) naming the blocked
+tables and, for each, the users/groups that hold MANAGE (Task 12).
  * @summary Update Data Product
  */
 export const updateDataProduct = (
@@ -25893,6 +26354,216 @@ export function useListComputeClustersSuspense<TData = Awaited<ReturnType<typeof
 
 
 /**
+ * Return how much of a source table the profiler reads (Admin or Author).
+ * @summary Get Profiler Sample
+ */
+export const getProfilerSample = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ProfilerSampleOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/compute/profiler-sample`,options
+    );
+  }
+
+
+
+
+export const getGetProfilerSampleQueryKey = () => {
+    return [
+    `/api/v1/compute/profiler-sample`
+    ] as const;
+    }
+
+    
+export const getGetProfilerSampleQueryOptions = <TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProfilerSampleQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProfilerSample>>> = ({ signal }) => getProfilerSample({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProfilerSampleQueryResult = NonNullable<Awaited<ReturnType<typeof getProfilerSample>>>
+export type GetProfilerSampleQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfilerSample>>,
+          TError,
+          Awaited<ReturnType<typeof getProfilerSample>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfilerSample>>,
+          TError,
+          Awaited<ReturnType<typeof getProfilerSample>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Profiler Sample
+ */
+
+export function useGetProfilerSample<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProfilerSampleQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetProfilerSampleSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProfilerSampleQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProfilerSample>>> = ({ signal }) => getProfilerSample({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProfilerSampleSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getProfilerSample>>>
+export type GetProfilerSampleSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Profiler Sample
+ */
+
+export function useGetProfilerSampleSuspense<TData = Awaited<ReturnType<typeof getProfilerSample>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProfilerSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProfilerSampleSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Set how much of a source table the profiler reads (admin only).
+ * @summary Save Profiler Sample
+ */
+export const saveProfilerSample = (
+    profilerSampleIn: ProfilerSampleIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ProfilerSampleOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/compute/profiler-sample`,
+      profilerSampleIn,options
+    );
+  }
+
+
+
+export const getSaveProfilerSampleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveProfilerSample>>, TError,{data: ProfilerSampleIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveProfilerSample>>, TError,{data: ProfilerSampleIn}, TContext> => {
+
+const mutationKey = ['saveProfilerSample'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveProfilerSample>>, {data: ProfilerSampleIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveProfilerSample(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveProfilerSampleMutationResult = NonNullable<Awaited<ReturnType<typeof saveProfilerSample>>>
+    export type SaveProfilerSampleMutationBody = ProfilerSampleIn
+    export type SaveProfilerSampleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Profiler Sample
+ */
+export const useSaveProfilerSample = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveProfilerSample>>, TError,{data: ProfilerSampleIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveProfilerSample>>,
+        TError,
+        {data: ProfilerSampleIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveProfilerSampleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Return the current compute settings + the effective warehouse (admin only).
  * @summary Get Compute Settings
  */
@@ -27599,7 +28270,13 @@ export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<ty
 
 
 /**
- * Clear ALL DQX Studio-managed data (Admin only). DESTRUCTIVE.
+ * Clear ALL DQX Studio-managed data on a background thread (Admin only). DESTRUCTIVE.
+
+The reset runs 32 cross-backend DELETEs and a full Ask-Genie space
+reprovision, which can outlive the Databricks Apps gateway idle timeout — so
+this endpoint fires the work on a named daemon thread and returns immediately
+with the initial ``running`` state. Progress and the terminal ``succeeded`` /
+``failed`` outcome (with counts) are polled via ``GET /admin/reset-status``.
 
 Guardrails:
 
@@ -27609,11 +28286,18 @@ Guardrails:
   :data:`RESET_CONFIRMATION_PHRASE`; any mismatch is a 400. This is
   defense-in-depth on top of the role gate — an accidental or replayed
   request without the phrase cannot trigger the wipe.
+- **Mutual exclusion**: a 409 is returned when a reset is already running,
+  or when a demo deployment is in progress — the two share the SP warehouse
+  + Lakebase and must not race.
 
 Scope: only the app's own ``dq_*`` tables are cleared (rows DELETEd, not
 tables dropped). The schema, the ``dq_migrations`` version tracker, and
 admin role mappings are preserved so the app keeps working and admins
 keep access. Customer/monitored data tables are never touched.
+
+The thread owns the terminal status: it writes ``succeeded`` (with counts)
+or ``failed`` (with the error message) to the reset status store, wrapping
+its body so an exception is always recorded rather than lost.
  * @summary Reset Database
  */
 export const resetDatabase = (
@@ -27681,7 +28365,8 @@ export const useResetDatabase = <TError = AxiosError<HTTPValidationError>,
 The seed runs for ~30min, so this endpoint fires it on a named daemon thread
 and returns immediately with the initial ``running`` state. Progress is
 polled via ``GET /demo/status``. A 409 is returned when a seed is already
-in progress so two concurrent deploys can't race.
+in progress, or when a database reset is running — the two share the SP
+warehouse + Lakebase and must not race.
 
 The seed service owns its terminal status: it writes ``succeeded`` or
 ``failed`` to the status store itself. The thread target only logs on an
@@ -27895,6 +28580,153 @@ export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof d
 
 
 /**
+ * Return the current state of the long-running database-reset job (Admin only).
+ * @summary Reset Status
+ */
+export const resetStatus = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ResetStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/admin/reset-status`,options
+    );
+  }
+
+
+
+
+export const getResetStatusQueryKey = () => {
+    return [
+    `/api/v1/admin/reset-status`
+    ] as const;
+    }
+
+    
+export const getResetStatusQueryOptions = <TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getResetStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof resetStatus>>> = ({ signal }) => resetStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ResetStatusQueryResult = NonNullable<Awaited<ReturnType<typeof resetStatus>>>
+export type ResetStatusQueryError = AxiosError<HTTPValidationError>
+
+
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof resetStatus>>,
+          TError,
+          Awaited<ReturnType<typeof resetStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof resetStatus>>,
+          TError,
+          Awaited<ReturnType<typeof resetStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Reset Status
+ */
+
+export function useResetStatus<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getResetStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getResetStatusSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getResetStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof resetStatus>>> = ({ signal }) => resetStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ResetStatusSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof resetStatus>>>
+export type ResetStatusSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Reset Status
+ */
+
+export function useResetStatusSuspense<TData = Awaited<ReturnType<typeof resetStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof resetStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getResetStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Return the full marketplace pack catalogue (admin only).
 
 Each rule is flagged ``imported`` when a rule of the same name already
@@ -28041,3 +28873,70 @@ export function useListMarketplacePacksSuspense<TData = Awaited<ReturnType<typeo
 
   return query;
 }
+
+
+
+
+
+/**
+ * Return per-table grantability for the tables a schedule will run against.
+ * @summary Preflight Schedule Grants
+ */
+export const preflightScheduleGrants = (
+    schedulePreflightIn: SchedulePreflightIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SchedulePreflightOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/preflight`,
+      schedulePreflightIn,options
+    );
+  }
+
+
+
+export const getPreflightScheduleGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightScheduleGrants>>, TError,{data: SchedulePreflightIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof preflightScheduleGrants>>, TError,{data: SchedulePreflightIn}, TContext> => {
+
+const mutationKey = ['preflightScheduleGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preflightScheduleGrants>>, {data: SchedulePreflightIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  preflightScheduleGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreflightScheduleGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof preflightScheduleGrants>>>
+    export type PreflightScheduleGrantsMutationBody = SchedulePreflightIn
+    export type PreflightScheduleGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preflight Schedule Grants
+ */
+export const usePreflightScheduleGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightScheduleGrants>>, TError,{data: SchedulePreflightIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof preflightScheduleGrants>>,
+        TError,
+        {data: SchedulePreflightIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreflightScheduleGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }

@@ -4,13 +4,14 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Generator
 from unittest.mock import create_autospec
 
 import pytest
 
 from databricks_labs_dqx_app.backend.cache import CacheFactory, MISS
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.config import AppConfig
+from databricks_labs_dqx_app.backend.config import AppConfig, conf
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, get_logger, setup_logger
 from databricks_labs_dqx_app.backend.migrations import MIGRATIONS, MigrationRunner
@@ -28,6 +29,7 @@ from databricks_labs_dqx_app.backend.models import (
     SaveRulesIn,
     SetStatusIn,
 )
+from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.routes.v1.dryrun import (
     get_dry_run_results,
     get_dry_run_status,
@@ -48,7 +50,7 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
     save_rules,
     submit_for_approval,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService, ProfilerSample
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.draft_run_gate_service import DraftRunGateService
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
@@ -65,6 +67,7 @@ from databricks_labs_dqx_app.backend.services.view_service import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -86,6 +89,41 @@ from databricks.sdk.service.sql import (
     StatementStatus,
 )
 from databricks.sdk.service.workspace import ExportResponse
+
+
+@pytest.fixture(autouse=True)
+def _activate_test_runtime_resources() -> Generator[None, None, None]:
+    """Supply activated Studio resources to route tests that bypass the app lifespan."""
+    previous_resources = rt.resources
+    resources = ActiveResources(
+        volume=VolumeLocation(
+            conf.catalog,
+            conf.schema_name,
+            "wheels",
+            f"/Volumes/{conf.catalog}/{conf.schema_name}/wheels",
+        ),
+        lakebase=LakebaseConnection(
+            endpoint="projects/test/branches/test/endpoints/primary",
+            host=None,
+            port=5432,
+            database="databricks_postgres",
+            username=None,
+            password=None,
+            schema=conf.lakebase_schema_name,
+        ),
+        warehouse_id="test-warehouse",
+        job_id="1",
+        tmp_schema=conf.tmp_schema_name,
+        genie_schema=conf.genie_schema_name,
+    )
+    rt.activate(resources)
+    try:
+        yield
+    finally:
+        if previous_resources is None:
+            rt.deactivate()
+        else:
+            rt.activate(previous_resources)
 
 
 @pytest.fixture
@@ -1208,10 +1246,10 @@ class TestJobService:
         return JobService(ws=ws, job_id="42", sql=sql)
 
     def test_submit_run_raises_when_no_job_id(self, ws: WorkspaceClient) -> None:
-        """Should raise RuntimeError when job_id is not configured."""
+        """Should raise RuntimeError when the task-runner job is unresolved."""
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
         svc = JobService(ws=ws, job_id="", sql=sql)
-        with pytest.raises(RuntimeError, match="DQX_JOB_ID is not configured"):
+        with pytest.raises(RuntimeError, match="Task-runner job is not resolved — cannot submit job runs"):
             svc.submit_run(
                 task_type="dryrun",
                 view_fqn="cat.sch.tmp_view_abc",
@@ -1378,15 +1416,41 @@ class TestViewService:
         sql_stmts = [c.kwargs["statement"] for c in calls]
         assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
 
-    def test_create_view_adds_limit_clause_when_sample_limit_given(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view with sample_limit should append LIMIT to the SQL."""
+    def test_create_view_adds_limit_clause_for_a_row_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A records sample should cap the view with LIMIT.
+
+        The row count query returns no usable value against this mock, so the
+        builder takes its documented non-random fallback — a bare LIMIT.
+        """
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
-        svc.create_view("cat.sch.src_table", sample_limit=5000)
+        svc.create_view("cat.sch.src_table", sample=ProfilerSample(kind="records", value=5000))
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         assert any("LIMIT 5000" in s for s in sql_stmts)
+
+    def test_create_view_uses_tablesample_for_a_percent_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A percent sample should use TABLESAMPLE and never a LIMIT."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table", sample=ProfilerSample(kind="percent", value=10))
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        create = [c.kwargs["statement"] for c in calls if "CREATE OR REPLACE VIEW" in c.kwargs["statement"]]
+        assert any("TABLESAMPLE (10 PERCENT)" in s for s in create)
+        assert not any("LIMIT" in s for s in create)
+
+    def test_create_view_without_a_sample_scans_the_whole_table(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """DQ runs pass no sample, so their view must not narrow the table."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table")
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        create = [c.kwargs["statement"] for c in calls if "CREATE OR REPLACE VIEW" in c.kwargs["statement"]]
+        assert create
+        assert not any("LIMIT" in s or "TABLESAMPLE" in s for s in create)
 
     def test_create_view_raises_on_sql_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """_ensure_schema should raise RuntimeError when the statement fails."""
@@ -1766,21 +1830,25 @@ class TestProfilerRoutes:
         """submit_profile_run should create a view and submit a job, returning run ids."""
         mock_view_svc.create_view.return_value = "cat.sch.tmp_view_xyz"  # type: ignore[attr-defined]
         mock_job_svc.submit_run.return_value = 77777  # type: ignore[attr-defined]
-        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_limit=5000)
+        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_kind="records", sample_value=5000)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_app_settings = create_autospec(AppSettingsService, instance=True)
         result = submit_profile_run(
             body=body,
             obo_ws=mock_obo_ws,
             view_svc=mock_view_svc,
             job_svc=mock_job_svc,
             app_conf=app_conf,
+            app_settings=mock_app_settings,
         )
 
         assert isinstance(result, ProfileRunOut)
         assert result.job_run_id == 77777
         assert len(result.run_id) > 0
-        mock_view_svc.create_view.assert_called_once_with("cat.sch.src_table", sample_limit=5000)  # type: ignore[attr-defined]
+        mock_view_svc.create_view.assert_called_once_with(  # type: ignore[attr-defined]
+            "cat.sch.src_table", sample=ProfilerSample(kind="records", value=5000)
+        )
 
     def test_submit_profile_run_raises_500_on_error(
         self,
@@ -1793,6 +1861,7 @@ class TestProfilerRoutes:
         body = ProfileRunIn(table_fqn="cat.sch.src_table")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_app_settings = create_autospec(AppSettingsService, instance=True)
         with pytest.raises(HTTPException) as exc:
             submit_profile_run(
                 body=body,
@@ -1800,6 +1869,7 @@ class TestProfilerRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 app_conf=app_conf,
+                app_settings=mock_app_settings,
             )
 
         assert exc.value.status_code == 500
@@ -1943,12 +2013,19 @@ class TestDryRunRoutes:
         svc.get_custom_metrics.return_value = []  # type: ignore[attr-defined]
         return svc
 
+    @pytest.fixture
+    def mock_sql(self) -> SqlExecutor:
+        sql = create_autospec(SqlExecutor)
+        sql.fqn.return_value = "cat.sch.dq_validation_runs"
+        return sql
+
     def test_submit_dry_run_success(
         self,
         mock_job_svc: JobService,
         mock_view_svc: ViewService,
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
+        mock_sql: SqlExecutor,
     ) -> None:
         """submit_dry_run should validate checks, create view, submit job and return run ids."""
         validation = ChecksValidationStatus()
@@ -1956,7 +2033,6 @@ class TestDryRunRoutes:
         mock_job_svc.submit_run.return_value = 88888  # type: ignore[attr-defined]
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
-        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = submit_dry_run(
             body=body,
             obo_ws=mock_obo_ws,
@@ -1964,7 +2040,7 @@ class TestDryRunRoutes:
             job_svc=mock_job_svc,
             validate_checks_fn=lambda checks: validation,
             settings_svc=mock_settings_svc,
-            app_conf=app_conf,
+            sql=mock_sql,
         )
 
         assert isinstance(result, DryRunSubmitOut)
@@ -1978,12 +2054,12 @@ class TestDryRunRoutes:
         mock_view_svc: ViewService,
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
+        mock_sql: SqlExecutor,
     ) -> None:
         """submit_dry_run should raise HTTP 400 when check validation reports errors."""
         validation = ChecksValidationStatus(errors=["Unknown function: bad_func"])
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
-        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             submit_dry_run(
                 body=body,
@@ -1992,7 +2068,7 @@ class TestDryRunRoutes:
                 job_svc=mock_job_svc,
                 validate_checks_fn=lambda checks: validation,
                 settings_svc=mock_settings_svc,
-                app_conf=app_conf,
+                sql=mock_sql,
             )
 
         assert exc.value.status_code == 400
@@ -2003,13 +2079,13 @@ class TestDryRunRoutes:
         mock_view_svc: ViewService,
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
+        mock_sql: SqlExecutor,
     ) -> None:
         """submit_dry_run should raise HTTP 500 when view creation fails."""
         validation = ChecksValidationStatus()
         mock_view_svc.create_view.side_effect = RuntimeError("warehouse unreachable")  # type: ignore[attr-defined]
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
-        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
             submit_dry_run(
                 body=body,
@@ -2018,7 +2094,7 @@ class TestDryRunRoutes:
                 job_svc=mock_job_svc,
                 validate_checks_fn=lambda checks: validation,
                 settings_svc=mock_settings_svc,
-                app_conf=app_conf,
+                sql=mock_sql,
             )
 
         assert exc.value.status_code == 500
@@ -2079,7 +2155,7 @@ class TestDryRunRoutes:
 
         assert exc.value.status_code == 500
 
-    def test_get_dry_run_results_returns_results(self, mock_job_svc: JobService) -> None:
+    def test_get_dry_run_results_returns_results(self, mock_job_svc: JobService, mock_sql: SqlExecutor) -> None:
         """get_dry_run_results should parse result row from the Delta table."""
         mock_job_svc.get_run_result_row.return_value = {  # type: ignore[attr-defined]
             "run_id": "run-001",
@@ -2092,12 +2168,11 @@ class TestDryRunRoutes:
             "status": "SUCCEEDED",
         }
 
-        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         mock_obo = create_autospec(WorkspaceClient)
         result = get_dry_run_results(
             run_id="run-001",
             job_svc=mock_job_svc,
-            app_conf=app_conf,
+            sql=mock_sql,
             user_catalogs=frozenset({"cat"}),
             obo_ws=mock_obo,
         )
@@ -2108,24 +2183,27 @@ class TestDryRunRoutes:
         assert result.invalid_rows == 20
         assert len(result.error_summary) == 1
 
-    def test_get_dry_run_results_raises_404_when_not_found(self, mock_job_svc: JobService) -> None:
+    def test_get_dry_run_results_raises_404_when_not_found(
+        self, mock_job_svc: JobService, mock_sql: SqlExecutor
+    ) -> None:
         """get_dry_run_results should raise HTTP 404 when no result row exists."""
         mock_job_svc.get_run_result_row.return_value = None  # type: ignore[attr-defined]
 
-        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         mock_obo = create_autospec(WorkspaceClient)
         with pytest.raises(HTTPException) as exc:
             get_dry_run_results(
                 run_id="run-missing",
                 job_svc=mock_job_svc,
-                app_conf=app_conf,
+                sql=mock_sql,
                 user_catalogs=frozenset({"cat"}),
                 obo_ws=mock_obo,
             )
 
         assert exc.value.status_code == 404
 
-    def test_get_dry_run_results_raises_500_on_failed_status(self, mock_job_svc: JobService) -> None:
+    def test_get_dry_run_results_raises_500_on_failed_status(
+        self, mock_job_svc: JobService, mock_sql: SqlExecutor
+    ) -> None:
         """get_dry_run_results should raise HTTP 500 when the run status is FAILED."""
         mock_job_svc.get_run_result_row.return_value = {  # type: ignore[attr-defined]
             "run_id": "run-001",
@@ -2134,13 +2212,12 @@ class TestDryRunRoutes:
             "error_message": "Spark OOM",
         }
 
-        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         mock_obo = create_autospec(WorkspaceClient)
         with pytest.raises(HTTPException) as exc:
             get_dry_run_results(
                 run_id="run-001",
                 job_svc=mock_job_svc,
-                app_conf=app_conf,
+                sql=mock_sql,
                 user_catalogs=frozenset({"cat"}),
                 obo_ws=mock_obo,
             )

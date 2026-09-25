@@ -2,7 +2,7 @@
 name = "mcp-dqx"
 version = "0.1.0"
 description = "DQX MCP Server - AI agent tools for data quality checks"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     # Runtime deps the server imports directly. Keep in sync with requirements.txt
     # (the manifest the Databricks App installs). mcp/pydantic come in via fastmcp;

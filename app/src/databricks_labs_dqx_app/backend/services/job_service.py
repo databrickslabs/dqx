@@ -58,7 +58,7 @@ class JobService:
         Returns the Databricks job ``run_id`` (not the app-level run_id).
         """
         if not self._job_id:
-            raise RuntimeError("DQX_JOB_ID is not configured — cannot submit job runs")
+            raise RuntimeError("Task-runner job is not resolved — cannot submit job runs")
 
         base_params = {
             "task_type": task_type,
@@ -142,6 +142,7 @@ class JobService:
         size_value: int,
         run_type: str | None = None,
         job_run_id: int | None = None,
+        sample_kind: str | None = None,
     ) -> None:
         """Insert a RUNNING placeholder row. Non-fatal on failure.
 
@@ -166,6 +167,9 @@ class JobService:
         if job_run_id is not None:
             cols += ", job_run_id"
             vals += f", {int(job_run_id)}"
+        if sample_kind is not None:
+            cols += ", sample_kind"
+            vals += f", '{escape_sql_string(sample_kind)}'"
 
         sql = f"INSERT INTO {table} ({cols}) VALUES ({vals})"
         try:
@@ -182,8 +186,13 @@ class JobService:
         view_fqn: str,
         sample_limit: int,
         job_run_id: int | None = None,
+        sample_kind: str | None = None,
     ) -> None:
-        """Insert a RUNNING placeholder for a profiler run."""
+        """Insert a RUNNING placeholder for a profiler run.
+
+        *sample_kind* says which unit *sample_limit* speaks; without it a
+        percentage run and a whole-table run both record 0 and read the same.
+        """
         self._record_running_placeholder(
             table,
             run_id,
@@ -193,6 +202,7 @@ class JobService:
             "sample_limit",
             sample_limit,
             job_run_id=job_run_id,
+            sample_kind=sample_kind,
         )
 
     def record_dryrun_started(
@@ -223,7 +233,7 @@ class JobService:
     # the existing query_dicts → JSON serialization keeps producing ISO
     # values for the frontend without further plumbing.
     _PROFILE_COLS = (
-        "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
+        "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, sample_kind, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
         "generated_rules_json, status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "

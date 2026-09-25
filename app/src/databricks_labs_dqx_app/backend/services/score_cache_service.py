@@ -4,7 +4,7 @@ The monitored-tables and table-spaces list pages (and the homepage) need
 dqlake-style DQ score columns that load instantly. Recomputing scores from
 the ``mv_dq_scores`` metric view on every page load would put a SQL
 warehouse round-trip on the hot path, so scores are persisted into the
-OLTP store (Lakebase Postgres, or the Delta OLTP fallback) and the list
+OLTP store (Lakebase Postgres) and the list
 endpoints LEFT JOIN them in the same round-trip they already make.
 
 Refresh model (no polling, no cron):

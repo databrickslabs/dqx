@@ -461,7 +461,7 @@ class TestSaveAppliedRules:
         assert len(results) == 1
         assert results[0].column_mapping == new_mapping
         calls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any("DELETE FROM dqx_test.dqx_app_test.dq_quality_rules" in c for c in calls)
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_resolved_rules" in c for c in calls)
         assert any("DELETE FROM dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
 
@@ -476,7 +476,7 @@ class TestSaveAppliedRules:
         assert results == []
         registry.get_rule.assert_not_called()
         calls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any("DELETE FROM dqx_test.dqx_app_test.dq_quality_rules" in c for c in calls)
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_resolved_rules" in c for c in calls)
         assert any("DELETE FROM dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
         assert not any("INSERT INTO" in c for c in calls)
 
@@ -635,7 +635,7 @@ class TestRemoveApplied:
         sql.query.return_value = [_applied_row(id_="ar1")]
         svc.remove_applied("ar1")
         calls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any("DELETE FROM dqx_test.dqx_app_test.dq_quality_rules" in c and "applied_rule_id" in c for c in calls)
+        assert any("DELETE FROM dqx_test.dqx_app_test.dq_resolved_rules" in c and "applied_rule_id" in c for c in calls)
         assert any("DELETE FROM dqx_test.dqx_app_test.dq_applied_rules" in c for c in calls)
 
     def test_raises_when_missing(self, svc, sql):

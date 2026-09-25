@@ -983,7 +983,7 @@ class DataProductService:
         (:meth:`_live_check_counts`): a rule expands to one check per mapping
         group (e.g. per column for a for-each-column rule), so a saved space
         shows the real non-zero count instead of ``summary.check_count`` — which
-        counts ``dq_quality_rules`` rows that only exist after
+        counts ``dq_resolved_rules`` rows that only exist after
         approval/materialization and is therefore ``0`` for a freshly-saved
         draft (P-item 44).
 
@@ -1028,7 +1028,7 @@ class DataProductService:
         ``# Checks`` must be the number of DQ checks a member's applied rules
         actually produce — one per mapping group, so a for-each-column rule
         expands to several checks. ``MonitoredTableSummary.check_count`` counts
-        materialized ``dq_quality_rules`` rows, which only exist after
+        materialized ``dq_resolved_rules`` rows, which only exist after
         approval/run, so a freshly-saved DRAFT space reported ``0`` (P-item 44).
 
         Mirrors the monitored-tables overview's

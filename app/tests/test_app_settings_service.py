@@ -5,6 +5,8 @@ even when unset), and seeding happens only via the explicit
 ``seed_run_review_statuses_if_absent`` called at startup.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -40,6 +42,29 @@ class TestRunReviewStatusReadIsSideEffectFree:
 
         assert svc.get_default_run_review_status() == "Pending review"
         sql_executor_mock.upsert.assert_not_called()
+
+
+def test_record_setup_completion_persists_fixed_sanitized_audit_keys(settings_service) -> None:
+    service, sql_executor_mock = settings_service
+
+    service.record_setup_completion(
+        job_id=42,
+        completed_at=datetime(2026, 9, 1, 14, 30, tzinfo=timezone.utc),
+        user_name="admin\nforged@example.com",
+    )
+
+    writes = [call.kwargs for call in sql_executor_mock.upsert.call_args_list]
+    assert [write["key_cols"]["setting_key"] for write in writes] == [
+        "setup_task_runner_job_id",
+        "setup_completed_at",
+        "setup_completed_by",
+    ]
+    assert [write["value_cols"]["setting_value"] for write in writes] == [
+        "42",
+        "2026-09-01T14:30:00+00:00",
+        "admin forged@example.com",
+    ]
+    assert all(write["value_cols"]["updated_by"] == "admin forged@example.com" for write in writes)
 
 
 class TestSeedRunReviewStatuses:

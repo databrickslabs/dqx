@@ -9,6 +9,7 @@ from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
+    get_app_settings_service,
     get_conf,
     get_job_service,
     get_monitored_table_service,
@@ -28,10 +29,22 @@ from databricks_labs_dqx_app.backend.models import (
     ProfileRunIn,
     ProfileRunOut,
     ProfileRunSummaryOut,
+    ProfilerSampleOverride,
     RunFailureOut,
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
+from databricks_labs_dqx_app.backend.profiler_options import sample_profile_options
+from databricks_labs_dqx_app.backend.runtime import rt
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    PROFILER_SAMPLE_KIND_FULL,
+    PROFILER_SAMPLE_KIND_PERCENT,
+    PROFILER_SAMPLE_VALUE_DEFAULT,
+    PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND,
+    AppSettingsService,
+    ProfilerSample,
+    clamp_profiler_sample_value,
+)
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
@@ -42,6 +55,53 @@ _PROFILER_TABLE = "dq_profiling_results"
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
+
+def resolve_sample(body: ProfilerSampleOverride, app_settings: AppSettingsService) -> ProfilerSample:
+    """Resolve the sampling policy for a profile run.
+
+    A request that names a *sample_kind* overrides the admin setting for
+    that run; anything else falls back to the configured default. This is
+    the single place the precedence is decided, so the single-table and
+    batch routes cannot drift apart.
+
+    A per-run override is clamped with the same helper the stored setting uses.
+    Without it an unbounded percentage (``TABLESAMPLE (5000 PERCENT)``) would
+    include every row — a "cap" that silently widens to the whole table, which
+    is exactly the failure the admin path already guards against. An override
+    that names a kind but no value falls back to that kind's default rather
+    than to zero.
+    """
+    if body.sample_kind is None:
+        return app_settings.get_profiler_sample()
+    if body.sample_kind == PROFILER_SAMPLE_KIND_FULL:
+        return ProfilerSample(kind=body.sample_kind, value=0)
+    requested = body.sample_value
+    if requested is None:
+        requested = PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND.get(body.sample_kind, PROFILER_SAMPLE_VALUE_DEFAULT)
+    return ProfilerSample(
+        kind=body.sample_kind,
+        value=clamp_profiler_sample_value(body.sample_kind, requested),
+    )
+
+
+def recorded_sample_limit(sample: ProfilerSample) -> int:
+    """Row cap to record on the run row for display.
+
+    The results table stores a single integer, so a percentage sample has no
+    exact row cap to report: 0 (the existing "unlimited" convention) is the
+    honest answer for both ``full`` and ``percent``, and the run's actual
+    ``rows_profiled`` reports what was really read.
+    """
+    if sample.is_full_table or sample.kind == PROFILER_SAMPLE_KIND_PERCENT:
+        return 0
+    return int(sample.value)
+
+
+def _run_table_fqn() -> str:
+    resources = rt.require_resources()
+    return f"{resources.volume.catalog}.{resources.volume.schema}.{_PROFILER_TABLE}"
+
 
 # Prefix the scheduler stamps onto ``requesting_user`` for every run it
 # launches (see ``SchedulerService._submit_profile_run``:
@@ -155,7 +215,7 @@ def list_profile_runs(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        table = _run_table_fqn()
         rows = job_svc.list_run_rows(table, source_table_fqn=table_fqn)
         return [
             ProfileRunSummaryOut(
@@ -200,7 +260,7 @@ def list_recent_profile_failures(
     The full profiler run history is still available via ``GET /profiler/runs``.
     """
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        table = _run_table_fqn()
         rows = job_svc.list_run_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
 
         results: list[RunFailureOut] = []
@@ -236,27 +296,30 @@ def submit_profile_run(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> ProfileRunOut:
     """Create a temporary view (OBO) and submit a profiler job (SP)."""
     try:
         run_id = uuid4().hex[:16]
+        sample = resolve_sample(body, app_settings)
 
         # Get requesting user email
         user = obo_ws.current_user.me()
         requesting_user = user.user_name or "unknown"
 
         # Create view using OBO token — inherits user's table permissions
-        view_fqn = view_svc.create_view(body.table_fqn, sample_limit=body.sample_limit)
+        view_fqn = view_svc.create_view(body.table_fqn, sample=sample)
 
         # From here on ``view_fqn`` is a UC side-effect we own. Any failure
         # before we return MUST drop the view, otherwise a half-submitted
         # run leaks a temp view in ``dqx_studio_tmp``.
         try:
             config = {
-                "sample_limit": body.sample_limit,
+                "sample_kind": sample.kind,
+                "sample_value": sample.value,
                 "source_table_fqn": body.table_fqn,
                 "columns": body.columns,
-                "profile_options": body.profile_options,
+                "profile_options": sample_profile_options(sample, body.profile_options),
             }
             job_run_id = job_svc.submit_run(
                 task_type="profile",
@@ -266,14 +329,15 @@ def submit_profile_run(
                 requesting_user=requesting_user,
             )
 
-            results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+            results_table = _run_table_fqn()
             job_svc.record_run_started(
                 table=results_table,
                 run_id=run_id,
                 requesting_user=requesting_user,
                 source_table_fqn=body.table_fqn,
                 view_fqn=view_fqn,
-                sample_limit=body.sample_limit,
+                sample_limit=recorded_sample_limit(sample),
+                sample_kind=sample.kind,
                 job_run_id=job_run_id,
             )
         except Exception:
@@ -311,10 +375,13 @@ def submit_batch_profile_run(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> BatchProfileRunOut:
     """Create temporary views and submit profiler jobs for multiple tables in parallel."""
     if not body.table_fqns:
         raise HTTPException(status_code=400, detail="table_fqns cannot be empty")
+
+    sample = resolve_sample(body, app_settings)
 
     try:
         user = obo_ws.current_user.me()
@@ -327,16 +394,17 @@ def submit_batch_profile_run(
             try:
                 run_id = uuid4().hex[:16]
 
-                view_fqn = view_svc.create_view(table_fqn, sample_limit=body.sample_limit)
+                view_fqn = view_svc.create_view(table_fqn, sample=sample)
 
                 # See submit_profile_run: anything past create_view must
                 # drop the view on failure or we leak it.
                 try:
                     config = {
-                        "sample_limit": body.sample_limit,
+                        "sample_kind": sample.kind,
+                        "sample_value": sample.value,
                         "source_table_fqn": table_fqn,
                         "columns": None,
-                        "profile_options": body.profile_options,
+                        "profile_options": sample_profile_options(sample, body.profile_options),
                     }
                     job_run_id = job_svc.submit_run(
                         task_type="profile",
@@ -349,14 +417,15 @@ def submit_batch_profile_run(
                     runs.append(ProfileRunOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn))
                     logger.info("Submitted batch profile run for %s (run_id=%s)", table_fqn, run_id)
 
-                    results_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+                    results_table = _run_table_fqn()
                     job_svc.record_run_started(
                         table=results_table,
                         run_id=run_id,
                         requesting_user=requesting_user,
                         source_table_fqn=table_fqn,
                         view_fqn=view_fqn,
-                        sample_limit=body.sample_limit,
+                        sample_limit=recorded_sample_limit(sample),
+                        sample_kind=sample.kind,
                         job_run_id=job_run_id,
                     )
                 except Exception:
@@ -580,7 +649,7 @@ def get_profile_run_results(
 ) -> ProfileResultsOut:
     """Read profiler results from the Delta table."""
     try:
-        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        table = _run_table_fqn()
         row = job_svc.get_run_result_row(table, run_id)
 
         if row is None:

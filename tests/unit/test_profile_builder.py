@@ -9,6 +9,7 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import (
     PROFILE_BUILDER_REGISTRY,
+    deregister_profile_builder,
     make_has_no_outliers_profile,
     make_is_in_profile,
     make_min_max_profile,
@@ -16,6 +17,20 @@ from databricks.labs.dqx.profiler.profile_builder import (
     register_profile_builder,
     validate_profile_options,
 )
+
+
+@pytest.fixture
+def restore_profile_builder_registry():
+    """
+    Snapshot PROFILE_BUILDER_REGISTRY before the test and restore it after,
+    so tests can freely add/overwrite entries without leaking into other tests.
+    """
+    original_registry = dict(PROFILE_BUILDER_REGISTRY)
+    try:
+        yield
+    finally:
+        PROFILE_BUILDER_REGISTRY.clear()
+        PROFILE_BUILDER_REGISTRY.update(original_registry)
 
 
 @pytest.fixture
@@ -79,6 +94,25 @@ def test_register_profile_builder_returns_original_function():
         assert _my_builder.__name__ == "_my_builder"
     finally:
         PROFILE_BUILDER_REGISTRY.pop("_test_return", None)
+
+
+def test_deregister_profile_builder_removes_registered_builder(restore_profile_builder_registry):
+    @register_profile_builder("_test_deregister")
+    def _custom_builder(*_):
+        return None
+
+    assert "_test_deregister" in PROFILE_BUILDER_REGISTRY
+
+    deregister_profile_builder("_test_deregister")
+
+    assert "_test_deregister" not in PROFILE_BUILDER_REGISTRY
+
+
+def test_deregister_profile_builder_missing_key_is_noop(restore_profile_builder_registry):
+    # Deregistering an unregistered key must not raise, so callers can use it unconditionally in cleanup.
+    deregister_profile_builder("_never_registered_key")
+
+    assert "_never_registered_key" not in PROFILE_BUILDER_REGISTRY
 
 
 # ---------------------------------------------------------------------------

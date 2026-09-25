@@ -314,7 +314,11 @@ RULES: tuple[RuleSpec, ...] = (
         body={"function": "is_in_list", "arguments": {"column": "{{country}}"}},
         slots=(SlotSpec("country", "text", arg_key="column"),),
         parameters=(
-            ParamSpec("allowed", "list", ["US", "GB", "DE", "FR", "ES", "IT", "NL", "CA", "AU", "JP", "IN", "BR"]),
+            ParamSpec(
+                "allowed",
+                "list",
+                ["'US'", "'GB'", "'DE'", "'FR'", "'ES'", "'IT'", "'NL'", "'CA'", "'AU'", "'JP'", "'IN'", "'BR'"],
+            ),
         ),
         author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
@@ -328,7 +332,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_in_list", "arguments": {"column": "{{tier}}"}},
         slots=(SlotSpec("tier", "text", arg_key="column"),),
-        parameters=(ParamSpec("allowed", "list", ["Free", "Pro", "Enterprise"]),),
+        parameters=(ParamSpec("allowed", "list", ["'Free'", "'Pro'", "'Enterprise'"]),),
         author_kind="ai_generated",
     ),
     RuleSpec(
@@ -365,7 +369,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_in_list", "arguments": {"column": "{{method}}"}},
         slots=(SlotSpec("method", "text", arg_key="column"),),
-        parameters=(ParamSpec("allowed", "list", ["card", "paypal", "transfer"]),),
+        parameters=(ParamSpec("allowed", "list", ["'card'", "'paypal'", "'transfer'"]),),
         author_kind="ai_generated",
     ),
     RuleSpec(

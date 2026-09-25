@@ -73,10 +73,9 @@ PLAIN_TABLE = TableInfo(row_filter=None, columns=[ColumnInfo(name="id"), ColumnI
 
 
 @pytest.fixture
-def sql_mock() -> MagicMock:
-    mock = create_autospec(SqlExecutor, instance=True)
-    mock.query_dicts.return_value = []
-    return mock
+def sql_mock(sql_executor_mock: MagicMock) -> MagicMock:
+    sql_executor_mock.query_dicts.return_value = []
+    return sql_executor_mock
 
 
 @pytest.fixture
@@ -217,12 +216,14 @@ def check_row(
     dimension: str | None = None,
     rule_id: str | None = None,
     columns: list[str] | None = None,
+    pass_threshold: int | None = None,
 ) -> dict[str, str | None]:
     """One v_dq_check_results row, Statement-Execution shaped (all strings).
 
     The attribution columns (severity/dimension/registry_rule_id/columns)
     are the AS-OF-RUN values the view parsed out of the run's frozen
-    ``checks_json`` — NULL for legacy/untagged runs.
+    ``checks_json`` — NULL for legacy/untagged runs. ``pass_threshold`` is
+    the per-run threshold frozen alongside them (NULL for legacy runs).
     """
     return {
         "input_location": fqn,
@@ -236,6 +237,7 @@ def check_row(
         "dimension": dimension,
         "registry_rule_id": rule_id,
         "columns_json": None if columns is None else json.dumps(columns),
+        "pass_threshold": None if pass_threshold is None else str(pass_threshold),
     }
 
 
@@ -583,6 +585,41 @@ class TestRuns:
         assert "GROUP BY run_id, run_time, run_mode" in stmt
         assert "ORDER BY run_time DESC" in stmt
         assert f"'{FQN}'" in stmt
+
+    def test_frozen_per_run_threshold_is_retained_after_a_later_threshold_change(
+        self, client, sql_mock, app_settings_mock
+    ):
+        """Regression (#129): a run keeps the threshold it was judged under.
+
+        Two runs each have a 65% pass rate (35 of 100 failed). The admin's
+        LIVE default is now 70% — a fresh judgement would breach both. But
+        the historical run froze its own threshold at 60% (65% >= 60% => no
+        breach), while the legacy run stamped nothing and must fall back to
+        the live 70% chain (65% < 70% => breach). Proving the frozen run does
+        NOT breach shows its own T1 is honoured, not the later T2.
+        """
+        app_settings_mock.get_pass_threshold_enabled.return_value = True
+        app_settings_mock.get_default_pass_threshold.return_value = 70
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row(run_id="r_frozen", errors=35, total=100, pass_threshold=60),
+                check_row(run_id="r_legacy", errors=35, total=100, pass_threshold=None),
+            ],
+            runs_rows=[
+                runs_row("r_frozen", "2026-07-02 00:00:00", 0.65, 35, 100),
+                runs_row("r_legacy", "2026-07-01 00:00:00", 0.65, 35, 100),
+            ],
+        )
+        resp = client.get(f"/api/v1/dq-results/runs/{FQN}")
+        assert resp.status_code == 200
+        by_run = {row["run_id"]: row for row in resp.json()["rows"]}
+        # Frozen run keeps its own 60% verdict: 65% pass is NOT a breach.
+        assert by_run["r_frozen"]["breached"] is False
+        assert by_run["r_frozen"]["breach_criticality"] is None
+        # Legacy run (no frozen value) uses the live 70% chain: 65% breaches.
+        assert by_run["r_legacy"]["breached"] is True
+        assert by_run["r_legacy"]["breach_criticality"] == "error"
 
     def test_binding_id_resolves_to_its_table(self, client, sql_mock, monitored_tables_mock):
         monitored_tables_mock.get.return_value = binding_detail("b1", FQN)
@@ -1032,7 +1069,9 @@ class TestHyphenatedAppCatalog:
     QUOTED_GENIE = "`prod-east`.`genie`"
 
     @pytest.fixture(autouse=True)
-    def _hyphenated_conf(self, client, app_config):
+    def _hyphenated_resources(self, client, sql_mock, app_config):
+        sql_mock.catalog = "prod-east"
+        sql_mock.schema = "dqx-studio"
         client.app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
             update={"catalog": "prod-east", "schema_name": "dqx-studio"}
         )

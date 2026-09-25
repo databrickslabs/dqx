@@ -36,7 +36,7 @@ place and stamps ``refrozen_at`` (:meth:`refreeze_current`) —
 auto-upgrade, a per-rule approval, or a per-rule rejection/deprecation.
 
 Scoping (SAFETY-CRITICAL): a binding's approved rows are identified via
-the ``dq_quality_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
+the ``dq_resolved_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
 ``dq_applied_rules.binding_id`` linkage the materializer maintains — NEVER
 by ``table_fqn`` alone (the P16-H pattern in
 ``routes/v1/monitored_tables.py``). Directly-authored (non-registry)
@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 class MonitoredTableVersionService:
     """Freezes/reads per-version approved-rule REFERENCE snapshots for monitored tables.
 
-    Reads the binding's current approved ``dq_quality_rules`` rows (through
+    Reads the binding's current approved ``dq_resolved_rules`` rows (through
     :class:`RulesCatalogService` + the applied-rule linkage on
     :class:`MonitoredTableService`) to determine which applied rules — and at
     which resolved registry version — belong to the approved set, and
@@ -90,7 +90,7 @@ class MonitoredTableVersionService:
         self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._tables = sql.fqn("dq_monitored_tables")
         self._applied_table = sql.fqn("dq_applied_rules")
-        self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._quality_rules_table = sql.fqn("dq_resolved_rules")
 
     # ------------------------------------------------------------------
     # Freeze / re-freeze
@@ -99,7 +99,7 @@ class MonitoredTableVersionService:
     def freeze_new_version(self, binding_id: str, user_email: str) -> int:
         """Bump the binding's version and freeze the current approved rule set as vN.
 
-        Reads the binding's CURRENT approved ``dq_quality_rules`` rows
+        Reads the binding's CURRENT approved ``dq_resolved_rules`` rows
         (scoped to this binding's ``applied_rule_id``s), increments
         ``dq_monitored_tables.version``, and inserts a new
         ``dq_monitored_table_versions`` snapshot at the new version.
@@ -202,7 +202,7 @@ class MonitoredTableVersionService:
         )
 
     def refreeze_for_quality_rule(self, rule_id: str) -> str | None:
-        """Re-freeze the binding owning materialized ``dq_quality_rules`` *rule_id*.
+        """Re-freeze the binding owning materialized ``dq_resolved_rules`` *rule_id*.
 
         Hook entry point for per-rule approve/reject in
         ``routes/v1/rules.py``: resolves the row's ``applied_rule_id`` ->
@@ -400,7 +400,7 @@ class MonitoredTableVersionService:
         Determines which applied rules belong to the binding's approved set
         (scoped by ``applied_rule_id``, excluding directly-authored rules) and
         the RESOLVED registry version each was rendered at, by reading the
-        approved ``dq_quality_rules`` rows via
+        approved ``dq_resolved_rules`` rows via
         ``RulesCatalogService.get_approved_checks_for_table``. Returns
         ``state_json`` carrying, per approved applied rule, the reference the
         runner payload is reconstructed from (``rule_refs``), the display
@@ -410,7 +410,7 @@ class MonitoredTableVersionService:
         all_checks = self._rules_catalog.get_approved_checks_for_table(detail.table.table_fqn)
         # Resolved registry version per approved applied rule, plus how many
         # rendered checks it contributes — read straight off the frozen
-        # ``dq_quality_rules`` checks (their ``user_metadata`` carries both).
+        # ``dq_resolved_rules`` checks (their ``user_metadata`` carries both).
         resolved_version: dict[str, int] = {}
         check_count = 0
         for check in all_checks:

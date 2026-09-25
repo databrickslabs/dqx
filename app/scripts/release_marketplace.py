@@ -1,0 +1,211 @@
+"""Create a locally signed Marketplace release branch and tag."""
+
+import argparse
+import re
+import subprocess
+import tempfile
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    """Sanitized result returned by a release command runner."""
+
+    returncode: int
+    stdout: str = ""
+
+
+class CommandRunner(Protocol):
+    """Subprocess boundary used by the Marketplace release workflow."""
+
+    def run(self, command: tuple[str, ...], *, cwd: Path, check: bool = True) -> CommandResult:
+        """Run one command in *cwd* and return its result."""
+        ...
+
+
+class SubprocessCommandRunner:
+    """Run release commands without invoking a shell."""
+
+    def run(self, command: tuple[str, ...], *, cwd: Path, check: bool = True) -> CommandResult:
+        """Run one command and optionally fail on a non-zero exit status."""
+        completed = subprocess.run(command, cwd=cwd, check=False, capture_output=True, text=True)
+        if check and completed.returncode != 0:
+            raise RuntimeError(f"command failed: {command[0]} {command[1]}")
+        return CommandResult(returncode=completed.returncode, stdout=completed.stdout)
+
+
+@dataclass(frozen=True)
+class _StudioRelease:
+    """Version and branch derived from a Studio release tag."""
+
+    version: str
+    branch: str
+
+
+def _studio_release(tag: str) -> _StudioRelease:
+    """Parse a Studio release tag into its version and branch name."""
+    match = re.fullmatch(r"studio-v([0-9]+\.[0-9]+\.[0-9]+)", tag)
+    if match is None:
+        raise ValueError("TAG must use studio-vX.Y.Z release syntax")
+    version = match.group(1)
+    return _StudioRelease(version=version, branch=f"dqx-studio/marketplace/v{version}")
+
+
+def release_push_commands(tag: str, branch: str) -> tuple[str, str]:
+    """Return the manual commands that publish a Studio release."""
+    return f"git push origin {branch}", f"git push origin {tag}"
+
+
+def release_marketplace(tag: str, repo_root: Path, commands: CommandRunner) -> str:
+    """Create and verify a local signed Marketplace release branch and tag without pushing."""
+    release = _studio_release(tag)
+    branch = release.branch
+    root_result = commands.run(("git", "rev-parse", "--show-toplevel"), cwd=repo_root, check=False)
+    if root_result.returncode != 0:
+        raise RuntimeError("repo_root must be a Git worktree")
+    try:
+        resolved_root = Path(root_result.stdout.strip()).resolve(strict=True)
+        requested_root = repo_root.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError("repo_root could not be safely resolved") from error
+    if resolved_root != requested_root:
+        raise RuntimeError("repo_root must be the Git worktree root")
+
+    existing_tag = commands.run(
+        ("git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"),
+        cwd=resolved_root,
+        check=False,
+    )
+    if existing_tag.returncode == 0:
+        raise RuntimeError(f"Local tag {tag} already exists")
+
+    source_commit = commands.run(("git", "rev-parse", "HEAD^{commit}"), cwd=resolved_root).stdout.strip()
+    if not source_commit:
+        raise RuntimeError("Could not resolve the release source commit")
+    source_pyproject = commands.run(("git", "show", f"{source_commit}:app/pyproject.toml"), cwd=resolved_root)
+    try:
+        project_version = tomllib.loads(source_pyproject.stdout)["project"]["version"]
+    except (KeyError, TypeError, tomllib.TOMLDecodeError) as error:
+        raise RuntimeError("Application version is missing from HEAD") from error
+    if project_version != release.version:
+        raise RuntimeError("TAG version does not match the application version at HEAD")
+
+    existing = commands.run(
+        ("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"),
+        cwd=resolved_root,
+        check=False,
+    )
+    if existing.returncode == 0:
+        raise RuntimeError(f"Local release branch {branch} already exists")
+
+    with tempfile.TemporaryDirectory(prefix="dqx-marketplace-release-") as temp_dir:
+        worktree = Path(temp_dir) / "worktree"
+        created = False
+        branch_created = False
+        tag_created = False
+        release_complete = False
+        release_error: BaseException | None = None
+        try:
+            commands.run(("git", "branch", branch, source_commit), cwd=resolved_root)
+            branch_created = True
+            commands.run(
+                ("git", "worktree", "add", str(worktree), branch),
+                cwd=resolved_root,
+            )
+            created = True
+            commands.run(("make", "app-install"), cwd=worktree)
+            commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_app.py"), cwd=worktree)
+            commands.run(("uv", "run", "--frozen", "python", "app/scripts/build_marketplace.py"), cwd=worktree)
+            commands.run(
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--group",
+                    "test",
+                    "pytest",
+                    "tests/test_build_marketplace.py",
+                    "tests/test_release_marketplace.py",
+                    "-v",
+                ),
+                cwd=worktree / "app",
+            )
+            commands.run(("git", "add", "-f", "-A", "app/marketplace"), cwd=worktree)
+            changed = commands.run(("git", "diff", "--cached", "--quiet"), cwd=worktree, check=False)
+            if changed.returncode == 0:
+                raise RuntimeError("Marketplace release produced no changes")
+            commands.run(
+                ("git", "commit", "-S", "-m", f"build(app): generate Marketplace release {tag}"),
+                cwd=worktree,
+            )
+            commands.run(("git", "verify-commit", "HEAD"), cwd=worktree)
+            commands.run(
+                ("git", "tag", "-s", "-a", tag, "-m", f"DQX Studio {release.version}", "HEAD"),
+                cwd=worktree,
+            )
+            tag_created = True
+            commands.run(("git", "verify-tag", tag), cwd=worktree)
+            for artifact in (
+                "app/marketplace/manifest.yaml",
+                "app/marketplace/src/databricks_labs_dqx_app/backend/app.py",
+                "app/marketplace/src/databricks_labs_dqx_app/__dist__/index.html",
+            ):
+                commands.run(("git", "cat-file", "-e", f"{tag}:{artifact}"), cwd=worktree)
+            release_complete = True
+        except BaseException as error:
+            release_error = error
+
+        cleanup_failures: list[str] = []
+
+        def cleanup(command: tuple[str, ...]) -> None:
+            try:
+                result = commands.run(command, cwd=resolved_root, check=False)
+            except (OSError, RuntimeError) as error:
+                cleanup_failures.append(f"{command[1]} ({type(error).__name__})")
+                return
+            if result.returncode != 0:
+                cleanup_failures.append(command[1])
+
+        if created or worktree.exists():
+            cleanup(("git", "worktree", "remove", "--force", str(worktree)))
+        if branch_created:
+            cleanup(("git", "worktree", "prune"))
+        if not release_complete:
+            if tag_created:
+                cleanup(("git", "tag", "--delete", tag))
+            if branch_created:
+                cleanup(("git", "branch", "-D", branch))
+
+        if cleanup_failures:
+            cleanup_summary = ", ".join(cleanup_failures)
+            if release_error is not None:
+                raise RuntimeError(
+                    f"Marketplace release failed; cleanup also failed: {cleanup_summary}"
+                ) from release_error
+            raise RuntimeError(f"Marketplace release cleanup failed: {cleanup_summary}")
+        if release_error is not None:
+            raise release_error.with_traceback(release_error.__traceback__)
+    return branch
+
+
+def main() -> int:
+    """Create a local Marketplace release branch and print its manual push command."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tag", required=True, help="signed version tag to create, for example studio-v0.1.0")
+    args = parser.parse_args()
+    try:
+        branch = release_marketplace(args.tag, Path.cwd(), SubprocessCommandRunner())
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SystemExit(f"error: {error}") from None
+    print(f"Created and verified local branch {branch} and signed tag {args.tag}.")
+    print("Inspect it, then push manually:")
+    for command in release_push_commands(args.tag, branch):
+        print(f"  {command}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
