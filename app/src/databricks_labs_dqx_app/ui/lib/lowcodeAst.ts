@@ -60,6 +60,51 @@ export function isColumnRef(v: unknown): v is ColumnRefValue {
   );
 }
 
+/**
+ * Every DECLARED-COLUMN name the AST references, from all three reference
+ * sites — a row's LHS `column_ref`, a row's RHS value, and a join key's
+ * input-side `column_ref`.
+ *
+ * The RHS is walked RECURSIVELY because a column reference (item 42) can sit
+ * anywhere a literal can: as the scalar value (`{{a}} <= {{b}}`), inside an
+ * array (a `between` bound, an `in` entry), or as an aggregated row's
+ * `{ aggregate, column_ref }` comparison spec. A shallow read of `value` missed
+ * the column-vs-column case entirely, which made the authoring form report a
+ * genuinely-referenced column as unused and refuse to save.
+ *
+ * Dotted names are JOINED-TABLE columns (`orders.id`), which compile to raw
+ * identifiers rather than `{{slot}}` placeholders, so they are not declared
+ * columns and are left out.
+ */
+export function collectAstColumnRefs(ast: LowcodeAstV2): Set<string> {
+  const refs = new Set<string>();
+  const add = (name: unknown): void => {
+    if (typeof name === "string" && name.length > 0 && !name.includes(".")) refs.add(name);
+  };
+  const walkValue = (value: unknown): void => {
+    if (isColumnRef(value)) {
+      add(value.$col);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(walkValue);
+      return;
+    }
+    if (value && typeof value === "object") {
+      // An aggregated row's RHS comparison spec ({ aggregate, column_ref }).
+      add((value as Record<string, unknown>).column_ref);
+    }
+  };
+  for (const row of ast.rows ?? []) {
+    add(row.column_ref);
+    walkValue(row.value);
+  }
+  for (const join of ast.joins ?? []) {
+    for (const key of join.keys ?? []) add(key.column_ref);
+  }
+  return refs;
+}
+
 export interface JoinKeyAst {
   joined_column: string;
   column_ref: string;

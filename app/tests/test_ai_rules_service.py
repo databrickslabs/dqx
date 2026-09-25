@@ -18,6 +18,8 @@ from databricks_labs_dqx_app.backend.services.ai_rules_service import (
     _DEFAULT_DIMENSIONS,
     _DEFAULT_SEVERITIES,
     _DQX_NATIVE_COVERAGE_GUIDANCE,
+    _DQX_NATIVE_GUIDANCE,
+    _DQX_NATIVE_MULTI_COLUMN_GUIDANCE,
     _EXPLAIN_SQL_SYSTEM_TEMPLATE,
     _IMPROVE_SQL_SYSTEM_TEMPLATE,
     _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE,
@@ -636,6 +638,96 @@ class TestGenerateRulePrefersBuiltInCheck:
         assert result["definition"]["function"] == "is_in_range"
         assert gateway.query.call_count == 1
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
+
+    async def test_multi_column_native_proposal_falls_through_to_lowcode(self):
+        # A col-vs-col requirement has no authorable built-in form: the editor
+        # binds a native rule to ONE column, so a check with two single-column
+        # parameters is dropped and the Condition Builder gets the requirement.
+        native = json.dumps(
+            {
+                "name": "Shipped after delivery",
+                "description": "shipped date must not be before delivery date",
+                "definition": {
+                    "function": "is_older_than_col2_for_n_days",
+                    "arguments": {"column1": "shipped_date", "column2": "delivery_date", "days": 0},
+                },
+                "columns": [
+                    {"name": "shipped_date", "family": "temporal"},
+                    {"name": "delivery_date", "family": "temporal"},
+                ],
+            }
+        )
+        gateway = _gateway_returning(native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(
+            description="shipped date must not be before delivery date", user_email="a@x"
+        )
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_args_list[0].kwargs["purpose"] == "generate_rule:dqx_native"
+        assert gateway.query.call_args_list[1].kwargs["purpose"] == "generate_rule:lowcode"
+
+    async def test_column_smuggled_into_value_argument_falls_through_to_lowcode(self):
+        # The subtler shape: a second column passed to a VALUE argument (`limit`),
+        # which the editor renders as a literal input — leaving that column
+        # unbindable. Dropped in favour of the Condition Builder.
+        native = json.dumps(
+            {
+                "name": "Shipped after delivery",
+                "description": "shipped date must not be before delivery date",
+                "definition": {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "shipped_date", "limit": "delivery_date"},
+                },
+                "columns": [
+                    {"name": "shipped_date", "family": "temporal"},
+                    {"name": "delivery_date", "family": "temporal"},
+                ],
+            }
+        )
+        gateway = _gateway_returning(native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(
+            description="shipped date must not be before delivery date", user_email="a@x"
+        )
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 2
+
+    async def test_composite_key_native_proposal_keeps_its_several_columns(self):
+        # The one legitimate multi-column native shape: a LIST-typed column
+        # argument (is_unique) binds any number of columns, so it is NOT dropped.
+        native = json.dumps(
+            {
+                "name": "Order line unique",
+                "description": "order id and line number must be unique together",
+                "definition": {"function": "is_unique", "arguments": {"columns": ["order_id", "line_number"]}},
+                "columns": [
+                    {"name": "order_id", "family": "any"},
+                    {"name": "line_number", "family": "any"},
+                ],
+            }
+        )
+        gateway = _gateway_returning(native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(
+            description="order id and line number must be unique together", user_email="a@x"
+        )
+
+        assert result["mode"] == "dqx_native"
+        assert [slot["name"] for slot in result["slots"]] == ["order_id", "line_number"]
+        assert gateway.query.call_count == 1
+
+    def test_native_prompt_asks_for_a_decline_on_a_multi_column_requirement(self):
+        # The prompt half of the fix: the model is told a built-in targets one
+        # column, so it declines col-vs-col requirements instead of bending a
+        # value argument into a column reference.
+        assert '{"decline": true}' in _DQX_NATIVE_MULTI_COLUMN_GUIDANCE
+        assert _DQX_NATIVE_MULTI_COLUMN_GUIDANCE in _DQX_NATIVE_GUIDANCE
+        assert _DQX_NATIVE_COVERAGE_GUIDANCE in _DQX_NATIVE_GUIDANCE
 
     def test_native_prompt_offers_the_decline_escape_hatch(self):
         # Without an explicit way to decline, a model asked for one check always
