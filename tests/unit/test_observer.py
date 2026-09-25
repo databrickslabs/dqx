@@ -129,6 +129,21 @@ def test_check_metrics_expr_escapes_backslashes():
     assert '\\\\"hi\\\\"' in expr
 
 
+def test_check_metrics_expr_escapes_backslash_in_comparison_literal():
+    """The exists() comparison literal (check_name_escaped), not only the JSON literal, must double
+    a backslash in the check name.
+
+    ``test_check_metrics_expr_escapes_backslashes`` pins only the JSON side (the ``\\\\"`` from an
+    embedded double quote). A regression that mis-escaped only the comparison literal (e.g. leaving a
+    single backslash) would slip past it and be caught solely by the live-Spark integration test.
+    """
+    expr = DQMetricsObserver().get_metrics(["a\\b"])[-1]
+
+    # Both the errors and warnings aggregates compare x.name against the escaped literal; the
+    # backslash must be doubled so Spark's parser leaves one behind to match the real column name.
+    assert expr.count("x.name = 'a\\\\b'") == 2
+
+
 def test_get_metrics_with_checks_empty_list():
     observer = DQMetricsObserver()
     metrics = observer.get_metrics([])
