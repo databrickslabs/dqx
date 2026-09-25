@@ -6,43 +6,11 @@ import Admonition from '@theme/Admonition';
 
 #  Demos
 
-## DQX Studio built-in demo
+## DQX Core
 
-If you're using [DQX Studio](/docs/studio/), the no-code web app, you don't need
-a notebook to try it out. Studio ships with a **built-in demo** so you can
-explore every feature against realistic data before pointing it at your own
-tables. It creates a small set of sample tables, a library of reusable rules,
-monitored tables, collections, and past runs — enough to see scores, trends,
-failing records, and the approval workflow in action.
+Import the following notebooks in the Databricks workspace to try DQX Core out:
 
-An admin deploys the demo from the [Marketplace](/docs/studio/authoring/marketplace)
-— it's the **Deploy demo content** action at the top of the page. Deploying it
-sets up the sample catalog, seeds the rules and monitored tables, and generates a
-history of runs so the results views have something to show. Once it's in place
-you can:
-
-* Browse the [rules registry](/docs/studio/authoring/create-a-rule) and see how
-  rules are reused across tables.
-* Open a [monitored table](/docs/studio/monitoring/) and
-  [review its results](/docs/studio/running/) — including failing records you
-  can inspect.
-* View a [collection](/docs/studio/monitoring/collections) such as *Customer 360*
-  to see quality across related tables at once.
-* Try [Ask Genie](/docs/studio/running/#ask-genie) on the demo's results.
-
-It's the fastest way for a new steward or reviewer to get comfortable — nothing
-they do to the demo touches production data.
-
-<Admonition type="note" title="Admin only">
-Only the **Admin** role can deploy or remove the demo, since it creates sample
-data and app content. See
-[Set up DQX Studio for your organization](/docs/studio/governance/).
-</Admonition>
-
-## Notebook demos
-
-Import the following notebooks in the Databricks workspace to try DQX out:
-## Use as Library
+### Use as Library
 * [DQX Quick Start Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_quick_start_demo_library.py) - quickstart DQX usage as a library.
 * [DQX Intermediate Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_intermediate_demo_library.py) - intermediate-level DQX usage as a library.
 * [DQX Comprehensive Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_library.py) - comprehensive DQX usage as a library.
@@ -63,16 +31,16 @@ Import the following notebooks in the Databricks workspace to try DQX out:
 * [DQX usage with dbt](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_dbt/README.md) - demonstrates how to use DQX as a library with dbt projects.
 * [DQX Demo on Primary-Key detection](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_llm_pk_detection.py) - demonstrates how to detect primary keys and generate uniqueness rules.
 
-## Deploy as Workspace Tool
+### Use as Workspace Tool
 * [DQX Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool when installed in the workspace.
 
-## Industry Accelerators
+### Industry Accelerators
 * [DQX for Banking / FSI Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_banking_demo.py) - showcases DQX data quality rules tailored for the Banking and Financial Services industry, focusing on fraud detection, transaction structuring, and regulatory compliance.
 * [DQX for Fashion & Retail Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_fashion_demo.py) - demonstrates DQX rules tailored for the Fashion and Retail industry, including SKU validation, hex color formats, and pricing compliance.
 * [DQX for Manufacturing Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_manufacturing_demo.py) - demonstrates how to use DQX to check data quality for Manufacturing Industry datasets, specifically for machine maintenance and sensor data.
 * [DQX for Customer 360 Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_customer_360_demo.py) - demonstrates DQX data quality rules for Customer 360 datasets, including customer identity, email format, revenue, ticket counts, purchase dates, and active customer flag consistency.
 
-## Use Cases
+### Use Cases
 * [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_pii_detection.py) - demonstrates how to use DQX to check data for Personally Identifiable Information (PII).
 
 <br />
@@ -80,4 +48,36 @@ Import the following notebooks in the Databricks workspace to try DQX out:
 You don't have to run DQX from a Notebook. DQX can be run from any Python script as long as it runs on Databricks.
 For example, you can run it from a Databricks job by adding DQX as a dependent library.
 When DQX is installed in the workspace as a tool, it provides a suite of command-line tools for executing DQX jobs (see the [User Guide](/docs/guide)).
+</Admonition>
+
+## DQX Studio
+
+If you're using [DQX Studio](/docs/studio/), the no-code web app, you can try the **app built-in demo** so you can
+explore every feature against realistic data before pointing it at your own
+tables. It creates a small set of sample tables, a library of reusable rules,
+monitored tables, collections, and past runs — enough to see scores, trends,
+failing records, and the approval workflow in action.
+
+An admin deploys the demo from the [Rule Marketplace](/docs/studio/authoring/rule-marketplace)
+— it's the **Deploy demo content** action at the top of the page. Deploying it
+sets up the sample catalog, seeds the rules and monitored tables, and generates a
+history of runs so the results views have something to show. Once it's in place
+you can:
+
+* Browse the [rules registry](/docs/studio/authoring/create-a-rule) and see how
+  rules are reused across tables.
+* Open a [monitored table](/docs/studio/monitoring/) and
+  [review its results](/docs/studio/running/) — including failing records you
+  can inspect.
+* View a [collection](/docs/studio/monitoring/collections) such as *Customer 360*
+  to see quality across related tables at once.
+* Try [Ask Genie](/docs/studio/running/#ask-genie) on the demo's results.
+
+It's the fastest way for a new steward or reviewer to get comfortable — nothing
+they do to the demo touches production data.
+
+<Admonition type="note" title="Admin only">
+Only the **Admin** role can deploy or remove the demo, since it creates sample
+data and app content. See
+[Configure DQX Studio](/docs/studio/governance/).
 </Admonition>

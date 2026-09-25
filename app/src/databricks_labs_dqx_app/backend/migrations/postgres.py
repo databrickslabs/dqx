@@ -126,19 +126,26 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by    TEXT"
             ");"
             # ----------------------------------------------------------
-            # dq_quality_rules — active rule catalog. ``registry_rule_id``/
-            # ``registry_version``/``applied_rule_id`` are provenance
-            # columns (Phase 3A, see docs/superpowers/specs/2026-07-02-
-            # rules-registry-design.md §3.1): when a row was materialized
-            # from a Rules Registry application, they point back at the
-            # source ``dq_rules`` row, the published version substituted,
-            # and the ``dq_applied_rules`` link — all NULL for rules
-            # authored directly against a table (unchanged legacy path).
-            # ``source='registry'`` marks a materialized row (Phase 3C
-            # ``Materializer``); the runner ignores ``source`` entirely so
-            # this is purely provenance for the UI/audit trail.
+            # dq_resolved_rules — active (resolved) per-table rule catalog.
+            # Renamed from ``dq_quality_rules`` so the name is not confused
+            # with the table-agnostic registry ``dq_rules``: these are the
+            # rules resolved/materialized against a concrete ``table_fqn``.
+            # ``registry_rule_id``/``registry_version``/``applied_rule_id``
+            # are Rules Registry provenance columns: when a row was
+            # materialized from a Rules Registry application, they point
+            # back at the source ``dq_rules`` row, the published version
+            # substituted, and the ``dq_applied_rules`` link — all NULL for
+            # rules authored directly against a table (unchanged legacy
+            # path). ``source='registry'`` marks a materialized row (Phase
+            # 3C ``Materializer``); the runner ignores ``source`` entirely
+            # so this is purely provenance for the UI/audit trail.
+            # ``rule_fingerprint`` is the dqx-core per-rule SHA-256
+            # (``compute_rule_fingerprint``) written by every writer; it
+            # powers the ``dq_rules_core`` compatibility view (below) so
+            # external pipelines can load these rules with the standard
+            # ``DQEngine.load_checks``.
             # ----------------------------------------------------------
-            f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules ("
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_resolved_rules ("
             "  rule_id           TEXT PRIMARY KEY,"
             "  table_fqn         TEXT NOT NULL,"
             '  "check"           JSONB NOT NULL,'
@@ -148,24 +155,29 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  registry_rule_id  TEXT,"
             "  registry_version  INTEGER,"
             "  applied_rule_id   TEXT,"
+            # NOT NULL: every writer (RulesCatalogService.save/update_rule,
+            # Materializer) sets this via compute_rule_fingerprint. Enforcing it
+            # keeps the dq_rules_core set-fingerprint aggregation exact — a NULL
+            # would be silently skipped by string_agg and weaken uniqueness.
+            "  rule_fingerprint  TEXT NOT NULL,"
             "  created_by TEXT,"
             "  created_at TIMESTAMPTZ,"
             "  updated_by TEXT,"
             "  updated_at TIMESTAMPTZ,"
-            "  CONSTRAINT chk_dq_quality_rules_status "
+            "  CONSTRAINT chk_dq_resolved_rules_status "
             f"    CHECK (status IN ({RuleStatus.sql_in_list()})),"
-            "  CONSTRAINT chk_dq_quality_rules_source "
+            "  CONSTRAINT chk_dq_resolved_rules_source "
             f"    CHECK (source IN ({RuleSource.sql_in_list()}))"
             ");"
             # Two read-paths dominate: by table_fqn (rules-list page) and
             # by status filter (review queue). One composite index covers
             # both since Postgres can use a leading-column-only scan.
-            f"CREATE INDEX IF NOT EXISTS idx_dq_quality_rules_table_status "
-            f"  ON {_S}.dq_quality_rules (table_fqn, status);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_resolved_rules_table_status "
+            f"  ON {_S}.dq_resolved_rules (table_fqn, status);"
             # ----------------------------------------------------------
-            # dq_quality_rules_history — append-only audit trail.
+            # dq_resolved_rules_history — append-only audit trail.
             # ----------------------------------------------------------
-            f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules_history ("
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_resolved_rules_history ("
             "  history_id  BIGSERIAL PRIMARY KEY,"
             "  rule_id     TEXT,"
             "  table_fqn   TEXT NOT NULL,"
@@ -178,10 +190,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  changed_by  TEXT,"
             "  changed_at  TIMESTAMPTZ"
             ");"
-            f"CREATE INDEX IF NOT EXISTS idx_dq_quality_rules_history_rule_changed_at "
-            f"  ON {_S}.dq_quality_rules_history (rule_id, changed_at DESC);"
-            f"CREATE INDEX IF NOT EXISTS idx_dq_quality_rules_history_table_changed_at "
-            f"  ON {_S}.dq_quality_rules_history (table_fqn, changed_at DESC);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_resolved_rules_history_rule_changed_at "
+            f"  ON {_S}.dq_resolved_rules_history (rule_id, changed_at DESC);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_resolved_rules_history_table_changed_at "
+            f"  ON {_S}.dq_resolved_rules_history (table_fqn, changed_at DESC);"
             # ----------------------------------------------------------
             # dq_role_mappings — RBAC.
             # ----------------------------------------------------------
@@ -265,7 +277,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ``user_metadata`` (see ``label_definitions``/Phase 1),
             # same as arbitrary free-text tags. ``rule_id`` is a
             # hex-string id generated in Python (``uuid4().hex[:16]``,
-            # matching ``dq_quality_rules.rule_id`` / ``dq_comments.comment_id``)
+            # matching ``dq_resolved_rules.rule_id`` / ``dq_comments.comment_id``)
             # stored as TEXT rather than the native ``UUID`` type, so all
             # entity ids share one representation across the schema.
             # ----------------------------------------------------------
@@ -334,7 +346,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ----------------------------------------------------------
             # dq_rules_history — append-only audit trail for the
             # registry rule lifecycle (create/update/status transitions/
-            # delete), mirroring ``dq_quality_rules_history``'s shape.
+            # delete), mirroring ``dq_resolved_rules_history``'s shape.
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules_history ("
             "  history_id    BIGSERIAL PRIMARY KEY,"
@@ -722,6 +734,59 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  model        TEXT,"
             "  updated_at   TIMESTAMPTZ"
             ");"
+            # ----------------------------------------------------------
+            # dq_rules_core — dqx-core-compatible READ view over the
+            # APPROVED rules in ``dq_resolved_rules``. It reshapes Studio's
+            # storage into exactly the columns dqx-core's
+            # ``LakebaseChecksStorageHandler`` reads, so external pipelines
+            # can load Studio-authored rules with the standard API:
+            #
+            #   engine.load_checks(LakebaseChecksStorageConfig(
+            #       location="<cat>.{schema}.dq_rules_core",
+            #       instance_name="<lakebase-instance>",
+            #       run_config_name="<table_fqn>"))
+            #
+            # Column mapping: ``run_config_name`` <- ``table_fqn``; ``check``
+            # <- the INNER ``{{function, arguments, for_each_column}}`` object
+            # (Studio packs the whole rule into the ``"check"`` JSONB, dqx-core
+            # wants only the inner check); name/criticality/filter/
+            # user_metadata/message_expr are read out of that blob.
+            #
+            # ``rule_set_fingerprint`` is computed here (not stored) as a
+            # GROUP BY over each table's approved rows, so every row of a
+            # ``table_fqn`` shares one value — which is what the loader needs
+            # to select "the latest rule set" and return the whole set. It
+            # reproduces dqx-core's ``compute_rule_set_fingerprint``
+            # (sha256 of the JSON array of sorted per-rule fingerprints) over
+            # the stored ``rule_fingerprint`` values. For rule sets that
+            # contain a ``for_each_column`` check the value may differ from a
+            # core computation that expands the fan-out first — this only
+            # affects the informational fingerprint, never which rules load.
+            # ----------------------------------------------------------
+            f"CREATE OR REPLACE VIEW {_S}.dq_rules_core AS "
+            "WITH approved AS ("
+            "  SELECT rule_id, table_fqn, \"check\", rule_fingerprint, created_at "
+            f"  FROM {_S}.dq_resolved_rules WHERE status = 'approved'"
+            "), set_fp AS ("
+            "  SELECT table_fqn, encode(sha256(convert_to("
+            # COLLATE "C" forces codepoint ordering so the hash byte-matches
+            # dqx-core's compute_rule_set_fingerprint (Python sorts by codepoint),
+            # independent of the database's default collation.
+            "    '[' || string_agg('\"' || rule_fingerprint || '\"', ', ' ORDER BY rule_fingerprint COLLATE \"C\") || ']',"
+            "    'UTF8')), 'hex') AS rule_set_fingerprint "
+            "  FROM approved GROUP BY table_fqn"
+            ") SELECT "
+            "  a.\"check\"->>'name'                          AS name,"
+            "  COALESCE(a.\"check\"->>'criticality', 'error') AS criticality,"
+            "  a.\"check\"->'check'                          AS \"check\","
+            "  a.\"check\"->>'filter'                        AS filter,"
+            "  a.table_fqn                                   AS run_config_name,"
+            "  a.\"check\"->'user_metadata'                  AS user_metadata,"
+            "  a.\"check\"->>'message_expr'                  AS message_expr,"
+            "  a.created_at                                  AS created_at,"
+            "  a.rule_fingerprint                            AS rule_fingerprint,"
+            "  s.rule_set_fingerprint                        AS rule_set_fingerprint "
+            "FROM approved a JOIN set_fp s USING (table_fqn)"
         ),
     ),
 ]

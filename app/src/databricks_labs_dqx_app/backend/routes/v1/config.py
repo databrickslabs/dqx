@@ -9,6 +9,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_ai_bootstrap,
@@ -153,16 +154,6 @@ class LabelDefinitionsIn(BaseModel):
     definitions: list[LabelDefinition]
 
 
-def _notify_scheduler() -> None:
-    """Best-effort reload of the background scheduler after config changes."""
-    try:
-        from databricks_labs_dqx_app.backend._scheduler_registry import notify_scheduler
-
-        notify_scheduler()
-    except Exception:
-        pass
-
-
 router = APIRouter()
 
 
@@ -199,7 +190,7 @@ def save_config(
     """Save workspace config to application state (admin only)."""
     try:
         svc.save_config(body.config, user_email=email)
-        _notify_scheduler()
+        scheduler_registry.notify_scheduler()
         config = svc.get_config()
         return ConfigOut(config=config)
     except Exception as e:
@@ -249,7 +240,7 @@ def save_run_config(
         config.run_configs.append(body.config)
 
     svc.save_config(config, user_email=email)
-    _notify_scheduler()
+    scheduler_registry.notify_scheduler()
     return RunConfigOut(config=body.config)
 
 
@@ -273,7 +264,7 @@ def delete_run_config(
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
     svc.save_config(config, user_email=email)
-    _notify_scheduler()
+    scheduler_registry.notify_scheduler()
     return ConfigOut(config=config)
 
 
