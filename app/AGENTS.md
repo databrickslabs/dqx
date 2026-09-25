@@ -74,8 +74,9 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_quarantine_records        (Delta) invalid rows captured by runs
  │   ├── dq_metrics                   (Delta) per-run quality metrics for trend tracking
  │   ├── dq_app_settings              (OLTP*) key/value app configuration
- │   ├── dq_quality_rules             (OLTP*) active/approved rules
- │   ├── dq_quality_rules_history     (OLTP*) rule change audit log
+ │   ├── dq_resolved_rules             (OLTP*) active/approved rules
+ │   ├── dq_rules_core                 (VIEW, Lakebase) dqx-core-compatible read view over approved dq_resolved_rules — external pipelines load it via DQEngine.load_checks(LakebaseChecksStorageConfig)
+ │   ├── dq_resolved_rules_history     (OLTP*) rule change audit log
  │   ├── dq_role_mappings             (OLTP*) role → workspace group mappings (RBAC)
  │   ├── dq_comments                  (OLTP*) comment threads on rules/runs
  │   ├── dq_schedule_configs          (OLTP*) per-schedule config (cron/interval, target rules)
@@ -88,8 +89,8 @@ but is protected transitively by the instance-level guard.
 Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`):
  └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
-         ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
-         │   dq_quality_rules_history, dq_comments, dq_schedule_configs,
+         ├── dq_app_settings, dq_role_mappings, dq_resolved_rules,
+         │   dq_resolved_rules_history, dq_comments, dq_schedule_configs,
          │   dq_schedule_configs_history, dq_schedule_runs
          └── dq_migrations             (Postgres migration version tracker)
 ```
@@ -511,7 +512,7 @@ choice is driven entirely by `databricks.yml`:
 | Backend | Tables | Why |
 |---------|--------|-----|
 | **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | Spark task runner writes these; high-volume append-mostly; columnar reads. |
-| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_resolved_rules`, `dq_resolved_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
 When Lakebase is **disabled** (no `lakebase_endpoint` set), the OLTP
 tables fall back to Delta — `MigrationRunner` runs both
@@ -549,7 +550,7 @@ per `_RETENTION_INTERVAL_HOURS` (24h). Two knobs, both stored in
 
 | Setting key                  | Default | Tables affected |
 |------------------------------|--------:|-----------------|
-| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_quality_rules_history`, `dq_schedule_configs_history`). Picked to match what trend dashboards expect. |
+| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_resolved_rules_history`, `dq_schedule_configs_history`). Picked to match what trend dashboards expect. |
 | `quarantine_retention_days`  | 30      | `dq_quarantine_records` only. Tighter because that table holds the full source row payload (PII surface). |
 
 Both resolvers share a `_RETENTION_DAYS_MIN = 7` floor so a
