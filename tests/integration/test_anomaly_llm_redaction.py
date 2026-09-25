@@ -1,4 +1,4 @@
-"""Live-Spark round-trip for anomaly redaction escaping (_sql_string_literal / _pattern_spark_expr).
+"""Live-Spark round-trip for anomaly redaction escaping (_sql_string_literal / pattern_spark_expr).
 
 The unit tests only pin the Python string that _sql_string_literal emits; they cannot confirm that
 Spark's parser actually matches the escaped literal. This test closes that gap for the redaction
@@ -16,12 +16,12 @@ test_summary_metrics.py, so it runs on every integration CI rather than nightly-
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.anomaly_llm_explainer import _pattern_spark_expr
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import pattern_spark_expr
 
 
 def _pattern(spark: SparkSession, contributions: dict[str, float], redact: set[str]) -> str:
     df = spark.createDataFrame([(contributions,)], "contributions map<string,double>")
-    expr = _pattern_spark_expr("contributions", frozenset(redact))
+    expr = pattern_spark_expr("contributions", frozenset(redact))
     return df.select(expr.alias("pattern")).collect()[0]["pattern"]
 
 

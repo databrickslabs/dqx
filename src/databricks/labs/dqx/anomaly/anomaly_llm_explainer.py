@@ -142,7 +142,7 @@ def _sql_string_literal(value: str) -> str:
         and leak that column's (potentially PII) values to the LLM.
 
     Used for *redact_columns* values — already validated as non-empty strings — before they are
-    embedded in the pattern-key SQL built by *_pattern_spark_expr*. Mirrors
+    embedded in the pattern-key SQL built by *pattern_spark_expr*. Mirrors
     *metrics_observer._sql_literal_escape*.
     """
     return value.replace("\\", "\\\\").replace("'", "\\'")
@@ -222,7 +222,7 @@ class ExplanationContext:
         )
 
 
-def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
+def pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
     """Pattern key as a pure-Spark-SQL expression (no Python UDFs shipped to executors).
 
     Drops null and redacted entries, takes the top-2 features by |value| desc,
@@ -728,7 +728,7 @@ def add_explanation_column(
     """
     redact_set = frozenset(ctx.redact_columns)
     segment_str = _format_segment(segment_values, redact_set)
-    df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
+    df_with_pattern = df.withColumn(ctx.pattern_col, pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(
         df_with_pattern, ctx, segment_str, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
     )
