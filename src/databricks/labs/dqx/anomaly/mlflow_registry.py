@@ -8,7 +8,6 @@ as the default implementation. This abstraction enables:
 """
 
 import os
-import inspect
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -117,7 +116,7 @@ class MLflowModelRegistry(ModelRegistryBase):
         and metrics, then registers it to Unity Catalog.
         """
         with mlflow.start_run(run_name=model_name):
-            model_info = log_sklearn_model_compatible(
+            model_info = log_sklearn_model(
                 model=model,
                 model_name=model_name,
                 signature=signature,
@@ -146,7 +145,7 @@ class MLflowModelRegistry(ModelRegistryBase):
             predictions = model.predict(train_pandas)
             signature = infer_signature(train_pandas, predictions)
 
-            model_info = log_sklearn_model_compatible(
+            model_info = log_sklearn_model(
                 model=model,
                 model_name=model_name,
                 signature=signature,
@@ -166,13 +165,13 @@ def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
 
 #: Serialization format for logged sklearn models, stated rather than defaulted.
 #:
-#: MLflow 3 validates a saved sklearn model against skops' set of trusted types and refuses anything it
+#: MLflow validates a saved sklearn model against skops' set of trusted types and refuses anything it
 #: does not recognise. ``IsolationForest`` is recognised; :class:`MahalanobisDetector` is DQX's own class,
 #: so ``profile="correlation"`` failed outright at registration with "The saved sklearn model references
-#: untrusted types". MLflow 2 defaulted to cloudpickle and never ran that check, so naming cloudpickle
-#: here restores the behaviour every DQX model has always been written with rather than introducing new
-#: behaviour, and it works identically on both major versions -- unlike ``skops_trusted_types``, which
-#: exists only on MLflow 3 and would need a second version branch below.
+#: untrusted types". Naming cloudpickle here skips that check and keeps the on-disk format every DQX model
+#: has always been written with. The alternative, ``skops_trusted_types``, would mean maintaining an
+#: explicit allowlist of DQX's own estimator classes and re-serialising existing models -- cost with no
+#: gain, since the trust boundary below already covers why loading is safe.
 #:
 #: The trust model is unchanged and is documented: DQX loads models only from the Unity Catalog registry
 #: the caller owns, and cloudpickle deserialization executes code, so a model URI is as trusted as the
@@ -180,28 +179,16 @@ def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
 SKLEARN_SERIALIZATION_FORMAT = "cloudpickle"
 
 
-def log_sklearn_model_compatible(
+def log_sklearn_model(
     *,
     model: TrainedModel,
     model_name: str,
     signature: MLflowSignature,
 ):
-    """Log sklearn model with compatibility across MLflow API variants.
-
-    Some runtimes accept `name=...` while others require `artifact_path=...`.
-    """
-    log_model_params = inspect.signature(mlflow.sklearn.log_model).parameters
-    if "name" in log_model_params:
-        return mlflow.sklearn.log_model(
-            sk_model=model,
-            name="model",
-            registered_model_name=model_name,
-            signature=signature,
-            serialization_format=SKLEARN_SERIALIZATION_FORMAT,
-        )
+    """Log sklearn model to MLflow."""
     return mlflow.sklearn.log_model(
         sk_model=model,
-        artifact_path="model",
+        name="model",
         registered_model_name=model_name,
         signature=signature,
         serialization_format=SKLEARN_SERIALIZATION_FORMAT,
