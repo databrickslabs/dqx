@@ -35,6 +35,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_entitlement_service,
+    get_metadata_dim_service,
     get_obo_ws,
     get_preview_sql_executor,
     get_sp_ws,
@@ -54,6 +55,8 @@ from databricks_labs_dqx_app.backend.services import genie_chat_service
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.genie_chat_service import GenieChatState
+from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.genie_space_service import (
     SAMPLE_QUESTIONS,
     SETTING_SPACE_ID,
@@ -70,6 +73,14 @@ _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, User
 SettingsDep = Annotated[AppSettingsService, Depends(get_app_settings_service)]
 SpWsDep = Annotated[WorkspaceClient, Depends(get_sp_ws)]
 OboWsDep = Annotated[WorkspaceClient, Depends(get_obo_ws)]
+MetadataDimsDep = Annotated[MetadataDimService, Depends(get_metadata_dim_service)]
+
+
+async def _maybe_refresh_metadata_dims(metadata_dims: MetadataDimService) -> None:
+    try:
+        await refresh_metadata_dims(metadata_dims)
+    except Exception:
+        logger.warning("Could not refresh Genie metadata dimensions before handling a message")
 
 
 def _to_answer(state: GenieChatState) -> GenieAnswerOut:
@@ -98,7 +109,13 @@ async def _space_id(settings: AppSettingsService) -> str | None:
     operation_id="askGenie",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-async def ask_genie(body: GenieAskIn, settings: SettingsDep, obo_ws: OboWsDep, sp_ws: SpWsDep) -> GenieAnswerOut:
+async def ask_genie(
+    body: GenieAskIn,
+    settings: SettingsDep,
+    obo_ws: OboWsDep,
+    sp_ws: SpWsDep,
+    metadata_dims: MetadataDimsDep,
+) -> GenieAnswerOut:
     """Blocking one-shot: start a message and poll it to a terminal state.
 
     Runs as the CALLING user, degrading to the SP when the OBO token is
@@ -106,6 +123,7 @@ async def ask_genie(body: GenieAskIn, settings: SettingsDep, obo_ws: OboWsDep, s
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
+    await _maybe_refresh_metadata_dims(metadata_dims)
     state = await asyncio.to_thread(
         genie_chat_service.ask, obo_ws, space_id, body.question, body.conversation_id, sp_ws=sp_ws
     )
@@ -119,7 +137,11 @@ async def ask_genie(body: GenieAskIn, settings: SettingsDep, obo_ws: OboWsDep, s
     dependencies=[require_role(*_ALL_ROLES)],
 )
 async def start_genie_message(
-    body: GenieAskIn, settings: SettingsDep, obo_ws: OboWsDep, sp_ws: SpWsDep
+    body: GenieAskIn,
+    settings: SettingsDep,
+    obo_ws: OboWsDep,
+    sp_ws: SpWsDep,
+    metadata_dims: MetadataDimsDep,
 ) -> GenieAnswerOut:
     """Kick off a question and return ids immediately; the UI then polls
     /poll to show live progress. Runs as the CALLING user, degrading to the
@@ -127,6 +149,7 @@ async def start_genie_message(
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
+    await _maybe_refresh_metadata_dims(metadata_dims)
     state = await asyncio.to_thread(
         genie_chat_service.start, obo_ws, space_id, body.question, body.conversation_id, sp_ws=sp_ws
     )

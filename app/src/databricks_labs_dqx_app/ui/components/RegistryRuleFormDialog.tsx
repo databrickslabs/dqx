@@ -2290,7 +2290,7 @@ export function RegistryRuleFormDialog({
   // Why granularity isn't the author's to pick here, or undefined while it IS
   // (raw SQL holding a full query). Doubles as the tag's tooltip, so a derived
   // level explains itself. Native splits by level rather than interpolating one
-  // sentence: a dataset-level CHECK means "needs the whole table to evaluate",
+  // sentence: a dataset-level CHECK means "evaluates a group of rows",
   // which is not the same as the single-verdict meaning dataset-level has for a
   // raw SQL query — is_unique, foreign_key and the is_aggr_* family all still
   // attribute their failures to individual rows.
@@ -4223,7 +4223,7 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
-            {/* Table-level SQL query warning: the query must collapse to one row.
+            {/* Dataset-level SQL query warning: the query must collapse to one row.
                 Merge-columns picker is in the Advanced section below. */}
             {sqlGranularityIsChoice && sqlGranularity === "dataset" && (
               <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-start gap-1">
