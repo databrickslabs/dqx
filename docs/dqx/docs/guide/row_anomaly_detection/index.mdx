@@ -654,6 +654,64 @@ Both profiles get the same feature engineering, so these need no configuration:
 - **Categoricals, booleans and nulls.** One-hot or frequency encoding by cardinality, 0/1 mapping, and an
   explicit indicator for columns that contain nulls.
 
+## Which comparison fired {#which-comparison-fired}
+
+`contributions` tells you **which column** made a row look unusual. When a column is compared more than one
+way, that is often not enough to act on. Check one metric with `baseline_by` and `baseline_over_time` set and
+`contributions` can only say `{"units": 100}` — true, and no help at all.
+
+`basis_contributions` answers the next question: *which comparison* did it fail?
+
+```python
+basis = F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("basis_contributions")
+result.filter(F.col("_dq_info")[0].anomaly.is_anomaly).select("units", basis.alias("basis")).show(truncate=False)
+```
+
+```
++-----+-------------------------------------------------------------------------------------------+
+|units|basis                                                                                      |
++-----+-------------------------------------------------------------------------------------------+
+|1180 |{units -> 8.0, units vs its group baseline -> 21.0, units vs its expected level at that     |
+|     | time -> 71.0}                                                                             |
++-----+-------------------------------------------------------------------------------------------+
+```
+
+Read that as: 1180 units is unremarkable for the table and only mildly unusual for this brand and nation, but
+it is well away from what this series' own history expects for that date. Each column's entries add up to 100
+on their own, so they divide that column's share rather than competing with the other columns'.
+
+<Admonition type="note" title="Not available for every detector">
+`basis_contributions` is `null` under `profile="correlation"`. That detector measures a column's position
+once the others are accounted for, and removing one view of a column leaves a near-copy behind, so a
+per-comparison number computed that way would look ordinary and name the wrong comparison. Reporting nothing
+is deliberate: `null` means *not measured*, never *nothing contributed*. Columns compared only one way are
+absent for the same reason — there is nothing to tell apart.
+</Admonition>
+
+### Is this a data problem or a business change?
+
+Row anomaly detection finds rows that do not fit. It cannot know whether *not fitting* means your pipeline
+broke or your business moved, and no model can decide that for you without labels. What it can do is show you
+which evidence fired, and that usually settles it quickly. Read these together:
+
+| What you see | Usually reads as |
+|---|---|
+| A null indicator among the top contributors, or a sudden burst of flags on one column | A data problem: something upstream stopped populating or changed shape |
+| Several metrics contributing at once under `profile="correlation"` | A data problem: metrics that normally move together stopped doing so, which a unit change or a broken join produces |
+| `drift_threshold` also firing, or a jump in alert volume across the whole batch | A data problem, or a genuine step change: the input no longer resembles training. Find out which before retraining |
+| `is_new_baseline` or `is_stale_baseline` set | Neither yet: the model is telling you it is out of its depth for this row, not that the row is wrong |
+| One business metric, departing from its own expected level over time, with nothing structural alongside | A business change more often than a defect: the number is plausible, it is the timing that is unusual |
+
+The last row is the one worth dwelling on, because it is where a data-quality tool and a general-purpose
+anomaly detector part company. DQX will flag it either way. Whether you want to be paged for it is your
+decision, and `basis_contributions` is what lets you make it: route on the comparison that fired rather than
+on the flag alone.
+
+If you only want the data-quality half, the rules in [Quality Checks](/docs/reference/quality_checks) cover
+what can be stated as a rule — nulls, ranges, formats, uniqueness, freshness, gaps, schema — and they are
+cheaper and more precise than a model for exactly those. Anomaly detection earns its place on what a rule
+cannot state.
+
 ## AI explanations
 
 AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do*, without anyone reading raw contribution percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the contributions as input). The explanation is AI-generated from the anomaly signal (feature names + contributions + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
@@ -749,6 +807,7 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `ai_explanation` | struct | LLM-generated explanation for the row's anomaly group (rows sharing the same top contributing features). On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
 | `is_stale_baseline` | boolean | `true` when the row's timestamp falls beyond the window a `baseline_over_time` baseline was fitted on, so its expected level is an extrapolation. Unlike an unseen group the row **is** still scored and can be flagged — a fitted curve does extrapolate, and near the boundary it stays usable — but accuracy degrades with distance, so treat it as a signal to retrain rather than as a verdict about the row. `null` when no temporal baseline was fitted. |
 | `stale_baseline_horizon` | string | How far beyond the fitted window the row sits, so you can tell *just past the edge* from *far outside it*. `null` when no temporal baseline was fitted. |
+| `basis_contributions` | map&lt;string, double&gt; | **Which comparison** made each column depart, where `contributions` says only which column did. Keyed by a readable label — `units`, `units vs its group baseline`, `units vs its expected level at that time` — with each column's entries totalling 100 among themselves, so they refine a `contributions` entry rather than competing with it. See [Which comparison fired](#which-comparison-fired). `null` under `profile="correlation"`, and for columns compared only one way. |
 
 The nested `ai_explanation` struct (populated when AI explanations are on, which is the default):
 
