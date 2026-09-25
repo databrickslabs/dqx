@@ -6,7 +6,7 @@ from typing import Literal
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.rule import register_rule, requires_dbr_version
+from databricks.labs.dqx.rule import register_rule, register_for_column_name_resolution, requires_dbr_version
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.utils import safe_filter_expr
@@ -60,6 +60,7 @@ _APPROXIMATE_MESSAGE_SUFFIX = {
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_latitude(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid latitudes.
 
@@ -83,6 +84,7 @@ def is_latitude(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_longitude(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid longitudes.
 
@@ -107,6 +109,7 @@ def is_longitude(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geometry(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geometries.
 
@@ -135,6 +138,7 @@ def is_geometry(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geography(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geographies.
 
@@ -163,6 +167,7 @@ def is_geography(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_point(column: str | Column) -> Column:
     """Checks whether the values in the input column are point geometries.
 
@@ -191,6 +196,7 @@ def is_point(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_linestring(column: str | Column) -> Column:
     """Checks whether the values in the input column are linestring geometries.
 
@@ -219,6 +225,7 @@ def is_linestring(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_polygon(column: str | Column) -> Column:
     """Checks whether the values in the input column are polygon geometries.
 
@@ -247,6 +254,7 @@ def is_polygon(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_multipoint(column: str | Column) -> Column:
     """Checks whether the values in the input column are multipoint geometries.
 
@@ -275,6 +283,7 @@ def is_multipoint(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_multilinestring(column: str | Column) -> Column:
     """Checks whether the values in the input column are multilinestring geometries.
 
@@ -303,6 +312,7 @@ def is_multilinestring(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_multipolygon(column: str | Column) -> Column:
     """Checks whether the values in the input column are multipolygon geometries.
 
@@ -331,6 +341,7 @@ def is_multipolygon(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geometrycollection(column: str | Column) -> Column:
     """Checks whether the values in the input column are geometrycollection geometries.
 
@@ -359,6 +370,7 @@ def is_geometrycollection(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_ogc_valid(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geometries in the OGC sense.
 
@@ -388,6 +400,7 @@ def is_ogc_valid(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_non_empty_geometry(column: str | Column) -> Column:
     """Checks whether the values in the input column are empty geometries.
 
@@ -417,6 +430,7 @@ def is_non_empty_geometry(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_null_island(column: str | Column) -> Column:
     """Checks whether the values in the input column are NULL island geometries (e.g. POINT(0 0), POINTZ(0 0 0), or
     POINTZM(0 0 0 0)).
@@ -454,6 +468,7 @@ def is_not_null_island(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def has_dimension(column: str | Column, dimension: int) -> Column:
     """Checks whether the geometries/geographies in the input column have a given dimension.
 
@@ -484,6 +499,7 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def has_x_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
     """Checks whether the x coordinates of the geometries in the input column are between a given range.
 
@@ -517,6 +533,7 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def has_y_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
     """Checks whether the y coordinates of the geometries in the input column are between a given range.
 
@@ -550,6 +567,7 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_equal_to(
     column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
@@ -588,6 +606,7 @@ def is_area_equal_to(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_not_equal_to(
     column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
@@ -626,6 +645,7 @@ def is_area_not_equal_to(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_not_greater_than(
     column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
@@ -664,6 +684,7 @@ def is_area_not_greater_than(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_not_less_than(
     column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
@@ -702,6 +723,7 @@ def is_area_not_less_than(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_num_points_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is equal to a specified value.
@@ -731,6 +753,7 @@ def is_num_points_equal_to(column: str | Column, value: int | float | str | Colu
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_num_points_not_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is not equal to a specified value.
@@ -760,6 +783,7 @@ def is_num_points_not_equal_to(column: str | Column, value: int | float | str | 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_num_points_not_greater_than(column: str | Column, value: int | float | str | Column) -> Column:
     """
     Checks if the number of coordinate pairs in the values of a geometry column is not greater than a specified limit.
@@ -789,6 +813,7 @@ def is_num_points_not_greater_than(column: str | Column, value: int | float | st
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_num_points_not_less_than(column: str | Column, value: int | float | str | Column) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is not less than a specified limit.
@@ -890,6 +915,7 @@ def _compare_spatial_sql_function_result(
 
 @requires_dbr_version("17.1")
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def are_polygons_mutually_disjoint(
     column: str | Column,
     row_filter: str | None = None,
@@ -1091,6 +1117,7 @@ def _has_topological_relationship_approximate(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_contains(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1134,6 +1161,7 @@ def is_geo_contains(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_covers(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1197,6 +1225,7 @@ def is_geo_covers(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_intersects(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1258,6 +1287,7 @@ def is_geo_intersects(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_touches(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1299,6 +1329,7 @@ def is_geo_touches(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_within(
     column: str | Column,
     reference_geometry: str | bytes | Column,

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CHECK_FUNC_REGISTRY",
     "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+    "CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE",
     "compute_rule_fingerprint",
     "Criticality",
     "DQDatasetRule",
@@ -30,6 +31,7 @@ __all__ = [
     "SingleColumnMixin",
     "normalize_bound_args",
     "register_for_original_columns_preselection",
+    "register_for_column_name_resolution",
     "CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE",
     "register_rule",
     "requires_dbr_version",
@@ -39,6 +41,7 @@ CHECK_FUNC_REGISTRY: dict[str, str] = {}
 CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE = "dqx_requires_dbr_version"
+CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE = "dqx_column_name_resolution"
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -52,6 +55,39 @@ def register_rule(rule_type: str) -> Callable:
 def register_for_original_columns_preselection() -> Callable:
     def wrapper(func: Callable) -> Callable:
         CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION.add(func.__name__)
+        return func
+
+    return wrapper
+
+
+def register_for_column_name_resolution() -> Callable:
+    """Marks a check function that parses string *column* / *columns* arguments as Spark SQL expressions.
+
+    Spark SQL cannot parse a column name that requires identifier escaping as a single column, e.g. "Long Name"
+    is read as column "Long" aliased to "Name". For check functions marked with this decorator, the engine passes
+    a check column that only resolves in the input DataFrame as a literal column name as a column reference
+    (*F.col*) instead, so names with spaces or special characters work without back-quoting.
+
+    Check functions that are not marked, including custom checks, always receive the *column* / *columns*
+    arguments exactly as defined in the check. Only mark a check function that accepts both string and Column
+    values for these arguments and does not require them to be strings.
+
+    Example usage:
+
+    ```python
+    @register_rule("row")
+    @register_for_column_name_resolution()
+    def my_check(column: str | Column) -> Column:
+        col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+        ...
+    ```
+
+    Returns:
+        A decorator that marks the function for column name resolution.
+    """
+
+    def wrapper(func: Callable) -> Callable:
+        setattr(func, CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE, True)
         return func
 
     return wrapper

@@ -46,6 +46,8 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
     requires_dbr_version,
     CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
+    register_for_column_name_resolution,
+    CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE,
 )
 from databricks.labs.dqx.checks_serializer import (
     ChecksSerializer,
@@ -2172,3 +2174,38 @@ def test_requires_dbr_version_returns_same_function():
 def test_requires_dbr_version_raises_on_invalid_version(bad_version):
     with pytest.raises(ValueError):
         requires_dbr_version(bad_version)
+
+
+def test_register_for_column_name_resolution_sets_attribute():
+    @register_for_column_name_resolution()
+    def my_check():
+        pass
+
+    assert getattr(my_check, CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE) is True
+
+
+def test_register_for_column_name_resolution_stacked_with_register_rule():
+    @register_rule("row")
+    @register_for_column_name_resolution()
+    def my_column_name_resolving_check():
+        pass
+
+    assert getattr(my_column_name_resolving_check, CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE) is True
+    assert CHECK_FUNC_REGISTRY.get("my_column_name_resolving_check") == "row"
+
+
+def test_register_for_column_name_resolution_returns_same_function():
+    def my_check():
+        pass
+
+    assert register_for_column_name_resolution()(my_check) is my_check
+
+
+def test_custom_check_is_not_registered_for_column_name_resolution_by_default():
+    """Custom checks must opt in, so existing custom checks keep receiving the columns exactly as defined."""
+
+    @register_rule("row")
+    def my_unmarked_custom_check():
+        pass
+
+    assert not hasattr(my_unmarked_custom_check, CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE)

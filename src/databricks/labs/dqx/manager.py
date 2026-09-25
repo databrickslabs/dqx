@@ -1,5 +1,6 @@
 import inspect
 import logging
+import re
 from datetime import datetime
 from dataclasses import dataclass
 from functools import cached_property
@@ -11,6 +12,7 @@ from pyspark.sql import DataFrame, Column, SparkSession
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
+    CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE,
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
@@ -24,6 +26,8 @@ from databricks.labs.dqx.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_UNQUOTED_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -125,16 +129,56 @@ class DQRuleManager:
         Column names that contain characters requiring SQL identifier escaping (e.g. spaces, such as
         "Customer Name") are back-quoted so they are unambiguous in the skip / error messages.
         """
-        invalid_cols = []
+        return [
+            self._display_column_name(column)
+            for column, resolved_column in zip(self.check_columns, self.resolved_check_columns)
+            if resolved_column is None
+        ]
 
-        if self.check.column is not None and self._is_invalid_column(self.check.column):
-            invalid_cols.append(self._display_column_name(self.check.column))
-        elif self.check.columns is not None:  # either column or columns can be provided, but not both
-            for column in self.check.columns:
-                if self._is_invalid_column(column):
-                    invalid_cols.append(self._display_column_name(column))
+    @cached_property
+    def check_columns(self) -> list[str | Column]:
+        """
+        Returns the check columns as a list, whether the check provides a single *column* or a list of *columns*.
+        """
+        if self.check.column is not None:
+            return [self.check.column]
+        if self.check.columns is not None:  # either column or columns can be provided, but not both
+            return list(self.check.columns)
+        return []
 
-        return invalid_cols
+    @cached_property
+    def resolved_check_columns(self) -> list[str | Column | None]:
+        """
+        Returns each of the check columns as resolved in the input DataFrame, in the same order as *check_columns*.
+        A column that cannot be resolved is returned as None.
+        """
+        return [self._resolve_column(column) for column in self.check_columns]
+
+    @cached_property
+    def resolved_check(self) -> DQRule:
+        """
+        Returns the check to execute.
+
+        Check functions registered with *register_for_column_name_resolution* parse string columns as Spark SQL
+        expressions, so a check column that only resolves as a literal column name (e.g. "Long Name", which Spark SQL
+        reads as column "Long" aliased to "Name") is passed to them as a column reference instead. All other check
+        functions, including custom checks, receive the columns exactly as defined in the check.
+
+        The resolved check is only used for execution. Reported check details and fingerprints come from *check*.
+        """
+        if not getattr(self.check.check_func, CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE, False):
+            return self.check
+
+        if all(resolved is column for column, resolved in zip(self.check_columns, self.resolved_check_columns)):
+            return self.check
+
+        resolved_columns = [
+            column if resolved is None else resolved
+            for column, resolved in zip(self.check_columns, self.resolved_check_columns)
+        ]
+        if self.check.column is not None:
+            return self.check.replace(column=resolved_columns[0])
+        return self.check.replace(columns=resolved_columns)
 
     @staticmethod
     def _display_column_name(column: str | Column) -> str:
@@ -210,7 +254,7 @@ class DQRuleManager:
             result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message), skipped=True)
             return DQCheckResult(condition=result_struct, check_df=self.df)
 
-        executor = DQRuleExecutorFactory.create(self.check)
+        executor = DQRuleExecutorFactory.create(self.resolved_check)
         raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
         return self._wrap_result(raw_result)
 
@@ -333,32 +377,70 @@ class DQRuleManager:
         Returns True if the specified column is invalid (i.e., cannot be resolved in the input DataFrame),
         otherwise False.
         """
-        try:
-            col_expr = F.expr(column) if isinstance(column, str) else column
-            _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
-        except AnalysisException as e:
-            # The input string may be a SQL expression (e.g. "a + b") or a plain column name that may require
-            # SQL identifier escaping (spaces / non-ASCII / reserved chars, e.g. "Customer Name"). To validate
-            # the input string, we first attempt F.expr() and retry failing strings as a backtick-quoted identifiers.
-            # String expressions parse cleanly and only genuine single-identifier names pass fallback validation.
-            if isinstance(column, str) and not self._is_invalid_quoted_column(column):
-                return False
-            # If column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown.
-            # Note: This does not cover all error conditions. Some issues only appear during a Spark action.
-            logger.debug(
-                f"Invalid column '{column}' provided in the check '{self.check.name}'",
-                exc_info=e,
-            )
-            return True
-        return False
+        return self._resolve_column(column) is None
 
-    def _is_invalid_quoted_column(self, column: str) -> bool:
+    def _resolve_column(self, column: str | Column) -> str | Column | None:
         """
-        Returns True if the string cannot be resolved as a single backtick-quoted column identifier,
-        otherwise False.
+        Returns the column as it resolves in the input DataFrame, or None if it cannot be resolved.
+
+        A string may be a column name or a Spark SQL expression (e.g. "a + b"). Spark SQL cannot parse a name that
+        requires identifier escaping as a single column (e.g. "Long Name" is read as column "Long" aliased to "Name"),
+        so the first of these forms that resolves is returned:
+        * a reference to the column, if the string exactly matches a top-level column name of the input DataFrame
+          (see *_get_column_reference*); this is checked against the DataFrame schema without further Spark analysis
+        * the column unchanged, if it resolves as an expression
+        * *F.col(name)* or *F.col("`name`")*, if the string resolves as a column reference (e.g. a nested field, or
+          a name that matches a column case-insensitively)
+
+        Note: this performs logical plan validation only, some issues only appear during a Spark action.
+        """
+        if isinstance(column, str) and column in self._input_column_names:
+            return self._get_column_reference(column)
+
+        expression_error = self._get_analysis_error(F.expr(column) if isinstance(column, str) else column)
+        if expression_error is None:
+            return column
+
+        if isinstance(column, str):
+            for column_reference in (F.col(column), F.col(quote_column_name(column))):
+                if self._get_analysis_error(column_reference) is None:
+                    return column_reference
+
+        logger.debug(
+            f"Invalid column '{sanitize_for_logging(str(column))}' provided in the check "
+            f"'{sanitize_for_logging(self.check.name)}'",
+            exc_info=expression_error,
+        )
+        return None
+
+    @cached_property
+    def _input_column_names(self) -> set[str]:
+        """
+        Returns the top-level column names of the input DataFrame.
+        """
+        return set(self.df.columns)
+
+    @staticmethod
+    def _get_column_reference(name: str) -> str | Column:
+        """
+        Returns a reference to an existing column of the input DataFrame by its exact name.
+
+        A name that is a valid unquoted SQL identifier (e.g. "col1") is returned unchanged, so it is used exactly as
+        before. Any other name is returned as a column reference so that it is not parsed as SQL: back-quoted when it
+        contains a dot or a backtick, which Spark would otherwise treat as a nested field or a quote.
+        """
+        if _UNQUOTED_IDENTIFIER_PATTERN.fullmatch(name):
+            return name
+        if "." in name or "`" in name:
+            return F.col(quote_column_name(name))
+        return F.col(name)
+
+    def _get_analysis_error(self, column: Column) -> AnalysisException | None:
+        """
+        Returns the error raised when resolving the column in the input DataFrame, or None if it resolves.
         """
         try:
-            _ = self.df.select(F.expr(quote_column_name(column))).schema
-        except AnalysisException:
-            return True
-        return False
+            _ = self.df.select(column).schema  # perform logical plan validation without triggering computation
+        except AnalysisException as e:
+            return e
+        return None

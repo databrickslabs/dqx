@@ -18,6 +18,13 @@ All rule types, including row-level and dataset-level rules, can be defined and 
 
 When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/docs/guide/quality_checks_definition) for the declarative format and validation section.
 
+<Admonition type="info" title="Column names with spaces or special characters">
+The `column` and `columns` arguments of built-in checks accept column names that contain spaces or special characters exactly as they appear in the DataFrame, for example `Long Name` or `Col with $pecial character`, without back-quoting.
+When a string exactly matches a column name of the checked DataFrame, DQX references that column instead of parsing the string as a Spark SQL expression (Spark SQL would otherwise read `Long Name` as column `Long` aliased to `Name`).
+Back-quoted names (e.g. ``"`Long Name`"``) and SQL expressions (e.g. `col1 + col2`) work as before.
+Other arguments that reference columns, such as `ref_columns`, `group_by`, or `column1` and `column2`, may still require back-quoting.
+</Admonition>
+
 You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.16.0/src/databricks/labs/dqx/check_funcs.py).
 
 <Admonition type="tip" title="Variable Substitution">
@@ -3975,6 +3982,27 @@ You should make sure to handle edge cases as part of your custom check (e.g. pro
     ```
   </TabItem>
 </Tabs>
+
+<Admonition type="tip" title="Column names with spaces or special characters in custom checks">
+Custom check functions receive the `column` and `columns` arguments exactly as defined in the check.
+If your check function parses string columns as Spark SQL expressions (e.g. using `F.expr` or `get_normalized_column_and_expr`) and accepts both string and `Column` values,
+register it with `register_for_column_name_resolution` so that DQX passes column names requiring escaping (e.g. `Long Name`) as column references:
+
+```python
+import pyspark.sql.functions as F
+from pyspark.sql import Column
+from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr
+from databricks.labs.dqx.rule import register_rule, register_for_column_name_resolution
+
+@register_rule("row")
+@register_for_column_name_resolution()
+def not_ends_with(column: str | Column, suffix: str) -> Column:
+  col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+  return make_condition(
+    col_expr.endswith(suffix), f"Column {col_expr_str} ends with {suffix}", f"{col_str_norm}_ends_with_{suffix}"
+  )
+```
+</Admonition>
 
 #### Execution of the custom python check programmatically using DQX classes
 
