@@ -65,5 +65,21 @@ anomaly_info_struct_schema = StructType(
         # two above: named-field queries keep working, a wider struct needs mergeSchema on append.
         StructField("is_stale_baseline", BooleanType(), True),
         StructField("stale_baseline_horizon", StringType(), True),
+        # How each column's share in *contributions* divides across the comparisons that column was
+        # judged on: its own value against the table, against its group's baseline (baseline_by), and
+        # against what its own history expects at that time (baseline_over_time). Keyed by a reader-facing
+        # label, and each column's entries total 100 among themselves rather than across the row, so these
+        # shares never compete with the column shares beside them.
+        #
+        # It exists because *contributions* structurally cannot carry it. Attribution is keyed by source
+        # column -- correctly, since explaining one engineered view at a time misattributes -- and that
+        # sums a column's views together. For a check on a single metric *contributions* is therefore
+        # {metric: 100} and conveys nothing at all, which is exactly the case a customer reported.
+        #
+        # Null means "not measured", never "no basis contributed": null for every row under the
+        # correlation-aware detector, whose leave-one-out attribution has no sound per-view split, and for
+        # a column compared only one way, which has no basis to disambiguate. Appended for the same reason
+        # as the four above: named-field queries keep working, a wider struct needs mergeSchema on append.
+        StructField("basis_contributions", MapType(StringType(), DoubleType()), True),
     ]
 )

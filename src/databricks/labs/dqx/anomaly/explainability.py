@@ -17,6 +17,7 @@ Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import mlflow.sklearn as mlflow_sklearn
@@ -28,7 +29,12 @@ from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.pipeline import Pipeline
 
-from databricks.labs.dqx.anomaly.scoring_config import TAIL_ANCHOR_PERCENTILE, TAIL_RATE_PERCENTILE
+from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
+from databricks.labs.dqx.anomaly.scoring_config import (
+    TAIL_ANCHOR_PERCENTILE,
+    TAIL_RATE_PERCENTILE,
+    ScoringOutputColumns,
+)
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
@@ -150,6 +156,119 @@ def format_shap_contributions(
             valid_row_idx += 1
 
     return contributions
+
+
+@dataclass(frozen=True)
+class RowContributions:
+    """A row's column shares, and how each column's share splits across the bases it was judged on.
+
+    *by_column* is the long-standing public map: one share per source column, summing to 100. It answers
+    "which column made this row look unusual".
+
+    *by_basis* answers the question that map structurally cannot. DQX can compare one metric three ways --
+    against the whole table, against its own group's baseline (*baseline_by*), and against what its own
+    history expects at that point in time (*baseline_over_time*) -- and every one of those is a separate
+    engineered view of the same column. Source-column blocking sums them, which is right for the column
+    share and erases which comparison actually fired. For a check on a single metric the column map is
+    therefore ``{metric: 100}`` and says nothing at all.
+
+    ``None`` for a row's *by_basis* means the split could not be measured, never that no basis
+    contributed. It is ``None`` for every row under the correlation-aware detector: its attribution is a
+    leave-one-out drop, and dropping one view of a column leaves a near-duplicate behind, so each view
+    measures almost nothing and normalising those numbers misattributes -- the exact error
+    :meth:`~databricks.labs.dqx.anomaly.correlation_detector.MahalanobisDetector.block_contributions`
+    exists to remove. Reporting nothing is the honest answer there.
+    """
+
+    by_column: list[dict[str, float | None] | None]
+    by_basis: list[dict[str, float | None] | None]
+
+    def as_columns(self) -> dict[str, list[dict[str, float | None] | None]]:
+        """Both maps under the output column names a scorer emits them as.
+
+        Keeps the pairing of field to column name in one place: every scorer builds a result dict and both
+        of them would otherwise spell out the same two assignments, which is duplication a reader has to
+        check rather than read.
+        """
+        columns = ScoringOutputColumns()
+        return {columns.contributions: self.by_column, columns.basis_contributions: self.by_basis}
+
+
+def supports_basis_split(model: Any) -> bool:
+    """Whether a per-view split of this model's attribution is sound.
+
+    True only for an estimator that goes through TreeSHAP. SHAP is additive, so a column's share is the
+    sum over its views and the split is those same values normalised within the block -- already computed
+    today and discarded by :func:`_sum_within_blocks`.
+
+    False for any estimator supplying attribution of its own, tested by the presence of
+    ``feature_contributions`` rather than of ``block_contributions``. That is the wider of the two tests
+    and deliberately so: the correlation-aware detector has both, but an older pickled copy of it can
+    arrive with only the former, because the module is registered with cloudpickle *by value* and an
+    older class definition travels inside a persisted model. Testing for the block method alone would let
+    that copy through and sum leave-one-out drops, which :func:`_attribute` refuses outright as unsound.
+
+    Unwraps a pipeline the same way :func:`compute_row_attributions` does, and duck-types for the same
+    reason: importing a concrete estimator here would drag it into every module that imports this one.
+    """
+    estimator = getattr(model, "named_steps", {}).get("model", model)
+    return not hasattr(estimator, "feature_contributions")
+
+
+def format_basis_contributions(
+    per_feature: np.ndarray,
+    blocks: dict[str, list[int]],
+    feature_labels: list[str],
+    valid_indices: np.ndarray,
+    num_rows: int,
+) -> list[dict[str, float | None] | None]:
+    """Split each column's evidence across its own engineered views, normalised within the column.
+
+    Normalised **within each block**, not across the whole row, and that is the point: these shares answer
+    "given that this column mattered, which comparison made it matter", so they must not compete with the
+    column-level shares in *by_column*. Each block's entries total 100 on their own.
+
+    Columns with a single view are omitted. A column compared only one way has no basis to disambiguate,
+    and emitting ``{col: 100}`` for it would pad the map with rows carrying no information -- the same
+    emptiness that makes a single-metric ``by_column`` map useless.
+
+    Negative values are dropped here, matching :func:`format_shap_contributions`: a view arguing the row is
+    *normal* is not a driver. The clip happens after blocking there and within the block here, so in both
+    places the signed values survive exactly as long as they are still being combined.
+
+    Args:
+        per_feature: Oriented per-feature attribution, shape ``(n_valid_rows, n_features)``. Signed.
+        blocks: Source column -> its feature positions, from
+            :func:`~databricks.labs.dqx.anomaly.feature_naming.source_block_indices`.
+        feature_labels: Reader-facing label per feature position, positionally matching *per_feature*.
+        valid_indices: Boolean mask over the caller's rows, marking which reached the attribution.
+        num_rows: Row count of the caller's frame, so the returned list aligns with it.
+
+    Returns:
+        One map per row, keyed by rendered view label, or ``None`` where nothing could be measured.
+    """
+    results: list[dict[str, float | None] | None] = [None] * num_rows
+    multi_view = {source: positions for source, positions in blocks.items() if len(positions) > 1}
+    if per_feature.size == 0 or not multi_view:
+        return results
+
+    width = per_feature.shape[1]
+    valid_row = 0
+    for row in range(num_rows):
+        if not valid_indices[row]:
+            continue
+        shares: dict[str, float | None] = {}
+        for positions in multi_view.values():
+            usable = [p for p in positions if 0 <= p < width]
+            magnitudes = np.maximum(per_feature[valid_row, usable], 0.0)
+            total = float(magnitudes.sum())
+            if total <= 0.0:
+                continue
+            for position, magnitude in zip(usable, magnitudes):
+                shares[feature_labels[position]] = round(float(magnitude) / total * 100.0, 1)
+        results[row] = shares or None
+        valid_row += 1
+    return results
 
 
 def compute_row_attributions(
@@ -436,8 +555,8 @@ def compute_gated_shap_contributions(
     scores: np.ndarray,
     quantile_points: list[tuple[float, float]] | None,
     threshold: float | None,
-    blocks: dict[str, list[int]] | None = None,
-) -> list[dict[str, float | None] | None]:
+    keys: AttributionKeys | None = None,
+) -> RowContributions:
     """Attribute only the rows whose severity reaches the anomaly threshold.
 
     TreeSHAP costs an order of magnitude more than scoring itself, and contributions are only
@@ -461,24 +580,77 @@ def compute_gated_shap_contributions(
     reason there is no setting for how many members to attribute. Such a knob would offer a choice between
     a correct explanation and a few percent of runtime, and the honest lever for anyone who does not want
     the cost is *enable_contributions=False*, which already exists.
+
+    Args:
+        models: The models behind the reported score. See :func:`mean_row_attributions`.
+        feature_matrix: Rows to attribute, already engineered.
+        engineered_feature_cols: Feature names, positionally matching *feature_matrix*.
+        scores: Raw anomaly scores for the same rows, used to gate.
+        quantile_points: Severity calibration knots; with *threshold*, what makes the gate possible.
+        threshold: Severity the row must reach to be attributed at all.
+        keys: Block positions per source column and a label per feature position, from
+            :meth:`~databricks.labs.dqx.anomaly.feature_naming.AttributionKeys.from_metadata`.
+            Attribution is keyed by source column when given, and the basis split is only attempted
+            then, because an unlabelled split would publish raw engineered names.
+
+    Returns:
+        :class:`RowContributions`. *by_column* is unchanged from what this function has always produced.
     """
     num_rows = len(feature_matrix)
     if not quantile_points or threshold is None:
-        attribution, valid_indices, keys = mean_row_attributions(
-            models, feature_matrix, engineered_feature_cols, blocks
-        )
-        return list(format_shap_contributions(attribution, valid_indices, num_rows, keys))
+        return _contributions_for_frame(models, feature_matrix, engineered_feature_cols, keys)
 
     severity = severity_from_scores(np.asarray(scores, dtype=float), quantile_points)
     anomalous_positions = np.flatnonzero(severity >= (float(threshold) - _SEVERITY_GATE_EPSILON))
-    contributions: list[dict[str, float | None] | None] = [None] * num_rows
+    by_column: list[dict[str, float | None] | None] = [None] * num_rows
+    by_basis: list[dict[str, float | None] | None] = [None] * num_rows
     if anomalous_positions.size:
         subset = feature_matrix.iloc[anomalous_positions]
-        attribution, valid_indices, keys = mean_row_attributions(models, subset, engineered_feature_cols, blocks)
-        subset_contributions = format_shap_contributions(attribution, valid_indices, len(subset), keys)
-        for position, contribution in zip(anomalous_positions.tolist(), subset_contributions):
-            contributions[position] = contribution
-    return contributions
+        gated = _contributions_for_frame(models, subset, engineered_feature_cols, keys)
+        for position, column_map, basis_map in zip(anomalous_positions.tolist(), gated.by_column, gated.by_basis):
+            by_column[position] = column_map
+            by_basis[position] = basis_map
+    return RowContributions(by_column=by_column, by_basis=by_basis)
+
+
+def _contributions_for_frame(
+    models: Sequence[Any],
+    feature_matrix: pd.DataFrame,
+    engineered_feature_cols: list[str],
+    keys: AttributionKeys | None,
+) -> RowContributions:
+    """Both public maps from a single attribution pass.
+
+    One pass, not two, because attribution is the expensive half: TreeSHAP costs roughly ten times
+    scoring. Where a basis split is sound the per-feature values are taken once and both views derived
+    from them, and where it is not the existing blocked call is made unchanged.
+
+    The blocked column map is **arithmetically identical** either way. Summing within blocks here is the
+    same operation :func:`_sum_within_blocks` performs inside the blocked call, applied to the same
+    oriented values, so turning the basis split on cannot move a single published column share.
+    """
+    num_rows = len(feature_matrix)
+    splittable = (
+        keys is not None and len(engineered_feature_cols) > 1 and all(supports_basis_split(model) for model in models)
+    )
+    if keys is None or not splittable:
+        blocks = keys.blocks if keys else None
+        attribution, valid_indices, names = mean_row_attributions(
+            models, feature_matrix, engineered_feature_cols, blocks
+        )
+        return RowContributions(
+            by_column=list(format_shap_contributions(attribution, valid_indices, num_rows, names)),
+            by_basis=[None] * num_rows,
+        )
+
+    per_feature, valid_indices, _ = mean_row_attributions(models, feature_matrix, engineered_feature_cols, None)
+    names = list(keys.blocks)
+    positions = [keys.blocks[name] for name in names]
+    blocked = _sum_within_blocks(per_feature, positions) if per_feature.size else per_feature
+    return RowContributions(
+        by_column=list(format_shap_contributions(blocked, valid_indices, num_rows, names)),
+        by_basis=format_basis_contributions(per_feature, keys.blocks, keys.labels, valid_indices, num_rows),
+    )
 
 
 def format_contributions_map(contributions_map: dict[str, float | None] | None, top_n: int) -> str:

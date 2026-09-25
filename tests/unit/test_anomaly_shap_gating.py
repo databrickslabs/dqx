@@ -42,7 +42,7 @@ def test_gated_contributions_computed_only_for_anomalous_rows(fitted_model_and_f
     scores = np.array([1.0, 1.2, 1.1, 10.0])
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], scores, QUANTILE_POINTS, threshold=85.0
-    )
+    ).by_column
     assert contributions[:3] == [None, None, None]
     assert isinstance(contributions[3], dict)
     assert set(contributions[3]) == {"amount", "quantity"}
@@ -55,7 +55,7 @@ def test_gated_contributions_fall_back_to_all_rows_without_quantile_points(fitte
     scores = np.array([1.0, 1.2, 1.1, 10.0])
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], scores, quantile_points=None, threshold=85.0
-    )
+    ).by_column
     assert all(isinstance(c, dict) for c in contributions)
 
 
@@ -65,7 +65,7 @@ def test_gated_contributions_epsilon_includes_threshold_boundary(fitted_model_an
     scores = np.array([1.0, 1.0, 1.0, 4.0])
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], scores, QUANTILE_POINTS, threshold=90.0
-    )
+    ).by_column
     assert contributions[:3] == [None, None, None]
     assert isinstance(contributions[3], dict)
 
@@ -97,7 +97,7 @@ def test_gating_behaves_identically_for_a_non_shap_estimator(fitted_mahalanobis_
 
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], scores, QUANTILE_POINTS, threshold=85.0
-    )
+    ).by_column
 
     assert contributions[:3] == [None, None, None]
     assert isinstance(contributions[3], dict)
@@ -112,7 +112,7 @@ def test_non_shap_contributions_are_map_compatible_with_the_shap_path(fitted_mah
 
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], scores, QUANTILE_POINTS, threshold=85.0
-    )
+    ).by_column
     anomalous = contributions[3]
 
     assert set(anomalous) == {"amount", "quantity"}
@@ -126,7 +126,7 @@ def test_non_shap_contributions_are_never_negative(fitted_mahalanobis_and_featur
 
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], np.array([9.0, 9.0, 9.0, 10.0]), QUANTILE_POINTS, threshold=10.0
-    )
+    ).by_column
 
     for row in contributions:
         assert row is not None
@@ -139,7 +139,7 @@ def test_the_deviating_feature_dominates_the_attribution(fitted_mahalanobis_and_
 
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], np.array([1.0, 1.2, 1.1, 10.0]), QUANTILE_POINTS, threshold=85.0
-    )
+    ).by_column
 
     assert contributions[3]["amount"] > contributions[3]["quantity"]
 
@@ -151,6 +151,6 @@ def test_rows_with_nulls_get_an_all_none_map(fitted_mahalanobis_and_features):
 
     contributions = compute_gated_shap_contributions(
         [model], features, ["amount", "quantity"], np.array([10.0, 10.0]), QUANTILE_POINTS, threshold=10.0
-    )
+    ).by_column
 
     assert all(value is None for value in contributions[1].values())

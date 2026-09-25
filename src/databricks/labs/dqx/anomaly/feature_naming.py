@@ -35,6 +35,8 @@ Fixed suffixes are tried last, accepted only when the remainder is a known sourc
 transform that appends the suffix actually ran for this model -- see ``_basis_ran``.
 """
 
+from dataclasses import dataclass
+
 from databricks.labs.dqx.anomaly.transformers import (
     BASELINE_RELATIVE_SUFFIX,
     TEMPORAL_RELATIVE_SUFFIX,
@@ -212,6 +214,46 @@ def source_blocks(metadata: SparkFeatureMetadata) -> dict[str, list[str]]:
     for name in metadata.engineered_feature_names:
         blocks.setdefault(source_column(name, metadata) or name, []).append(name)
     return blocks
+
+
+@dataclass(frozen=True)
+class AttributionKeys:
+    """Everything attribution needs from the persisted metadata to name what it reports.
+
+    The two travel together always: *blocks* says which feature positions make up each source column, and
+    *labels* supplies the words for those positions, so one without the other cannot produce a published
+    map. Bundled rather than passed as a pair because both are pure functions of the same metadata and both
+    have to be derived on the driver and closed over by a UDF, which is three call sites that would
+    otherwise each repeat the same two derivations.
+    """
+
+    blocks: dict[str, list[int]]
+    labels: list[str]
+
+    @classmethod
+    def from_metadata(cls, metadata: SparkFeatureMetadata) -> "AttributionKeys":
+        """Derive both from a model's persisted feature metadata."""
+        return cls(blocks=source_block_indices(metadata), labels=feature_labels(metadata))
+
+
+def feature_labels(metadata: SparkFeatureMetadata) -> list[str]:
+    """Reader-facing label for every engineered feature, in feature order.
+
+    The positional companion to :func:`source_block_indices`: that gives an attribution routine the
+    feature positions making up each column, this gives it the words for those positions. Together they
+    are what lets a within-column split be published as "units vs its expected level at that time" rather
+    than as ``units_rel_time``.
+
+    Positional, like ``engineered_feature_names`` itself, so a caller can index straight into it with a
+    feature position and must not sort or filter it.
+
+    Args:
+        metadata: The persisted feature metadata for the model.
+
+    Returns:
+        One label per engineered feature. A feature with nothing to translate labels as itself.
+    """
+    return [human_label(name, metadata) for name in metadata.engineered_feature_names]
 
 
 def source_block_indices(metadata: SparkFeatureMetadata) -> dict[str, list[int]]:

@@ -146,7 +146,9 @@ def test_the_gated_entry_point_takes_every_member(members: list[IsolationForest]
     """
     scores = np.array([0.40, 0.62, 0.61])
 
-    contributions = compute_gated_shap_contributions(members, probe, _COLUMNS, scores, _QUANTILE_POINTS, threshold=95.0)
+    contributions = compute_gated_shap_contributions(
+        members, probe, _COLUMNS, scores, _QUANTILE_POINTS, threshold=95.0
+    ).by_column
 
     assert contributions[0] is None, "an ordinary row should not be attributed at all"
     for anomalous in contributions[1:]:

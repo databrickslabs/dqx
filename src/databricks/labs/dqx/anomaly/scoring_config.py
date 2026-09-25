@@ -36,6 +36,9 @@ class ScoringOutputColumns:
     score: str = "anomaly_score"
     score_std: str = "anomaly_score_std"
     contributions: str = "anomaly_contributions"
+    # How each column's share in *contributions* splits across the bases that column was compared on.
+    # Null where the split cannot be measured soundly; see explainability.RowContributions.
+    basis_contributions: str = "anomaly_basis_contributions"
     severity: str = "severity_percentile"
     info: str = DefaultColumnNames.INFO.value
     ai_explanation: str = "ai_explanation"

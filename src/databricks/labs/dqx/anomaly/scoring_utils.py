@@ -117,6 +117,7 @@ def create_null_scored_dataframe(
     score_col: str = "anomaly_score",
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
+    basis_contributions_col: str = "anomaly_basis_contributions",
     severity_col: str = "severity_percentile",
     info_col_name: str = "_dq_info",
 ) -> DataFrame:
@@ -129,6 +130,7 @@ def create_null_scored_dataframe(
         score_col: Name for the score column
         score_std_col: Name for the standard deviation column
         contributions_col: Name for the contributions column
+        basis_contributions_col: Name for the per-basis contributions column
         severity_col: Name for the severity percentile column
         info_col_name: Name for the info struct column (collision-safe UUID name expected).
 
@@ -140,6 +142,7 @@ def create_null_scored_dataframe(
         result = result.withColumn(score_std_col, F.lit(None).cast(DoubleType()))
     if enable_contributions:
         result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
+        result = result.withColumn(basis_contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
     result = result.withColumn(severity_col, F.lit(None).cast(DoubleType()))
 
     null_anomaly_info = F.lit(None).cast(anomaly_info_struct_schema)
@@ -246,6 +249,17 @@ def add_info_column(
         ).otherwise(F.lit(None).cast(MapType(StringType(), DoubleType())))
     else:
         anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
+
+    # The basis split rides the same gate as the contributions it decomposes. Gating it separately could
+    # publish a split for a row whose column shares are null, which reads as evidence about a row the
+    # model declined to explain.
+    basis_col = output_columns.basis_contributions
+    if enable_contributions and basis_col in df.columns:
+        anomaly_info_fields["basis_contributions"] = F.when(
+            F.col(severity_col) >= F.lit(threshold), F.col(basis_col)
+        ).otherwise(F.lit(None).cast(MapType(StringType(), DoubleType())))
+    else:
+        anomaly_info_fields["basis_contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
 
     # Add confidence_std (null if not requested or not available)
     if enable_confidence_std and score_std_col in df.columns:
@@ -633,6 +647,10 @@ def create_udf_schema(enable_contributions: bool) -> StructType:
     ]
     if enable_contributions:
         schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
+        # Rides with the contributions rather than behind a flag of its own: it is derived from the very
+        # attribution that *enable_contributions* pays for, so it costs nothing extra once that is on and
+        # there is nothing to switch off independently.
+        schema_fields.append(StructField("anomaly_basis_contributions", MapType(StringType(), DoubleType()), True))
     return StructType(schema_fields)
 
 
