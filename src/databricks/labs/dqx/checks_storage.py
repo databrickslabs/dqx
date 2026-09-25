@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Generic, TypeVar, NoReturn
 from sqlalchemy import (
     DateTime,
@@ -211,6 +212,7 @@ class DataFrameConverter:
         run_config_name: str = "default",
         rule_set_fingerprint: str | None = None,
         created_at: datetime | None = None,
+        custom_checks: dict[str, Callable] | None = None,
     ) -> DataFrame:
         """
         Converts a list of quality checks defined as Python dictionaries to a DataFrame.
@@ -236,7 +238,7 @@ class DataFrameConverter:
         Raises:
             InvalidCheckError: If any check is invalid or unsupported.
         """
-        status = ChecksValidator.validate_checks(checks, None)
+        status = ChecksValidator.validate_checks(checks, custom_checks)
         if status.has_errors:
             raise InvalidCheckError(str(status))
 
@@ -245,7 +247,7 @@ class DataFrameConverter:
         rule_set_fingerprint = (
             rule_set_fingerprint
             if rule_set_fingerprint is not None
-            else compute_rule_set_fingerprint_by_metadata(checks)
+            else compute_rule_set_fingerprint_by_metadata(checks, custom_checks)
         )
 
         effective_created_at = created_at if created_at is not None else datetime.now(timezone.utc)
@@ -264,7 +266,9 @@ class DataFrameConverter:
                 "arguments": json_arguments,
             }
 
-            name, rule_fingerprint = DataFrameConverter._resolve_name_and_fingerprint(original_check, check)
+            name, rule_fingerprint = DataFrameConverter._resolve_name_and_fingerprint(
+                original_check, check, custom_checks
+            )
 
             # Values are already normalized by ChecksNormalizer.normalize; json.dumps for MAP<STRING, STRING>,
             # mirroring the arguments encoding so non-string user_metadata types survive the round-trip.
@@ -290,7 +294,9 @@ class DataFrameConverter:
         return spark.createDataFrame(dq_rule_rows, CHECKS_TABLE_SCHEMA)
 
     @staticmethod
-    def _resolve_name_and_fingerprint(original_check: dict, normalized_check: dict) -> tuple[str | None, str]:
+    def _resolve_name_and_fingerprint(
+        original_check: dict, normalized_check: dict, custom_checks: dict[str, Callable] | None = None
+    ) -> tuple[str | None, str]:
         """Resolve the stored name and rule_fingerprint so they match what apply writes into _errors/_warnings.
 
         A DQRule autogenerates its name in __post_init__ and includes that name in its fingerprint, so a check
@@ -308,7 +314,7 @@ class DataFrameConverter:
         check_inner = normalized_check.get("check") or {}
         if check_inner.get("for_each_column"):
             return normalized_check.get("name"), compute_rule_fingerprint(normalized_check)
-        rule = deserialize_checks([original_check])[0]
+        rule = deserialize_checks([original_check], custom_checks)[0]
         return rule.name, rule.rule_fingerprint
 
 
@@ -326,13 +332,14 @@ class ChecksStorageHandler(ABC, Generic[T]):
 
         Args:
             config: configuration for loading checks, including the table location and run configuration name.
-
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of
+                the calling module).
         Returns:
             list of dq rules or raise an error if checks file is missing or is invalid.
         """
 
     @abstractmethod
-    def save(self, checks: list[dict], config: T) -> None:
+    def save(self, checks: list[dict], config: T, custom_check_functions: dict[str, Callable] | None = None) -> None:
         """Save quality rules to the target."""
 
 
@@ -372,7 +379,12 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         )
 
     @telemetry_logger("save_checks", "table")
-    def save(self, checks: list[dict], config: TableChecksStorageConfig) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        config: TableChecksStorageConfig,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ) -> None:
         """
         Save checks to a Delta table in the workspace.
 
@@ -418,9 +430,13 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             )
 
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
-        rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks)
+        rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks, custom_check_functions)
         rules_df = DataFrameConverter.to_dataframe(
-            self.spark, checks, run_config_name=config.run_config_name, rule_set_fingerprint=rule_set_fingerprint
+            self.spark,
+            checks,
+            run_config_name=config.run_config_name,
+            rule_set_fingerprint=rule_set_fingerprint,
+            custom_checks=custom_check_functions,
         )
 
         # Skip save if rule_set_fingerprint already exists in existing table
@@ -962,7 +978,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 engine.dispose()
 
     @telemetry_logger("save_checks", "lakebase")
-    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        config: LakebaseChecksStorageConfig,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ) -> None:
         """
         Save dq rules (checks) to a Lakebase table.
 
@@ -1048,7 +1069,12 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
             raise InvalidCheckError(f"Invalid checks in file: {file_path}: {e}") from e
 
     @telemetry_logger("save_checks", "workspace_file")
-    def save(self, checks: list[dict], config: WorkspaceFileChecksStorageConfig) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        config: WorkspaceFileChecksStorageConfig,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ) -> None:
         """Save checks (dq rules) to yaml file in the workspace.
         This does not require installation of DQX in the workspace.
 
@@ -1097,7 +1123,12 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
         except (yaml.YAMLError, json.JSONDecodeError) as e:
             raise InvalidCheckError(f"Invalid checks in file: {file_path}: {e}") from e
 
-    def save(self, checks: list[dict], config: FileChecksStorageConfig) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        config: FileChecksStorageConfig,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ) -> None:
         """
         Save checks (dq rules) to a file (json or yaml) in the local filesystem.
 
@@ -1160,7 +1191,12 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         return handler.load(config)
 
     @telemetry_logger("save_checks", "installation")
-    def save(self, checks: list[dict], config: InstallationChecksStorageConfig) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        config: InstallationChecksStorageConfig,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ) -> None:
         """
         Save checks (dq rules) to yaml file or table in the installation folder.
         This will overwrite existing checks file or table.
@@ -1271,7 +1307,12 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
             raise InvalidCheckError(f"Invalid checks in file: {file_path}: {e}") from e
 
     @telemetry_logger("save_checks", "volume")
-    def save(self, checks: list[dict], config: VolumeFileChecksStorageConfig) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        config: VolumeFileChecksStorageConfig,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ) -> None:
         """Save checks (dq rules) to yaml file in a Unity Catalog volume.
         This does not require installation of DQX in a Unity Catalog volume.
 
