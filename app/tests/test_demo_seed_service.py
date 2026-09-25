@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.demo import manifest, redate
 from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
 from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService, demo_tag_targets
 
 
 def _svc(**over):
@@ -38,6 +39,7 @@ def _svc(**over):
         app_sql=create_autospec(SqlExecutor, instance=True),
         oltp=MagicMock(),
         sp_ws=create_autospec(WorkspaceClient, instance=True),
+        resource_tagger=create_autospec(ResourceTaggingService, instance=True),
         registry=create_autospec(RegistryService, instance=True),
         monitored_tables=create_autospec(MonitoredTableService, instance=True),
         apply_rules=create_autospec(ApplyRulesService, instance=True),
@@ -95,6 +97,25 @@ def test_run_creates_all_rules_and_writes_terminal_status():
     assert deps["status"].set.called
     last = deps["status"].set.call_args_list[-1].args[0]
     assert last.state in {"succeeded", "failed"}
+
+
+def test_build_source_data_tags_demo_schema_and_tables():
+    # Ownership tagging must run through the service-principal reconciler after
+    # the Studio-owned demo objects exist; it is separate from governed column
+    # tags, which use SET TAG SQL through the deployer's OBO executor.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    deps["resource_tagger"].reconcile.assert_called_once_with(
+        demo_tag_targets(
+            "dqx",
+            manifest.SOURCE_SCHEMA,
+            tuple(table.name for table in manifest.TABLES),
+        )
+    )
 
 
 def test_build_rules_uses_real_mode_and_polarity_per_spec():
@@ -452,9 +473,7 @@ def test_validation_gate_aborts_when_a_gate_run_fails():
     svc, deps = _svc()
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="gate-run")
-    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [] if "SELECT 1" in sql else [{"status": "FAILED"}]
-    )
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "SELECT 1" in sql else [{"status": "FAILED"}]
 
     binding_map = {"customers": "b-customers", "orders": "b-orders"}
     with pytest.raises(RuntimeError, match="terminated with status"):
@@ -477,9 +496,7 @@ def test_run_aborts_on_failed_gate_run_before_building_weekly_trend():
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="gate-run")
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
-    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [] if "SELECT 1" in sql else [{"status": "FAILED"}]
-    )
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "SELECT 1" in sql else [{"status": "FAILED"}]
 
     with pytest.raises(RuntimeError, match="terminated with status"):
         svc.run(user_email="admin@example.com", wipe_first=False, weeks=9)
@@ -508,9 +525,7 @@ def test_weekly_trend_skips_redate_for_a_failed_run(monkeypatch):
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     # every weekly run terminates FAILED
-    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [] if "SELECT 1" in sql else [{"status": "FAILED"}]
-    )
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "SELECT 1" in sql else [{"status": "FAILED"}]
 
     binding_map = {"customers": "b-customers", "orders": "b-orders"}
     rule_map = {spec.key: "r1" for spec in manifest.RULES}
