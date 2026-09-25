@@ -1,4 +1,4 @@
-"""Unit tests for MLflow anomaly model registry compatibility.
+"""Unit tests for the MLflow anomaly model registry.
 
 ``mlflow.sklearn`` is imported explicitly, and that import is load-bearing rather than tidiness. On
 MLflow 3 ``mlflow.sklearn`` is a ``LazyLoader`` until something touches it, and patching an attribute on
@@ -15,7 +15,7 @@ import mlflow.sklearn  # noqa: F401  -- see below
 
 from databricks.labs.dqx.anomaly.mlflow_registry import (
     SKLEARN_SERIALIZATION_FORMAT,
-    log_sklearn_model_compatible,
+    log_sklearn_model,
 )
 
 
@@ -29,7 +29,7 @@ class _DummySignature:
     outputs = None
 
 
-def test_log_model_uses_name_when_supported(monkeypatch):
+def test_log_sklearn_model_forwards_name_and_serialization_format(monkeypatch):
     captured = {}
 
     def fake_log_model(*, sk_model, name, registered_model_name, signature, serialization_format):
@@ -44,7 +44,7 @@ def test_log_model_uses_name_when_supported(monkeypatch):
 
     monkeypatch.setattr(mlflow.sklearn, "log_model", fake_log_model)
 
-    info = log_sklearn_model_compatible(
+    info = log_sklearn_model(
         model=_DummyModel(),
         model_name="catalog.schema.model",
         signature=_DummySignature(),

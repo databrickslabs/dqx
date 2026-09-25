@@ -4,7 +4,7 @@ This is the only place the correlation-aware detector is exercised through the r
 before it is unit-level (numpy) or offline (the SMD bake-off), and neither can answer the two questions
 that only a workspace can:
 
-1. **Does MLflow round-trip a DQX-defined estimator class at all?** ``log_sklearn_model_compatible``
+1. **Does MLflow round-trip a DQX-defined estimator class at all?** ``log_sklearn_model``
    passes no *code_paths* and no *pip_requirements* (``mlflow_registry.py:167``). The sklearn flavour
    defaults to cloudpickle, and ``correlation_detector`` registers itself for pickle-by-value, so the
    class should travel inside the artifact -- but "should" is the word this test exists to remove.
