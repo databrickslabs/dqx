@@ -2001,14 +2001,35 @@ The top-level `filter` condition is pushed down as `row_filter` to the check fun
 
 **Compare datasets check**
 
-By default, duplicate-key groups are paired lazily: rows within each group are ordered by the string representation of
-their compared values with nulls first, assigned a row number, and joined on the matching keys plus that row number.
-Numeric values sort lexically (for example, `"10"` before `"2"`), while the comparison itself uses the original values.
+By default, duplicate-key groups are paired lazily: rows within each group are ordered by their compared
+values with nulls first, assigned a row number, and joined on the matching keys plus that row number.
+Numeric columns are ordered by their native value (so magnitude ordering is preserved); other types are ordered by
+their string representation, while the comparison itself uses the original values.
 This avoids Cartesian fan-out without triggering eager validation jobs. It adds window partitioning and sorting, and
 does not search for the pairing that produces the fewest differences. Unique-key groups still match one-to-one.
 
-Set `raise_on_duplicate_keys: true` to require unique matching keys in both datasets. This opt-in validation eagerly
-executes Spark jobs and raises `InvalidParameterError` if either dataset contains duplicate matching-key combinations.
+With `abs_tolerance`/`rel_tolerance`, only exactly-equal values are paired up front; values that match solely within a
+tolerance fall to positional pairing, which is a greedy heuristic rather than an optimal tolerance matching. For
+duplicate matching keys whose within-tolerance partners interleave, deduplicate the matching keys first if you need
+exact one-to-one tolerance pairing.
+
+When a `filter` (`row_filter`) is present, lazy pairing first matches in-scope rows with equal compared values. Remaining
+in-scope rows are paired positionally. Filtered-out rows can pair with reference rows only for keys with no in-scope
+source rows. This preserves available exact matches and reports surplus reference rows as missing when
+`check_missing_records` is enabled. The filter applies only to source rows; all reference rows remain eligible for
+residual pairing. Consequently, an unmatched in-scope duplicate can be paired
+with a reference value equal to a filtered-out source row and reported as changed. A present source row whose filter
+evaluates to NULL is out of scope, matching Spark `WHERE` semantics. Genuinely reference-only rows are still reported
+when `check_missing_records` is enabled.
+
+The exact-value phase runs for every filtered lazy comparison, even when the matching keys
+are unique. It adds two value-group aggregations, two joins, and exact and residual ranking to the physical plan. For
+large inputs with known-unique keys, use `raise_on_duplicate_keys: true` to trade an eager uniqueness check for the
+simpler single-join comparison.
+
+Set `raise_on_duplicate_keys: true` to require unique matching keys among in-scope source rows and all reference rows.
+This opt-in validation eagerly executes Spark jobs and raises `InvalidParameterError` if either checked row set contains
+duplicate matching-key combinations.
 When the matching keys are known to be unique, this is also the more efficient option: it validates uniqueness with a
 lightweight aggregation and then pairs rows with a single join, skipping the per-group row-number windows (and their
 sort of both datasets) used by the default lazy pairing.

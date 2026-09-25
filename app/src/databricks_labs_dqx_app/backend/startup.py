@@ -44,6 +44,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import Binding
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
+from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -421,7 +422,7 @@ async def _run_post_migration_startup(
     resources: ActiveResources,
 ) -> None:
     _ensure_score_views(delta_sql, resources)
-    _ensure_metadata_dims(delta_sql, oltp, resources)
+    await _ensure_metadata_dims(delta_sql, oltp, resources)
     _ensure_entitlement_objects(delta_sql, resources)
     _grant_user_view_access(delta_sql, resources)
     await asyncio.to_thread(_ensure_genie_space, workspace, resources, oltp)
@@ -450,18 +451,20 @@ def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> N
         logger.warning("Could not create the DQ score views")
 
 
-def _ensure_metadata_dims(
+async def _ensure_metadata_dims(
     delta_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
     resources: ActiveResources,
 ) -> None:
     try:
-        MetadataDimService(
-            sp_sql=delta_sql,
-            registry=RegistryService(sql=oltp),
-            monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
-            genie_schema=resources.genie_schema,
-        ).refresh()
+        await refresh_metadata_dims(
+            MetadataDimService(
+                sp_sql=delta_sql,
+                registry=RegistryService(sql=oltp),
+                monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
+                genie_schema=resources.genie_schema,
+            )
+        )
     except Exception:
         logger.warning("Could not refresh the DQ metadata dimensions")
 
@@ -504,15 +507,10 @@ def _ensure_genie_space(
     try:
         from databricks_labs_dqx_app.backend.services.genie_space_service import ensure_dq_genie_space
 
-        try:
-            parent_path = f"/Users/{workspace.current_user.me().user_name}"
-        except Exception:
-            parent_path = "/Shared"
         ensure_dq_genie_space(
             settings=AppSettingsService(sql=oltp),
             ws=workspace,
             warehouse_id=resources.warehouse_id,
-            parent_path=parent_path,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
         )
@@ -597,12 +595,6 @@ async def _start_scheduler(
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=delta_sql)
         registry = RegistryService(sql=oltp)
         settings = AppSettingsService(sql=oltp)
-        metadata_dims = MetadataDimService(
-            sp_sql=delta_sql,
-            registry=registry,
-            monitored_tables=monitored_tables,
-            genie_schema=resources.genie_schema,
-        )
         tag_reconcile = TagReconcileService(
             registry=registry,
             monitored_tables=monitored_tables,
@@ -620,7 +612,6 @@ async def _start_scheduler(
             oltp_sql=oltp,
             data_product_service=data_products,
             binding_run_service=binding_runs,
-            metadata_dim_service=metadata_dims,
             score_cache_service=ScoreCacheService(
                 oltp=oltp,
                 warehouse_sql=delta_sql,

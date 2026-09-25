@@ -39,7 +39,6 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
-from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
@@ -162,10 +161,10 @@ _GC_HOUR_UTC = 1
 _GC_AGE_HOURS = 48
 _GC_MAX_DROPS_PER_RUN = 500
 
-# Hourly sweep for tmp views whose runs finished (or were abandoned) but
+# Daily sweep for tmp views whose runs finished (or were abandoned) but
 # whose per-run status poll never fired ``drop_view``. This is the main
 # safety net — the weekly age-based GC below is belt-and-braces.
-_TMP_VIEW_SWEEP_INTERVAL_HOURS = 1
+_TMP_VIEW_SWEEP_INTERVAL_HOURS = 24
 _TMP_VIEW_SWEEP_MAX_RUNS = 50
 
 # Retention sweep — daily DELETE pass against the high-volume tables to
@@ -190,14 +189,6 @@ _RETENTION_INTERVAL_HOURS = 24
 _QUARANTINE_RETENTION_DAYS_DEFAULT = 30
 _QUARANTINE_TABLE_NAME = "dq_quarantine_records"
 
-# The rule + monitored-table metadata dims (``dim_dq_rules`` /
-# ``dim_dq_monitored_tables``) are full-refreshed from the Rules Registry
-# once per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so the Genie space's
-# authoring/ownership data sources stay current between deploys. Hourly
-# (vs. retention's daily) because registry edits are user-facing and cheap
-# to re-materialize at page scale.
-_METADATA_DIM_REFRESH_INTERVAL_HOURS = 1
-
 # Apply-on-tag reconcile sweep (Task 7): a low-frequency pass that re-attaches
 # every published tag-mapped rule across all monitored tables, catching tag
 # changes on already-monitored tables (the publish/register route hooks handle
@@ -206,6 +197,26 @@ _METADATA_DIM_REFRESH_INTERVAL_HOURS = 1
 # reads every monitored table's columns via the SP client. A no-op when no
 # ``tag_reconcile_service`` was wired or when tag-auto-apply is off.
 _TAG_RECONCILE_INTERVAL_HOURS = 6
+
+# Scheduler loop poll cadence. When any schedule is active (a non-manual,
+# non-paused scope config, a cron-scheduled data product, or a cron-scheduled
+# monitored table) the loop wakes every ``_ACTIVE_POLL_SECONDS`` so due runs
+# fire promptly. When nothing is scheduled it backs off to
+# ``_IDLE_POLL_SECONDS`` so the ``_tick`` query against the OLTP store stops
+# pinning a scale-to-zero Lakebase endpoint awake every minute — the endpoint
+# can then suspend in the gaps. ``reload()`` still wakes the loop immediately
+# when a schedule config is saved (see the config/schedule routes), so the
+# longer idle interval only ever bounds first pickup of a schedule created
+# while idle.
+#
+# The idle interval is set to one hour to match the current idle floor: the
+# hourly metadata-dim refresh (``_METADATA_DIM_REFRESH_INTERVAL_HOURS``) reads
+# the Lakebase Rules Registry every hour regardless, so polling less often than
+# that would not let Lakebase suspend any longer. Lowering that floor (and thus
+# raising this interval to multi-hour) requires making the metadata refresh
+# skip-when-unchanged — deferred.
+_ACTIVE_POLL_SECONDS = 60
+_IDLE_POLL_SECONDS = 3600
 
 # System attribution for scheduler-initiated writes (mirrors the
 # ``user_email="scheduler"`` the product/table run ticks already use).
@@ -224,7 +235,7 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_metrics", "run_time"),
 )
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
-    ("dq_quality_rules_history", "changed_at"),
+    ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
 )
 
@@ -245,7 +256,6 @@ class SchedulerService:
         binding_run_service: BindingRunService | None = None,
         score_cache_service: ScoreCacheService | None = None,
         monitored_table_service: MonitoredTableService | None = None,
-        metadata_dim_service: MetadataDimService | None = None,
         tag_reconcile_service: TagReconcileService | None = None,
         reconcile_scores_on_start: bool = False,
     ) -> None:
@@ -294,22 +304,13 @@ class SchedulerService:
             "Last run" column and table-space last-run stay current for runs
             no browser observed, without the list path ever touching the
             warehouse. When ``None`` the timestamp write is skipped.
-        metadata_dim_service:
-            Optional collaborator that full-refreshes the rule +
-            monitored-table metadata dims (``dim_dq_rules`` /
-            ``dim_dq_monitored_tables``) the Genie space queries. When set,
-            :meth:`_maybe_refresh_metadata_dims` re-materializes them once
-            per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so registry edits
-            reach Genie without a redeploy. When ``None`` (legacy
-            deployments, unit tests) the tick is a no-op — a fourth,
-            independent timer that touches no state the other ticks read.
         tag_reconcile_service:
             Optional apply-on-tag orchestrator (Task 7). When set,
             :meth:`_maybe_run_tag_reconcile` runs a full reconcile sweep once
             per ``_TAG_RECONCILE_INTERVAL_HOURS`` so tag changes on
             already-monitored tables re-attach their matching published rules
             without a publish/register event. When ``None`` (legacy
-            deployments, unit tests) the tick is a no-op — a fifth independent
+            deployments, unit tests) the tick is a no-op — a fourth independent
             timer that touches no state the other ticks read. The sweep is
             itself a no-op when the ``tag_auto_apply`` setting is off.
         reconcile_scores_on_start:
@@ -348,14 +349,13 @@ class SchedulerService:
         self._table = self._oltp_sql.fqn("dq_schedule_runs")
         self._configs_table = self._oltp_sql.fqn("dq_schedule_configs")
         self._settings_table = self._oltp_sql.fqn("dq_app_settings")
-        self._rules_table = self._oltp_sql.fqn("dq_quality_rules")
+        self._rules_table = self._oltp_sql.fqn("dq_resolved_rules")
         self._products_table = self._oltp_sql.fqn("dq_data_products")
         self._monitored_tables_table = self._oltp_sql.fqn("dq_monitored_tables")
         self._data_product_service = data_product_service
         self._binding_run_service = binding_run_service
         self._score_cache_service = score_cache_service
         self._monitored_table_service = monitored_table_service
-        self._metadata_dim_service = metadata_dim_service
         self._tag_reconcile_service = tag_reconcile_service
         # Scheduler-launched runs awaiting their dq_validation_runs
         # terminal row, run_id -> launch time (UTC). In-memory only:
@@ -389,7 +389,7 @@ class SchedulerService:
         # and orphans only accumulate slowly.
         self._next_view_gc_at: datetime = self._next_saturday_01_utc(datetime.now(timezone.utc))
 
-        # Hourly tmp-view sweep: drops views for terminal/abandoned runs.
+        # Daily tmp-view sweep: drops views for terminal/abandoned runs.
         # Fires on the first scheduler tick after boot so a redeploy
         # quickly reaps anything a browser never polled to completion.
         self._next_tmp_view_sweep_at: datetime = datetime.now(timezone.utc)
@@ -398,14 +398,6 @@ class SchedulerService:
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
-
-        # Metadata-dim refresh: fires every
-        # ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` (default 1h). Held in
-        # process memory like the retention sweep; the app also refreshes once
-        # at startup, so a missed tick is harmless.
-        self._next_metadata_dim_refresh_at: datetime = datetime.now(timezone.utc) + timedelta(
-            hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS
-        )
 
         # Apply-on-tag reconcile sweep: fires every
         # ``_TAG_RECONCILE_INTERVAL_HOURS`` (default 6h). Held in process
@@ -448,30 +440,63 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
-        """Check schedules every 60 seconds and trigger due runs."""
+        """Trigger due runs, then sleep until the next tick or a ``reload()``.
+
+        The sleep cadence adapts to whether anything is scheduled (see
+        :meth:`_poll_interval_seconds`): the tight ``_ACTIVE_POLL_SECONDS``
+        while schedules exist, and the longer ``_IDLE_POLL_SECONDS`` when the
+        app is idle so the ``_tick`` query stops pinning a scale-to-zero
+        Lakebase endpoint awake every minute. ``reload()`` interrupts the sleep
+        immediately when a schedule is saved, so the longer idle interval never
+        delays a schedule the user just created.
+        """
         while True:
+            # Default to the active cadence: if a tick raises before it can
+            # report, keep polling tightly rather than risk backing off while
+            # real work is pending.
+            has_active_work = True
             try:
                 recalc = self._force_recalc
                 self._force_recalc = False
-                await self._tick(recalc=recalc)
+                has_active_work = await self._tick(recalc=recalc)
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
                 await self._maybe_sweep_stale_tmp_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
                 await self._maybe_run_tag_reconcile(datetime.now(timezone.utc))
-                await self._maybe_refresh_metadata_dims(datetime.now(timezone.utc))
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Scheduler tick failed")
 
             try:
-                await asyncio.wait_for(self._reload_event.wait(), timeout=60)
+                timeout = self._poll_interval_seconds(has_active_work)
+                await asyncio.wait_for(self._reload_event.wait(), timeout=timeout)
                 self._reload_event.clear()
             except asyncio.TimeoutError:
                 pass
 
-    async def _tick(self, *, recalc: bool = False) -> None:
+    def _poll_interval_seconds(self, has_active_work: bool) -> int:
+        """Seconds to sleep before the next tick.
+
+        Active schedules need the tight ``_ACTIVE_POLL_SECONDS`` cadence so due
+        runs fire promptly. When nothing is scheduled we back off to
+        ``_IDLE_POLL_SECONDS`` so the OLTP-store query in :meth:`_tick` stops
+        holding a scale-to-zero Lakebase endpoint awake — the endpoint can
+        suspend in the gap and ``reload()`` still wakes us the instant a
+        schedule is saved.
+        """
+        return _ACTIVE_POLL_SECONDS if has_active_work else _IDLE_POLL_SECONDS
+
+    async def _tick(self, *, recalc: bool = False) -> bool:
         """Single scheduler iteration: load configs, check each, trigger if due.
+
+        Returns ``True`` when at least one *active* schedule exists — a
+        non-manual, non-paused scope config, a cron-scheduled data product, or
+        a cron-scheduled monitored table — or a scheduler-tracked run is still
+        awaiting its completion score refresh, so :meth:`_loop` knows whether it
+        can back off (see :meth:`_poll_interval_seconds`). A due-ness source
+        that errors counts as active, so a transient failure never lets the
+        loop go idle while real work may be pending.
 
         When *recalc* is True (after a config save), ``next_run_at`` is
         recomputed from the current config so schedule time changes take
@@ -492,6 +517,7 @@ class SchedulerService:
         else:
             logger.info("Scheduler tick: found %d config(s), recalc=%s", len(configs), recalc)
 
+        active_configs = 0
         for name, cfg in configs.items():
             freq = cfg.get("frequency", "manual")
             if freq == "manual":
@@ -503,6 +529,10 @@ class SchedulerService:
             # next tick simply picks the schedule back up.
             if cfg.get("paused"):
                 continue
+
+            # A non-manual, non-paused config is active work: the loop must
+            # keep polling tightly to fire it even if it is not due yet.
+            active_configs += 1
 
             try:
                 tracker = await asyncio.to_thread(self._get_tracker, name)
@@ -574,20 +604,27 @@ class SchedulerService:
         # product-tick failure is fully isolated inside
         # :meth:`_tick_products` and cannot roll back or skip anything
         # the config loop already did.
+        # An errored source is treated as active work so the active-work
+        # check below keeps polling tightly rather than letting a transient
+        # failure back the loop off.
+        product_active = False
         try:
-            await asyncio.to_thread(self._tick_products, now)
+            product_active = await asyncio.to_thread(self._tick_products, now) > 0
         except Exception:
             logger.exception("Scheduler failed processing Data Product schedules")
+            product_active = True
 
         # Third, independent due-ness source (P21 item 14): monitored
         # tables with an approved snapshot (``version > 0``) carrying a
         # cron — not gated on current review ``status``, see
         # :meth:`_load_scheduled_tables`. Fully isolated inside
         # :meth:`_tick_monitored_tables` like the product tick above.
+        table_active = False
         try:
-            await asyncio.to_thread(self._tick_monitored_tables, now)
+            table_active = await asyncio.to_thread(self._tick_monitored_tables, now) > 0
         except Exception:
             logger.exception("Scheduler failed processing monitored-table schedules")
+            table_active = True
 
         # Completion observation: refresh the Lakebase score cache for any
         # scheduler-launched run whose terminal ``dq_validation_runs`` row
@@ -598,6 +635,17 @@ class SchedulerService:
             await asyncio.to_thread(self._refresh_scores_for_completed_runs, now)
         except Exception:
             logger.exception("Scheduler failed refreshing the score cache for completed runs")
+
+        # Active when any due-ness source has scheduled work (or errored), or a
+        # scheduler-tracked run is still awaiting its completion score refresh.
+        # Score-refresh is completion bookkeeping, not a due-ness source, but it
+        # piggybacks on the 60s tick — backing off to the idle interval while a
+        # run is pending would leave its score cache and last-run timestamps
+        # stale for up to an hour (out-of-band manual runs reach
+        # ``_pending_score_runs`` via ``_sweep_recent_run_sets`` with no schedule
+        # configured), so a non-empty pending set keeps the tight cadence until
+        # the run's terminal row is observed.
+        return active_configs > 0 or product_active or table_active or bool(self._pending_score_runs)
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
@@ -651,8 +699,12 @@ class SchedulerService:
     # back to UTC, matching the scope-config path's behaviour for the
     # common case where no timezone was configured.
 
-    def _tick_products(self, now: datetime) -> None:
+    def _tick_products(self, now: datetime) -> int:
         """Check every cron-scheduled Table Space with an approved snapshot and trigger due ones.
+
+        Returns the number of cron-scheduled products found (0 when the
+        scheduler has no :class:`DataProductService` or none are scheduled) so
+        :meth:`_tick` can fold it into its active-work signal.
 
         Eligibility (see :meth:`_load_scheduled_products`) is
         ``version > 0``, not the space's current review ``status`` — a
@@ -666,11 +718,11 @@ class SchedulerService:
         to call unconditionally from :meth:`_tick`.
         """
         if self._data_product_service is None:
-            return
+            return 0
 
         products = self._load_scheduled_products()
         if not products:
-            return
+            return 0
 
         logger.info("Scheduler tick: found %d scheduled data product(s)", len(products))
 
@@ -679,6 +731,8 @@ class SchedulerService:
                 self._tick_one_product(product, now)
             except Exception:
                 logger.exception("Scheduler failed processing product schedule 'product:%s'", product["product_id"])
+
+        return len(products)
 
     def _load_scheduled_products(self) -> list[dict[str, Any]]:
         """Return cron-scheduled Table Spaces that have an approved (frozen) snapshot.
@@ -879,20 +933,19 @@ class SchedulerService:
     # scheduler runs the frozen, already-reviewed snapshot regardless of
     # whether the binding is currently mid-review for NEWER content.
 
-    def _tick_monitored_tables(self, now: datetime) -> None:
+    def _tick_monitored_tables(self, now: datetime) -> int:
         """Check every cron-scheduled monitored table with an approved snapshot and trigger due ones.
 
-        No-op when the scheduler was constructed without a
-        :class:`BindingRunService` (legacy deployments, or unit tests that
-        only exercise the other paths) — safe to call unconditionally from
-        :meth:`_tick`.
+        Returns the number of cron-scheduled monitored tables found (0 when the
+        scheduler has no :class:`BindingRunService` or none are scheduled) so
+        :meth:`_tick` can fold it into its active-work signal.
         """
         if self._binding_run_service is None:
-            return
+            return 0
 
         tables = self._load_scheduled_tables()
         if not tables:
-            return
+            return 0
 
         logger.info("Scheduler tick: found %d scheduled monitored table(s)", len(tables))
 
@@ -901,6 +954,8 @@ class SchedulerService:
                 self._tick_one_table(table, now)
             except Exception:
                 logger.exception("Scheduler failed processing table schedule 'table:%s'", table["binding_id"])
+
+        return len(tables)
 
     def _load_scheduled_tables(self) -> list[dict[str, Any]]:
         """Return cron-scheduled monitored tables that have an approved (frozen) snapshot.
@@ -2046,7 +2101,7 @@ class SchedulerService:
         return None
 
     # ------------------------------------------------------------------
-    # Stale tmp-view sweep (hourly)
+    # Stale tmp-view sweep (daily)
     # ------------------------------------------------------------------
 
     async def _maybe_sweep_stale_tmp_views(self, now: datetime) -> None:
@@ -2382,32 +2437,6 @@ class SchedulerService:
             await asyncio.to_thread(self._tag_reconcile_service.sweep, _SCHEDULER_SYSTEM_USER)
         except Exception:
             logger.exception("Tag-reconcile sweep failed (non-fatal)")
-
-    async def _maybe_refresh_metadata_dims(self, now: datetime) -> None:
-        """Full-refresh the metadata dims if the hourly timer has elapsed.
-
-        No-op when no ``metadata_dim_service`` was wired (legacy deployments,
-        unit tests). Cheap to skip (one comparison) and runs in a background
-        thread so it doesn't block the loop. Failures are logged but never
-        fatal — the next tick re-tries.
-        """
-        if self._metadata_dim_service is None:
-            return
-        if now < self._next_metadata_dim_refresh_at:
-            return
-
-        scheduled_for = self._next_metadata_dim_refresh_at
-        # Advance the timer first so a slow refresh can't double-fire.
-        self._next_metadata_dim_refresh_at = now + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
-        logger.info(
-            "Metadata-dim refresh: triggering hourly rebuild (was due at %s); next run scheduled for %s",
-            scheduled_for.isoformat(),
-            self._next_metadata_dim_refresh_at.isoformat(),
-        )
-        try:
-            await asyncio.to_thread(self._metadata_dim_service.refresh)
-        except Exception:
-            logger.exception("Metadata-dim refresh failed (non-fatal)")
 
     def _run_retention(self) -> None:
         """DELETE rows older than ``retention_days`` from each high-volume table.
