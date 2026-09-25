@@ -303,7 +303,7 @@ def quote_column_name(name: str) -> str:
 
     Column names containing spaces, non-ASCII characters, or other characters that require escaping
     (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before
-    being parsed by ``F.expr``.
+    being parsed by *F.expr*.
 
     Args:
         name: Column name to quote.
@@ -317,7 +317,7 @@ def quote_column_name(name: str) -> str:
 
 def unquote_column_name(name: str) -> str:
     """
-    Removes surrounding back-quotes from a column name, reversing :func:`quote_column_name`.
+    Removes surrounding back-quotes from a column name, reversing *quote_column_name*.
 
     A column reference that the user already back-quoted (e.g. "`Customer Name`") is unwrapped to its
     plain form ("Customer Name") for use in display names and messages. Strings that are not a single
@@ -330,13 +330,19 @@ def unquote_column_name(name: str) -> str:
         The column name without surrounding back-quotes.
     """
     if len(name) >= 2 and name.startswith("`") and name.endswith("`"):
-        return name[1:-1].replace("``", "`")
+        inner = name[1:-1]
+        # Only unwrap a single back-quoted identifier. A dotted path of individually quoted segments
+        # (e.g. "`Odd Name`.`field`") also starts and ends with a back-quote but is not one identifier;
+        # unwrapping it would mangle the path, so leave it unchanged for F.expr to resolve. A lone
+        # back-quote surviving after doubled "``" escapes are removed marks such a multi-segment string.
+        if "`" not in inner.replace("``", ""):
+            return inner.replace("``", "`")
     return name
 
 
 def normalize_column_expr(column: str) -> str:
     """
-    Prepares a column reference string for use with ``F.expr``, back-quoting names that require SQL
+    Prepares a column reference string for use with *F.expr*, back-quoting names that require SQL
     identifier escaping while leaving SQL expressions untouched.
 
     Check functions accept a column as either a plain name or a SQL expression string. A plain name that

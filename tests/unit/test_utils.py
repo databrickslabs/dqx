@@ -961,6 +961,10 @@ def test_quote_column_name():
         ("struct_col.field1", "struct_col.field1"),
         ("a + b", "a + b"),
         ("*", "*"),
+        # A dotted path of individually back-quoted segments also starts and ends with a back-quote but
+        # is not one identifier: it is returned unchanged rather than mangled by stripping only the
+        # outer back-quotes.
+        ("`Odd Name`.`field`", "`Odd Name`.`field`"),
     ],
 )
 def test_unquote_column_name(name: str, expected: str):
