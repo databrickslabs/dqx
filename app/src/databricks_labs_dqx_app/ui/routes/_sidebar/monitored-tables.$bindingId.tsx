@@ -76,6 +76,7 @@ import {
   getGetMonitoredTableQueryKey,
   getListMonitoredTablesQueryKey,
   useSubmitProfileRun,
+  useGetProfilerSample,
   getProfileRunStatus,
   useListProfileRuns,
   useGetProfileRunResults,
@@ -86,6 +87,7 @@ import {
   useGetTableTags,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
+  useGetDraftRunSampleLimit,
   useSuggestRulesForTable,
   usePreviewTableData,
   useQueryTableData,
@@ -125,12 +127,10 @@ import {
   type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
-import {
-  LifecycleDecisionNote,
-  LifecycleRationaleDialog,
-  type LifecycleAction,
-} from "@/components/LifecycleRationaleDialog";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
+import { LifecycleDecisionNote } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
+import { sampleValueForKind } from "@/lib/sampling";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -150,7 +150,6 @@ import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availabil
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
-import { DescribeRuleDialog } from "@/components/apply-rules/DescribeRuleDialog";
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
@@ -177,7 +176,6 @@ import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestions
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
-import { RunSampleDialog } from "@/components/common/RunSampleDialog";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -456,7 +454,9 @@ function MonitoredTableDetailPage() {
   const rejectMutation = useRejectMonitoredTableWithRationale();
   const revertMutation = useRevertMonitoredTable();
   const deleteMutation = useDeleteMonitoredTable();
-  const [lifecycleDialog, setLifecycleDialog] = useState<LifecycleAction | null>(null);
+  // Reject discards the author's pending submission, so it keeps a plain
+  // yes/no confirm (no rationale textarea). Submit and approve fire directly.
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
@@ -660,7 +660,7 @@ function MonitoredTableDetailPage() {
                     <TooltipTrigger asChild>
                       <span className={cn(submitBlocked && "cursor-not-allowed")}>
                         <Button
-                          onClick={() => setLifecycleDialog("submit")}
+                          onClick={() => handleSubmit(null)}
                           disabled={lifecycleBusy || submitBlocked}
                           className="gap-2"
                         >
@@ -826,7 +826,7 @@ function MonitoredTableDetailPage() {
                       variant="outline"
                       size="sm"
                       disabled={lifecycleBusy}
-                      onClick={() => setLifecycleDialog("approve")}
+                      onClick={() => handleApprove(null)}
                       className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
                     >
                       {approveMutation.isPending ? (
@@ -840,7 +840,7 @@ function MonitoredTableDetailPage() {
                       variant="outline"
                       size="sm"
                       disabled={lifecycleBusy}
-                      onClick={() => setLifecycleDialog("reject")}
+                      onClick={() => setRejectConfirmOpen(true)}
                       className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
                     >
                       {rejectMutation.isPending ? (
@@ -861,45 +861,28 @@ function MonitoredTableDetailPage() {
           <LifecycleDecisionNote rationale={table.last_decision_rationale} />
         )}
 
-        <LifecycleRationaleDialog
-          open={lifecycleDialog !== null}
-          onOpenChange={(open) => {
-            if (!open) setLifecycleDialog(null);
-          }}
-          action={lifecycleDialog ?? "submit"}
-          title={
-            lifecycleDialog === "approve"
-              ? t("monitoredTables.approveAction")
-              : lifecycleDialog === "reject"
-                ? t("monitoredTables.rejectConfirmTitle")
-                : willAutoApprove
-                  ? t("monitoredTables.saveAndPublishButton")
-                  : t("monitoredTables.submitButton")
-          }
-          description={
-            lifecycleDialog === "reject"
-              ? t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })
-              : t("monitoredTables.pendingBannerBody")
-          }
-          confirmLabel={
-            lifecycleDialog === "approve"
-              ? t("monitoredTables.approveAction")
-              : lifecycleDialog === "reject"
-                ? t("monitoredTables.rejectAction")
-                : willAutoApprove
-                  ? t("monitoredTables.saveAndPublishButton")
-                  : t("monitoredTables.submitButton")
-          }
-          destructive={lifecycleDialog === "reject"}
-          busy={lifecycleBusy}
-          onConfirm={(rationale) => {
-            const action = lifecycleDialog;
-            setLifecycleDialog(null);
-            if (action === "approve") handleApprove(rationale);
-            else if (action === "reject") handleReject(rationale);
-            else if (action === "submit") handleSubmit(rationale);
-          }}
-        />
+        <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("monitoredTables.rejectConfirmTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("monitoredTables.rejectConfirmDescription", { table: table.table_fqn })}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={lifecycleBusy}>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-white hover:bg-destructive/90"
+                onClick={() => {
+                  setRejectConfirmOpen(false);
+                  handleReject(null);
+                }}
+              >
+                {t("monitoredTables.rejectAction")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
@@ -1076,9 +1059,10 @@ function VersionBadge({ table }: { table: MonitoredTableOut }) {
 }
 
 /** Split-button Run action, RUNNER-gated (`usePermissions().canRunRules`,
- *  checked by the caller). Every entry point here first opens the run-scope
- *  dialog (full table or an N-row sample) and submits on confirm — a manual
- *  run always gets to say how much of the table it reads. Primary click runs
+ *  checked by the caller). "Run now" (approved) scans the whole table
+ *  (sample_size 0); "Run draft" scans the admin-configured draft sample
+ *  (default 0 = whole table) fetched from `useGetDraftRunSampleLimit`,
+ *  which an admin can narrow to a row cap. Primary click runs
  *  the latest approved snapshot ("Run now (vN)"), disabled with a tooltip at
  *  v0. The attached dropdown
  *  offers "Run draft" at the TOP (item 15) followed by each approved version.
@@ -1125,6 +1109,15 @@ function RunTableAction({
   const versionsQuery = useListMonitoredTableVersions(bindingId);
   const versions = versionsQuery.data?.data ?? [];
   const runMutation = useRunMonitoredTable();
+  // Draft runs scan the admin-configured sample, which defaults to the whole
+  // table (0 = unlimited) so a draft's pass rate describes the table; an admin
+  // can set a row cap to keep exploratory runs on large tables cheap. "Run now"
+  // (approved) always scans the full table (sample_size 0). While the limit
+  // query has not resolved (loading OR error) this is `undefined`, NOT 0 — so
+  // the draft run OMITS sample_size and the backend resolves the configured
+  // default itself.
+  const draftSampleQuery = useGetDraftRunSampleLimit();
+  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit;
   const hasApproved = (table.version ?? 0) > 0;
   // Run draft is available only when there is a draft to run: either the
   // binding itself is in draft, or there are unsaved applied-rule edits that
@@ -1137,23 +1130,13 @@ function RunTableAction({
   // mutation (not visible here), so without this a fast double-click could
   // fire a second save-then-run while the first save is still in flight.
   const [runDraftBusy, setRunDraftBusy] = useState(false);
-  // Scope is asked for AFTER pressing a run button rather than sitting in the
-  // header: it only ever applies to the run being started, so it has no
-  // meaning until that run is actually on its way. The run (and its pinned
-  // version, if any) is parked in `scopePrompt` and deliberately OUTLIVES the
-  // close — clearing it would swap the dialog's labels mid fade-out.
-  const [scopePrompt, setScopePrompt] = useState<{ source: "approved" | "draft"; version?: number }>({
-    source: "approved",
-  });
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const promptScope = (prompt: { source: "approved" | "draft"; version?: number }) => {
-    setScopePrompt(prompt);
-    setScopeOpen(true);
-  };
 
-  const handleRun = (source: "approved" | "draft", sampleSize: number, version?: number) => {
+  const handleRun = (source: "approved" | "draft", sampleSize: number | undefined, version?: number) => {
     runMutation.mutate(
       {
+        // `sample_size: undefined` is dropped from the JSON body, so the
+        // backend receives None and resolves the configured draft default —
+        // draft runs are never accidentally sent as full-table (sample_size 0).
         bindingId,
         data: { source, version, sample_size: sampleSize },
       },
@@ -1177,7 +1160,7 @@ function RunTableAction({
 
   // Save any pending edits first (so the draft run reflects them), then run.
   // A save failure is surfaced by `onSaveDraft` and we do NOT run.
-  const handleRunDraft = async (sampleSize: number) => {
+  const handleRunDraft = async (sampleSize: number | undefined) => {
     setRunDraftBusy(true);
     try {
       if (isDirty) {
@@ -1238,7 +1221,7 @@ function RunTableAction({
       <TooltipTrigger asChild>
         <span className={cn(approvedDisabled && "cursor-not-allowed")}>
           <Button
-            onClick={() => promptScope({ source: "approved" })}
+            onClick={() => handleRun("approved", 0)}
             disabled={approvedDisabled}
             className="gap-2 rounded-r-none"
           >
@@ -1256,7 +1239,7 @@ function RunTableAction({
       <TooltipTrigger asChild>
         <span className={cn(draftDisabled && "cursor-not-allowed")}>
           <Button
-            onClick={() => promptScope({ source: "draft" })}
+            onClick={() => void handleRunDraft(draftSampleSize)}
             disabled={draftDisabled}
             className="gap-2 rounded-r-none"
           >
@@ -1269,28 +1252,6 @@ function RunTableAction({
     </Tooltip>
   );
 
-  const isDraftPrompt = scopePrompt.source === "draft";
-  const scopeDialog = (
-    <RunSampleDialog
-      open={scopeOpen}
-      onOpenChange={(next) => {
-        if (!next) setScopeOpen(false);
-      }}
-      title={isDraftPrompt ? t("monitoredTables.runDraftScopeTitle") : t("monitoredTables.runNowScopeTitle")}
-      description={isDraftPrompt ? t("monitoredTables.runDraftScopeHint") : t("monitoredTables.runNowScopeHint")}
-      confirmLabel={isDraftPrompt ? t("monitoredTables.runDraftAction") : t("monitoredTables.runNowButtonNoVersion")}
-      busy={busy}
-      // A draft run is a spot-check, so it opens on a 1000-row sample; a
-      // published run opens on the full table it has always scanned.
-      defaultKind={isDraftPrompt ? "records" : "full"}
-      onConfirm={(sampleSize) => {
-        setScopeOpen(false);
-        if (scopePrompt.source === "draft") void handleRunDraft(sampleSize);
-        else handleRun("approved", sampleSize, scopePrompt.version);
-      }}
-    />
-  );
-
   const runNowMenuItem = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -1299,7 +1260,7 @@ function RunTableAction({
             disabled={approvedDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              promptScope({ source: "approved" });
+              handleRun("approved", 0);
             }}
           >
             {t("monitoredTables.runNowApprovedOption")}
@@ -1318,7 +1279,7 @@ function RunTableAction({
             disabled={draftDisabled}
             onSelect={(e) => {
               e.preventDefault();
-              promptScope({ source: "draft" });
+              void handleRunDraft(draftSampleSize);
             }}
           >
             {t("monitoredTables.runDraftAction")}
@@ -1352,7 +1313,7 @@ function RunTableAction({
               <DropdownMenuItem
                 key={v.version}
                 disabled={busy}
-                onSelect={() => promptScope({ source: "approved", version: v.version })}
+                onSelect={() => handleRun("approved", 0, v.version)}
               >
                 {t("monitoredTables.runVersionOption", { version: v.version })}
               </DropdownMenuItem>
@@ -1361,7 +1322,6 @@ function RunTableAction({
         </DropdownMenu>
       </TooltipProvider>
       </div>
-      {scopeDialog}
     </div>
   );
 }
@@ -1787,9 +1747,53 @@ function ProfileTab({
 
   const running = submitMutation.isPending || runId !== null;
 
-  const handleRunProfile = useCallback(() => {
+  // One-off profile runs ask for their sampling in a modal, pre-filled from the
+  // admin default (Settings → Compute → Profiling). Confirming overrides that
+  // default for this run only; it never writes the setting back.
+  const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
+  const [sampleKind, setSampleKind] = useState<SampleKind>("percent");
+  const [sampleValue, setSampleValue] = useState(10);
+  const [sampleHydrated, setSampleHydrated] = useState(false);
+  const profilerSampleQuery = useGetProfilerSample();
+
+  useEffect(() => {
+    const cfg = profilerSampleQuery.data?.data;
+    if (cfg && !sampleHydrated) {
+      setSampleKind(cfg.sample_kind);
+      setSampleValue(cfg.sample_value || cfg.default_value || 10);
+      setSampleHydrated(true);
+    }
+  }, [profilerSampleQuery.data, sampleHydrated]);
+
+  const handleSampleKind = useCallback((k: SampleKind) => {
+    setSampleKind(k);
+    // records → percent cannot reinterpret a row count; clamping would select
+    // 100% (the whole table).
+    setSampleValue((v) => sampleValueForKind(k, v));
+  }, []);
+
+  /** Opens the sampling modal. Every one-off profile entry point goes through
+   *  this so none of them can submit a run without asking for its sample. */
+  const openSampleDialog = useCallback(() => setSampleDialogOpen(true), []);
+
+  /** Submits the run with the sampling chosen in the modal. Only the modal's
+   *  confirm action calls this. */
+  const submitProfileWithSample = useCallback(() => {
+    setSampleDialogOpen(false);
     submitMutation.mutate(
-      { data: { table_fqn: tableFqn } },
+      {
+        // Send an override only once the admin default has loaded. Before that
+        // the selector still shows its placeholder, and posting it would
+        // override the configured policy with a value the admin never chose;
+        // omitting the fields makes the backend resolve the setting itself.
+        data: sampleHydrated
+          ? {
+              table_fqn: tableFqn,
+              sample_kind: sampleKind,
+              sample_value: sampleKind === "full" ? null : sampleValue,
+            }
+          : { table_fqn: tableFqn },
+      },
       {
         onSuccess: (resp) => {
           setRunId(resp.data.run_id);
@@ -1801,7 +1805,7 @@ function ProfileTab({
         },
       },
     );
-  }, [submitMutation, tableFqn, t, queryClient]);
+  }, [submitMutation, tableFqn, sampleHydrated, sampleKind, sampleValue, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
 
@@ -1891,10 +1895,40 @@ function ProfileTab({
             </div>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={handleRunProfile} disabled={running}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={openSampleDialog}
+          disabled={running}
+        >
           <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", running && "animate-spin")} />
           {running ? t("monitoredTables.profileRunningButton") : t("monitoredTables.profileRefreshButton")}
         </Button>
+        <AlertDialog open={sampleDialogOpen} onOpenChange={setSampleDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("monitoredTables.profileSampleDialogTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("monitoredTables.profileSampleDialogDescription")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="flex items-center rounded-md border p-3">
+              <SampleSelector
+                kind={sampleKind}
+                value={sampleValue}
+                onKind={handleSampleKind}
+                onValue={setSampleValue}
+                compact
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction onClick={submitProfileWithSample} disabled={!sampleHydrated}>
+                {t("monitoredTables.profileSampleDialogConfirm")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {initialLoading ? (
@@ -1913,7 +1947,7 @@ function ProfileTab({
             {t("monitoredTables.profileEmptyHint")}
           </p>
           {!running && (
-            <Button size="sm" className="gap-2" onClick={handleRunProfile}>
+            <Button size="sm" className="gap-2" onClick={openSampleDialog}>
               <RefreshCw className="h-3.5 w-3.5" />
               {t("monitoredTables.profileRunButton")}
             </Button>
@@ -2073,7 +2107,6 @@ function ApplyRulesTab({
   const [addOpen, setAddOpen] = useState(false);
   const [addColumnContext, setAddColumnContext] = useState<ColumnRef | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
-  const [describeOpen, setDescribeOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
@@ -2727,17 +2760,6 @@ function ApplyRulesTab({
                   {t("monitoredTables.suggestRulesButton")}
                 </Button>
               )}
-              {aiAvailability.available && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => setDescribeOpen(true)}
-                >
-                  <Sparkles className="h-3.5 w-3.5" stroke={AI_GRADIENT_URL} />
-                  {t("monitoredTables.describeRuleButton")}
-                </Button>
-              )}
               {/* Toolbar "Apply rules" button removed (item 36) — the wide
                   dashed CTA at the bottom of the by-rule list and the
                   per-column "+ Add rule" CTAs in the by-column lens now cover
@@ -2903,18 +2925,6 @@ function ApplyRulesTab({
         appliedRules={stagedRows}
         onAdd={stageNewRows}
         onApplied={() => {}}
-      />
-
-      <DescribeRuleDialog
-        open={describeOpen}
-        onOpenChange={setDescribeOpen}
-        bindingId={bindingId}
-        tableFqn={tableFqn}
-        columns={columns.map((c) => c.name)}
-        labelDefinitions={labelDefinitions}
-        onAdd={stageNewRows}
-        onApplied={() => {}}
-        reportUnavailable={reportUnavailable}
       />
 
       <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>

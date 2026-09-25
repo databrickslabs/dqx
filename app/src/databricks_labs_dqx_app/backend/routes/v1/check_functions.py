@@ -28,6 +28,7 @@ from fastapi import APIRouter
 
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.native_test_predicate import is_native_rule_testable
+from databricks_labs_dqx_app.backend.text_case import to_title_case
 from databricks_labs_dqx_app.backend.models import (
     CheckFunctionDef,
     CheckFunctionParam,
@@ -195,33 +196,18 @@ _FRIENDLY_LABELS: dict[str, str] = {
     "has_no_aggr_outliers": "Has No Aggregate Outliers",
 }
 
-# Tokens that should be upper-cased in generated labels (after title-casing).
-_ACRONYMS: tuple[tuple[str, str], ...] = (
-    ("Sql", "SQL"),
-    ("Ipv4", "IPv4"),
-    ("Ipv6", "IPv6"),
-    ("Ip", "IP"),
-    ("Json", "JSON"),
-    ("Pii", "PII"),
-    ("Url", "URL"),
-    ("Id", "ID"),
-)
-
 
 def _friendly_label(name: str) -> str:
     """Return a human-readable label for a DQX check function name.
 
     Checks the curated *_FRIENDLY_LABELS* override map first (for cases like
-    ``is_aggr_equal`` → "Is Aggregate Equal"). Falls back to title-casing
-    ``name.replace("_", " ")`` with an acronym fixup pass that upper-cases
-    well-known tokens (SQL, IP, JSON, PII, …).
+    ``is_aggr_equal`` → "Is Aggregate Equal"), then falls back to the shared
+    :func:`to_title_case` helper, which also upper-cases well-known acronyms
+    (SQL, IP, JSON, PII, …).
     """
     if name in _FRIENDLY_LABELS:
         return _FRIENDLY_LABELS[name]
-    label = name.replace("_", " ").title()
-    for mixed, upper in _ACRONYMS:
-        label = label.replace(mixed, upper)
-    return label
+    return to_title_case(name)
 
 
 def _family_for_column_param(fn_name: str) -> str:
