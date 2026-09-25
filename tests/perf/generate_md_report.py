@@ -76,9 +76,9 @@ for bench in check_benchmarks:
 if anomaly_benchmarks:
     lines.append("\n## Anomaly Benchmarks\n")
     lines.append(
-        "* Every fixture is generated in-repo by `tests/integration_anomaly/synthetic_generators.py` "
-        "from a fixed seed. Nothing is downloaded and no third-party data is redistributed, so these "
-        "numbers carry no dataset licence conditions."
+        "* Every fixture is synthetic and generated from a fixed seed, so the numbers are reproducible. "
+        "Nothing is downloaded and no third-party data is redistributed, so they carry no dataset "
+        "licence conditions."
     )
     lines.append(
         "* Each row states the fixture it was measured on. They are deliberately different problems: "
@@ -88,10 +88,9 @@ if anomaly_benchmarks:
         "*across* rows is meaningless."
     )
     lines.append(
-        "* Quality columns are **indicative and first-observed only**: the nightly baseline merge keeps "
-        "existing entries on conflict, so `extra_info` is not refreshed once a benchmark has been "
-        "recorded. Quality regressions are caught by assertions in "
-        "`tests/integration_anomaly/test_anomaly_quality.py`, not by this table."
+        "* Quality columns are **indicative**: they record what was measured when a benchmark was first "
+        "added and are not restated on every run. Read them as a rough sense of each fixture's "
+        "difficulty, not as a tracked metric."
     )
     lines.append(
         "* Synthetic distributions chosen to be moderately hard, not a general claim about detection "

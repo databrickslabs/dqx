@@ -559,12 +559,18 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
 @pytest.mark.parametrize(
     "demo_notebook",
     [
-        "dqx_demo_anomaly_tabular_transactions.py",
-        "dqx_demo_anomaly_correlation_fleet.py",
+        "dqx_row_anomaly_detection_demo.py",
+        "dqx_row_anomaly_tabular_transactions.py",
+        "dqx_row_anomaly_correlation_fleet.py",
     ],
 )
 def test_run_dqx_anomaly_demo(ws, make_notebook, make_schema, make_job, library_ref, demo_notebook):
-    """Run the row anomaly detection demos: the tabular profile and the correlation profile."""
+    """Run the row anomaly detection demos: the generic walkthrough, then each profile on its own dataset.
+
+    The generic one is listed here deliberately. It was restored from main for this PR and ported off the
+    removed ``segment_by`` / ``expected_anomaly_rate`` arguments, so nothing but an actual run proves the
+    port is right.
+    """
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     path = Path(__file__).parent.parent.parent / "demos" / demo_notebook
