@@ -1381,21 +1381,37 @@ def test_is_geo_within_distance_empty_reference_violation(skip_if_runtime_not_ge
 
 
 def test_is_geo_within_distance_projected_srid_column_violation(skip_if_runtime_not_geo_compatible, spark):
-    """SRID 0 and 4326 are WGS 84; any other SRID would be misread as degrees and is reported instead."""
-    wgs84 = f"SRID=4326;{_POINT_NEAR}"
-    projected = f"SRID=3857;{_POINT_FAR}"
-    test_df = spark.createDataFrame([[wgs84], [projected]], _GEO_SCHEMA)
-    actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
+    """SRID 0 and 4326 are WGS 84; any other SRID would be misread as degrees and is reported instead.
+
+    The SRID is stamped onto a native GEOMETRY with st_setsrid rather than carried in an EWKT
+    ``SRID=...;`` prefix: parsing that prefix through try_to_geometry is not available on every
+    geo-compatible runtime (standard clusters at 17.1 return NULL for it), so stamping the SRID
+    directly exercises the bad-SRID guard identically on serverless and standard clusters.
+    """
+    wgs84 = F.call_function("st_setsrid", F.call_function("try_to_geometry", F.lit(_POINT_NEAR)), F.lit(4326))
+    projected = F.call_function("st_setsrid", F.call_function("try_to_geometry", F.lit(_POINT_FAR)), F.lit(3857))
+    test_df = spark.createDataFrame([[1], [2]], "id: int").select(
+        F.when(F.col("id") == 1, wgs84).otherwise(projected).alias("geom")
+    )
+    reference = F.call_function("try_to_geometry", F.lit(_POINT_INSIDE))
+    actual = test_df.select(is_geo_within_distance("geom", reference, 1000))
     expected = spark.createDataFrame(
-        [[wgs84, None], [projected, _within_distance_bad_srid(_POINT_FAR, 3857)]], _WITHIN_DISTANCE_SCHEMA
+        [[None], [_within_distance_bad_srid(_POINT_FAR, 3857)]], _WITHIN_DISTANCE_CONDITION_SCHEMA
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_is_geo_within_distance_projected_srid_reference_violation(skip_if_runtime_not_geo_compatible, spark):
-    """A reference carrying a projected SRID is reported on every row rather than measured."""
+    """A reference carrying a projected SRID is reported on every row rather than measured.
+
+    As above, the reference SRID is stamped with st_setsrid rather than carried in EWKT text so the
+    guard behaves the same on serverless and standard clusters.
+    """
     test_df = spark.createDataFrame([[_POINT_NEAR], [None]], _GEO_SCHEMA)
-    actual = test_df.select("geom", _within_distance(f"SRID=3857;{_POINT_INSIDE}", 1000))
+    projected_reference = F.call_function(
+        "st_setsrid", F.call_function("try_to_geometry", F.lit(_POINT_INSIDE)), F.lit(3857)
+    )
+    actual = test_df.select("geom", is_geo_within_distance("geom", projected_reference, 1000, convert_column=True))
     expected = spark.createDataFrame(
         [
             [
