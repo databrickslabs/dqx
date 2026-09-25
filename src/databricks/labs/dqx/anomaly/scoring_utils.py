@@ -250,17 +250,6 @@ def add_info_column(
     else:
         anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
 
-    # The basis split rides the same gate as the contributions it decomposes. Gating it separately could
-    # publish a split for a row whose column shares are null, which reads as evidence about a row the
-    # model declined to explain.
-    basis_col = output_columns.basis_contributions
-    if enable_contributions and basis_col in df.columns:
-        anomaly_info_fields["basis_contributions"] = F.when(
-            F.col(severity_col) >= F.lit(threshold), F.col(basis_col)
-        ).otherwise(F.lit(None).cast(MapType(StringType(), DoubleType())))
-    else:
-        anomaly_info_fields["basis_contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
-
     # Add confidence_std (null if not requested or not available)
     if enable_confidence_std and score_std_col in df.columns:
         anomaly_info_fields["confidence_std"] = F.col(score_std_col)
@@ -296,6 +285,21 @@ def add_info_column(
     else:
         anomaly_info_fields["is_stale_baseline"] = F.lit(None).cast(BooleanType())
         anomaly_info_fields["stale_baseline_horizon"] = F.lit(None).cast(StringType())
+
+    # Appended last, matching anomaly_info_struct_schema: the struct below is cast positionally, so this
+    # dict's insertion order *is* the field order. Reads oddly far from the contributions it decomposes, and
+    # has to stay here regardless.
+    #
+    # The split rides the same severity gate as those contributions. Gating it separately could publish a
+    # split for a row whose column shares are null, which reads as evidence about a row the model declined
+    # to explain.
+    basis_col = output_columns.basis_contributions
+    if enable_contributions and basis_col in df.columns:
+        anomaly_info_fields["basis_contributions"] = F.when(
+            F.col(severity_col) >= F.lit(threshold), F.col(basis_col)
+        ).otherwise(F.lit(None).cast(MapType(StringType(), DoubleType())))
+    else:
+        anomaly_info_fields["basis_contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
 
     anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()]).cast(
         anomaly_info_struct_schema

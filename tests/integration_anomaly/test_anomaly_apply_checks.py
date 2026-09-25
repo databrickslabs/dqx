@@ -270,6 +270,7 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
         "check_name",
         "score",
         "severity_percentile",
+        "basis_contributions",
         "is_anomaly",
         "threshold",
         "model",
