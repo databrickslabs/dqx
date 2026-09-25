@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame, Window
-from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
+from pyspark.sql.types import DoubleType, LongType, MapType, StringType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
 from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_label
+from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import displayed_severity_expr
 from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 from databricks.labs.dqx.config import LLMModelConfig
@@ -44,13 +45,18 @@ _PROMPT_INSTRUCTIONS = (
     "produce the identical number. So never say a value was high, low, above, below, elevated, "
     "inflated, dropped, spiked, or missing. Say it departed from its expected pattern, and leave "
     "which way unsaid. The same applies to drift magnitudes, which are also unsigned.\n"
-    "baseline_grouping and temporal_baseline tell you which comparisons were AVAILABLE to the model, not "
-    "which one objected. A metric may be compared against the table, against its own group and against "
-    "its expected level at that time all at once, and the contribution you are given is the total across "
-    "those, so it cannot say which comparison drove it. Treat these fields as context that widens what "
-    "the number is consistent with: when either is set, a metric can be entirely ordinary for the table "
-    "and still have departed from a narrower comparison, so do not call it unusual outright. State that "
-    "the metric contributed and name the comparisons that were in use; do not assign the departure to "
+    "baseline_grouping and temporal_baseline tell you which comparisons were AVAILABLE to the model. A "
+    "metric may be compared against the table, against its own group and against its expected level at "
+    "that time all at once, and each feature_contributions share is the total across those. Treat these "
+    "fields as context that widens what the number is consistent with: when either is set, a metric can be "
+    "entirely ordinary for the table and still have departed from a narrower comparison, so do not call it "
+    "unusual outright.\n"
+    "basis_contributions is the field that says WHICH of those comparisons drove it, when it is present. "
+    "Use it: it is the difference between 'units contributed' and 'units was unremarkable in itself but "
+    "departed from what its own history expects at that point in time', and the second is the useful "
+    "sentence. Its shares are within each metric and total 100 per metric, so they do not compete with the "
+    "feature_contributions shares. When it says 'not measured', the evidence for which comparison objected "
+    "genuinely does not exist, so name the comparisons that were in use and do not assign the departure to "
     "one of them.\n"
     "Be direct and concrete: name the metrics, their shares and the group size without hedging "
     "phrases like 'The data shows', 'It appears that', or 'might indicate'. Being direct means "
@@ -79,8 +85,9 @@ _ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
         "how far each metric's own value sits from the values the model was trained on. A high contribution "
         "means this metric was unusual for the rows it was compared against. Where a metric is compared "
         "several ways at once -- against the whole table, against its own group, against its expected level "
-        "at that time -- the share covers all of those together, so it says the metric was involved, not "
-        "which comparison objected.",
+        "at that time -- the share covers all of those together, so on its own it says the metric was "
+        "involved and not which comparison objected. basis_contributions answers that for this detector, "
+        "and you should use it.",
     ),
 )
 _DEFAULT_ATTRIBUTION_SEMANTICS = _ATTRIBUTION_SEMANTICS[-1][1]
@@ -117,7 +124,18 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "column was compared, so a share says the column was involved and not which comparison objected. "
         "These are aggregated relative importances — not raw data values, and not percentages of the score. "
         "The shares are normalised across the entries listed here only, so when evidence_disclosure says "
-        "any was withheld they are shares of what is disclosed and not of the whole decision.",
+        "any was withheld they are shares of what is disclosed and not of the whole decision. See "
+        "basis_contributions for which comparison drove each column.",
+    ),
+    (
+        "basis_contributions",
+        "Which comparison made each column depart, e.g. 'units (8%), units vs its group baseline (21%), "
+        "units vs its expected level at that time (71%)'. Shares are within each column and total 100 per "
+        "column, so they refine a feature_contributions entry rather than competing with it. A bare column "
+        "name means the column's own value against the whole table. 'not measured' means the split could "
+        "not be computed for this detector, which is not the same as no comparison having contributed — say "
+        "nothing about which one in that case. Columns compared only one way are absent, because there is "
+        "nothing to distinguish.",
     ),
     ("group_size", "Number of rows in this group, e.g. '312 rows'."),
     ("severity_range", "Severity percentile range across the group, e.g. 'mean 97.4, min 95.1, max 99.8'."),
@@ -196,6 +214,10 @@ _PROMPT_EXAMPLES = (
     "evidence_disclosure: every contributing metric is shown to you, so the shares below cover all of "
     "the evidence the model used.\n"
     "feature_contributions: amount (61%), quantity (22%)\n"
+    # The relationship basis cannot split a column across its comparisons, so this exemplar is also the
+    # worked example of the "not measured" case: it names the comparisons that were in use and assigns the
+    # departure to none of them.
+    "basis_contributions: not measured\n"
     "group_size: 312 rows\n"
     "severity_range: mean 97.4, min 95.1, max 99.8\n"
     "confidence: high\n"
@@ -212,6 +234,12 @@ _PROMPT_EXAMPLES = (
     "evidence_disclosure: MOST of the contributing evidence cannot be disclosed and is absent from the "
     "shares below, so what remains is a minority of what the model used.\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
+    # The basis split is available here and the response uses it. Note it does not conflict with the
+    # limited disclosure above: withholding drops whole columns, so a column that *is* shown has its split
+    # shown in full. The limit is on which metrics appear, not on how a shown metric's share divides.
+    # `retries` is absent from the split on purpose: a column compared only one way has no basis to
+    # distinguish, so it is omitted rather than listed at 100%.
+    "basis_contributions: latency_ms (9%), latency_ms vs its expected level at that time (91%)\n"
     "group_size: 88 rows\n"
     "severity_range: mean 98.9, min 97.0, max 99.9\n"
     "confidence: mixed\n"
@@ -227,11 +255,12 @@ _PROMPT_EXAMPLES = (
     # deterministic clause is appended to every withheld narrative, and an exemplar that stated it too would
     # model saying it twice.
     'Response: {"narrative":"Of what can be shown across these 88 rows, latency_ms carries most (74%) '
-    'and retries a small part (12%); latency_ms has also moved from its training baseline. These rows are '
-    'judged against expected levels over time as well as overall.","business_impact":"If these rows are '
-    'wrong, downstream consumers with SLAs would be the first to notice.","action":"Start with the rows '
-    'themselves rather than one field: compare latency_ms against its expected level for that period, and '
-    'take account of the evidence this explanation could not include."}'
+    'and retries a small part (12%); latency_ms has also moved from its training baseline. Almost all of '
+    "latency_ms's own evidence (91%) is against what its history expects at that point in time rather than "
+    'against its overall range, so these rows depart from their expected level for when they '
+    'arrived.","business_impact":"If these rows are wrong, downstream consumers with SLAs would be the '
+    'first to notice.","action":"Compare latency_ms against its expected level for that period rather than '
+    'against its overall range, and take account of the evidence this explanation could not include."}'
 )
 
 if TYPE_CHECKING:
@@ -240,6 +269,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TOP_N = 5
+# Entries shown for the basis split. Larger than _TOP_N because this map holds several entries per column
+# -- one per comparison -- so a cap of five could truncate the second column's split mid-way and leave the
+# model reading a partial decomposition as a whole one.
+_BASIS_MAX_ENTRIES = 12
 # Default working-column name for the pattern group key. Production scoring overrides
 # this with a UUID-suffixed name via *ScoringConfig.pattern_col* (threaded through
 # *ExplanationContext.pattern_col*) so it can never collide with a user column; the constant is
@@ -315,6 +348,11 @@ class ExplanationContext:
     ai_explanation_col: str
     threshold: float
     model_name: str
+    # Which comparison drove each column, when the detector supports the split. Optional and defaulted
+    # rather than required, because a caller that builds this context directly may be scoring a model whose
+    # frame has no such column; absent means the prompt says "not measured" and the model is told to draw
+    # no conclusion about which comparison objected.
+    basis_contributions_col: str = ScoringOutputColumns().basis_contributions
     llm_model_config: LLMModelConfig | None = None
     # Cap on LLM calls made by a single ``add_explanation_column`` invocation. When the
     # caller is *score_segmented* this is the *per-segment budget* (split equally across
@@ -382,7 +420,14 @@ def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadat
     expanded = set(redact_columns)
     if metadata is not None:
         for column in redact_columns:
-            expanded.update(engineered_from(column, metadata))
+            derived = engineered_from(column, metadata)
+            expanded.update(derived)
+            # Third vocabulary: the reader-facing labels. *basis_contributions* is keyed by label rather
+            # than by engineered name ("units vs its expected level at that time"), so a set holding only
+            # the names would match nothing there and a redacted column's evidence would reach the prompt
+            # through that map. Covered here rather than at the filter, so every consumer of this set is
+            # covered at once however it keys its own map.
+            expanded.update(human_label(name, metadata) for name in derived)
     else:
         expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
     return frozenset(expanded)
@@ -693,6 +738,33 @@ def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) 
     return F.expr(sql)
 
 
+def _format_basis_contributions_sql(max_entries: int) -> Column:
+    """Spark expression rendering ``mean_basis_contributions`` as 'label (71%), label (21%)'.
+
+    Prints the stored values **as they are**, unlike :func:`_format_contributions_sql`. Those shares are
+    normalised within each column and several columns share this one map, so renormalising across the map
+    would turn "71% of what made units depart" into a share of something with no meaning.
+
+    Keys are already reader-facing labels, produced by ``feature_naming.human_label`` at scoring time, so
+    there is no label lookup here and nothing user-derived is interpolated into the SQL.
+
+    A null or empty map renders 'not measured', which the prompt instructions define as "the split could
+    not be computed", distinct from "no comparison contributed".
+    """
+    entries = "filter(map_entries(`mean_basis_contributions`), e -> e.value is not null and e.value > 0)"
+    sorted_entries = (
+        f"array_sort({entries}, (a, b) -> "
+        f"case when b.value > a.value then 1 when b.value < a.value then -1 else 0 end)"
+    )
+    top = f"slice({sorted_entries}, 1, {int(max_entries)})"
+    formatted = f"transform({top}, e -> concat(e.key, ' (', cast(round(e.value) as int), '%)'))"
+    sql = (
+        f"case when `mean_basis_contributions` is null or size({entries}) = 0 then 'not measured' "
+        f"else concat_ws(', ', {formatted}) end"
+    )
+    return F.expr(sql)
+
+
 def _build_ai_query_prompt_column(
     ctx: ExplanationContext,
     is_ensemble: bool,
@@ -730,6 +802,9 @@ def _build_ai_query_prompt_column(
         F.lit("feature_contributions: "),
         F.col("feature_contributions"),
         F.lit("\n"),
+        F.lit("basis_contributions: "),
+        _format_basis_contributions_sql(_BASIS_MAX_ENTRIES),
+        F.lit("\n"),
         F.lit("group_size: "),
         group_size_expr,
         F.lit("\n"),
@@ -757,6 +832,7 @@ def _aggregate_groups_spark(
     anomalous: DataFrame,
     pattern_col: str,
     contributions_col: str,
+    basis_contributions_col: str,
     severity_col: str,
     score_std_col: str,
     redact_set: frozenset[str],
@@ -776,26 +852,11 @@ def _aggregate_groups_spark(
         F.max(severity_col).alias("severity_max"),
         F.avg(score_std_col).alias("mean_std"),
     )
-    # Withheld keys are aggregated alongside the disclosed ones rather than filtered away first, because
-    # how much was withheld is itself needed downstream. Filtering here is what made the explanation
-    # misleading: the shares were renormalised over whatever survived, with nothing recording that anything
-    # had gone. Measured on one group, a visible column holding 7% of the evidence was rendered as 100%.
-    exploded = anomalous.select(F.col(pattern_col), F.explode(F.col(contributions_col)).alias("__k", "__v"))
-    per_key_mean = exploded.groupBy(pattern_col, "__k").agg(F.avg("__v").alias("__mean"))
-    withheld = F.col("__k").isin(list(redact_set)) if redact_set else F.lit(False)
-    per_pattern_contrib = (
-        per_key_mean.groupBy(pattern_col)
-        .agg(
-            # collect_list drops nulls, so the `when` keeps only disclosed keys out of the emitted map. The
-            # redacted names never reach it, which is the property redaction exists for and is unchanged.
-            F.map_from_entries(F.collect_list(F.when(~withheld, F.struct(F.col("__k"), F.col("__mean"))))).alias(
-                "mean_contributions"
-            ),
-            F.sum(F.when(withheld, F.abs(F.col("__mean"))).otherwise(F.lit(0.0))).alias("__withheld_evidence"),
-            F.sum(F.abs(F.col("__mean"))).alias("__total_evidence"),
-        )
-        .withColumn("__disclosure", _disclosure_state_expr(F.col("__withheld_evidence"), F.col("__total_evidence")))
-    )
+    per_pattern_contrib = _mean_column_contributions(anomalous, pattern_col, contributions_col, redact_set)
+    # The basis split, averaged the same way and redacted against the same set. It needs no disclosure
+    # accounting of its own: its shares are within a column and are never renormalised when rendered, so
+    # dropping a redacted column's entries removes them without restating what is left.
+    per_pattern_basis = _mean_basis_contributions(anomalous, pattern_col, basis_contributions_col, redact_set)
 
     # Single-action total/kept accounting: window aggregates over ``primary`` carry run-level
     # totals onto each ranked row, so collecting the small (<= ``max_groups``) ranked
@@ -837,10 +898,76 @@ def _aggregate_groups_spark(
     # warning on every action. The kept keys are already known from ``ranked_local``, so an ``isin``
     # filter is equivalent to the windowed top-N selection and keeps the returned lineage window-free.
     kept_pattern_values = [r[pattern_col] for r in ranked_local]
-    kept = primary.filter(F.col(pattern_col).isin(kept_pattern_values)).join(
-        per_pattern_contrib, on=pattern_col, how="left"
+    kept = (
+        primary.filter(F.col(pattern_col).isin(kept_pattern_values))
+        .join(per_pattern_contrib, on=pattern_col, how="left")
+        .join(per_pattern_basis, on=pattern_col, how="left")
     )
     return kept, dropped_groups_count, dropped_rows_count, total_groups
+
+
+def _mean_column_contributions(
+    anomalous: DataFrame,
+    pattern_col: str,
+    contributions_col: str,
+    redact_set: frozenset[str],
+) -> DataFrame:
+    """Per-pattern mean of the column shares, plus the disclosure state redaction leaves behind.
+
+    Withheld keys are aggregated alongside the disclosed ones rather than filtered away first, because how
+    much was withheld is itself needed downstream. Filtering first is what made the explanation misleading:
+    the shares were renormalised over whatever survived, with nothing recording that anything had gone.
+    Measured on one group, a visible column holding 7% of the evidence was rendered as 100%.
+    """
+    exploded = anomalous.select(F.col(pattern_col), F.explode(F.col(contributions_col)).alias("__k", "__v"))
+    per_key_mean = exploded.groupBy(pattern_col, "__k").agg(F.avg("__v").alias("__mean"))
+    withheld = F.col("__k").isin(list(redact_set)) if redact_set else F.lit(False)
+    return (
+        per_key_mean.groupBy(pattern_col)
+        .agg(
+            # collect_list drops nulls, so the `when` keeps only disclosed keys out of the emitted map. The
+            # redacted names never reach it, which is the property redaction exists for and is unchanged.
+            F.map_from_entries(F.collect_list(F.when(~withheld, F.struct(F.col("__k"), F.col("__mean"))))).alias(
+                "mean_contributions"
+            ),
+            F.sum(F.when(withheld, F.abs(F.col("__mean"))).otherwise(F.lit(0.0))).alias("__withheld_evidence"),
+            F.sum(F.abs(F.col("__mean"))).alias("__total_evidence"),
+        )
+        .withColumn("__disclosure", _disclosure_state_expr(F.col("__withheld_evidence"), F.col("__total_evidence")))
+    )
+
+
+def _mean_basis_contributions(
+    anomalous: DataFrame,
+    pattern_col: str,
+    basis_contributions_col: str,
+    redact_set: frozenset[str],
+) -> DataFrame:
+    """Per-pattern mean of the basis split, keyed by label, with redacted labels dropped.
+
+    Averaged across the group like the column map, because one explanation is shared by every row in the
+    group and a single row's split would not describe it.
+
+    The shares are **not** renormalised after redaction, which is the opposite choice to the column map and
+    is right for the same reason that one renormalises. There, renormalising hides the withheld proportion;
+    here, each column's entries already total 100 among themselves, so renormalising after dropping some
+    would silently promote a surviving comparison to explain a departure it did not.
+
+    A frame without the column yields an empty per-pattern map, so the prompt reports "not measured" rather
+    than failing: a caller can build an ExplanationContext for a model scored before this existed.
+    """
+    if basis_contributions_col not in anomalous.columns:
+        empty = F.lit(None).cast(MapType(StringType(), DoubleType()))
+        return anomalous.select(F.col(pattern_col)).distinct().withColumn("mean_basis_contributions", empty)
+
+    exploded = anomalous.select(F.col(pattern_col), F.explode(F.col(basis_contributions_col)).alias("__bk", "__bv"))
+    per_key_mean = exploded.groupBy(pattern_col, "__bk").agg(F.avg("__bv").alias("__bmean"))
+    withheld = F.col("__bk").isin(list(redact_set)) if redact_set else F.lit(False)
+    return per_key_mean.groupBy(pattern_col).agg(
+        F.map_from_entries(F.collect_list(F.when(~withheld, F.struct(F.col("__bk"), F.col("__bmean"))))).alias(
+            "mean_basis_contributions"
+        )
+    )
 
 
 def _call_llm_for_groups_ai_query(
@@ -1073,6 +1200,7 @@ def _add_explanation_column_ai_query(
         anomalous,
         pattern_col=ctx.pattern_col,
         contributions_col=ctx.contributions_col,
+        basis_contributions_col=ctx.basis_contributions_col,
         severity_col=ctx.severity_col,
         score_std_col=ctx.score_std_col,
         redact_set=redact_set,

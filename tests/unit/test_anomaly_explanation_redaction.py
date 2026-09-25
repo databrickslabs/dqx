@@ -78,13 +78,38 @@ def test_metadata_driven_redaction_covers_onehot_and_frequency():
     """
     result = redaction_set(("country",), _metadata())
 
-    assert result == {"country", "country_US", "country_DE", "country_freq", "country_is_null"}
+    assert result == {
+        "country",
+        "country_US",
+        "country_DE",
+        "country_freq",
+        "country_is_null",
+        # The reader-facing labels of those same features, because a map can be keyed by either.
+        "country = US",
+        "country = DE",
+        "country frequency",
+        "country is null",
+    }
 
 
 def test_metadata_driven_redaction_covers_numeric_identity_and_baseline():
     result = redaction_set(("amount",), _metadata())
 
-    assert result == {"amount", "amount_rel_baseline"}
+    assert result == {"amount", "amount_rel_baseline", "amount vs its group baseline"}
+
+
+def test_redaction_covers_the_labels_a_basis_map_is_keyed_by():
+    """Without this, redacting a column would not redact it from *basis_contributions*.
+
+    That map is keyed by the reader-facing label rather than by the engineered name, so a set holding only
+    names matches nothing in it and a redacted column's evidence reaches the LLM prompt through it. The
+    label is the third vocabulary the same information travels under, and redaction that covers two of
+    three is a privacy failure rather than a partial success.
+    """
+    result = redaction_set(("amount",), _metadata())
+
+    assert "amount vs its group baseline" in result, "the basis map's key must be redacted too"
+    assert "country vs its group baseline" not in result, "and only for the column actually named"
 
 
 def test_metadata_driven_redaction_leaves_other_columns_untouched():

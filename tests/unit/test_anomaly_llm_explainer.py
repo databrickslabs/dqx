@@ -545,11 +545,24 @@ def test_the_exemplars_state_business_impact_conditionally():
 
 
 def test_the_instructions_present_the_comparisons_as_context_not_cause():
-    """Otherwise "avoid hedging" plus a large share reads as licence to name a responsible comparison."""
+    """Naming a responsible comparison needs evidence, and the prompt must tie the two together.
+
+    The original concern stands: "avoid hedging" plus a large share reads as licence to pick a comparison
+    and blame it. What changed is that *basis_contributions* now supplies that evidence when the detector
+    can measure it, so the prohibition has to be conditional rather than absolute -- otherwise the model is
+    told to ignore the field that answers the question. Both halves are asserted here, because dropping
+    either one is a silent regression: without the first the model invents an attribution, and without the
+    second it refuses to use a real one.
+    """
     header = llm_explainer._render_ai_query_prompt_header()
 
-    assert "which comparisons were AVAILABLE to the model, not which one objected" in header
+    # With evidence: use it.
+    assert "basis_contributions is the field that says WHICH of those comparisons drove it" in header
+    # Without it: the original prohibition, now scoped to the case that earns it.
+    assert "not measured" in header
     assert "do not assign the departure to one of them" in header
+    # And a share on its own still never establishes which comparison objected.
+    assert "each feature_contributions share is the total across those" in header
     assert "do not call it unusual outright" in header
 
 
