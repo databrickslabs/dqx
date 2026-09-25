@@ -1316,6 +1316,30 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df, ra
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_compare_datasets_filtered(benchmark, ws, generated_df, make_ref_df):
+    # Exercises the filtered exact-value pairing path: the check `filter` is pushed down as `row_filter`,
+    # routing duplicate-key groups through _add_exact_value_pairing_columns (two value-group aggregations,
+    # two count joins, and exact/residual/in-scope ranking windows) instead of the plain positional pairing
+    # measured by test_benchmark_compare_datasets[lazy_pairing]. col1/col2 keys are heavily duplicated at
+    # 100M rows, so the extra machinery does real work.
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["col1", "col2"],
+            filter="col3 > 0",
+            check_func_kwargs={
+                "ref_columns": ["ref_col1", "ref_col2"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    actual_count = benchmark(lambda: dq_engine.apply_checks(generated_df, checks, refs_df).count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_aggr_matches_dataset(benchmark, ws, generated_df, make_ref_df):
     """Benchmark dataset-wide row-count comparison against a reference DataFrame (crossJoin path)."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)

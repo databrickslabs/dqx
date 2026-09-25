@@ -20,6 +20,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_entitlement_service,
+    get_metadata_dim_service,
     get_obo_ws,
     get_preview_sql_executor,
     get_sp_ws,
@@ -33,6 +34,7 @@ from databricks_labs_dqx_app.backend.services.genie_space_service import (
     SETTING_SPACE_ID,
     SETTING_STATUS,
 )
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 
 SPACE = "space-1"
 BASE = f"/api/2.0/genie/spaces/{SPACE}"
@@ -75,12 +77,18 @@ def obo_ws_mock() -> MagicMock:
 
 
 @pytest.fixture
+def metadata_dims_mock() -> MagicMock:
+    return create_autospec(MetadataDimService, instance=True)
+
+
+@pytest.fixture
 def client(
     settings_mock: MagicMock,
     sp_ws_mock: MagicMock,
     entitlement_mock: MagicMock,
     obo_sql_mock: MagicMock,
     obo_ws_mock: MagicMock,
+    metadata_dims_mock: MagicMock,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.genie import router
 
@@ -93,6 +101,7 @@ def client(
     app.dependency_overrides[get_preview_sql_executor] = lambda: obo_sql_mock
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
     app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
+    app.dependency_overrides[get_metadata_dim_service] = lambda: metadata_dims_mock
     return TestClient(app)
 
 
@@ -100,6 +109,37 @@ def provision(settings_store: dict[str, str]) -> None:
     settings_store[SETTING_SPACE_ID] = SPACE
     settings_store[SETTING_CONFIG_HASH] = "some-hash"
     settings_store[SETTING_STATUS] = "ready"
+
+
+@pytest.mark.asyncio
+async def test_metadata_dims_refresh_once_per_hour(monkeypatch: pytest.MonkeyPatch) -> None:
+    from databricks_labs_dqx_app.backend.routes.v1 import genie
+
+    now = 100.0
+    monkeypatch.setattr("databricks_labs_dqx_app.backend.cache.time.monotonic", lambda: now)
+    metadata_dims = create_autospec(MetadataDimService, instance=True)
+
+    await genie.refresh_metadata_dims(metadata_dims)
+    now += 3_599
+    await genie.refresh_metadata_dims(metadata_dims)
+    now += 2
+    await genie.refresh_metadata_dims(metadata_dims)
+
+    assert metadata_dims.refresh.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_metadata_dims_refresh_is_retried() -> None:
+    from databricks_labs_dqx_app.backend.routes.v1 import genie
+
+    metadata_dims = create_autospec(MetadataDimService, instance=True)
+    metadata_dims.refresh.side_effect = [RuntimeError("warehouse unavailable"), None]
+
+    with pytest.raises(RuntimeError, match="warehouse unavailable"):
+        await genie.refresh_metadata_dims(metadata_dims)
+    await genie.refresh_metadata_dims(metadata_dims)
+
+    assert metadata_dims.refresh.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +183,21 @@ def test_space_unavailable_without_space(client: TestClient) -> None:
 
 
 def test_start_proxies_to_genie_as_the_caller(
-    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock, sp_ws_mock: MagicMock
+    client: TestClient,
+    settings_store: dict[str, str],
+    obo_ws_mock: MagicMock,
+    sp_ws_mock: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from databricks_labs_dqx_app.backend.routes.v1 import genie
+
     provision(settings_store)
+    refreshes: list[MetadataDimService] = []
+
+    async def record_refresh(metadata_dims: MetadataDimService) -> None:
+        refreshes.append(metadata_dims)
+
+    monkeypatch.setattr(genie, "refresh_metadata_dims", record_refresh)
     obo_ws_mock.api_client.do.return_value = {
         "conversation_id": "c1",
         "message_id": "m1",
@@ -158,6 +210,7 @@ def test_start_proxies_to_genie_as_the_caller(
     assert body["conversation_id"] == "c1"
     assert body["message_id"] == "m1"
     assert body["stage"] == "Understanding your question"
+    assert len(refreshes) == 1
     obo_ws_mock.api_client.do.assert_called_once_with(
         "POST", f"{BASE}/start-conversation", body={"content": "What is my score?"}
     )
@@ -166,7 +219,10 @@ def test_start_proxies_to_genie_as_the_caller(
 
 
 def test_start_continues_existing_conversation(
-    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock
+    client: TestClient,
+    settings_store: dict[str, str],
+    obo_ws_mock: MagicMock,
+    metadata_dims_mock: MagicMock,
 ) -> None:
     provision(settings_store)
     obo_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m2"}
@@ -175,6 +231,26 @@ def test_start_continues_existing_conversation(
     obo_ws_mock.api_client.do.assert_called_once_with(
         "POST", f"{BASE}/conversations/c1/messages", body={"content": "and now?"}
     )
+    metadata_dims_mock.refresh.assert_called_once_with()
+
+
+def test_start_continues_when_metadata_refresh_fails(
+    client: TestClient,
+    settings_store: dict[str, str],
+    obo_ws_mock: MagicMock,
+    metadata_dims_mock: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provision(settings_store)
+    metadata_dims_mock.refresh.side_effect = RuntimeError("sensitive rule description")
+    obo_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m1"}
+
+    with caplog.at_level("WARNING"):
+        resp = client.post("/api/v1/genie/start", json={"question": "q"})
+
+    assert resp.status_code == 200
+    assert resp.json()["conversation_id"] == "c1"
+    assert "sensitive rule description" not in caplog.text
 
 
 def test_start_falls_back_to_sp_when_obo_is_rejected(
@@ -221,8 +297,21 @@ def test_poll_returns_partial_answer_payload(
     assert body["stage"] == "Done"
 
 
-def test_ask_blocking_flow(client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock) -> None:
+def test_ask_blocking_flow(
+    client: TestClient,
+    settings_store: dict[str, str],
+    obo_ws_mock: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from databricks_labs_dqx_app.backend.routes.v1 import genie
+
     provision(settings_store)
+    refreshes: list[MetadataDimService] = []
+
+    async def record_refresh(metadata_dims: MetadataDimService) -> None:
+        refreshes.append(metadata_dims)
+
+    monkeypatch.setattr(genie, "refresh_metadata_dims", record_refresh)
     obo_ws_mock.api_client.do.side_effect = [
         {"conversation_id": "c1", "message_id": "m1", "status": "SUBMITTED"},
         {"status": "COMPLETED", "attachments": [{"text": {"content": "All good."}}]},
@@ -233,6 +322,7 @@ def test_ask_blocking_flow(client: TestClient, settings_store: dict[str, str], o
     assert body["available"] is True
     assert body["answer_text"] == "All good."
     assert body["status"] == "COMPLETED"
+    assert len(refreshes) == 1
 
 
 def test_genie_error_is_a_clean_payload_not_a_500(
@@ -376,7 +466,11 @@ def test_verify_entitlements_accepts_exactly_50(client: TestClient, entitlement_
 
 @pytest.mark.parametrize("role", [UserRole.VIEWER, UserRole.RULE_AUTHOR, UserRole.RULE_APPROVER, UserRole.ADMIN])
 def test_every_role_may_use_the_chat(
-    role: UserRole, settings_mock: MagicMock, sp_ws_mock: MagicMock, obo_ws_mock: MagicMock
+    role: UserRole,
+    settings_mock: MagicMock,
+    sp_ws_mock: MagicMock,
+    obo_ws_mock: MagicMock,
+    metadata_dims_mock: MagicMock,
 ) -> None:
     from databricks_labs_dqx_app.backend.routes.v1.genie import router
 
@@ -385,6 +479,7 @@ def test_every_role_may_use_the_chat(
     app.dependency_overrides[get_app_settings_service] = lambda: settings_mock
     app.dependency_overrides[get_sp_ws] = lambda: sp_ws_mock
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
+    app.dependency_overrides[get_metadata_dim_service] = lambda: metadata_dims_mock
     app.dependency_overrides[get_user_role] = lambda: role
     client = TestClient(app)
     assert client.get("/api/v1/genie/space").status_code == 200

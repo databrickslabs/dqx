@@ -82,7 +82,7 @@ function Layout() {
 
             {/* Monitored Tables — apply registry rules to real tables
                 (slot->column mapping), profile them, and publish to
-                materialize into dq_quality_rules (Phase 3D). */}
+                materialize into dq_resolved_rules (Phase 3D). */}
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
