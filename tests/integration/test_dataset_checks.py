@@ -2917,6 +2917,444 @@ def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSe
     }
 
 
+def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "A", False), (1, "B", True), (1, "C", None)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    actual = {row["value"]: row["violation"] for row in rows}
+
+    assert len(rows) == 3
+    assert actual == {"A": None, "B": None, "C": None}
+
+
+def test_compare_datasets_strict_mode_ignores_duplicate_keys_outside_filter(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "A", False), (1, "B", True), (1, "C", None)], "id int, value string, in_scope boolean"
+    )
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        raise_on_duplicate_keys=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_strict_mode_rejects_in_scope_duplicate_keys(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A", True), (1, "B", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    _, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", row_filter="in_scope", raise_on_duplicate_keys=True
+    )
+
+    with pytest.raises(InvalidParameterError, match="source dataset contains duplicate matching keys"):
+        apply(df, spark, {"ref_df": ref_df})
+
+
+def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSession):
+    # A filtered source row (id=1) is still present in the source, so it must pair with its reference
+    # counterpart (violation suppressed) rather than splitting into a phantom "missing" row. A reference
+    # key that is genuinely absent from the source (id=2) must still be reported as missing (issue #1504).
+    df = spark.createDataFrame([(1, "A", False)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B"), (2, "C")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    result = apply(df, spark, {"ref_df": ref_df})
+    actual = result.select("id", "value", "in_scope", condition.alias("violation")).collect()
+    excluded_row = next(row for row in actual if row["id"] == 1)
+    missing_row = next(row for row in actual if row["id"] == 2)
+
+    assert len(actual) == 2
+    # The filtered source row pairs with reference id=1 and is not reported as missing.
+    assert excluded_row["in_scope"] is False
+    assert excluded_row["violation"] is None
+    # The reference-only row (id=2) is still reported as missing.
+    assert missing_row["in_scope"] is None
+    assert json.loads(missing_row["violation"]) == {
+        "row_missing": True,
+        "row_extra": False,
+        "changed": {"value": {"ref": "C"}},
+    }
+
+
+@pytest.mark.parametrize("excluded_scope", [False, None])
+def test_compare_datasets_filter_reports_surplus_reference_with_duplicate_key(
+    spark: SparkSession, excluded_scope: bool | None
+):
+    df = spark.createDataFrame([(1, "X", True), (1, "Z", excluded_scope)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "X"), (1, "X")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert next(row for row in rows if row["in_scope"] is True)["violation"] is None
+    assert next(row for row in rows if row["value"] == "Z")["violation"] is None
+    assert json.loads(next(row for row in rows if row["value"] is None)["violation"]) == {
+        "row_missing": True,
+        "row_extra": False,
+        "changed": {"value": {"ref": "X"}},
+    }
+
+
+def test_compare_datasets_filter_reports_surplus_reference_without_compared_columns(spark: SparkSession):
+    df = spark.createDataFrame([(1, True), (1, False)], "id int, in_scope boolean")
+    ref_df = spark.createDataFrame([(1,), (1,)], "id int")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows if row["in_scope"] is not None)
+    assert json.loads(next(row for row in rows if row["in_scope"] is None)["violation"])["row_missing"] is True
+
+
+def test_compare_datasets_filter_duplicate_keys_preserves_exact_matches(spark: SparkSession):
+    df = spark.createDataFrame([(1, "B", True), (1, "A", False)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    result = apply(df, spark, {"ref_df": ref_df})
+    actual = result.select("value", "in_scope", condition.alias("violation")).collect()
+    in_scope_row = next(row for row in actual if row["in_scope"] is True)
+    excluded_row = next(row for row in actual if row["in_scope"] is False)
+
+    assert len(actual) == 2
+    assert in_scope_row["violation"] is None
+    assert excluded_row["violation"] is None
+
+
+def test_compare_datasets_filter_compares_residual_in_scope_rows_to_full_reference(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "X", True), (1, "X", True), (1, "Y", False)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (1, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    in_scope_rows = [row for row in rows if row["in_scope"] is True]
+
+    assert len(rows) == 3
+    assert sum(row["violation"] is None for row in in_scope_rows) == 1
+    assert {
+        json.loads(row["violation"])["changed"]["value"]["ref"] for row in in_scope_rows if row["violation"] is not None
+    } == {"Y"}
+    assert next(row for row in rows if row["in_scope"] is False)["violation"] is None
+
+
+def test_compare_datasets_filter_prioritizes_tolerant_in_scope_match(spark: SparkSession):
+    df = spark.createDataFrame([(1, 1.05, True), (1, 1.0, False)], "id int, value double, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, 1.0)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        abs_tolerance=0.1,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_filter_tolerant_match_survives_interleaved_values(spark: SparkSession):
+    # Regression (#1504 follow-up): residual pairing ranks rows by their compared values so the n-th
+    # source row pairs with the n-th reference row. Ordering numeric values by their string cast sorted
+    # "10.0" before "2.0", reordering the two sides differently and pairing 2.0<->9.7 and 10.0<->2.3 --
+    # both flagged even though each in-scope row is within abs_tolerance of a reference partner
+    # (2.0~2.3, 10.0~9.7). Native numeric ordering keeps the sides aligned so neither is flagged.
+    df = spark.createDataFrame(
+        [(1, 2.0, True), (1, 10.0, True)],
+        "id int, value double, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, 2.3), (1, 9.7)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        abs_tolerance=0.5,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_unfiltered_tolerant_match_survives_interleaved_values(spark: SparkSession):
+    # The native-numeric ordering fix also feeds the unfiltered positional path (no row_filter), which
+    # orders duplicate-key rows purely by their compared values. With the old string cast, "10.0" < "2.0"
+    # reordered the two sides and mispaired 2.0<->9.7 and 10.0<->2.3 -- flagging both rows even though each
+    # is within abs_tolerance of a reference partner (2.0~2.3, 10.0~9.7). Native ordering keeps them aligned.
+    df = spark.createDataFrame([(1, 2.0), (1, 10.0)], "id int, value double")
+    ref_df = spark.createDataFrame([(1, 2.3), (1, 9.7)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        abs_tolerance=0.5,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_strict_mode_non_null_safe_excludes_null_keys_from_uniqueness(spark: SparkSession):
+    # Strict mode (raise_on_duplicate_keys=True) + null_safe_row_matching=False + row_filter: null matching
+    # keys are dropped before the scope-aware uniqueness aggregation, so two in-scope null-key rows are not
+    # counted as duplicate keys and do NOT raise. The non-null in-scope key stays unique and matches exactly.
+    df = spark.createDataFrame(
+        [(1, "A", True), (None, "B", True), (None, "C", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "A")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_row_matching=False,
+        raise_on_duplicate_keys=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+
+    assert len(rows) == 3  # no InvalidParameterError: null-key in-scope rows are excluded from the check
+    assert next(row for row in rows if row["id"] == 1)["violation"] is None
+
+
+def test_compare_datasets_null_filter_present_row_with_diff_is_suppressed(spark: SparkSession):
+    # A present source row whose row_filter evaluates to NULL (in_scope is NULL) is treated as out-of-scope
+    # and suppressed even when it genuinely differs from its reference on a compared column:
+    # (row_missing | filter_col) & ~all_is_ok -> NULL & True -> NULL. An in-scope row with a real diff is
+    # still flagged. Guards the intended behavior change from `filter_col.isNull() | filter_col`.
+    df = spark.createDataFrame(
+        [(1, "A", True), (2, "X", None)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "B"), (2, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+    null_filter_row = next(row for row in rows if row["id"] == 2)
+    in_scope_row = next(row for row in rows if row["id"] == 1)
+
+    # NULL-evaluating filter suppresses the change on the present row, despite value X != ref Y.
+    assert null_filter_row["violation"] is None
+    # The genuinely in-scope diff is still reported.
+    assert json.loads(in_scope_row["violation"])["changed"]["value"] == {"df": "A", "ref": "B"}
+
+
+def test_compare_datasets_filter_default_drops_surplus_reference(spark: SparkSession):
+    # With check_missing_records unset (default False), a surplus reference row on a filtered exact-value
+    # pairing key must be silently dropped, not surfaced as missing. The single in-scope X pairs with one
+    # reference X; the extra reference X does not appear in the output.
+    df = spark.createDataFrame([(1, "X", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "X"), (1, "X")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+
+    assert len(rows) == 1  # the surplus reference row is not reported
+    assert rows[0]["violation"] is None
+
+
+def test_compare_datasets_filter_null_values_not_flagged_without_null_safe_matching(spark: SparkSession):
+    # Regression: the filtered exact-value pairing path (triggered by row_filter) groups compared
+    # values null-safely, but change detection with null_safe_column_value_matching=False uses `!=`,
+    # where NULL != NULL evaluates to NULL (not True). A paired NULL/NULL in-scope row must therefore
+    # NOT be reported as a violation, while a genuine value change is still flagged.
+    df = spark.createDataFrame(
+        [(1, None, True), (1, None, True), (2, "a", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, None), (1, None), (2, "b")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_column_value_matching=False,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+
+    null_rows = [row for row in rows if row["id"] == 1]
+    changed_row = next(row for row in rows if row["id"] == 2)
+
+    assert len(null_rows) == 2
+    # NULL == NULL under non-null-safe matching is not a change, so the paired rows carry no violation.
+    assert all(row["violation"] is None for row in null_rows)
+    # A real difference on the same filtered path is still detected.
+    changed = json.loads(changed_row["violation"])["changed"]
+    assert changed["value"]["df"] == "a"
+    assert changed["value"]["ref"] == "b"
+
+
+def test_compare_datasets_filter_drops_null_keys_without_null_safe_row_matching(spark: SparkSession):
+    # Coverage gap #1: exact-value pairing path (row_filter set) with null_safe_row_matching=False.
+    # Null matching keys are dropped before value-group counting, so a null-key in-scope row does not
+    # pair with a null-key reference, while a non-null key still pairs exactly.
+    df = spark.createDataFrame(
+        [(1, "X", True), (None, "Y", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (None, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_row_matching=False,
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+    matched = next(row for row in rows if row["id"] == 1)
+    null_violations = [json.loads(row["violation"]) for row in rows if row["id"] is None and row["violation"]]
+
+    # The non-null key pairs and matches exactly.
+    assert matched["violation"] is None
+    # The null-key source and reference rows do not match under non-null-safe matching, so they are
+    # reported as extra (source) and missing (reference) rather than silently paired.
+    assert any(v["row_extra"] for v in null_violations)
+    assert any(v["row_missing"] for v in null_violations)
+
+
+def test_compare_datasets_filter_pairs_null_keys_with_null_safe_row_matching(spark: SparkSession):
+    # Coverage gap #2: exact-value pairing path with null matching keys under default null-safe row
+    # matching. A null-key in-scope row pairs null-safely with its null-key reference.
+    df = spark.createDataFrame(
+        [(1, "X", True), (None, "Y", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (None, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    # Both the non-null and the null matching key pair (null-safe) and their values match.
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_filter_pairs_composite_keys(spark: SparkSession):
+    # Coverage gap #3: exact-value pairing path with a composite (multi-column) matching key.
+    df = spark.createDataFrame(
+        [(1, 10, "X", True), (1, 20, "Y", True), (1, 30, "Z", False)],
+        "id int, sub int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, 10, "X"), (1, 20, "W")], "id int, sub int, value string")
+    condition, apply = compare_datasets(
+        columns=["id", "sub"],
+        ref_columns=["id", "sub"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("sub", condition.alias("violation")).collect()
+    by_sub = {row["sub"]: row for row in rows}
+
+    # (1, 10): X == X exact match on the composite key.
+    assert by_sub[10]["violation"] is None
+    # (1, 20): Y vs W is a genuine change.
+    changed = json.loads(by_sub[20]["violation"])["changed"]["value"]
+    assert changed["df"] == "Y"
+    assert changed["ref"] == "W"
+    # (1, 30) is out of scope and suppressed.
+    assert by_sub[30]["violation"] is None
+
+
+def test_compare_datasets_filter_exact_match_across_multiple_compare_columns(spark: SparkSession):
+    # Coverage gap #4: exact-value pairing path grouping on multiple compare columns. Each in-scope
+    # row exact-matches the reference row with the same (c1, c2); a residual row still reports its diff.
+    df = spark.createDataFrame(
+        [(1, "A", "X", True), (1, "A", "Y", True)],
+        "id int, c1 string, c2 string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "A", "X"), (1, "A", "Z")], "id int, c1 string, c2 string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("c2", condition.alias("violation")).collect()
+    by_c2 = {row["c2"]: row for row in rows}
+
+    # (A, X) exact-matches reference (A, X) across both compared columns.
+    assert by_c2["X"]["violation"] is None
+    # (A, Y) has no exact reference; it pairs with the remaining reference (A, Z) and reports the c2 diff.
+    changed = json.loads(by_c2["Y"]["violation"])["changed"]["c2"]
+    assert changed["df"] == "Y"
+    assert changed["ref"] == "Z"
+
+
 @pytest.mark.parametrize("duplicate_key", [1, None])
 @pytest.mark.parametrize("compare_values", [False, True])
 def test_compare_datasets_pairs_duplicate_keys_without_cartesian_fanout(
