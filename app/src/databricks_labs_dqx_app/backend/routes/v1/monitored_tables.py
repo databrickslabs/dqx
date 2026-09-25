@@ -4,7 +4,7 @@ Layer 2 of the Rules Registry
 (``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §7): a thin
 binding recording that a table is under active Rules Registry governance,
 plus the live link of applied registry rules and the materializer that
-renders them into ``dq_quality_rules`` (Phase 3C).
+renders them into ``dq_resolved_rules`` (Phase 3C).
 """
 
 from typing import Annotated
@@ -12,6 +12,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
@@ -33,6 +34,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_rule_suggester,
     get_rules_catalog_service,
+    get_schedule_grant_service,
     get_tag_suggestion_service,
     require_role,
 )
@@ -42,6 +44,11 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
     DraftRunRequiredError,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    ScheduleGrantService,
+    manage_block_detail,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
@@ -168,7 +175,7 @@ def _apply_snapshot_check_counts(
     B2-25: the overview "# Checks" must agree with the DQ score and the detail
     page. The score is derived from the FROZEN per-version snapshot (via
     ``dq_metrics``), whereas ``MonitoredTableService.list_monitored_tables``
-    counts live ``dq_quality_rules`` rows — a transient set that a
+    counts live ``dq_resolved_rules`` rows — a transient set that a
     re-materialization can (wrongly, pre-Fix-B) drop to zero, so a scored table
     could show 0 checks. Count from the snapshot instead:
 
@@ -377,7 +384,7 @@ def delete_monitored_table(
     the caller is an admin/approver.
 
     TODO(Phase 3C): once the materializer exists, block/handle
-    de-materialization of any ``dq_quality_rules`` rows tied to this
+    de-materialization of any ``dq_resolved_rules`` rows tied to this
     binding's applications before allowing deletion.
     """
     user_email = _current_user_email(obo_ws)
@@ -454,12 +461,19 @@ def update_monitored_table_schedule(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
 ) -> MonitoredTableOut:
     """Set or clear a monitored table's run schedule (P21 item 14).
 
     Requires ``MODIFY`` on the monitored table unless the caller is an
     admin/approver. Orthogonal to the review lifecycle — does NOT flip the
     binding's status. An approved table with a cron fires on the in-app scheduler.
+
+    When a schedule is being *set* (a non-empty cron), the caller must be able to
+    grant the scheduler service principals SELECT on the source table — scheduled
+    runs have no OBO token and read as those SPs. If the caller can grant we do so
+    (idempotently) before saving; if not, the save is hard-blocked (403) naming
+    the users/groups that hold MANAGE (Task 12).
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -470,6 +484,25 @@ def update_monitored_table_schedule(
         principal_ids=set(principal_ids),
         principal_email=user_email,
     )
+
+    # Only gate/grant when a schedule is actually being set/enabled — clearing a
+    # schedule (empty cron) needs no source-table access.
+    if (body.schedule_cron or "").strip():
+        detail = svc.get(binding_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        table_fqn = detail.table.table_fqn
+        try:
+            grant_svc.grant_select_to_schedulers(table_fqn)
+        except CannotManageError as e:
+            raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+        except Exception as e:
+            logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Could not grant the scheduler read access to this table. Please try again.",
+            )
+
     try:
         table = svc.update_schedule(
             binding_id,
@@ -479,6 +512,11 @@ def update_monitored_table_schedule(
             schedule_kind=body.schedule_kind,
             schedule_sample_size=body.schedule_sample_size,
         )
+        # Setting a cron on an approved table activates it immediately (the
+        # schedule is orthogonal to the review lifecycle) — wake the scheduler
+        # so its first run does not wait out the idle poll interval.
+        if (body.schedule_cron or "").strip():
+            scheduler_registry.notify_scheduler()
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -950,7 +988,7 @@ def remove_applied_rule(
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+    """Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
@@ -1056,11 +1094,11 @@ def set_applied_rule_severity_override(
 # parallel status-mutation implementation, these routes REUSE the per-rule
 # transition path (``RulesCatalogService.set_status`` — the exact call
 # ``routes/v1/rules.py`` submit/approve/reject make) to move each of the
-# binding's materialized ``dq_quality_rules`` rows, so audit/history/version
+# binding's materialized ``dq_resolved_rules`` rows, so audit/history/version
 # semantics are identical for a table's checks whether they were submitted
 # one at a time from Drafts & Review or in bulk from here. The binding's own
 # status is then rolled up from its checks. The scheduler is untouched: it
-# still runs only ``dq_quality_rules`` rows at ``status='approved'``.
+# still runs only ``dq_resolved_rules`` rows at ``status='approved'``.
 # ------------------------------------------------------------------
 
 
@@ -1178,7 +1216,7 @@ def submit_monitored_table(
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
 
-    Materializes the binding's applied rules into ``dq_quality_rules`` (the
+    Materializes the binding's applied rules into ``dq_resolved_rules`` (the
     UI has already persisted any staged edits via ``saveAppliedRules``), then
     submits every freshly-materialized ``draft`` check for approval — reusing
     the same per-rule transition the Drafts & Review queue uses — and rolls
@@ -1300,7 +1338,7 @@ def approve_monitored_table(
     Reuses the per-rule approve transition so each check's audit trail is
     identical to a hand-approval, then rolls the binding up to ``approved``.
     From here the scheduler picks the checks up (it runs only ``approved``
-    ``dq_quality_rules`` rows).
+    ``dq_resolved_rules`` rows).
 
     Table approval is the ONLY event that bumps the monitored-table version:
     after the binding rolls up to ``approved`` the newly-approved rule set is

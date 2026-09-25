@@ -32,6 +32,7 @@ from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
 from .services.database_reset_service import DatabaseResetService
 from .services.discovery import DiscoveryService
+from .services.reset_status import ResetStatusStore
 from .services.draft_run_gate_service import DraftRunGateService
 from .services.job_service import JobService
 from .services.role_service import RoleService
@@ -41,6 +42,7 @@ from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
+from .services.metadata_dim_service import MetadataDimService
 from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
@@ -55,6 +57,7 @@ from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.compute_service import ComputeService, resolve_warehouse_id
+from .services.schedule_grant_service import ScheduleGrantService
 from .services.rule_test_service import RuleTestService
 from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
@@ -285,10 +288,9 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     """Build the zero-arg Genie re-provision callable, or None when unavailable.
 
     Mirrors ``backend.app._ensure_genie_space``: requires a bound SQL warehouse
-    to attach a freshly-created space to, and resolves the SP's parent folder
-    (falling back to ``/Shared``). ``ensure_dq_genie_space`` is itself idempotent
-    and never raises out of its own body; the callable is invoked best-effort by
-    the reset service, which records (never re-raises) any failure.
+    to attach a freshly-created space to. ``ensure_dq_genie_space`` is itself
+    idempotent and never raises out of its own body; the callable is invoked
+    best-effort by the reset service, which records (never re-raises) any failure.
     """
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
@@ -298,17 +300,10 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     from .services.genie_space_service import ensure_dq_genie_space
 
     def _reprovision() -> object:
-        try:
-            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
-        except Exception:
-            # Best-effort: the parent folder is cosmetic — fall back to a
-            # location every workspace has rather than skip provisioning.
-            parent_path = "/Shared"
         return ensure_dq_genie_space(
             settings=app_settings,
             ws=sp_ws,
             warehouse_id=warehouse_id,
-            parent_path=parent_path,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
         )
@@ -691,6 +686,18 @@ async def get_compute_service(
     return ComputeService(sp_ws=sp_ws, app_settings=app_settings)
 
 
+async def get_schedule_grant_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ScheduleGrantService:
+    """Create a ScheduleGrantService (OBO grantability checks + scheduler grants, Task 12).
+
+    Reads and grants run under the caller's OBO client; *sp_ws* is used only to
+    resolve the app SP identity and derive the task-runner SP from the bound job.
+    """
+    return ScheduleGrantService(obo_ws=obo_ws, sp_ws=sp_ws, job_id=conf.job_id)
+
+
 async def get_preview_sql_executor(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
@@ -869,6 +876,20 @@ async def get_score_cache_service(
     )
 
 
+async def get_metadata_dim_service(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+) -> MetadataDimService:
+    """Create the materializer for the Genie metadata dimensions."""
+    return MetadataDimService(
+        sp_sql=sp_sql,
+        registry=registry,
+        monitored_tables=monitored_tables,
+        genie_schema=rt.require_resources().genie_schema,
+    )
+
+
 async def get_entitlement_service(
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> EntitlementService:
@@ -938,6 +959,13 @@ async def get_demo_status_store(
 ) -> DemoStatusStore:
     """Create the settings-backed store for the long-running demo-seed job status."""
     return DemoStatusStore(app_settings)
+
+
+async def get_reset_status_store(
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ResetStatusStore:
+    """Create the settings-backed store for the long-running database-reset job status."""
+    return ResetStatusStore(app_settings)
 
 
 async def get_demo_seed_service(
@@ -1314,12 +1342,14 @@ __all__ = [
     "get_user_role",
     "get_comments_service",
     "get_compute_service",
+    "get_schedule_grant_service",
     "get_preview_sql_executor",
     "get_table_data_service",
     "get_rule_test_service",
     "get_review_status_service",
     "get_schedule_config_service",
     "get_demo_status_store",
+    "get_reset_status_store",
     "get_demo_seed_service",
     "require_role",
     "CurrentUserRole",

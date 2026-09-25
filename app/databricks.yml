@@ -237,7 +237,7 @@ resources:
       name: ${var.sql_warehouse_name}
       cluster_size: ${var.sql_warehouse_size}
       max_num_clusters: 1
-      auto_stop_mins: 30
+      auto_stop_mins: 10
       enable_serverless_compute: true
       warehouse_type: PRO
       # List the app SP explicitly: with ``permissions`` set, the app's warehouse

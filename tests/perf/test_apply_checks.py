@@ -6,7 +6,7 @@ import pytest
 import pyspark.sql.functions as F
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
-from tests.perf.conftest import DEFAULT_ROWS
+from tests.perf.conftest import DEFAULT_ROWS, DISTRIBUTION_VALUE_COUNT
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
@@ -1316,6 +1316,30 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df, ra
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_compare_datasets_filtered(benchmark, ws, generated_df, make_ref_df):
+    # Exercises the filtered exact-value pairing path: the check `filter` is pushed down as `row_filter`,
+    # routing duplicate-key groups through _add_exact_value_pairing_columns (two value-group aggregations,
+    # two count joins, and exact/residual/in-scope ranking windows) instead of the plain positional pairing
+    # measured by test_benchmark_compare_datasets[lazy_pairing]. col1/col2 keys are heavily duplicated at
+    # 100M rows, so the extra machinery does real work.
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["col1", "col2"],
+            filter="col3 > 0",
+            check_func_kwargs={
+                "ref_columns": ["ref_col1", "ref_col2"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    actual_count = benchmark(lambda: dq_engine.apply_checks(generated_df, checks, refs_df).count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_aggr_matches_dataset(benchmark, ws, generated_df, make_ref_df):
     """Benchmark dataset-wide row-count comparison against a reference DataFrame (crossJoin path)."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -2442,5 +2466,27 @@ def test_benchmark_is_valid_language_code(benchmark, ws, generated_language_code
     ]
     benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_language_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_in_distribution(benchmark, ws, generated_distribution_df):
+    """Benchmark is_in_distribution against a 20-value categorical column.
+
+    Expected distribution is uniform over the same 20 int values dbldatagen draws from, and
+    distance=1.0 (the TVD upper bound) keeps the check passing regardless of small sampling
+    skew introduced by the generator, so the benchmark measures the full aggregation path
+    without failing on synthetic noise."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    uniform_distribution = {i: 1.0 / DISTRIBUTION_VALUE_COUNT for i in range(1, DISTRIBUTION_VALUE_COUNT + 1)}
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_in_distribution,
+            column="col_categorical",
+            check_func_kwargs={"distribution": uniform_distribution, "distance": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_distribution_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS

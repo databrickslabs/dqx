@@ -543,6 +543,7 @@ export function MultiTableResultsSection({
       total_tests: g.total_tests ?? null,
       breached: g.breached ?? false,
       breach_criticality: g.breach_criticality ?? null,
+      pass_threshold: g.pass_threshold ?? null,
     }));
 
   // Registry order for the By dimension / By severity default sort: dimensions
@@ -604,10 +605,14 @@ export function MultiTableResultsSection({
   // Keyed by the by_rule row label (what failures carry as rule_name); only
   // breached rows contribute; suppressed when the threshold feature is off.
   const breachedRuleCriticality: Record<string, string> = {};
+  // Same keying, carrying the frozen threshold so the ⚠ tooltip can name the
+  // percentage the rule was judged against.
+  const breachedRuleThreshold: Record<string, number> = {};
   if (thresholdEnabled) {
     for (const r of [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])]) {
       if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
         breachedRuleCriticality[r.label] = r.breach_criticality;
+        if (r.pass_threshold != null) breachedRuleThreshold[r.label] = r.pass_threshold;
       }
     }
   }
@@ -1177,6 +1182,7 @@ export function MultiTableResultsSection({
                     severityRanks={sevRanks}
                     dimensionColors={dimColors}
                     breachedRuleCriticality={breachedRuleCriticality}
+                    breachedRuleThreshold={breachedRuleThreshold}
                   />
                 )}
               </CollapseRegion>
