@@ -305,7 +305,7 @@ log_alert = DQAlert(
 )
 
 actions = [
-    DQAction(action=lineage_action, condition=None, name="collect_lineage"),
+    DQAction(action=lineage_action, name="collect_lineage"),
     DQAction(action=log_alert, condition="error_row_count > 0", name="alert_on_errors"),
 ]
 
