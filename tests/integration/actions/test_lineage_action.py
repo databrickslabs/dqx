@@ -55,6 +55,7 @@ from databricks.labs.dqx.actions.lineage import (
     LINEAGE_TABLE_SCHEMA,
     LineageActionConfig,
     LineageSearchConfig,
+    extract_failed_columns,
 )
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.config import OutputConfig
@@ -192,7 +193,7 @@ _OUTPUT_TABLE_SCHEMA = StructType(
 
 
 def _issue_row(
-    *, name: str, message: str, columns: list[str], function: str, run_id: str = "integration-lineage-run"
+    *, name: str, message: str, columns: list[str], function: str, run_id: str | None = "integration-lineage-run"
 ) -> dict[str, Any]:
     """Build one *_errors*/*_warnings* struct row for use in *createDataFrame*.
 
@@ -605,6 +606,74 @@ def test_column_lineage_ignores_prior_run_failures(
             "value" not in source_columns
         ), f"prior-run failure leaked into current-run column lineage: {source_columns}"
         assert "other" in source_columns, f"current-run failure missing from column lineage: {source_columns}"
+    finally:
+        spark.sql(f"DROP TABLE IF EXISTS {output_location}")
+
+
+def test_extract_failed_columns_includes_null_run_id(
+    spark: SparkSession,
+    make_schema,
+    make_random,
+) -> None:
+    """Regression: *issue.run_id* is nullable, and Spark's ``null == <value>`` returns null
+    (dropped by ``.where``). An equality-only filter would silently omit unstamped failures.
+    The filter must include null run_id so those columns still seed column lineage. Rows
+    stamped with a *different* run_id are still excluded (append-mode isolation).
+    """
+    schema = make_schema()
+    output_location = f"{schema.full_name}.null_run_id_{make_random(6).lower()}"
+    rows = [
+        {
+            "id": 1,
+            "value": "a",
+            "_errors": [
+                _issue_row(
+                    name="unstamped_check",
+                    message="'value' failed with null run_id",
+                    columns=["value"],
+                    function="is_not_null",
+                    run_id=None,
+                )
+            ],
+            "_warnings": [],
+        },
+        {
+            "id": 2,
+            "value": "b",
+            "_errors": [
+                _issue_row(
+                    name="current_check",
+                    message="'other' failed in the current run",
+                    columns=["other"],
+                    function="is_not_null",
+                )
+            ],
+            "_warnings": [],
+        },
+        {
+            "id": 3,
+            "value": "c",
+            "_errors": [
+                _issue_row(
+                    name="prior_check",
+                    message="'prior' failed in a prior run",
+                    columns=["prior"],
+                    function="is_not_null",
+                    run_id="prior-run",
+                )
+            ],
+            "_warnings": [],
+        },
+    ]
+    spark.createDataFrame(rows, _OUTPUT_TABLE_SCHEMA).write.mode("overwrite").format("delta").saveAsTable(
+        output_location
+    )
+    try:
+        failed = {
+            row[0]
+            for row in extract_failed_columns(spark, output_location, run_id="integration-lineage-run").collect()
+        }
+        assert failed == {"value", "other"}, f"null-run_id and current-run failures expected, got {failed}"
     finally:
         spark.sql(f"DROP TABLE IF EXISTS {output_location}")
 

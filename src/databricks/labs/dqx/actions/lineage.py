@@ -367,12 +367,12 @@ def extract_failed_columns(
     ``_warnings`` — override via *errors_column* / *warnings_column* when the DQX engine has
     renamed them) and every struct exposes a *run_id* STRING plus a *columns* ARRAY<STRING>
     listing the column(s) the check flagged. In append-mode writes the same table accumulates
-    rows from many runs, so this helper explodes both arrays, keeps only issues whose
-    ``issue.run_id`` matches the supplied *run_id*, then explodes the inner *columns* field,
-    unions the two, filters nulls, and returns the distinct set as a one-column DataFrame
-    (schema *_FAILED_COLUMNS_SCHEMA* with a single ``col_name STRING`` column). Without the
-    run-id filter a prior run's failure could seed column-lineage rows stamped with the
-    current *run_id*.
+    rows from many runs, so this helper explodes both arrays, keeps issues whose
+    ``issue.run_id`` matches the supplied *run_id* **or is null** (treating null as "current run"),
+    then explodes the inner *columns* field, unions the two, filters nulls, and returns the distinct set as a
+    one-column DataFrame (schema *_FAILED_COLUMNS_SCHEMA* with a single ``col_name STRING``
+    column). Without the run-id filter a prior run's failure could seed column-lineage rows
+    stamped with the current *run_id*.
 
     The DataFrame shape is deliberate: the downstream column-lineage CTE joins it via a
     session temp view rather than iterating one query per name, so the full pipeline stays
@@ -385,8 +385,8 @@ def extract_failed_columns(
     Args:
         spark: Active *SparkSession* used to read *output_location*.
         output_location: 3-level UC name of the DQX output (or quarantine) table.
-        run_id: Current DQX run identifier — only issue structs whose ``issue.run_id`` equals
-            this value contribute to the returned column set.
+        run_id: Current DQX run identifier — issue structs whose ``issue.run_id`` equals this
+            value or is null contribute to the returned column set.
         errors_column: Name of the ARRAY<STRUCT> column that carries error-level issues
             (default ``_errors``).
         warnings_column: Name of the ARRAY<STRUCT> column that carries warning-level issues
@@ -407,7 +407,11 @@ def extract_failed_columns(
     for issues_col in (errors_column, warnings_column):
         if issues_col not in present_columns:
             continue
-        exploded = df.select(F.explode(F.col(issues_col)).alias("issue")).where(F.col("issue.run_id") == F.lit(run_id))
+        exploded = (
+            df
+            .select(F.explode(F.col(issues_col)).alias("issue"))
+            .where((F.col("issue.run_id") == F.lit(run_id)) | F.col("issue.run_id").isNull())
+        )
         issue_frames.append(exploded.select(F.explode(F.col("issue.columns")).alias(_FAILED_COLUMN_NAME)))
 
     if not issue_frames:
