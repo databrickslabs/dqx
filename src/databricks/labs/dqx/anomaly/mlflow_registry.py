@@ -7,6 +7,7 @@ as the default implementation. This abstraction enables:
 - Clean separation of concerns
 """
 
+import inspect
 import os
 from abc import ABC, abstractmethod
 from typing import Any
@@ -185,10 +186,31 @@ def log_sklearn_model(
     model_name: str,
     signature: MLflowSignature,
 ):
-    """Log sklearn model to MLflow."""
+    """Log sklearn model to MLflow, across both spellings of the artifact argument.
+
+    ``name=`` is MLflow 3's parameter and ``artifact_path=`` its predecessor. #1536 removed this branch on
+    the grounds that the floor in *pyproject.toml* (``mlflow>=3.13.0``) guarantees the newer one, and CI
+    then failed with ``TypeError: log_model() got an unexpected keyword argument 'name'`` in
+    ``test_train_anomaly_cli`` and ``test_anomaly_workflow_deploy_and_run``.
+
+    The floor is the wrong guarantee for this call. It constrains the environment DQX is *installed* into,
+    while training runs on a Databricks cluster and uses the MLflow that runtime bundles, which the library
+    does not choose. So the branch is a runtime-compatibility check rather than a version workaround, which
+    is what its original docstring said before it was read as obsolete scaffolding. Only a workspace run
+    reaches it: the author of #1536 could not run the anomaly suite, and CI could not either while the PR
+    was conflicting.
+    """
+    if "name" in inspect.signature(mlflow.sklearn.log_model).parameters:
+        return mlflow.sklearn.log_model(
+            sk_model=model,
+            name="model",
+            registered_model_name=model_name,
+            signature=signature,
+            serialization_format=SKLEARN_SERIALIZATION_FORMAT,
+        )
     return mlflow.sklearn.log_model(
         sk_model=model,
-        name="model",
+        artifact_path="model",
         registered_model_name=model_name,
         signature=signature,
         serialization_format=SKLEARN_SERIALIZATION_FORMAT,

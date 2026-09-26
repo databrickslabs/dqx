@@ -412,7 +412,13 @@ def test_create_udf_schema_includes_contributions():
     schema_without = create_udf_schema(enable_contributions=False)
     schema_with = create_udf_schema(enable_contributions=True)
     assert [field.name for field in schema_without.fields] == ["anomaly_score"]
-    assert [field.name for field in schema_with.fields] == ["anomaly_score", "anomaly_contributions"]
+    # The basis split rides with the contributions rather than behind a flag of its own: it is derived from
+    # the attribution enable_contributions already pays for, so there is nothing to switch off separately.
+    assert [field.name for field in schema_with.fields] == [
+        "anomaly_score",
+        "anomaly_contributions",
+        "anomaly_basis_contributions",
+    ]
 
 
 def test_sklearn_version_mismatch_warns(
