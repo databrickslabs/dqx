@@ -85,6 +85,65 @@ def test_a_view_arguing_the_row_is_normal_earns_no_share(customer_metadata: Spar
     }
 
 
+def test_features_that_render_to_the_same_label_are_summed_not_overwritten():
+    """Two engineered features can share one label, and the map is keyed by label.
+
+    ``human_label`` deliberately renders ``_hour_sin`` and ``_hour_cos`` both as "{col} hour", and likewise
+    for the day-of-week and month pairs -- a sine/cosine pair *is* one idea, so one name for it is right for
+    a reader. But a datetime column in ``columns`` produces all of those in a single source block, so keying
+    a dict by label collides, and assignment would keep only the last value. The block's shares would then
+    total less than 100 while both the documented contract and the LLM prompt say they total 100.
+
+    Summing is the correct aggregation rather than a workaround: the two terms together are the column's
+    hour evidence, so their shares add.
+    """
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "signup", "category": "datetime"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=[
+            "signup_hour_sin",
+            "signup_hour_cos",
+            "signup_dow_sin",
+            "signup_dow_cos",
+            "signup_is_weekend",
+        ],
+        baseline_by=[],
+        baseline_over_time="",
+    )
+    keys = AttributionKeys.from_metadata(metadata)
+    assert keys.labels.count("signup hour") == 2, "the fixture must actually contain a collision"
+
+    # Equal evidence from all five features.
+    basis = format_basis_contributions(np.ones((1, 5)), keys.blocks, keys.labels, np.array([True]), 1)
+
+    shares = basis[0]
+    assert isinstance(shares, dict)
+    total = sum(value for value in shares.values() if value is not None)
+    assert total == pytest.approx(100.0, abs=0.5), f"shares must total 100 per column, got {total}: {shares}"
+    # .get rather than a subscript: pylint infers the list element as possibly-None and does not narrow
+    # on the isinstance above, while it accepts the .values() call on the line before.
+    assert shares.get("signup hour") == pytest.approx(40.0, abs=0.5), "the two hour terms add, not replace"
+
+
+def test_a_short_label_list_drops_trailing_features_rather_than_raising(
+    customer_metadata: SparkFeatureMetadata,
+):
+    """Reachable with hand-built arguments, so it is bounded rather than trusted.
+
+    The sibling ``format_shap_contributions`` re-checks its own shape for the same reason. Indexing the
+    labels by a position valid only in the attribution matrix would raise ``IndexError`` from inside a
+    scoring UDF, which fails a whole partition to report nothing.
+    """
+    keys = AttributionKeys.from_metadata(customer_metadata)
+
+    basis = format_basis_contributions(np.ones((1, 3)), keys.blocks, keys.labels[:2], np.array([True]), 1)
+
+    shares = basis[0]
+    assert isinstance(shares, dict)
+    assert set(shares) == {"units", "units vs its group baseline"}, shares
+
+
 def test_a_column_compared_only_one_way_is_omitted():
     """There is no basis to disambiguate, and ``{col: 100}`` would pad the map with nothing."""
     metadata = SparkFeatureMetadata(

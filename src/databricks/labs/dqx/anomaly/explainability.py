@@ -236,6 +236,14 @@ def format_basis_contributions(
     *normal* is not a driver. The clip happens after blocking there and within the block here, so in both
     places the signed values survive exactly as long as they are still being combined.
 
+    Positions are bounded by *both* the attribution's width and the label list's length, rather than by the
+    matrix alone. The two always agree when they come from
+    :meth:`~databricks.labs.dqx.anomaly.feature_naming.AttributionKeys.from_metadata`, which derives them
+    from one metadata object, but this function is public and reachable with hand-built arguments -- the same
+    reason :func:`format_shap_contributions` re-checks its own shape instead of trusting its caller. A short
+    label list drops the trailing features rather than raising, which keeps a partial answer available and
+    cannot mislabel one feature's share as another's.
+
     Args:
         per_feature: Oriented per-feature attribution, shape ``(n_valid_rows, n_features)``. Signed.
         blocks: Source column -> its feature positions, from
@@ -252,12 +260,12 @@ def format_basis_contributions(
     if per_feature.size == 0 or not multi_view:
         return results
 
-    width = per_feature.shape[1]
+    width = min(per_feature.shape[1], len(feature_labels))
     valid_row = 0
     for row in range(num_rows):
         if not valid_indices[row]:
             continue
-        shares: dict[str, float | None] = {}
+        accumulated: dict[str, float] = {}
         for positions in multi_view.values():
             usable = [p for p in positions if 0 <= p < width]
             magnitudes = np.maximum(per_feature[valid_row, usable], 0.0)
@@ -265,7 +273,17 @@ def format_basis_contributions(
             if total <= 0.0:
                 continue
             for position, magnitude in zip(usable, magnitudes):
-                shares[feature_labels[position]] = round(float(magnitude) / total * 100.0, 1)
+                # Accumulated, not assigned. Two features can render to one label on purpose -- a
+                # sine/cosine pair *is* one idea, so ``human_label`` gives ``_hour_sin`` and ``_hour_cos``
+                # the same words -- and a datetime column produces several such pairs inside one block.
+                # Assigning kept only the last of each pair, which left the block's shares totalling 60
+                # rather than 100 on a five-feature block and contradicted both the published contract and
+                # what the prompt tells the model. Adding them is also the right arithmetic: the two terms
+                # together are that column's hour evidence.
+                label = feature_labels[position]
+                accumulated[label] = accumulated.get(label, 0.0) + float(magnitude) / total * 100.0
+        # Rounded once, at the end, so summing before rounding cannot drift the block off 100.
+        shares: dict[str, float | None] = {label: round(value, 1) for label, value in accumulated.items()}
         results[row] = shares or None
         valid_row += 1
     return results
