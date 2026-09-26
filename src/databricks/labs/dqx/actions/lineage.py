@@ -35,6 +35,7 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
+from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
@@ -514,14 +515,6 @@ def _fully_qualified_identifier(name: str) -> str:
     return ".".join(quote_column_name(segment) for segment in name.split("."))
 
 
-_VERSION_LOOKUP_SCHEMA = StructType(
-    [
-        StructField("target_table", StringType(), nullable=False),
-        StructField("resolved_delta_version", LongType(), nullable=True),
-    ]
-)
-
-
 def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> None:
     """Attach *LINEAGE_TABLE_COMMENT* and each column's declared comment to the persisted lineage
     table via ``COMMENT ON TABLE`` / ``COMMENT ON COLUMN``
@@ -624,35 +617,35 @@ def _collect_lineage_rows(
 
 
 def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -> DataFrame:
-    """Populate *target_delta_version* with the latest Delta version of each *target_table*.
-
-    Collects the distinct non-null *target_table* values from *lineage_df*, runs
-    ``DESCRIBE HISTORY <ident> LIMIT 1`` per name, and left-joins the resulting version onto the
-    input. Failures (missing table, non-Delta table, access denied, malformed name) leave the
-    field NULL and log a sanitised warning — the pipeline never fails on a single-table lookup.
-
-    The output preserves *LINEAGE_TABLE_SCHEMA* column order so downstream *save_dataframe_as_table*
-    writes remain schema-stable.
-    """
-    distinct_targets = lineage_df.select("target_table").where(F.col("target_table").isNotNull()).distinct().collect()
+    """Populate *target_delta_version* with the latest Delta version of each *target_table*."""
+    distinct_targets = [
+        row["target_table"]
+        for row in lineage_df.select("target_table").where(F.col("target_table").isNotNull()).distinct().collect()
+    ]
     if not distinct_targets:
         return lineage_df
 
-    resolved: list[tuple[str, int | None]] = []
-    for row in distinct_targets:
-        table = row["target_table"]
+    per_target_frames: list[DataFrame] = []
+    for table in distinct_targets:
         try:
-            history_row = (
-                spark.sql(f"DESCRIBE HISTORY {_fully_qualified_identifier(table)} LIMIT 1").select("version").first()
-            )
+            history = DeltaTable.forName(spark, table).history(1)
         except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
             logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")
-            resolved.append((table, None))
             continue
-        version = int(history_row["version"]) if history_row is not None else None
-        resolved.append((table, version))
+        per_target_frames.append(
+            history.select(
+                F.col("version").cast(LongType()).alias("resolved_delta_version"),
+                F.lit(table).alias("target_table"),
+            )
+        )
 
-    lookup = spark.createDataFrame(resolved, _VERSION_LOOKUP_SCHEMA)
+    if not per_target_frames:
+        return lineage_df
+
+    lookup = per_target_frames[0]
+    for frame in per_target_frames[1:]:
+        lookup = lookup.unionByName(frame)
+
     joined = lineage_df.drop("target_delta_version").join(lookup, on="target_table", how="left")
     return joined.withColumnRenamed("resolved_delta_version", "target_delta_version").select(
         *[F.col(field.name) for field in LINEAGE_TABLE_SCHEMA.fields]
