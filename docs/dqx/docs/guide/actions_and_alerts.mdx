@@ -500,6 +500,138 @@ audit = DQAction(
   </TabItem>
 </Tabs>
 
+### CollectLineageAction
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.17.0" heading={false} />
+</FeatureTags>
+
+`CollectLineageAction` collects the upstream, downstream, and per-failed-column lineage
+for the run's *input_location* and persists it into a Delta table. It is intended to be paired with
+alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can
+answer *"what feeds this table?"* directly from a DQ alert.
+
+See the end-to-end walkthrough in
+[demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_lineage_action.py)
+for a pipeline that exercises lineage collection with an alert on top.
+
+The action never fails the pipeline: collection errors are logged and returned as `CONFIG_ERROR`
+so a stale system-table read never neglects check results.
+
+<Admonition type="note" title="Requires DBR 17+">
+Upstream and downstream table walks use a single recursive CTE against *system.access.table_lineage*
+with an in-CTE full-path cycle guard, so the compute must be on **Databricks Runtime 17 or newer**
+(the release that introduced ``WITH RECURSIVE``). On older runtimes the walk fails softly, a
+sanitised warning is logged, and an empty *LINEAGE_TABLE_SCHEMA* DataFrame is written — no other
+lineage collection is affected.
+</Admonition>
+
+**Configuration:**
+
+- *LineageSearchConfig* (used for *upstream*, *downstream*, *column_upstream*,
+  *column_downstream*): *depth* (int ≥ 1, default `1`), *lookback_days* (int ≥ 1, default
+  `30`), *max_nodes* (int ≥ 1, default `100`). Both the table-lineage and column-lineage
+  walks are recursive and honour *depth* and *max_nodes* identically. *max_nodes* is a
+  **guardrail** applied as a ``LIMIT`` inside each member of the recursive CTE (bounding the
+  frontier per hop, so intermediate expansion is capped per iteration) and once more at the
+  tail (bounding total output). Together with *depth* this bounds the traversal's
+  materialised row count to ``O(depth * max_nodes)``. It does **not** guarantee which rows
+  survive when the graph produces more edges than the cap (no ordering contract); treat it
+  as a safety limit.
+- *LineageActionConfig* composes four optional sub-configs — *upstream*, *downstream*,
+  *column_upstream*, *column_downstream* — plus a *failures_source* selector:
+  - Sub-configs each default to a fresh *LineageSearchConfig* (direction on by default); set
+    any field to `null` (YAML) / `None` (Python) to disable that direction. Table and column
+    directions are symmetric — the split lets you collect, e.g., only *upstream* +
+    *column_downstream* if that is all you need.
+  - *failures_source* (default `"both"`) picks which sink the per-failed-column seeds are
+    read from: `"output"` reads only *context.output_location*, `"quarantine"` reads only
+    *context.quarantine_location*, `"both"` reads from whichever of the two are present and
+    unions the distinct failed columns. DQX writes failures to *quarantine_location* in
+    split-run mode and to *output_location* in non-split mode, so the default `"both"`
+    makes column lineage work in either configuration without extra wiring.
+  - *errors_column* / *warnings_column* (defaults `"_errors"` / `"_warnings"`) name the two
+    ARRAY&lt;STRUCT&gt; columns DQX appends to the output / quarantine tables. Override them
+    when the engine's error / warning column renames have been applied so this action can
+    still locate the issue structs.
+- *output_config* (required *OutputConfig*): the Delta destination for the persisted lineage rows.
+  Fully configurable — *location*, *format*, *mode*, *options*, *partition_by*, *cluster_by*.
+
+<Admonition type="note" title="Keep write mode consistent with failed-check output">
+Set `output_config.mode` equal to `RunConfig.output_config.mode` (the failed-checks output mode) so
+lineage writes stay consistent with how DQX writes failed rows. This is a coherence contract, not a
+type-level constraint — the framework does not enforce it.
+</Admonition>
+
+**Emitted extras:** exactly `{"lineage_location": "<full name>"}`. Downstream actions read the table
+when they need the full structure — see [Passing data between actions (extras)](#passing-data-between-actions-extras).
+
+**Persisted table schema** (columns are the same on every run, including empty runs):
+
+| Column                 | Type         | Populated for                                    |
+|------------------------|--------------|--------------------------------------------------|
+| *run_id*               | STRING       | every row (from `context.run_id`)                |
+| *run_time*             | TIMESTAMP    | every row (from `context.run_time`)              |
+| *source_table*         | STRING       | every row (`context.input_location`)             |
+| *edge_type*            | STRING       | every row — *upstream* / *downstream* / *column_upstream* / *column_downstream* |
+| *depth*                | BIGINT       | edge rows (BFS depth)                            |
+| *target_table*         | STRING       | edge rows                                        |
+| *target_delta_version* | BIGINT       | edge rows (when known)                           |
+| *source_column*        | STRING       | column-lineage rows                              |
+| *target_column*        | STRING       | column-lineage rows                              |
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+from databricks.labs.dqx.actions import (
+    CollectLineageAction,
+    DQAction,
+    LineageActionConfig,
+    LineageSearchConfig,
+)
+from databricks.labs.dqx.config import OutputConfig
+
+lineage = DQAction(
+    action=CollectLineageAction(
+        output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
+        config=LineageActionConfig(
+            upstream=LineageSearchConfig(depth=2, lookback_days=30, max_nodes=100),
+            downstream=LineageSearchConfig(depth=1),
+            column_upstream=LineageSearchConfig(depth=2),
+            column_downstream=None,  # disable downstream column lineage for this action
+            failures_source="both",   # read failures from output_location and quarantine_location
+        ),
+    ),
+)
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- action:
+    type: collect_lineage
+    output_config:
+      location: cat.sch.dqx_lineage
+      mode: append
+    config:
+      upstream:
+        depth: 2
+        lookback_days: 30
+        max_nodes: 100
+      downstream:
+        depth: 1
+      column_upstream:
+        depth: 2
+      column_downstream: null   # disable downstream column lineage for this action
+      failures_source: both     # read failures from output_location and quarantine_location
+```
+
+  </TabItem>
+</Tabs>
+
 ## Registering a custom action
 
 The built-in actions (`DQAlert`, `FailPipeline`, `NoOpAction`) cover the common cases, but you can add
@@ -587,6 +719,76 @@ configuration: they are **not** stored with the metadata in `actions_location`. 
 unique: registering a *different* class under a `type` already taken by another raises
 `InvalidActionError`, but re-running the same definition (e.g. a notebook cell) simply overwrites it.
 </Admonition>
+
+## Passing data between actions (extras)
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.17.0" heading={false} />
+</FeatureTags>
+
+Actions in a DQX run evaluate **sequentially**, so an earlier action can hand a small payload to a
+later one — for example, `CollectLineageAction` publishes the full name of the lineage table it just
+wrote, and a following `DQAlert` embeds that table name into its message. This is exposed through
+`ActionResult.extras` / `ActionContext.extras` and needs no new orchestration abstraction.
+
+**Contract**
+
+- Producer returns `ActionResult(..., extras=<dict[str, str] | None>)`. *extras* is optional and
+  defaults to `None` for backward compatibility with actions written before this feature.
+- The payload is a flat *dict[str, str]* — small, cheap to copy, safe to log. If a producer needs to
+  transport richer structure, persist it and hand back the
+  location/reference as a string; downstream consumers read the persisted artefact directly.
+- Consumer reads the payload via `context.get_extras("<producing-action-name>")`, which always
+  returns a `dict[str, str]` (empty when no producer of that name has contributed yet) so no
+  intermediate `None`-guards are needed at the call site.
+- The evaluator **copies** the payload before inserting it into the next `ActionContext`, so
+  mutations made by the producer after *execute* returned are invisible downstream.
+
+<Admonition type="caution" title="Extras are keyed by producing action name">
+Two `DQAction` entries with the same `name` share one *extras* slot. The second action's payload
+overwrites the first (last-write-wins). Give producers distinct names when consumers must
+distinguish between them.
+</Admonition>
+
+**Minimal worked example** — an alert that references the lineage table produced by the previous
+action:
+
+```python
+from typing import Literal
+from databricks.labs.dqx.actions import (
+    Action,
+    ActionContext,
+    ActionResult,
+    ActionServices,
+    ActionStatus,
+    CollectLineageAction,
+    DQAction,
+    register_action,
+)
+from databricks.labs.dqx.config import OutputConfig
+
+
+@register_action
+class LineageAwareAlert(Action):
+    type: Literal["lineage_aware_alert"] = "lineage_aware_alert"
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        lineage_info = context.get_extras("collect_lineage")
+        table = lineage_info.get("lineage_location")
+        # ... build and deliver an alert message that mentions `table` ...
+        return ActionResult(action_name=self.name or self.type, fired=True, status=ActionStatus.HEALTHY)
+
+
+actions = [
+    DQAction(
+        action=CollectLineageAction(
+            output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
+        ),
+    ),
+    DQAction(condition="error_row_count > 0", action=LineageAwareAlert()),
+]
+```
 
 ## Alert Types
 

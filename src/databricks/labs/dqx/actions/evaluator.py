@@ -96,6 +96,13 @@ class ActionEvaluator:
         """
         results: list[ActionResult] = []
         deferred: list[TerminalActionError] = []
+        # Extras propagation is opt-in per action: the accumulator stays *None* until the first
+        # producer contributes, and only actions returning a non-None extras payload add a slot.
+        # A shallow dict-copy at the boundary severs the caller's reference so downstream actions
+        # cannot observe mutations made by the producer after execute() returned.
+        accumulated_extras: dict[str, dict[str, str]] | None = (
+            dict(context.extras) if context.extras is not None else None
+        )
 
         for dq_action in self._actions:
             safe_name = _sanitize(dq_action.name)
@@ -160,11 +167,14 @@ class ActionEvaluator:
             # ------------------------------------------------------------------
             try:
                 # Pass the action's own gating condition so the action (e.g. an alert message) can
-                # report why it fired; the shared run context carries no per-action condition.
-                action_context = dataclasses.replace(context, condition=dq_action.condition)
+                # report why it fired; the shared run context carries no per-action condition. Also
+                # feed the accumulated extras of all preceding actions so this one can read them
+                # via context.extras.get(...).
+                action_context = dataclasses.replace(context, condition=dq_action.condition, extras=accumulated_extras)
                 result = dq_action.action.execute(action_context, self._services)
                 results.append(result)
                 self._log_fired(safe_name, result)
+                accumulated_extras = self._record_extras(dq_action, result, accumulated_extras)
                 self._state_store.record(
                     self._build_event(
                         dq_action,
@@ -179,6 +189,8 @@ class ActionEvaluator:
                     f"Action '{safe_name}' fired with status '{ActionStatus.UNHEALTHY.value}' and raised a "
                     f"terminal error; deferring until loop completes."
                 )
+                # Terminal action didn't complete cleanly, so any extras it may have produced are
+                # discarded — do not touch accumulated_extras here.
                 deferred.append(exc)
                 self._state_store.record(
                     self._build_event(dq_action, context, fired=True, status=ActionStatus.UNHEALTHY)
@@ -191,6 +203,26 @@ class ActionEvaluator:
             raise deferred[0]
 
         return results
+
+    @staticmethod
+    def _record_extras(
+        dq_action: DQAction,
+        result: ActionResult,
+        accumulated_extras: dict[str, dict[str, str]] | None,
+    ) -> dict[str, dict[str, str]] | None:
+        """Append *result.extras* under *dq_action.name* into a fresh accumulator and return it.
+
+        Skips accumulation when the action returned no extras. The inserted payload is copied so a
+        producer that mutates the returned dict after *execute* cannot leak that mutation to
+        downstream actions.
+        """
+        if not result.extras:
+            return accumulated_extras
+        if accumulated_extras is None:
+            accumulated_extras = {}
+        accumulated_extras[dq_action.name] = dict(result.extras)
+        logger.debug(f"Recorded extras from action '{_sanitize(dq_action.name)}' for downstream propagation.")
+        return accumulated_extras
 
     @staticmethod
     def _log_fired(safe_name: str, result: ActionResult) -> None:
