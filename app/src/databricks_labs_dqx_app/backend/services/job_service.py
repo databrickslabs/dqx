@@ -33,7 +33,6 @@ class JobService:
         job_id: str,
         sql: SqlExecutor,
         warehouse_id: str | None = None,
-        wheels_volume: str | None = None,
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
@@ -43,7 +42,6 @@ class JobService:
         # caller) wins; otherwise fall back to the SP executor's env-bound
         # warehouse so behaviour is unchanged when no override is set.
         self._warehouse_id = (warehouse_id or "").strip() or (sql.warehouse_id or "")
-        self._wheels_volume = (wheels_volume or "").strip()
 
     def submit_run(
         self,
@@ -70,8 +68,7 @@ class JobService:
             "warehouse_id": self._warehouse_id,
         }
         config_json = prepare_config_json(
-            self._ws,
-            wheels_volume=self._wheels_volume,
+            self._sql,
             run_id=run_id,
             config=config,
             job_parameters_without_config=base_params,

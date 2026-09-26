@@ -159,7 +159,7 @@ class TestBaselineOnlyCatalogue:
 
     def test_catalogue_contains_only_the_analytical_baseline(self) -> None:
         assert [(m.version, m.description) for m in MIGRATIONS] == [
-            (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)")
+            (1, "Delta analytical baseline (validation, profiling, quarantine, metrics, run configs)")
         ]
 
     def test_delta_migrations_do_not_create_oltp_tables(self) -> None:
@@ -191,6 +191,7 @@ class TestBaselineOnlyCatalogue:
             "dq_validation_runs",
             "dq_quarantine_records",
             "dq_metrics",
+            "dq_run_configs",
         )
 
     @pytest.mark.parametrize(
