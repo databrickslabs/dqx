@@ -1,12 +1,18 @@
 """Integration tests for auto-discovery of anomaly detection columns and segments."""
 
+import datetime
+import logging
+
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
+from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_baseline_columns
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import SEGMENT_REGIONS
 from tests.integration_anomaly.conftest import qualify_model_name
+
+#: A Monday, so the weekday and weekend calendar features the advisory warns about are meaningful.
+START = datetime.datetime(2025, 1, 6)
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
@@ -79,7 +85,14 @@ def test_auto_discover_excludes_high_cardinality(spark: SparkSession):
 
 
 def test_zero_config_training(spark: SparkSession, make_schema, make_random, anomaly_engine):
-    """Test zero-configuration training with auto-discovery."""
+    """Zero-config training discovers the metrics *and* a grouping, and conditions on it.
+
+    A discovered grouping produces **one** model that judges each metric against its own group's
+    baseline, not one model per group. It used to produce one per group, which is the configuration
+    that measured worst on the Server Machine Dataset — worse than pooling, with one entity emitting
+    15,963 false positives on 28,392 normal rows — while also being the only configuration whose
+    cost grows with group count. See databrickslabs/dqx#1484.
+    """
     # Create unique schema for test isolation
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
@@ -106,25 +119,33 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
     # Verify models were created
     assert model_uri is not None
 
-    # Check registry for segment models
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
 
-    # Should create 2 segment models (US and EU)
-    assert len(models) == 2
+    # One conditioned model, not one per region: the discovered grouping becomes baseline_by.
+    assert len(models) == 1
+    assert models[0].grouping.baseline_by == ["region"]
 
     # Verify auto-discovered columns (amount and discount)
     for model in models:
         assert set(model.training.columns) == {"amount", "discount"}
 
 
-def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make_random, anomaly_engine):
-    """Test that providing explicit columns disables auto-segmentation."""
+def test_explicit_columns_keep_the_pooled_comparison_but_warn(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """Naming the feature columns keeps the whole-table comparison, and says so.
+
+    Explicit configuration wins: DQX does not add engineered baseline features the caller never
+    asked for, because a discovered grouping is data-dependent and a retrain after a cardinality
+    shift would silently move every score. What it does instead is name the grouping it found, so
+    the caller can opt in. Silence was the actual defect here, not the pooling.
+    """
     # Create unique schema for test isolation
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
 
-    # Create data with segment column
+    # region is a strong baseline candidate (2 values, 200 rows each)
     data = []
     for region in ("US", "EU"):
         for i in range(200):
@@ -134,37 +155,87 @@ def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make
     table_name = f"{TEST_CATALOG}.{schema.name}.explicit_cols_test_{suffix}"
     df.write.saveAsTable(table_name)
 
-    # Train with explicit columns (should NOT auto-segment)
+    # Explicit feature column, no explicit grouping: pooled, with an advisory naming what it found.
     registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
-    anomaly_engine.train(
-        df=spark.table(table_name),
-        columns=["amount"],  # Explicit columns provided
-        model_name=qualify_model_name(f"test_explicit_{suffix}", registry_table),
-        registry_table=registry_table,
-    )
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount"],
+            model_name=qualify_model_name(f"test_explicit_{suffix}", registry_table),
+            registry_table=registry_table,
+        )
 
-    # Verify only 1 global model created (no segmentation)
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 1
-    assert models[0].segmentation.is_global_model is True
+    assert models[0].training.columns == ["amount"]
+    assert not models[0].grouping.baseline_by
+
+    advisories = [r.message for r in caplog.records if "looks like a grouping" in r.message]
+    assert advisories, "an explicit-columns train over groupable data should name the grouping"
+    # The message has to carry the fix, not just the diagnosis, or the caller has to go and read docs.
+    assert "region" in advisories[0]
+    assert "baseline_by=['region']" in advisories[0]
+    assert "baseline_by=[]" in advisories[0]
 
 
-def test_warnings_for_small_segments(spark: SparkSession):
-    """Test that warnings are issued for segments with <1000 rows."""
-    # Create data with small segments
-    data = []
-    for region in SEGMENT_REGIONS:
-        for i in range(500):  # Only 500 rows per segment
-            data.append((region, 100.0 + i))
+def test_no_advisory_when_the_data_has_no_grouping(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """The advisory stays quiet when there is nothing to act on.
 
-    df = spark.createDataFrame(data, "region string, amount double")
+    This is what keeps it worth reading: a warning that fires on every explicit-columns call is one
+    callers learn to filter out, and then it is worth nothing when it does matter.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
 
-    profile = auto_discover_columns(df)
+    # Numeric metrics only, so there is no categorical column to group on.
+    df = spark.createDataFrame([(100.0 + i, 5.0 + i % 7) for i in range(400)], "amount double, discount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.no_grouping_{suffix}"
+    df.write.saveAsTable(table_name)
 
-    # Should still recommend region but warn about small segments
-    assert "region" in profile.recommended_segments
-    assert any("1000 rows" in w for w in profile.warnings)
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "discount"],
+            model_name=qualify_model_name(f"test_nogroup_{suffix}", registry_table),
+            registry_table=registry_table,
+        )
+
+    assert not [r for r in caplog.records if "looks like a grouping" in r.message]
+
+
+def test_suggestion_never_offers_a_column_the_caller_measures(spark: SparkSession):
+    """A column cannot be both what is measured and what it is measured against.
+
+    ``validate_baseline_columns`` would reject the overlap anyway, so suggesting it would be advice
+    that fails if taken.
+    """
+    df = spark.createDataFrame(
+        [("US", "retail", 100.0 + i) for i in range(300)] + [("EU", "retail", 100.0 + i) for i in range(300)],
+        "region string, channel string, amount double",
+    )
+
+    suggestion = suggest_baseline_columns(df, exclude=["region"])
+
+    assert suggestion is None or "region" not in suggestion.columns
+
+
+def test_suggestion_reports_the_shape_the_warning_quotes(spark: SparkSession):
+    """The advisory quotes a group count and rows per group, so those have to be right."""
+    df = spark.createDataFrame(
+        [(region, 100.0 + i) for region in ("US", "EU", "APAC") for i in range(200)],
+        "region string, amount double",
+    )
+
+    suggestion = suggest_baseline_columns(df, exclude=["amount"])
+
+    assert suggestion is not None
+    assert suggestion.columns == ["region"]
+    assert suggestion.group_count == 3
+    assert suggestion.rows_per_group == 200
 
 
 def test_autodiscovery_excludes_high_null_numeric_columns(spark: SparkSession):
@@ -241,14 +312,19 @@ def test_autodiscovery_with_datetime_columns(spark: SparkSession):
 
 def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
     """Test string column analysis with low/medium/high cardinality (lines 130-148)."""
-    # Create DataFrame with strings of varying cardinality
+    # 1,000 rows so `category` clears the *effective* rows-per-group floor. Discovery runs before sampling,
+    # so a candidate needs MIN_ROWS_PER_BASELINE_GROUP / (sample_fraction * train_ratio) rows per group on the
+    # full table for the fit to see the minimum it promises. At 200 rows this fixture gave `category` 40 rows
+    # per group, which is 9.6 by the time anything is fitted, so it is correctly no longer a grouping
+    # candidate. 1,000 rows gives it 200, and ~48 after sampling.
+    row_count = 1000
     data = []
-    for i in range(200):
+    for i in range(row_count):
         data.append(
             (
-                f"cat_{i % 5}",  # Low cardinality (5 distinct)
+                f"cat_{i % 5}",  # Low cardinality (5 distinct), 200 rows/group
                 f"user_{i % 50}",  # Medium cardinality (50 distinct)
-                f"tx_{i}",  # High cardinality (200 distinct) - avoid "id" pattern
+                f"tx_{i}",  # One per row, so cardinality == row_count - avoid the "id" name pattern
                 100.0 + i,
             )
         )
@@ -257,20 +333,27 @@ def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
 
     profile = auto_discover_columns(df)
 
-    # category has 5 distinct values (≤20) - should be selected
-    assert "category" in profile.recommended_columns
+    # category has 5 distinct values - low cardinality makes it a baseline grouping column,
+    # not a feature. Under the baseline-aware policy it is routed to recommended_segments and
+    # removed from recommended_columns (baseline columns are not features).
+    assert "category" in profile.recommended_segments
+    assert "category" not in profile.recommended_columns
     assert profile.column_types is not None
     assert profile.column_types["category"] == "categorical"
 
-    # user_code has 50 distinct values (21-100 range) - should be selected as priority 5
+    # user_code has 50 distinct values - stays a feature: as a second baseline column it would give
+    # 5 * 50 = 250 groups over 1,000 rows, 4 rows each, far under the floor, so it is not selected.
     assert "user_code" in profile.recommended_columns
     assert profile.column_types["user_code"] == "categorical"
 
-    # transaction_ref has 200 distinct values (>100) - should be excluded with warning (lines 144-148)
+    # transaction_ref is unique per row, so its cardinality is above the threshold and it is excluded
+    # with a warning naming the count. Derived from row_count rather than written as a literal: the
+    # fixture was rescaled from 200 rows to 1,000 to clear the effective rows-per-group floor, and this
+    # assertion kept expecting "200 distinct values" -- a hardcoded number the fixture no longer had.
     assert "transaction_ref" not in profile.recommended_columns
     warnings_text = " ".join(profile.warnings)
     assert "transaction_ref" in warnings_text
-    assert "200 distinct values" in warnings_text
+    assert f"{row_count} distinct values" in warnings_text
     assert "too high cardinality" in warnings_text
 
     # amount should be selected as numeric
@@ -360,40 +443,23 @@ def test_autodiscovery_many_segments_warning(spark: SparkSession):
     assert "region" in profile.recommended_columns
 
 
-def test_autodiscovery_granular_segments_warning(spark: SparkSession):
-    """Test warning when average rows per segment <100 (lines 245-249)."""
-    # Create 10 segments (within 2-20 range) with only 50 rows each (avg <100)
-    # However, line 295 requires (total_count / distinct_count) >= 100
-    # So 50 rows per segment won't pass the criteria
-    # We need a test that passes line 292 but triggers line 245-249
-    # Let's use 5 segments with 80 rows each = 400 total
-    # 400 / 5 = 80 rows/segment, which is < 100 but >= the minimum threshold
-    # Actually, line 295 checks >= 100, so we need to check line 245 differently
-    # Line 245 is checked AFTER selection, so we need segments that pass >= 100 in line 295
-    # but when calculated in line 238, avg < 100
-    # This is contradictory - if it passes line 295, avg = total/distinct >= 100
-    # So line 245 only triggers with multiple segment columns where product > actual avg
-    # For single column test, let's just verify the segment is properly analyzed
+def test_autodiscovery_selects_multi_value_grouping(spark: SparkSession):
+    """Five groups of 150 rows clear the 30-rows-per-group floor and are selected as the grouping.
+
+    The baseline policy bounds groups by rows-per-group, not by a fixed minimum count, and emits no
+    "too granular" warning once the floor is met — one model serves every group.
+    """
     data = []
     for region in [f"region_{i}" for i in range(5)]:
-        for j in range(150):  # 150 rows per segment > 100, satisfies line 295
+        for j in range(150):  # 150 rows per group, well above MIN_ROWS_PER_BASELINE_GROUP
             data.append((region, 100.0 + j))
 
     df = spark.createDataFrame(data, "region string, amount double")
 
     profile = auto_discover_columns(df)
 
-    # region should be selected as segment (5 distinct is in 2-20 range, 150 rows/segment >= 100)
     assert "region" in profile.recommended_segments
-
-    # Verify segment count is calculated correctly
     assert profile.segment_count == 5
-
-    # Should have warning about small segment size (lines 195-198)
-    warnings_text = " ".join(profile.warnings)
-    # The warning comes from _validate_and_add_segment_column (line 195-198)
-    # which checks for < 1000 rows per segment
-    assert "region" in warnings_text and ("min:" in warnings_text or "<1000 rows" in warnings_text)
 
 
 def test_segment_column_explicitly_removed_from_features(spark: SparkSession):
@@ -418,3 +484,74 @@ def test_segment_column_explicitly_removed_from_features(spark: SparkSession):
 
     # Verify region was analyzed (has a type) but then removed
     assert profile.column_types is not None
+
+
+def test_the_calendar_advisory_fires_when_a_timestamp_reaches_the_feature_list(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """A datetime column in *columns* becomes seven cyclical features, and the caller has to be told.
+
+    This is the advisory with the most to say for itself, because the mistake it names is the *default*:
+    auto-discovery includes any timestamp it finds. Measured on the transactions demo, the same model with a
+    meaningless timestamp added took recall at a fixed alert budget from 100% to 79% while raising exactly as
+    many alerts, so a caller who never sees the warning silently loses a quarter of their detections.
+
+    The message must carry both escapes, since the right one depends on what the column means: exclude it
+    when the clock is irrelevant, or name it as an axis when the level moves over time.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    rows = [(START + datetime.timedelta(hours=i), float(100.0 + i % 17), 5.0 + i % 3) for i in range(400)]
+    df = spark.createDataFrame(rows, "event_ts timestamp, amount double, discount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.calendar_advisory_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "discount", "event_ts"],
+            model_name=qualify_model_name(f"test_calendar_{suffix}", registry_table),
+            registry_table=registry_table,
+            baseline_by=[],
+        )
+
+    advisories = [r.message for r in caplog.records if "cyclical calendar features" in r.message]
+    assert advisories, "a datetime column among the features must be called out"
+    message = advisories[0]
+    assert "event_ts" in message
+    # Both escapes, and each naming the actual column rather than a placeholder, so either is copy-pasteable.
+    assert "exclude_columns=['event_ts']" in message
+    assert "baseline_over_time='event_ts'" in message
+
+
+def test_the_calendar_advisory_stays_quiet_when_the_timestamp_is_the_axis(
+    spark: SparkSession, make_schema, make_random, anomaly_engine, caplog
+):
+    """Naming a column as the time axis is the fix the advisory recommends, so it must not then fire.
+
+    An advisory that keeps warning after you have followed it is one callers learn to filter out, and then it
+    is worth nothing on the run where it matters.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    rows = [(START + datetime.timedelta(hours=i), float(100.0 + 0.05 * i), 5.0 + i % 3) for i in range(400)]
+    df = spark.createDataFrame(rows, "event_ts timestamp, amount double, discount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.calendar_axis_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.anomaly.training_service"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "discount"],
+            model_name=qualify_model_name(f"test_axis_{suffix}", registry_table),
+            registry_table=registry_table,
+            baseline_by=[],
+            baseline_over_time="event_ts",
+        )
+
+    advisories = [r.message for r in caplog.records if "cyclical calendar features" in r.message]
+    assert not advisories, f"the axis column must not be reported as a feature: {advisories}"

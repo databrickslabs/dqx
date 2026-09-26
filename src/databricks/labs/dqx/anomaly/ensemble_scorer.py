@@ -23,6 +23,7 @@ from databricks.labs.dqx.anomaly.feature_prep import (
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.explainability import compute_gated_shap_contributions
+from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
 
 
 def serialize_ensemble_models(
@@ -45,6 +46,9 @@ def prepare_ensemble_scoring_schema(enable_contributions: bool) -> StructType:
     ]
     if enable_contributions:
         schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
+        # Emitted alongside, for the same reason as in scoring_utils.create_udf_schema: the basis split is
+        # derived from the attribution enable_contributions already pays for.
+        schema_fields.append(StructField("anomaly_basis_contributions", MapType(StringType(), DoubleType()), True))
     return StructType(schema_fields)
 
 
@@ -76,11 +80,16 @@ def create_ensemble_scoring_udf_with_contributions(
     schema: StructType,
     quantile_points: list[tuple[float, float]] | None = None,
     threshold: float | None = None,
+    keys: AttributionKeys | None = None,
 ):
-    """Create ensemble scoring UDF with SHAP contributions.
+    """Create ensemble scoring UDF with feature contributions.
 
-    When *quantile_points* and *threshold* are provided, SHAP runs only for rows whose
+    When *quantile_points* and *threshold* are provided, attribution runs only for rows whose
     mean-score severity reaches the threshold; other rows get a null contributions map.
+
+    Contributions are the mean across every member, matching the score and *anomaly_score_std*, which are
+    also aggregates over all of them. Explaining one member while scoring with all of them made the
+    explanation depend on which member happened to be trained first.
     """
 
     @pandas_udf(schema)  # type: ignore[call-overload]
@@ -93,17 +102,19 @@ def create_ensemble_scoring_udf_with_contributions(
         mean_scores = scores_matrix.mean(axis=0)
         std_scores = scores_matrix.std(axis=0, ddof=1)
 
+        contributions = compute_gated_shap_contributions(
+            models,
+            feature_matrix,
+            engineered_feature_cols,
+            mean_scores,
+            quantile_points,
+            threshold,
+            keys,
+        )
         result = {
             "anomaly_score": mean_scores,
             "anomaly_score_std": std_scores,
-            "anomaly_contributions": compute_gated_shap_contributions(
-                models[0],
-                feature_matrix,
-                engineered_feature_cols,
-                mean_scores,
-                quantile_points,
-                threshold,
-            ),
+            **contributions.as_columns(),
         }
 
         return pd.DataFrame(result)
@@ -139,8 +150,15 @@ def score_ensemble_models(
 
     schema = prepare_ensemble_scoring_schema(enable_contributions)
     if enable_contributions:
+        # Blocks are a pure function of the persisted metadata, so they are built once on the driver and
+        # closed over rather than rebuilt per partition -- the same reasoning as the single-model scorer.
         ensemble_scoring_udf = create_ensemble_scoring_udf_with_contributions(
-            models_bytes, engineered_feature_cols, schema, quantile_points, threshold
+            models_bytes,
+            engineered_feature_cols,
+            schema,
+            quantile_points,
+            threshold,
+            AttributionKeys.from_metadata(feature_metadata),
         )
     else:
         ensemble_scoring_udf = create_ensemble_scoring_udf(models_bytes, engineered_feature_cols, schema)
@@ -151,6 +169,7 @@ def score_ensemble_models(
     cols_to_select = [f"{original_row_col}.*", "_scores.anomaly_score", "_scores.anomaly_score_std"]
     if enable_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
+        cols_to_select.append("_scores.anomaly_basis_contributions")
 
     return scored_df.select(*cols_to_select)
 
@@ -185,14 +204,16 @@ def score_ensemble_models_local(
     result["anomaly_score_std"] = scores_matrix.std(axis=0, ddof=1)
 
     if enable_contributions:
-        result["anomaly_contributions"] = compute_gated_shap_contributions(
-            models[0],
+        contributions = compute_gated_shap_contributions(
+            models,
             feature_matrix,
             engineered_feature_cols,
             mean_scores,
             quantile_points,
             threshold,
+            AttributionKeys.from_metadata(feature_metadata),
         )
+        result.update(contributions.as_columns())
 
     result_pdf = pd.DataFrame(result)
     result_schema = StructType(
@@ -201,7 +222,10 @@ def score_ensemble_models_local(
             StructField("anomaly_score", DoubleType(), True),
             StructField("anomaly_score_std", DoubleType(), True),
             *(
-                [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
+                [
+                    StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True),
+                    StructField("anomaly_basis_contributions", MapType(StringType(), DoubleType()), True),
+                ]
                 if enable_contributions
                 else []
             ),

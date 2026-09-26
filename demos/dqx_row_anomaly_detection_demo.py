@@ -253,9 +253,8 @@ display(
     .filter(F.col("identity.model_name").contains(model_name_auto))
     .select(
         "identity.model_name",
-        "training.columns", 
-        "segmentation.segment_by",
-        "segmentation.segment_values",
+        "training.columns",
+        "grouping.baseline_by",
         "training.training_rows",
         "training.training_time",
         "identity.status"
@@ -699,10 +698,10 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC
 # MAGIC **Training options (`AnomalyEngine.train` / `AnomalyParams`):**
 # MAGIC - `columns` (list[str]): explicit feature list (disables auto‑discovery)
-# MAGIC - `segment_by` (list[str]): explicit segmentation columns
+# MAGIC - `baseline_by` (list[str]): columns naming the group each metric is judged against
 # MAGIC - `sample_fraction`, `max_rows`: training sample controls
 # MAGIC - `ensemble_size`: number of models in the ensemble
-# MAGIC - `expected_anomaly_rate`: expected anomaly rate for calibration
+# MAGIC - `profile` (str): which detector decides a row is unusual, `"tabular"` (default) or `"correlation"`
 # MAGIC
 # MAGIC These are optional — the demo uses defaults for simplicity.
 # MAGIC
@@ -828,7 +827,7 @@ else:
 # MAGIC ```
 # MAGIC
 # MAGIC **Optional next steps:**
-# MAGIC - Add segmentation (`segment_by` option for training), drift detection, and scheduled scoring.
+# MAGIC - Add grouping (`baseline_by`), a time baseline (`baseline_over_time`), drift detection, and scheduled scoring.
 # MAGIC - Automate retraining and alerting.
 
 # COMMAND ----------

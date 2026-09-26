@@ -21,6 +21,12 @@ report_path = Path(__file__).parent.parent.parent / "docs" / "dqx" / "docs" / "r
 
 data = json.loads(baseline_path.read_text())
 
+# Anomaly benchmarks get their own section below, with detection-quality columns the check
+# benchmarks have no use for. Split them out here so they are not also listed in the main table.
+ANOMALY_GROUP = "anomaly_synthetic"
+check_benchmarks = [b for b in data["benchmarks"] if b.get("group") != ANOMALY_GROUP]
+anomaly_benchmarks = [b for b in data["benchmarks"] if b.get("group") == ANOMALY_GROUP]
+
 lines = []
 lines.append("---\n")
 lines.append("title: Benchmarks\n")
@@ -48,7 +54,7 @@ lines.append(
     "|------|----------|------------|---------|---------|------------|---------|--------|--------|--------|--------------|-----------------|-------|"
 )
 
-for bench in data["benchmarks"]:
+for bench in check_benchmarks:
     stats = bench["stats"]
     lines.append(
         f"| {bench['name']} "
@@ -66,15 +72,35 @@ for bench in data["benchmarks"]:
         f"| {stats['ops']:.2f} |"
     )
 
-# Optional anomaly benchmark section (extra_info like roc_auc).
-anomaly_benchmarks = [b for b in data["benchmarks"] if b.get("group") == "anomaly_synthetic"]
+# Anomaly benchmark section: timings plus indicative detection quality carried in extra_info.
 if anomaly_benchmarks:
     lines.append("\n## Anomaly Benchmarks\n")
     lines.append(
-        "| Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | Rounds | Ops/s | ROC-AUC | Precision | Recall | F1 | Precision@N |"
+        "* Every fixture is synthetic and generated from a fixed seed, so the numbers are reproducible. "
+        "Nothing is downloaded and no third-party data is redistributed, so they carry no dataset "
+        "licence conditions."
     )
     lines.append(
-        "|------|----------|------------|---------|---------|------------|--------|-------|---------|-----------|--------|----|-------------|"
+        "* Each row states the fixture it was measured on. They are deliberately different problems: "
+        "one blends overlapping and heavy-tailed distributions, one breaks the correlation between "
+        "metrics that normally move together (`profile=\"correlation\"`), and one collapses a single "
+        "group's volume while the overall total stays flat (`baseline_by`). Comparing quality numbers "
+        "*across* rows is meaningless."
+    )
+    lines.append(
+        "* Quality columns are **indicative**: they record what was measured when a benchmark was first "
+        "added and are not restated on every run. Read them as a rough sense of each fixture's "
+        "difficulty, not as a tracked metric."
+    )
+    lines.append(
+        "* Synthetic distributions chosen to be moderately hard, not a general claim about detection "
+        "quality on your own data.\n"
+    )
+    lines.append(
+        "| Test | Fixture | Rows (train/test) | Features | Anomaly rate | Mean (s) | Median (s) | Rounds | ROC-AUC | Precision | Recall | F1 | Precision@N |"
+    )
+    lines.append(
+        "|------|---------|-------------------|----------|--------------|----------|------------|--------|---------|-----------|--------|----|-------------|"
     )
     for bench in anomaly_benchmarks:
         stats = bench["stats"]
@@ -89,15 +115,18 @@ if anomaly_benchmarks:
         recall_str = f"{recall:.6f}" if isinstance(recall, (int, float)) else "n/a"
         f1_str = f"{f1_score:.6f}" if isinstance(f1_score, (int, float)) else "n/a"
         precision_at_n_str = f"{precision_at_n:.6f}" if isinstance(precision_at_n, (int, float)) else "n/a"
+        anomaly_frac = extra.get("anomaly_frac")
+        anomaly_frac_str = f"{anomaly_frac:.4f}" if isinstance(anomaly_frac, (int, float)) else "n/a"
+        rows_str = f"{extra.get('n_train_rows', 'n/a')} / {extra.get('n_test_rows', 'n/a')}"
         lines.append(
             f"| {bench['name']} "
+            f"| {extra.get('dataset', 'n/a')} "
+            f"| {rows_str} "
+            f"| {extra.get('n_features', 'n/a')} "
+            f"| {anomaly_frac_str} "
             f"| {stats['mean']:.6f} "
             f"| {stats['median']:.6f} "
-            f"| {stats['min']:.6f} "
-            f"| {stats['max']:.6f} "
-            f"| {stats['stddev']:.6f} "
             f"| {stats['rounds']} "
-            f"| {stats['ops']:.2f} "
             f"| {roc_auc_str} "
             f"| {precision_str} "
             f"| {recall_str} "

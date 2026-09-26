@@ -112,7 +112,9 @@ def test_apply_checks_by_metadata_distributed():
     first_error = errs[0]
     assert first_error["name"] == "has_row_anomalies"
     assert first_error["function"] == "has_no_row_anomalies"
-    assert "exceeded threshold" in first_error["message"]
+    # "reached", not "exceeded": the flag fires on severity >= threshold, so a row exactly at the threshold
+    # is flagged and the message has to describe an inclusive comparison.
+    assert "reached threshold" in first_error["message"]
     assert anomaly_outlier["severity_percentile"] >= DEFAULT_SCORE_THRESHOLD
 
 

@@ -626,7 +626,12 @@ jobs:
           # The run fails if performance degrades by more than 25%.
           # Tests are run sequentially to reduce variability.
           # Do at least 5 rounds to get more stable results.
-          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
+          # Anomaly benchmarks are deselected here: --benchmark-compare-fail applies to the whole
+          # invocation and cannot be scoped per test, and those benchmarks are dominated by MLflow
+          # and Unity Catalog control-plane latency, so they would trip a 25% mean gate on variance
+          # alone. They still produce a baseline in the step above; only the timing comparison skips
+          # them. Their detection quality is gated by assertions in tests/integration_anomaly/.
+          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 -m "not anomaly" \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \
             --benchmark-compare-fail=mean:25% \

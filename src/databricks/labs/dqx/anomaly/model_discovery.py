@@ -1,6 +1,4 @@
-"""Discover model columns, segments, and quantile points from the anomaly registry."""
-
-from datetime import datetime
+"""Discover model columns and quantile points from the anomaly registry."""
 
 from pyspark.sql import DataFrame
 
@@ -14,29 +12,13 @@ def get_record_for_discovery(
     registry_table: str,
     model_name_local: str,
 ) -> AnomalyModelRecord:
-    """Get model record for auto-discovery, checking global and segmented models."""
+    """Get the active model record for auto-discovery."""
     record = registry_client.get_active_model(registry_table, model_name_local)
-
     if record:
         return record
 
-    all_segments = registry_client.get_all_segment_models(registry_table, model_name_local)
-    if all_segments:
-        return select_segment_record(all_segments)
-
     raise InvalidParameterError(
         f"Model '{model_name_local}' not found in '{registry_table}'. " "Train first using anomaly.train(...)."
-    )
-
-
-def select_segment_record(all_segments: list[AnomalyModelRecord]) -> AnomalyModelRecord:
-    """Select a deterministic segment record (latest training_time, tie-breaker by model_name)."""
-    return max(
-        all_segments,
-        key=lambda record: (
-            record.training.training_time or datetime.min,
-            record.identity.model_name,
-        ),
     )
 
 
@@ -69,22 +51,16 @@ def extract_quantile_points(record: AnomalyModelRecord) -> list[tuple[float, flo
     return points
 
 
-def fetch_model_columns_and_segments(
+def fetch_model_columns(
     df: DataFrame,
     model_name: str,
     registry_table: str,
-) -> tuple[list[str], list[str] | None]:
-    """Auto-discover columns and segmentation from the model registry.
-
-    Returns:
-        Tuple of (columns, segment_by).
-    """
+) -> list[str]:
+    """Auto-discover the feature columns a model was trained on, from the registry."""
     registry_client = AnomalyModelRegistry(df.sparkSession)
     record = get_record_for_discovery(registry_client, registry_table, model_name)
 
     columns = list(record.training.columns)
-    segment_by = record.segmentation.segment_by
-
     missing_columns = [c for c in columns if c not in df.columns]
     if missing_columns:
         raise InvalidParameterError(
@@ -92,4 +68,4 @@ def fetch_model_columns_and_segments(
             f"Available columns: {df.columns}."
         )
 
-    return columns, segment_by
+    return columns
