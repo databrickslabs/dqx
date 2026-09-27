@@ -26,6 +26,7 @@ from databricks.labs.dqx.utils import (
     get_file_extension,
     resolve_variables,
     quote_column_name,
+    is_spark_column,
     unquote_column_name,
     normalize_column_expr,
 )
@@ -947,6 +948,22 @@ def test_quote_column_name():
     column_name = "my `column` name"
     result = quote_column_name(column_name)
     assert result == "`my ``column`` name`"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        # F.col / F.lit return the classic Column or the Spark Connect variant depending on the runtime;
+        # both must be recognised (this is the divergence that failed CI on Python 3.10 for #1510).
+        (F.col("x"), True),
+        (F.lit(1), True),
+        ("x", False),
+        (5, False),
+        (None, False),
+    ],
+)
+def test_is_spark_column(value, expected):
+    assert is_spark_column(value) is expected
 
 
 @pytest.mark.parametrize(
