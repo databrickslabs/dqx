@@ -825,8 +825,8 @@ def test_column_lineage_reads_failures_from_quarantine(
     make_output_table,
 ) -> None:
     """Split-run coverage — DQX writes failures to *quarantine_location* while *output_location*
-    carries only clean rows. ``failures_source="both"`` (the default) must still seed column
-    lineage from the quarantine sink.
+    carries only clean rows. The action must still seed column lineage from the quarantine
+    sink (both present sinks are read and unioned).
     """
     source = "cat.sch.split_run_src"
     downstream_table = "cat.sch.split_run_dst"

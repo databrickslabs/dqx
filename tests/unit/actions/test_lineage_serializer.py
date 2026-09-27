@@ -38,8 +38,7 @@ def test_metadata_dict_resolves_to_action() -> None:
     """A dict with type='collect_lineage' + nested output_config resolves via the registry.
 
     *downstream=None* / *column_upstream=None* exercises the "disable a direction by setting
-    its sub-config to null" contract that replaces the old per-config *enabled* flag; the
-    top-level *failures_source* is also parsed off the metadata dict.
+    its sub-config to null" contract that replaces the old per-config *enabled* flag.
     """
     metadata: dict = {
         "action": {
@@ -50,7 +49,6 @@ def test_metadata_dict_resolves_to_action() -> None:
                 "downstream": None,
                 "column_upstream": None,
                 "column_downstream": {"depth": 1},
-                "failures_source": "quarantine",
             },
         },
     }
@@ -66,7 +64,6 @@ def test_metadata_dict_resolves_to_action() -> None:
     assert action.config.column_upstream is None
     assert isinstance(action.config.column_downstream, LineageSearchConfig)
     assert action.config.column_downstream.depth == 1
-    assert action.config.failures_source == "quarantine"
 
 
 def test_metadata_dict_disables_direction_via_null() -> None:
@@ -89,8 +86,6 @@ def test_metadata_dict_disables_direction_via_null() -> None:
     assert dq_action.action.config.downstream is None
     assert dq_action.action.config.column_upstream is None
     assert dq_action.action.config.column_downstream is None
-    # failures_source defaults to "both" when omitted.
-    assert dq_action.action.config.failures_source == "both"
 
 
 def test_missing_output_config_raises_at_construction() -> None:
@@ -118,15 +113,13 @@ def test_lineage_search_config_field_validators(field: str, bad_value: int, mess
 
 def test_lineage_action_config_defaults_are_isolated() -> None:
     """Each LineageActionConfig sub-config defaults to a fresh instance (default_factory);
-    *failures_source* defaults to *"both"* and the error / warning column names default to
-    DQX's built-in *_errors* / *_warnings*.
+    the error / warning column names default to DQX's built-in *_errors* / *_warnings*.
     """
     cfg = LineageActionConfig()
     assert isinstance(cfg.upstream, LineageSearchConfig)
     assert isinstance(cfg.downstream, LineageSearchConfig)
     assert isinstance(cfg.column_upstream, LineageSearchConfig)
     assert isinstance(cfg.column_downstream, LineageSearchConfig)
-    assert cfg.failures_source == "both"
     assert cfg.errors_column == "_errors"
     assert cfg.warnings_column == "_warnings"
     other = LineageActionConfig()

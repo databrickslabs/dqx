@@ -197,31 +197,21 @@ class LineageSearchConfig(BaseModel):
         return value
 
 
-FailuresSource = Literal["output", "quarantine", "both"]
-
-
 class LineageActionConfig(BaseModel):
     """Top-level configuration for *CollectLineageAction*.
 
     Composes four independent sub-configs — *upstream*, *downstream*, *column_upstream*,
-    *column_downstream* — plus a *failures_source* selector that picks which sink to read
-    per-failed-column lineage seeds from.
+    *column_downstream*.
 
     Each sub-config defaults to a fresh *LineageSearchConfig* (direction on by default); set
     any field to *None* to disable that direction. Table and column directions are symmetric:
     the four fields let a caller collect, e.g., only table-upstream + column-downstream if
     that is all they need.
 
-    *failures_source* controls where *extract_failed_columns* reads issue structs from at
-    execute time:
-
-      * ``"output"`` — only *context.output_location* (skips column lineage when the location
-        is missing or has no failures).
-      * ``"quarantine"`` — only *context.quarantine_location*.
-      * ``"both"`` (default) — read from whichever of the two locations are present and union
-        their distinct failed columns. DQX writes failures to *quarantine_location* in
-        split-run mode and to *output_location* in non-split mode, so *"both"* makes the
-        action work in either configuration without extra wiring.
+    Per-failed-column lineage seeds are read from whichever of *context.output_location* and
+    *context.quarantine_location* are present and unioned. DQX writes failures to
+    *quarantine_location* in split-run mode and to *output_location* in non-split mode, so
+    the union makes the action work in either configuration without extra wiring.
 
     *errors_column* and *warnings_column* name the two ARRAY<STRUCT> columns DQX appends to
     the output / quarantine tables. Defaults match DQX's built-in names (``_errors`` /
@@ -235,7 +225,6 @@ class LineageActionConfig(BaseModel):
     downstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
     column_upstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
     column_downstream: LineageSearchConfig | None = Field(default_factory=LineageSearchConfig)
-    failures_source: FailuresSource = "both"
     errors_column: str = _DEFAULT_ERRORS_COLUMN
     warnings_column: str = _DEFAULT_WARNINGS_COLUMN
 
@@ -245,9 +234,10 @@ class CollectLineageAction(Action):
     """Collect table / column lineage into a Delta table.
 
     On every run, gathers upstream/downstream tables (recursive-CTE walk, optionally bounded
-    by *depth*) and recursive per-failed-column lineage (upstream and downstream, seeded from failure
-    records in *output_location* and/or *quarantine_location* per *config.failures_source*),
-    and writes one row per edge to the Delta table specified by *output_config*. The action
+    by *depth*) and recursive per-failed-column lineage (upstream and downstream, seeded from
+    failure records read from whichever of *output_location* and *quarantine_location* are
+    present on the context), and writes one row per edge to the Delta table specified by
+    *output_config*. The action
     never fails the pipeline — collection errors are logged and turned into *CONFIG_ERROR*
     results. To disable a specific direction, set the corresponding sub-config on
     *LineageActionConfig* (*upstream*, *downstream*, *column_upstream*, *column_downstream*)
@@ -323,7 +313,6 @@ class CollectLineageAction(Action):
             spark=spark,
             output_location=context.output_location,
             quarantine_location=context.quarantine_location,
-            failures_source=self.config.failures_source,
             errors_column=self.config.errors_column,
             warnings_column=self.config.warnings_column,
             safe_name=safe_name,
@@ -431,22 +420,17 @@ def _resolve_failed_columns(
     spark: SparkSession,
     output_location: str | None,
     quarantine_location: str | None,
-    failures_source: FailuresSource,
     errors_column: str,
     warnings_column: str,
     safe_name: str,
     run_id: str,
 ) -> DataFrame:
-    """Read failed-column names from the sinks selected by *failures_source* and union them.
+    """Read failed-column names from every present sink and union them.
 
-    *failures_source* controls which sinks are consulted:
-
-      * ``"output"``   — only *output_location*.
-      * ``"quarantine"`` — only *quarantine_location*.
-      * ``"both"``     — read from whichever of the two is non-*None* and union the distinct
-        column names. DQX writes failures to *quarantine_location* in split-run mode and to
-        *output_location* in non-split mode; ``"both"`` therefore ensures column-lineage seeds
-        are populated regardless of routing.
+    Consults whichever of *output_location* and *quarantine_location* are non-*None* and
+    unions the distinct column names. DQX writes failures to *quarantine_location* in
+    split-run mode and to *output_location* in non-split mode, so reading both ensures
+    column-lineage seeds are populated regardless of routing.
 
     *errors_column* / *warnings_column* are the names of the ARRAY<STRUCT> issue columns on
     the sinks — forwarded to *extract_failed_columns* so custom engine renames are honoured.
@@ -458,15 +442,15 @@ def _resolve_failed_columns(
     append mode.
     """
     locations: list[str] = []
-    if failures_source in {"output", "both"} and output_location is not None:
+    if output_location is not None:
         locations.append(output_location)
-    if failures_source in {"quarantine", "both"} and quarantine_location is not None:
+    if quarantine_location is not None:
         locations.append(quarantine_location)
     if not locations:
         logger.warning(
             f"CollectLineageAction '{safe_name}' has no readable failures source "
-            f"(failures_source='{failures_source}', output_location={output_location!r}, "
-            f"quarantine_location={quarantine_location!r}); column lineage will be skipped."
+            f"(output_location={output_location!r}, quarantine_location={quarantine_location!r}); "
+            "column lineage will be skipped."
         )
         return spark.createDataFrame([], _FAILED_COLUMNS_SCHEMA)
     result = extract_failed_columns(spark, locations[0], run_id, errors_column, warnings_column)
