@@ -120,3 +120,16 @@ def test_is_running_false_when_updated_at_unparseable():
     store = ResetStatusStore(settings)
     store.set(ResetStatus("running", "clearing", "", "not-a-timestamp"))
     assert store.is_running() is False
+
+
+def test_mark_interrupted_if_running_fails_a_running_reset():
+    settings = create_autospec(AppSettingsService, instance=True)
+    stored: dict[str, str] = {}
+    settings.save_setting.side_effect = lambda k, v, **kw: stored.__setitem__(k, v)
+    settings.get_setting.side_effect = lambda k: stored.get(k)
+    store = ResetStatusStore(settings)
+    store.set(ResetStatus(state="running", message="Clearing", started_at=_now_iso(), updated_at=_now_iso()))
+    assert store.mark_interrupted_if_running() is True
+    assert store.get().state == "failed"
+    assert store.mark_interrupted_if_running() is False
+    assert RESET_STATUS_KEY in stored

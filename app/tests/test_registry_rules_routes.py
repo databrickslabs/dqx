@@ -21,6 +21,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import ResolvedOwner
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
     backfill_rule_embeddings,
@@ -43,6 +44,16 @@ def _definition() -> RuleDefinition:
         {
             "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
             "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one"}],
+            "parameters": [],
+        }
+    )
+
+
+def _column_definition(column: str) -> RuleDefinition:
+    return RuleDefinition.model_validate(
+        {
+            "body": {"function": "is_not_null", "arguments": {"column": "{{" + column + "}}"}},
+            "slots": [{"name": column, "family": "any", "position": 0, "cardinality": "one"}],
             "parameters": [],
         }
     )
@@ -72,6 +83,78 @@ class TestListAndGet:
         assert len(result) == 1
         assert result[0].rule_id == "r1"
         svc.list_rules.assert_called_once_with(status="draft", dimension=None, severity=None, owner=None, tag=None)
+
+    def test_list_backfills_missing_owner_display_name_on_read(self, monkeypatch):
+        # A row that persisted a NULL owner_display_name (e.g. written before the
+        # write-time resolver, or when SCIM was down) is resolved on read so the
+        # Owners filter/column shows a friendly name instead of a raw email.
+        rule = _rule()
+        rule.owner = "c.psafos@example.com"
+        rule.owner_display_name = None
+        svc = MagicMock()
+        svc.list_rules.return_value = [rule]
+
+        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
+
+        monkeypatch.setattr(
+            mod,
+            "lookup_owners",
+            lambda owners, sp_ws: {
+                "c.psafos@example.com": ResolvedOwner("c.psafos@example.com", "Christos Psafos", "user")
+            },
+        )
+        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        assert result[0].owner_display_name == "Christos Psafos"
+        assert result[0].owner_unverified is False
+        # The resolved name is written back so the assignment is durable.
+        svc.backfill_owner_display_names.assert_called_once_with({"c.psafos@example.com": "Christos Psafos"})
+
+    def test_list_keeps_group_owner_verified_without_display_name(self, monkeypatch):
+        rule = _rule()
+        rule.owner = "data-eng-group"
+        rule.owner_display_name = None
+        svc = MagicMock()
+        svc.list_rules.return_value = [rule]
+
+        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
+
+        monkeypatch.setattr(
+            mod,
+            "lookup_owners",
+            lambda owners, sp_ws: {"data-eng-group": ResolvedOwner("data-eng-group", "data-eng-group", "group")},
+        )
+        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        assert result[0].owner_display_name is None
+        assert result[0].owner == "data-eng-group"
+        assert result[0].owner_unverified is False
+        svc.backfill_owner_display_names.assert_not_called()
+
+    def test_list_flags_owner_with_no_databricks_principal(self, monkeypatch):
+        rule = _rule()
+        rule.owner = "jhon.doe@example.com"
+        rule.owner_display_name = None
+        svc = MagicMock()
+        svc.list_rules.return_value = [rule]
+
+        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
+
+        monkeypatch.setattr(mod, "lookup_owners", lambda owners, sp_ws: {"jhon.doe@example.com": None})
+        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        assert result[0].owner == "jhon.doe@example.com"
+        assert result[0].owner_unverified is True
+
+    def test_list_does_not_flag_owner_when_lookup_failed(self, monkeypatch):
+        rule = _rule()
+        rule.owner = "alice@example.com"
+        rule.owner_display_name = None
+        svc = MagicMock()
+        svc.list_rules.return_value = [rule]
+
+        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
+
+        monkeypatch.setattr(mod, "lookup_owners", lambda owners, sp_ws: {})
+        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        assert result[0].owner_unverified is False
 
     def test_get_returns_detail_with_no_version_when_unpublished(self):
         svc = MagicMock()
@@ -449,6 +532,106 @@ class TestBatchImport:
         assert result.reused == []
         svc.compute_definition_fingerprint.assert_not_called()
         svc.get_active_rule_by_fingerprint.assert_not_called()
+
+    def test_contract_columns_reuse_the_existing_generic_rule(self):
+        # ``customer_id is not null`` and ``email is not null`` from a contract
+        # are the same rule as the registry's generic ``{{column}}`` one.
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule("generic", status="approved", version=1)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("customer_id")),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email")),
+            ],
+            skip_duplicates=True,
+            generalize_slots=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        svc.create_rule.assert_not_called()
+        assert [r.rule.rule_id for r in result.reused] == ["generic", "generic"]
+        assert [r.input_index for r in result.reused] == [0, 1]
+        assert [r.slot_renames for r in result.reused] == [{"customer_id": "column"}, {"email": "column"}]
+
+    def test_contract_columns_create_one_generic_rule_when_missing(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = []
+        svc.get_active_rule_by_fingerprint.return_value = None
+        svc.create_rule.return_value = (_rule("new"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native",
+                    definition=_column_definition("customer_id"),
+                    user_metadata={"name": "customer_id is not null", "description": "Customer id must be set"},
+                ),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email")),
+            ],
+            skip_duplicates=True,
+            generalize_slots=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        svc.create_rule.assert_called_once()
+        kwargs = svc.create_rule.call_args.kwargs
+        assert kwargs["definition"].body["arguments"] == {"column": "{{column}}"}
+        assert kwargs["user_metadata"] == {"name": "Is not null"}
+        assert result.created[0].slot_renames == {"customer_id": "column"}
+        assert result.reused[0].rule.rule_id == "new"
+        assert result.reused[0].slot_renames == {"email": "column"}
+
+    def test_earlier_per_column_import_is_not_reused_for_another_column(self):
+        svc = MagicMock()
+        old_copy = _rule("customer_id_copy", status="approved", version=1)
+        old_copy.definition = _column_definition("customer_id")
+        old_copy.source = "import"
+        svc.list_rules.return_value = [old_copy]
+        svc.get_active_rule_by_fingerprint.return_value = None
+        svc.create_rule.return_value = (_rule("generic"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email"))],
+            skip_duplicates=True,
+            generalize_slots=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert [r.rule.rule_id for r in result.created] == ["generic"]
+        assert result.reused == []
+
+    def test_approved_rule_is_preferred_over_draft(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule("draft"), _rule("approved", status="approved", version=1)]
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email"))],
+            skip_duplicates=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.reused[0].rule.rule_id == "approved"
 
     def test_imported_dimension_is_folded_onto_the_configured_vocabulary(self):
         # ODCS closes ``quality.dimension`` to a lowercase vocabulary, so a

@@ -130,7 +130,8 @@
     "monitoredTables": "Tables",
     "importRules": "Import Rules",
     "results": "Results",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "schedules": "Schedules"
   },
   "userMenu": {
     "profile": "Profile",
@@ -635,7 +636,7 @@
     "profileTitle": "Profile & generate",
     "profileDescription": "Profile your data to auto-generate quality rules based on column statistics.",
     "importTitle": "Import rules",
-    "importDescription": "Bulk-import from a DQX YAML file or generate rules from an ODCS v3.x data contract.",
+    "importDescription": "Bulk-import reusable rules from a DQX YAML file.",
     "fromContractTitle": "From data contract",
     "fromContractDescription": "Generate rules from an ODCS v3.x data contract — schema, constraints, and explicit DQX checks.",
     "schemaTitle": "Validate table schema",
@@ -828,8 +829,8 @@
     "title": "Import",
     "sectionRules": "Import rules",
     "sectionTables": "Import to tables",
-    "scopeNoteRules": "Rules land in the Rules Registry only — no table is registered and nothing runs. Apply approved rules to a table from its Apply rules tab, or switch to Import to tables to do both at once.",
-    "scopeNoteTables": "Each contract schema is registered as a monitored table and its rules are created in the registry. Rules that map to the table automatically are applied; the rest stay in the registry for manual mapping.",
+    "scopeNoteRules": "Add reusable rules to the registry. Tables are not changed.",
+    "scopeNoteTables": "Register tables and apply matching rules in one import.",
     "tabYaml": "DQX YAML",
     "tabContract": "ODCS data contract",
     "importFromYaml": "Import from YAML",
@@ -897,7 +898,10 @@
     "thousandRows": "1,000 rows",
     "fiveThousandRows": "5,000 rows",
     "tenThousandRows": "10,000 rows",
-    "dryRunTooltip": "Dry-run validates only the first 1–10,000 rows of the target table — it's a fast preview, not a full validation. To run imported rules against every row after approval, go to Run Rules and pick \"All rows\"."
+    "dryRunTooltip": "Dry-run validates only the first 1–10,000 rows of the target table — it's a fast preview, not a full validation. To run imported rules against every row after approval, go to Run Rules and pick \"All rows\".",
+    "exampleFile": "Example file",
+    "downloadExample": "Download example",
+    "functionsNotLoaded": "Rule functions are still loading. Try again in a moment."
   },
   "rulesCreateSql": {
     "breadcrumb": "Cross-table rules",
@@ -1917,7 +1921,30 @@
     "joinPickCatalogPlaceholder": "Select catalog…",
     "joinPickSchemaPlaceholder": "Select schema…",
     "joinPickTablePlaceholder": "Select table…",
-    "sourceMarketplace": "Marketplace"
+    "sourceMarketplace": "Marketplace",
+    "groupByLabel": "Group by",
+    "groupUncategorized": "Uncategorized",
+    "groupUnowned": "No owner",
+    "columnTypeGroup": {
+      "any": "Any column type",
+      "numeric": "Numeric columns",
+      "text": "Text columns",
+      "temporal": "Date and time columns",
+      "boolean": "Boolean columns",
+      "mixed": "Multiple column types",
+      "table": "Table-level rules"
+    },
+    "appliedTablesTitle": "Applied tables",
+    "appliedTablesViewResults": "View results",
+    "appliedTablesNotRun": "Not run",
+    "appliedTablesRestricted_one": "{{count}} additional table is hidden by your Unity Catalog permissions.",
+    "appliedTablesRestricted_other": "{{count}} additional tables are hidden by your Unity Catalog permissions.",
+    "groupByNone": "None",
+    "groupByColumnType": "Column type",
+    "groupByDimension": "Dimension",
+    "groupBySeverity": "Severity",
+    "groupByRuleType": "Rule type",
+    "groupByOwner": "Owner"
   },
   "monitoredTables": {
     "breadcrumb": "Tables",
@@ -2388,7 +2415,30 @@
     "bulkDeleted": "Deleted",
     "bulkSucceeded_one": "{{msg}} ({{count}} table)",
     "bulkSucceeded_other": "{{msg}} ({{count}} tables)",
-    "bulkPartial": "{{ok}} succeeded, {{fail}} failed{{reason}}"
+    "bulkPartial": "{{ok}} succeeded, {{fail}} failed{{reason}}",
+    "groupByLabel": "Group by",
+    "groupByTable": "Table",
+    "groupByRule": "Rule",
+    "expandRulesAria": "Show rules applied to {{name}}",
+    "collapseRulesAria": "Hide rules applied to {{name}}",
+    "implementedRules": {
+      "colTable": "Table",
+      "colRule": "Rule",
+      "colTables": "Tables",
+      "colColumns": "Columns",
+      "colThreshold": "Pass threshold",
+      "colRowFilter": "Row filter",
+      "colSource": "Source",
+      "wholeTable": "Whole table",
+      "ruleDefault": "Rule default",
+      "allRows": "All rows",
+      "expand": "Expand {{name}}",
+      "collapse": "Collapse {{name}}",
+      "empty": "No rules are applied to any table yet.",
+      "emptySearch": "No applied rules match this search.",
+      "noneForTable": "No applied rules are available for this table.",
+      "searchPlaceholder": "Search rules, tables or columns…"
+    }
   },
   "dataProducts": {
     "title": "Collections",
@@ -2701,7 +2751,9 @@
     "stewardGrantDialogConfirm": "Confirm",
     "ownerGrantDialogConfirm": "Confirm",
     "stewardGrantFailed": "Owner granted, but failed to write the permission grant.",
-    "ownerGrantFailed": "Owner granted, but failed to write the permission grant."
+    "ownerGrantFailed": "Owner granted, but failed to write the permission grant.",
+    "ownerNotFound": "This owner doesn't match any Databricks user, group, or service principal.",
+    "ownerNotFoundEditable": "This owner doesn't match any Databricks user, group, or service principal. Pick the correct owner above."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "number",
@@ -2867,7 +2919,13 @@
     "invalidSamplesUnavailable": "Invalid samples can't be shown for this table.",
     "breachWarnTooltip": "Pass rate below threshold",
     "breachErrorTooltip": "Pass rate below threshold",
-    "breachTooltipWithThreshold": "Pass rate below threshold ({{pct}}%)"
+    "breachTooltipWithThreshold": "Pass rate below threshold ({{pct}}%)",
+    "chipOutcome": "Outcome: {{value}}",
+    "outcomeFailed": "Failing",
+    "outcomePassed": "Passing",
+    "filterAllOutcomes": "All outcomes",
+    "filterSearchOutcomes": "Search outcomes…",
+    "filterNoOutcomes": "No outcomes"
   },
   "genie": {
     "iconTitle": "Databricks Genie",
@@ -2974,5 +3032,42 @@
     },
     "instructions": "How to resolve this",
     "diagnosticCode": "Code: {{code}}"
+  },
+  "schedules": {
+    "title": "Schedules",
+    "subtitle": "Manage table, collection, and named-scope schedules in one place.",
+    "count": "{{count}} schedules",
+    "search": "Search schedules",
+    "filterType": "Filter by schedule type",
+    "filterStatus": "Filter by schedule status",
+    "filterOwner": "Filter by owner",
+    "allTypes": "All types",
+    "allStatuses": "All statuses",
+    "allOwners": "All owners",
+    "typeTable": "Table",
+    "typeCollection": "Collection",
+    "typeScope": "Named scope",
+    "active": "Active",
+    "paused": "Paused",
+    "failing": "Needs attention",
+    "failed": "Failed",
+    "partial": "Partial failure",
+    "name": "Schedule",
+    "type": "Type",
+    "cadence": "Cadence",
+    "owner": "Owner",
+    "health": "Health",
+    "nextRun": "Next run",
+    "lastRun": "Last run",
+    "actions": "Actions",
+    "deleteSchedule": "Delete schedule",
+    "pause": "Pause",
+    "resume": "Resume",
+    "saved": "Schedule updated",
+    "removed": "Schedule removed",
+    "removeConfirm": "Remove schedule “{{name}}”?",
+    "empty": "No schedules match these filters.",
+    "duplicateWarning": "This table also runs through a scheduled collection.",
+    "viewRuns": "View runs"
   }
 }

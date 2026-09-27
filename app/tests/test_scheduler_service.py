@@ -1195,8 +1195,15 @@ class TestRealignNextRunOnCronChange:
         br_service.run_binding.assert_not_called()
         mocks.oltp.upsert.assert_not_called()
 
-    def test_failure_backoff_is_not_realigned_away(self, make_scheduler):
-        """Replacing a backoff would re-fire the run that just failed."""
+    def test_malformed_cron_backoff_is_not_realigned_away(self, make_scheduler):
+        """A backoff stamp only exists for a cron that won't parse.
+
+        Both writers of a :data:`_FAILURE_BACKOFF` stamp (the seed branch and
+        ``_finish_schedule_firing``) reach it only when ``_compute_next_cron_run``
+        raised. The re-derivation in ``_realign_next_run`` raises for that same
+        cron, so the stamp is kept and the run that just failed is not re-fired
+        before the backoff elapses.
+        """
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
         now = datetime(2026, 5, 1, 9, 5, 0, tzinfo=timezone.utc)
         mocks.oltp.query.return_value = [
@@ -1209,11 +1216,43 @@ class TestRealignNextRunOnCronChange:
         ]
 
         svc._tick_one_table(
-            {"binding_id": "b1", "schedule_cron": "*/1 * * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+            {"binding_id": "b1", "schedule_cron": "not a cron", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
         )
 
         br_service.run_binding.assert_not_called()
         mocks.oltp.upsert.assert_not_called()
+
+    def test_failed_status_with_edited_cron_realigns_and_recovers(self, make_scheduler):
+        """A single failed run must NOT freeze the schedule on its old cadence."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                # The occurrence the OLD 09:00 cron left behind after a failed run.
+                "2026-08-22T09:00:00+00:00",
+                status="failed",
+                last_run_at="2026-08-21T09:00:11+00:00",
+            )
+        ]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 8, 21, 17, 56, 0, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "42 19 * * *",
+                "schedule_tz": "Europe/Berlin",
+                "schedule_kind": "dq_only",
+            },
+            now,
+        )
+
+        br_service.run_binding.assert_called_once()
+        realign, firing = mocks.oltp.upsert.call_args_list
+        # 19:42 Berlin == 17:42Z in August: today's occurrence, already past.
+        assert "2026-08-21T17:42:00+00:00" in realign.kwargs["value_cols"]["next_run_at"].expr
+        # Firing re-anchors last_run_at, so the catch-up cannot repeat.
+        assert "2026-08-22T17:42:00+00:00" in firing.kwargs["value_cols"]["next_run_at"].expr
 
     def test_seeded_occurrence_that_just_came_due_still_fires(self, make_scheduler):
         """A never-fired row is owed its first run, not the one after it."""

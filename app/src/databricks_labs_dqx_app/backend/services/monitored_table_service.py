@@ -48,7 +48,10 @@ from databricks.sdk import WorkspaceClient
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    fill_missing_owner_display_names,
+    resolve_owner_display_name,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -470,6 +473,7 @@ class MonitoredTableService:
         if name:
             needle = name.lower()
             tables = [(t, s, c) for t, s, c in tables if needle in t.table_fqn.lower()]
+        fill_missing_owner_display_names([t for t, _, _c in tables], self._sp_ws, self._sql, self._table)
         applied_counts = self._applied_rule_counts([t.binding_id for t, _, _c in tables])
         check_counts = self._materialized_check_counts([t.table_fqn for t, _, _c in tables])
         bindings_with_rules = [bid for bid in applied_counts if applied_counts[bid] > 0]
@@ -712,6 +716,7 @@ class MonitoredTableService:
         table = self._get(binding_id)
         if table is None:
             return None
+        fill_missing_owner_display_names([table], self._sp_ws, self._sql, self._table)
         # ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
         # row (denormalized on completion by :meth:`refresh_run_timestamps`) —
         # no warehouse hop on the detail load (About tab reads last_profiled_at).

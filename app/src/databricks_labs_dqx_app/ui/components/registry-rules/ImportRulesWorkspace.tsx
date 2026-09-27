@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Card,
@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Upload,
   Loader2,
@@ -20,13 +19,9 @@ import {
   AlertTriangle,
   Save,
   Send,
-  FileCode2,
-  FileText,
   ExternalLink,
-  Info,
-  Library,
-  Table2,
 } from "lucide-react";
+import { isAxiosError } from "axios";
 import { toast } from "sonner";
 import { useLabelDefinitions, useValidateChecks } from "@/lib/api-custom";
 import { useListCheckFunctions } from "@/lib/api";
@@ -44,138 +39,56 @@ import {
   parseImportYamlText,
   SQL_CHECK_PREFIX,
 } from "@/lib/import-registry-rules";
-import {
-  ContractWorkspace,
-  DOCS_URL as CONTRACT_DOCS_URL,
-} from "@/routes/_sidebar/rules.from-contract";
-import { BulkContractImportWorkspace } from "@/components/registry-rules/BulkContractImportWorkspace";
+import { IMPORT_EXAMPLES, ImportExampleLinks } from "@/components/imports/ImportExampleLinks";
 
-// The YAML form documents a different thing than the two ODCS surfaces, so the
-// header link follows the active surface instead of vanishing on the YAML tab.
 const CHECKS_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/guide/quality_checks_definition/";
 
-// One flat search param drives two levels of tabs: "yaml"/"contract" are the
-// source formats of the rules-only import, "tables" is the bulk contract import
-// that also registers tables. Flattening keeps old ``?tab=contract`` bookmarks
-// (and the ``/rules/from-contract`` redirect) working unchanged.
-export type ImportTab = "yaml" | "contract" | "tables";
-
-/** Top-level destination of the import: the registry, or registry + tables. */
-type ImportSection = "rules" | "tables";
-/** Source format of a rules-only import. */
-type RulesFormat = "yaml" | "contract";
-
-export interface ImportSearchParams {
-  from?: string;
-  tab?: ImportTab;
-}
-
-export function coerceImportTab(value: unknown): ImportTab | undefined {
-  return value === "yaml" || value === "contract" || value === "tables" ? value : undefined;
-}
-
-export interface ImportRulesWorkspaceProps {
-  tab: ImportTab;
-  onTabChange: (tab: ImportTab) => void;
-  onDone: () => void;
-}
-
-export function ImportRulesWorkspace({ tab, onTabChange, onDone }: ImportRulesWorkspaceProps) {
+// Rules imports only create reusable rule templates from DQX YAML. ODCS
+// contracts, which also register tables, are imported from /monitored-tables/import.
+export function ImportRulesWorkspace({ onDone }: { onDone: () => void }) {
   const { t } = useTranslation();
-  const section: ImportSection = tab === "tables" ? "tables" : "rules";
-  const format: RulesFormat = tab === "contract" ? "contract" : "yaml";
-
-  // Coming back from "Import to tables" should restore the format the user was
-  // last on, not silently reset an ODCS import to the YAML form.
-  const lastFormat = useRef<RulesFormat>(format);
-  useEffect(() => {
-    if (tab === "yaml" || tab === "contract") lastFormat.current = tab;
-  }, [tab]);
-
-  const docsUrl = tab === "yaml" ? CHECKS_DOCS_URL : CONTRACT_DOCS_URL;
 
   return (
     <>
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold tracking-tight">{t("rulesImport.title")}</h1>
-        <a
-          href={docsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1.5"
-        >
-          {t("rulesFromContract.viewDocs")}
-          <ExternalLink className="h-3 w-3" />
-        </a>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("rulesImport.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("rulesImport.scopeNoteRules")}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <a
+            href={CHECKS_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {t("rulesFromContract.viewDocs")}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+          <ImportExampleLinks examplePath={IMPORT_EXAMPLES.rulesYaml} />
+        </div>
       </div>
 
-      <Tabs
-        value={section}
-        onValueChange={(value) =>
-          onTabChange(value === "tables" ? "tables" : lastFormat.current)
-        }
-      >
-        <TabsList>
-          <TabsTrigger value="rules" className="gap-2">
-            <Library className="h-3.5 w-3.5" />
-            {t("rulesImport.sectionRules")}
-          </TabsTrigger>
-          <TabsTrigger value="tables" className="gap-2">
-            <Table2 className="h-3.5 w-3.5" />
-            {t("rulesImport.sectionTables")}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="rules" className="mt-4 space-y-4">
-          <ScopeNote text={t("rulesImport.scopeNoteRules")} />
-          <Tabs
-            value={format}
-            onValueChange={(value) => onTabChange(value === "contract" ? "contract" : "yaml")}
-          >
-            {/* Outlined so this reads as a format switch within Import rules,
-                not as a second peer of the Import rules / Import to tables tabs. */}
-            <TabsList className="h-8 border bg-background">
-              <TabsTrigger value="yaml" className="gap-1.5 text-xs">
-                <FileCode2 className="h-3.5 w-3.5" />
-                {t("rulesImport.tabYaml")}
-              </TabsTrigger>
-              <TabsTrigger value="contract" className="gap-1.5 text-xs">
-                <FileText className="h-3.5 w-3.5" />
-                {t("rulesImport.tabContract")}
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="yaml" className="mt-2">
-              <YamlImportCard onDone={onDone} />
-            </TabsContent>
-            <TabsContent value="contract" className="mt-2">
-              <ContractWorkspace onDone={onDone} />
-            </TabsContent>
-          </Tabs>
-        </TabsContent>
-
-        <TabsContent value="tables" className="mt-4 space-y-4">
-          <ScopeNote text={t("rulesImport.scopeNoteTables")} />
-          <BulkContractImportWorkspace onDone={onDone} />
-        </TabsContent>
-      </Tabs>
+      <YamlImportCard onDone={onDone} />
     </>
-  );
-}
-
-/** States where an import lands, which neither tab label can convey on its own. */
-function ScopeNote({ text }: { text: string }) {
-  return (
-    <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3">
-      <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      <p className="text-xs text-muted-foreground">{text}</p>
-    </div>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // YAML Import
 // ──────────────────────────────────────────────────────────────────────────────
+
+/** The reason a save request failed: the API's ``detail`` when there is one,
+ *  otherwise the transport error (network, timeout, proxy status). */
+function saveErrorDetail(err: unknown): string | null {
+  if (isAxiosError(err)) {
+    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (err.response) return `HTTP ${err.response.status}`;
+    return err.message || null;
+  }
+  return err instanceof Error ? err.message : null;
+}
 
 function YamlImportCard({ onDone }: { onDone: () => void }) {
   const { t } = useTranslation();
@@ -248,7 +161,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
   const importChecks = async (alsoSubmit: boolean) => {
     if (!parsedChecks) return;
     if (checkFunctions.length === 0) {
-      toast.error(t("rulesImport.failedSaveRules"));
+      toast.error(t("rulesImport.functionsNotLoaded"));
       return;
     }
     if (alsoSubmit) setIsSubmitting(true);
@@ -290,9 +203,10 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         toast.error(t("rulesImport.failedSaveRules"));
       }
       if (result.saved > 0 || result.reused > 0) onDone();
-    } catch {
+    } catch (err) {
       toast.dismiss();
-      toast.error(t("rulesImport.failedSaveRules"));
+      const detail = saveErrorDetail(err);
+      toast.error(detail ? `${t("rulesImport.failedSaveRules")}: ${detail}` : t("rulesImport.failedSaveRules"));
     } finally {
       setIsSaving(false);
       setIsSubmitting(false);

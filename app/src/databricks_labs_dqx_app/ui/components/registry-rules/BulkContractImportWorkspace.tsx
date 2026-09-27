@@ -69,7 +69,7 @@ import {
 import { normalizeImportedCheck, parseChecksForImport } from "@/lib/import-registry-rules";
 import { resolveCriticality, severityValueCriticality } from "@/lib/registry-rule-conversion";
 import { orderSeverityValuesForDisplay, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
-import { buildSlotMapping } from "@/lib/slot-mapping";
+import { buildGenericSlotMapping } from "@/lib/slot-mapping";
 import {
   aggregateByContract,
   chunk,
@@ -80,7 +80,7 @@ import {
 } from "@/lib/bulk-contract-import";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
-import { OptionRow } from "@/routes/_sidebar/rules.from-contract";
+import { OptionRow } from "@/components/imports/OptionRow";
 import { usePermissions } from "@/hooks/use-permissions";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { cn } from "@/lib/utils";
@@ -373,6 +373,23 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
       // (Phase 2) so the backend auto-applies them the moment the rule is
       // approved, instead of silently dropping the intended binding+mapping.
       const pendingRecords: RecordPendingApplicationIn[] = [];
+      // A generic rule now covers several columns of one table, and both the
+      // pending store and an application hold one row per (table, rule) — so
+      // every column's mapping is collected here and sent as one application
+      // with a mapping group per column, instead of each column overwriting
+      // the last.
+      const targets = new Map<
+        string,
+        {
+          bindingId: string;
+          tableFqn: string | null;
+          ruleId: string;
+          approved: boolean;
+          groups: Record<string, string>[];
+          groupKeys: Set<string>;
+          outcomes: SchemaOutcome[];
+        }
+      >();
 
       for (const entry of plan) {
         const bindingId = entry.tableFqn ? bindingByFqn.get(entry.tableFqn) ?? null : null;
@@ -395,7 +412,11 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
         for (const ruleChunk of chunk(entry.ruleInputs)) {
           // Each entry is tagged so the created-vs-reused split is tracked while
           // the apply/pre-stage handling stays identical for both.
-          let processed: { rule: CreateRegistryRuleOut["rule"]; reused: boolean }[];
+          let processed: {
+            rule: CreateRegistryRuleOut["rule"];
+            reused: boolean;
+            slotRenames: Record<string, string>;
+          }[];
           try {
             // skip_duplicates keeps re-imports idempotent: a structurally
             // identical active rule is reused instead of creating a copy.
@@ -406,12 +427,15 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
               also_submit: true,
               auto_approve: skipApproval && canApproveRules,
               skip_duplicates: true,
+              // Contract rules are per column; create them as generic rules so
+              // every column with the same check shares one registry rule.
+              generalize_slots: true,
             });
             const created = resp.data.created ?? [];
             const reused = resp.data.reused ?? [];
             processed = [
-              ...created.map((cr) => ({ rule: cr.rule, reused: false })),
-              ...reused.map((cr) => ({ rule: cr.rule, reused: true })),
+              ...created.map((cr) => ({ rule: cr.rule, reused: false, slotRenames: cr.slot_renames ?? {} })),
+              ...reused.map((cr) => ({ rule: cr.rule, reused: true, slotRenames: cr.slot_renames ?? {} })),
             ];
             const failed = resp.data.failed ?? [];
             // Surface the real (server-sanitized) per-rule reason instead of a
@@ -460,7 +484,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
                 }
                 columnsCache.set(entry.tableFqn as string, cols);
               }
-              mapping = cols === null ? null : buildSlotMapping(slots, cols);
+              mapping = cols === null ? null : buildGenericSlotMapping(slots, entryRule.slotRenames, cols);
             }
 
             if (mapping === null) {
@@ -468,32 +492,55 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
               continue;
             }
 
-            if (rule.status !== "approved") {
-              // Rule is awaiting approval — pre-stage the application so it
-              // activates automatically when the rule is approved.
-              pendingRecords.push({
-                binding_id: bindingId as string,
-                rule_id: rule.rule_id,
-                column_mapping: [mapping],
-              });
-              outcome.pending += 1;
-              continue;
+            const targetKey = `${bindingId}\u0000${rule.rule_id}`;
+            let target = targets.get(targetKey);
+            if (!target) {
+              target = {
+                bindingId: bindingId as string,
+                tableFqn: entry.tableFqn,
+                ruleId: rule.rule_id,
+                approved: rule.status === "approved",
+                groups: [],
+                groupKeys: new Set(),
+                outcomes: [],
+              };
+              targets.set(targetKey, target);
             }
-
-            try {
-              await applyRuleToTable(bindingId as string, {
-                rule_id: rule.rule_id,
-                column_mapping: [mapping],
-              });
-              outcome.applied += 1;
-              anyApplied = true;
-            } catch {
-              outcome.failed += 1;
-              outcome.errors.push(t("rulesBulkImport.errors.applyFailed", { fqn: entry.tableFqn }));
-            }
+            const groupKey = JSON.stringify(Object.entries(mapping).sort());
+            if (target.groupKeys.has(groupKey)) continue;
+            target.groupKeys.add(groupKey);
+            target.groups.push(mapping);
+            target.outcomes.push(outcome);
           }
         }
         outcomes.push(outcome);
+      }
+
+      for (const target of targets.values()) {
+        if (!target.approved) {
+          // Rule is awaiting approval — pre-stage the application so it
+          // activates automatically when the rule is approved.
+          pendingRecords.push({
+            binding_id: target.bindingId,
+            rule_id: target.ruleId,
+            column_mapping: target.groups,
+          });
+          for (const o of target.outcomes) o.pending += 1;
+          continue;
+        }
+        try {
+          await applyRuleToTable(target.bindingId, {
+            rule_id: target.ruleId,
+            column_mapping: target.groups,
+          });
+          for (const o of target.outcomes) o.applied += 1;
+          anyApplied = true;
+        } catch {
+          for (const o of new Set(target.outcomes)) {
+            o.errors.push(t("rulesBulkImport.errors.applyFailed", { fqn: target.tableFqn }));
+          }
+          for (const o of target.outcomes) o.failed += 1;
+        }
       }
 
       // Persist the pre-staged (pending-approval) applications in chunks. A

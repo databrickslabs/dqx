@@ -92,7 +92,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.database_reset_service import DatabaseResetService
-from databricks_labs_dqx_app.backend.services.job_service import JobService
+from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
@@ -140,6 +140,10 @@ _METRICS_POLL_SECONDS = 5
 # ~30min seed).
 _PROFILE_TIMEOUT_SECONDS = 900
 _PROFILE_POLL_SECONDS = 10
+# Job life-cycle states after which the profiler can no longer write its row.
+# A job that ends without one (e.g. its write failed) must not hold the seed
+# for the full timeout.
+_JOB_ENDED_STATES = frozenset({"TERMINATED", "SKIPPED", "INTERNAL_ERROR"})
 # Rows the demo profiler samples from its source table.
 _PROFILE_SAMPLE_LIMIT = 50_000
 _PROFILE_SAMPLE = ProfilerSample(kind=PROFILER_SAMPLE_KIND_RECORDS, value=_PROFILE_SAMPLE_LIMIT)
@@ -473,7 +477,7 @@ class DemoSeedService:
                 sample_kind=_PROFILE_SAMPLE.kind,
                 job_run_id=job_run_id,
             )
-            status = self._wait_for_profile(run_id)
+            status = self._wait_for_profile(run_id, job_service, job_run_id)
             if status == "SUCCESS":
                 logger.info("Demo profiling of %s completed (run_id=%s)", table_fqn, self._sanitize(run_id))
             else:
@@ -501,27 +505,57 @@ class DemoSeedService:
                     # finally, so a drop failure must never mask the seed result.
                     logger.warning("Failed to drop demo profiler view %s", self._sanitize(view_fqn))
 
-    def _wait_for_profile(self, run_id: str) -> str | None:
+    def _wait_for_profile(self, run_id: str, job_service: JobService, job_run_id: int) -> str | None:
         """Poll ``dq_profiling_results`` until the profiler run reaches a terminal row.
 
         The runner overwrites the app-written RUNNING placeholder with a terminal
         (``SUCCESS`` / ``FAILED``) row once the Job finishes; this reads that
-        non-RUNNING status. Returns the terminal status, or ``None`` when the
-        bounded deadline elapses first (the caller logs that best-effort).
+        non-RUNNING status. If the Job itself ends without writing one, returns a
+        ``JOB_<state>`` status right away instead of waiting out the deadline.
+        Returns ``None`` when the bounded deadline elapses first (the caller logs
+        that best-effort).
         """
-        results_fqn = self._app_sql.fqn("dq_profiling_results")
         deadline = time.monotonic() + _PROFILE_TIMEOUT_SECONDS
         while True:
-            rows = self._app_sql.query_dicts(
-                f"SELECT status FROM {results_fqn} "  # noqa: S608
-                f"WHERE run_id = '{escape_sql_string(run_id)}' AND status <> 'RUNNING' LIMIT 1"
-            )
-            status = rows[0].get("status") if rows else None
+            status = self._profile_result_status(run_id)
             if status:
                 return status
+            job_status = self._profile_job_status(job_service, job_run_id)
+            if job_status is not None and job_status.state in _JOB_ENDED_STATES:
+                # The runner writes its row before the Job ends; re-read once in
+                # case it landed between the two checks.
+                status = self._profile_result_status(run_id)
+                if status:
+                    return status
+                logger.warning(
+                    "Demo profiler job %s ended without a result row (%s): %s",
+                    job_run_id,
+                    job_status.result_state or job_status.state,
+                    self._sanitize(job_status.message or ""),
+                )
+                return f"JOB_{job_status.result_state or job_status.state}"
             if time.monotonic() >= deadline:
                 return None
             time.sleep(_PROFILE_POLL_SECONDS)
+
+    def _profile_result_status(self, run_id: str) -> str | None:
+        results_fqn = self._app_sql.fqn("dq_profiling_results")
+        rows = self._app_sql.query_dicts(
+            f"SELECT status FROM {results_fqn} "  # noqa: S608
+            f"WHERE run_id = '{escape_sql_string(run_id)}' AND status <> 'RUNNING' LIMIT 1"
+        )
+        return rows[0].get("status") if rows else None
+
+    @staticmethod
+    def _profile_job_status(job_service: JobService, job_run_id: int) -> RunStatus | None:
+        try:
+            return job_service.get_run_status(job_run_id)
+        except Exception:
+            # Broad except by design (see the BLE001 policy block in
+            # pyproject.toml): a Jobs API hiccup must fall back to the
+            # row-only poll, never abort profiling.
+            logger.warning("Could not read demo profiler job %s status", job_run_id, exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # Phase: rules

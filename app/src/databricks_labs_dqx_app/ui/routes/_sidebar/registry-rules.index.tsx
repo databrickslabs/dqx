@@ -79,9 +79,11 @@ import {
   RulesTable,
   getRulesTableSortValue,
   getRulesTableSortConfig,
+  type RulesTableGroup,
   type RulesTableSortKey,
   type RulesTableSelection,
 } from "@/components/rules/RulesTable";
+import { compareRuleColumnTypeGroups, ruleColumnTypeGroup } from "@/lib/rule-taxonomy";
 import { compareSortValues } from "@/components/data-table/sort";
 import {
   RESERVED_NAME_KEY,
@@ -140,6 +142,15 @@ function RegistryRulesSkeleton() {
 const ALL = "all";
 const PAGE_SIZE = 25;
 const FILTER_CLASS = FILTER_TRIGGER_CLASS;
+type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "owner";
+const GROUP_BY_OPTIONS: { value: RuleGroupBy; labelKey: string }[] = [
+  { value: "none", labelKey: "rulesRegistry.groupByNone" },
+  { value: "columnType", labelKey: "rulesRegistry.groupByColumnType" },
+  { value: "dimension", labelKey: "rulesRegistry.groupByDimension" },
+  { value: "severity", labelKey: "rulesRegistry.groupBySeverity" },
+  { value: "mode", labelKey: "rulesRegistry.groupByRuleType" },
+  { value: "owner", labelKey: "rulesRegistry.groupByOwner" },
+];
 
 function RegistryRulesPage() {
   const { t } = useTranslation();
@@ -159,6 +170,7 @@ function RegistryRulesPage() {
   const [labelFilter, setLabelFilter] = useState<LabelSelection>(new Map());
   const [nameSearch, setNameSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [groupBy, setGroupBy] = useState<RuleGroupBy>("none");
 
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
@@ -254,25 +266,71 @@ function RegistryRulesPage() {
     [sortKey, sortDir],
   );
 
+  const groupForRule = useCallback(
+    (rule: RegistryRuleOut): RulesTableGroup => {
+      switch (groupBy) {
+        case "columnType": {
+          const value = ruleColumnTypeGroup(rule);
+          return { key: value, label: t(`rulesRegistry.columnTypeGroup.${value}`) };
+        }
+        case "dimension":
+        case "severity": {
+          const value = getTag(rule, groupBy === "dimension" ? RESERVED_DIMENSION_KEY : RESERVED_SEVERITY_KEY);
+          return { key: value || "__uncategorized", label: value || t("rulesRegistry.groupUncategorized") };
+        }
+        case "mode":
+          return {
+            key: rule.mode,
+            label:
+              rule.mode === "dqx_native"
+                ? t("rulesRegistry.modeDqxNative")
+                : rule.mode === "lowcode"
+                  ? t("rulesRegistry.coreConditionBuilder")
+                  : t("rulesRegistry.coreSql"),
+          };
+        case "owner":
+          return {
+            key: rule.owner || "__unowned",
+            label: rule.owner_display_name || rule.owner || t("rulesRegistry.groupUnowned"),
+          };
+        case "none":
+          return { key: "all", label: "" };
+      }
+    },
+    [groupBy, t],
+  );
+
+  // Grouped views sort by group first (so each group's rows are contiguous
+  // under one header), then by the active column within a group.
   const sortedRules = useMemo(() => {
-    if (!sortKey) return rules;
-    const { nullsFirst } = getRulesTableSortConfig(sortKey);
+    if (!sortKey && groupBy === "none") return rules;
+    const sortConfig = sortKey ? getRulesTableSortConfig(sortKey) : null;
     const copy = [...rules];
-    copy.sort((a, b) =>
-      compareSortValues(
+    copy.sort((a, b) => {
+      if (groupBy !== "none") {
+        const groupOrder =
+          groupBy === "columnType"
+            ? compareRuleColumnTypeGroups(a, b)
+            : groupForRule(a).label.localeCompare(groupForRule(b).label);
+        if (groupOrder !== 0) return groupOrder;
+      }
+      if (!sortKey || !sortConfig) return 0;
+      return compareSortValues(
         getRulesTableSortValue(sortKey, a),
         getRulesTableSortValue(sortKey, b),
         sortDir,
-        nullsFirst,
-      ),
-    );
+        sortConfig.nullsFirst,
+      );
+    });
     return copy;
-  }, [rules, sortKey, sortDir]);
+  }, [rules, sortKey, sortDir, groupBy, groupForRule]);
 
   const pagedRules = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return sortedRules.slice(start, start + PAGE_SIZE);
   }, [sortedRules, page]);
+  // Groups collapse to headers, so the grouped view lists every rule unpaginated.
+  const visibleRules = groupBy === "none" ? pagedRules : sortedRules;
 
   const hasActiveFilters =
     dimensionFilter !== ALL ||
@@ -909,6 +967,25 @@ function RegistryRulesPage() {
         }}
         className={FILTER_CLASS}
       />
+      <Select
+        value={groupBy}
+        onValueChange={(value) => {
+          setGroupBy(value as RuleGroupBy);
+          setPage(1);
+        }}
+      >
+        <SelectTrigger className={FILTER_CLASS} aria-label={t("rulesRegistry.groupByLabel")}>
+          <span className="text-muted-foreground">{t("rulesRegistry.groupByLabel")}:</span>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {GROUP_BY_OPTIONS.map((option) => (
+            <SelectItem key={option.value} value={option.value} className="text-xs">
+              {t(option.labelKey)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {hasActiveFilters && (
         <Button
           variant="ghost"
@@ -981,8 +1058,10 @@ function RegistryRulesPage() {
                   paint the shell immediately and only spin the contents (rather
                   than swapping the whole region for a skeleton block). */}
               <RulesTable
-              rows={isPending ? [] : pagedRules}
+              rows={isPending ? [] : visibleRules}
               labelDefinitions={labelDefinitions}
+              groupForRule={groupBy === "none" ? undefined : groupForRule}
+              forceGroupsExpanded={nameSearch.trim().length > 0}
               sortKey={sortKey}
               sortDir={sortDir}
               onHeaderClick={handleHeaderClick}
@@ -1014,7 +1093,9 @@ function RegistryRulesPage() {
               }
               />
             </div>
-            <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+            {groupBy === "none" && (
+              <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+            )}
           </>
         )}
       </div>

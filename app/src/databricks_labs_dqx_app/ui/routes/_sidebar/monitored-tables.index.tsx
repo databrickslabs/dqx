@@ -17,6 +17,7 @@ import {
 } from "@/components/monitored-tables/MonitoredTablesTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
+import { RulesGroupedTable } from "@/components/monitored-tables/ImplementedRulesExplorer";
 import { ExportDialog } from "@/components/ExportDialog";
 import { exportMonitoredTables } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
@@ -40,14 +41,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, FileDown, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, Undo2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileDown, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, Undo2, Upload, XCircle } from "lucide-react";
 import {
+  useListImplementedRules,
   useListMonitoredTables,
   useDeleteMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
   useRevertMonitoredTable,
   useRunMonitoredTable,
+  type ImplementedRuleOut,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
 import {
@@ -71,7 +74,11 @@ import { isFqnLikeTableSearch, matchesTableFqnSearch } from "./monitored-tables-
 const PAGE_SIZE = 25;
 const ALL = "all";
 
+type GroupBy = "table" | "rule";
+
 export const Route = createFileRoute("/_sidebar/monitored-tables/")({
+  validateSearch: (search: Record<string, unknown>): { groupBy?: GroupBy } =>
+    search.groupBy === "rule" ? { groupBy: "rule" } : {},
   component: () => (
     <QueryErrorResetBoundary>
       {({ reset }) => (
@@ -132,6 +139,7 @@ function MonitoredTablesPage() {
   const perms = usePermissions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { groupBy = "table" } = Route.useSearch();
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
@@ -157,6 +165,36 @@ function MonitoredTablesPage() {
   // still honors these query params, but the overview no longer uses them.
   const { data, isLoading, isError, refetch } = useListMonitoredTables({});
   const tables = useMemo(() => data?.data ?? [], [data]);
+
+  // Applied rules across every table: only fetched for the rule view or once
+  // a table row is expanded, so the default table view stays one request.
+  const [expandedBindingIds, setExpandedBindingIds] = useState<Set<string>>(new Set());
+  const {
+    data: implementedRulesData,
+    isLoading: implementedRulesLoading,
+    isError: implementedRulesError,
+    refetch: refetchImplementedRules,
+  } = useListImplementedRules({ query: { enabled: groupBy === "rule" || expandedBindingIds.size > 0 } });
+  const implementedRules = useMemo(() => implementedRulesData?.data ?? [], [implementedRulesData]);
+  const rulesByBindingId = useMemo(() => {
+    const grouped = new Map<string, ImplementedRuleOut[]>();
+    for (const rule of implementedRules) {
+      const rows = grouped.get(rule.binding_id) ?? [];
+      rows.push(rule);
+      grouped.set(rule.binding_id, rows);
+    }
+    return grouped;
+  }, [implementedRules]);
+  const toggleExpandedTable = useCallback((bindingId: string) => {
+    setExpandedBindingIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(bindingId)) next.delete(bindingId);
+      else next.add(bindingId);
+      return next;
+    });
+  }, []);
+  const setGroupBy = (value: string) =>
+    navigate({ to: "/monitored-tables", search: value === "rule" ? { groupBy: "rule" } : {}, replace: true });
 
   const visibleTables = useMemo(() => {
     const fqnSearch = isFqnLikeTableSearch(nameSearch);
@@ -539,6 +577,23 @@ function MonitoredTablesPage() {
     );
   };
 
+  const groupBySelect = (
+    <Select value={groupBy} onValueChange={setGroupBy}>
+      <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.groupByLabel")}>
+        <span className="text-muted-foreground">{t("monitoredTables.groupByLabel")}:</span>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="table" className="text-xs">
+          {t("monitoredTables.groupByTable")}
+        </SelectItem>
+        <SelectItem value="rule" className="text-xs">
+          {t("monitoredTables.groupByRule")}
+        </SelectItem>
+      </SelectContent>
+    </Select>
+  );
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -549,14 +604,24 @@ function MonitoredTablesPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{t("monitoredTables.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {/* Export lives in the selection action bar (bulkToolbar) — select
                 rows to export exactly those, mirroring the Rules overview. */}
             {perms.canCreateRules && (
-              <Button onClick={() => setAddOpen(true)} className="gap-2">
-                <Plus className="h-4 w-4" />
-                {t("monitoredTables.monitorTable")}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate({ to: "/monitored-tables/import" })}
+                  className="gap-2"
+                >
+                  <Upload className="h-4 w-4" />
+                  {t("rulesImport.sectionTables")}
+                </Button>
+                <Button onClick={() => setAddOpen(true)} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  {t("monitoredTables.monitorTable")}
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -573,6 +638,36 @@ function MonitoredTablesPage() {
           fetchDqx={() => exportMonitoredTables({ format: "dqx", binding_id: [...selectedIds] })}
           fetchOdcs={() => exportMonitoredTables({ format: "odcs", binding_id: [...selectedIds] })}
         />
+        {groupBy === "rule" ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-72">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder={t("monitoredTables.implementedRules.searchPlaceholder")}
+                  value={nameSearch}
+                  onChange={(e) => setNameSearch(e.target.value)}
+                  className="h-8 text-xs pl-7"
+                />
+              </div>
+              {groupBySelect}
+            </div>
+            {implementedRulesLoading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : implementedRulesError ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
+                <p className="text-sm text-muted-foreground mb-3">{t("common.loadFailed")}</p>
+                <Button variant="outline" size="sm" onClick={() => refetchImplementedRules()} className="gap-2">
+                  <RotateCcw className="h-3 w-3" />
+                  {t("common.retry")}
+                </Button>
+              </div>
+            ) : (
+              <RulesGroupedTable rows={implementedRules} query={nameSearch} />
+            )}
+          </div>
+        ) : (
         <div className="relative">
           {bulkToolbar}
           <MonitoredTablesTable
@@ -586,6 +681,10 @@ function MonitoredTablesPage() {
           }
           pendingBindingId={pendingId}
           selection={tableSelection}
+          onToggleExpanded={toggleExpandedTable}
+          expandedBindingIds={expandedBindingIds}
+          rulesByBindingId={rulesByBindingId}
+          rulesLoading={implementedRulesLoading}
           toolbarExtra={
             <>
               <div className="relative w-56">
@@ -639,6 +738,7 @@ function MonitoredTablesPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {groupBySelect}
             </>
           }
           renderActions={
@@ -789,8 +889,9 @@ function MonitoredTablesPage() {
           }
           />
         </div>
+        )}
 
-        {visibleTables.length > 0 && (
+        {groupBy === "table" && visibleTables.length > 0 && (
           <Pagination page={page} totalItems={visibleTables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>

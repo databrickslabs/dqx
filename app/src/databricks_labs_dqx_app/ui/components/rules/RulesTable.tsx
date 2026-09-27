@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -11,7 +11,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
-import { ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
@@ -89,6 +89,28 @@ interface RulesTableRenderContext {
  * enter (not at mount) since the cell's final width isn't known until the
  * table has settled into its column widths.
  */
+/** Owner name, with a warning when the owner matched no Databricks principal. */
+function OwnerCell({ rule }: { rule: RegistryRuleOut }) {
+  const { t } = useTranslation();
+  const text = rule.owner_display_name || rule.owner || "—";
+  if (!rule.owner_unverified) {
+    return <TruncatedCell text={text} className="text-muted-foreground" />;
+  }
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <TruncatedCell text={text} className="min-w-0 text-muted-foreground" />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("permissions.ownerNotFound")} />
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs">
+          {t("permissions.ownerNotFound")}
+        </TooltipContent>
+      </Tooltip>
+    </span>
+  );
+}
+
 function TruncatedCell({
   text,
   className,
@@ -270,7 +292,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     sortable: true,
     // A→Z through the named owners (B2-92); unowned rules sort last.
     renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={r.owner_display_name || r.owner || "—"} className="text-muted-foreground" />,
+    renderCell: (r) => <OwnerCell rule={r} />,
   },
   source: {
     labelKey: "rulesRegistry.colSource",
@@ -451,10 +473,19 @@ export interface RulesTableSelection {
   onToggleAll: () => void;
 }
 
+export interface RulesTableGroup {
+  key: string;
+  label: string;
+}
+
 export interface RulesTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: RegistryRuleOut[];
   labelDefinitions: LabelColorDefinition[];
+  /** Inserts collapsible group headers; rows must arrive sorted by group. Omit for the flat table. */
+  groupForRule?: (rule: RegistryRuleOut) => RulesTableGroup;
+  /** Expands every group (e.g. while searching, so matches are never hidden). */
+  forceGroupsExpanded?: boolean;
   sortKey: RulesTableSortKey | null;
   sortDir: "asc" | "desc";
   onHeaderClick: (key: RulesTableSortKey) => void;
@@ -484,6 +515,8 @@ export interface RulesTableProps {
 export function RulesTable({
   rows,
   labelDefinitions,
+  groupForRule,
+  forceGroupsExpanded = false,
   sortKey,
   sortDir,
   onHeaderClick,
@@ -500,6 +533,7 @@ export function RulesTable({
   const allSelected =
     showSelection && selectableCount > 0 && selection!.selectedIds.size === selectableCount;
   const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const {
     colOrder,
@@ -533,6 +567,24 @@ export function RulesTable({
   const orderedKeys: ColumnKey[] = visibleKeys.includes("actions")
     ? [...visibleKeys.filter((k) => k !== "actions"), "actions"]
     : visibleKeys;
+
+  const groups = useMemo(() => rows.map((r) => groupForRule?.(r)), [rows, groupForRule]);
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const group of groups) {
+      if (group) counts.set(group.key, (counts.get(group.key) ?? 0) + 1);
+    }
+    return counts;
+  }, [groups]);
+
+  function toggleGroup(key: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -620,8 +672,41 @@ export function RulesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.rule_id} className="group cursor-pointer" onClick={() => onRowClick(r)}>
+            {rows.map((r, rowIndex) => {
+              const group = groups[rowIndex];
+              const showGroupHeader = !!group && group.key !== groups[rowIndex - 1]?.key;
+              const expanded = !group || forceGroupsExpanded || expandedGroups.has(group.key);
+              return (
+              <Fragment key={r.rule_id}>
+              {showGroupHeader && group && (
+                <TableRow className="hover:bg-muted/30">
+                  <TableCell
+                    colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
+                    className="bg-muted/30 p-0 text-xs font-semibold text-foreground"
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted"
+                      aria-expanded={expanded}
+                      onClick={() => toggleGroup(group.key)}
+                    >
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                          !expanded && "-rotate-90",
+                        )}
+                        aria-hidden
+                      />
+                      <span>{group.label}</span>
+                      <Badge variant="secondary" className="min-w-6 justify-center text-[10px]">
+                        {groupCounts.get(group.key) ?? 0}
+                      </Badge>
+                    </button>
+                  </TableCell>
+                </TableRow>
+              )}
+              {expanded && (
+              <TableRow className="group cursor-pointer" onClick={() => onRowClick(r)}>
                 {showSelection && (
                   <TableCell
                     className="w-10 p-2 align-middle"
@@ -668,7 +753,10 @@ export function RulesTable({
                   );
                 })}
               </TableRow>
-            ))}
+              )}
+              </Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </div>

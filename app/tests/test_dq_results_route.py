@@ -814,6 +814,28 @@ class TestGlobalResults:
         assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert "input_location IN" not in stmt
 
+    def test_global_query_pushes_catalog_gate_into_sql(self, client, sql_mock):
+        sql_dispatch(sql_mock)
+        client.get("/api/v1/dq-results/global")
+        stmt = sql_mock.query_dicts.call_args_list[0][0][0]
+        assert "split(input_location, '\\\\.')[0] IN ('dev', 'main')" in stmt
+
+    def test_global_outcome_facet_keeps_only_matching_checks(self, client, sql_mock):
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("c1", errors=10, total=100, fqn="main.sales.orders"),
+                check_row("c2", errors=0, total=100, fqn="main.sales.orders"),
+            ],
+        )
+        failed = client.get("/api/v1/dq-results/global", params={"outcome": ["failed"]}).json()
+        assert [g["label"] for g in failed["by_rule"]] == ["c1"]
+        passed = client.get("/api/v1/dq-results/global", params={"outcome": ["passed"]}).json()
+        assert [g["label"] for g in passed["by_rule"]] == ["c2"]
+        # Unknown outcome values are ignored rather than emptying the scope.
+        bogus = client.get("/api/v1/dq-results/global", params={"outcome": ["bogus"]}).json()
+        assert {g["label"] for g in bogus["by_rule"]} == {"c1", "c2"}
+
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
         assert client.get("/api/v1/dq-results/global").status_code == 500

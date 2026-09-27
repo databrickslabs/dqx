@@ -40,6 +40,15 @@ class ScheduleConfigEntry:
     updated_at: str | None = None
 
 
+@dataclass
+class ScheduleTrackerEntry:
+    schedule_name: str
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_run_id: str | None = None
+    status: str | None = None
+
+
 class ScheduleConfigService:
     """CRUD for per-schedule configuration rows in ``dq_schedule_configs``."""
 
@@ -48,6 +57,7 @@ class ScheduleConfigService:
         self._table = sql.fqn("dq_schedule_configs")
         self._history_table = sql.fqn("dq_schedule_configs_history")
         self._rules_table = sql.fqn("dq_resolved_rules")
+        self._runs_table = sql.fqn("dq_schedule_runs")
 
     def resolve_scope_table_fqns(self, config: dict[str, Any]) -> list[str]:
         """Resolve the real table FQNs a scope-config schedule would run against.
@@ -79,6 +89,33 @@ class ScheduleConfigService:
             fqns = [f for f in fqns if f in tables]
 
         return fqns
+
+    def list_trackers(self) -> dict[str, ScheduleTrackerEntry]:
+        """Return scheduler run pointers keyed by namespaced schedule identity."""
+        ts = self._sql.ts_text
+        rows = self._sql.query(
+            f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "  # noqa: S608
+            f"last_run_id, status FROM {self._runs_table}"
+        )
+        return {
+            str(row[0]): ScheduleTrackerEntry(
+                schedule_name=str(row[0]),
+                last_run_at=row[1],
+                next_run_at=row[2],
+                last_run_id=row[3],
+                status=row[4],
+            )
+            for row in rows
+            if row and row[0]
+        }
+
+    def set_tracker_paused(self, schedule_name: str, paused: bool) -> None:
+        """Pause or resume a table/collection schedule without discarding its cron."""
+        self._sql.upsert(
+            self._runs_table,
+            key_cols={"schedule_name": schedule_name},
+            value_cols={"status": "paused" if paused else "pending", "updated_at": RawSql("now()")},
+        )
 
     def list_schedules(self) -> list[ScheduleConfigEntry]:
         ts = self._sql.ts_text

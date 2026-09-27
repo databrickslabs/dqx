@@ -235,7 +235,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_at    TIMESTAMPTZ,"
             "  CONSTRAINT chk_dq_schedule_runs_status "
             "    CHECK (status IS NULL OR status IN "
-            "      ('pending','success','partial_failure','failed'))"
+            "      ('pending','success','partial_failure','failed','paused'))"
             ");"
             # The scheduler loop polls "next_run_at <= now() AND status
             # IS NOT 'pending'" every tick; a btree index on
@@ -477,6 +477,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  column_mapping JSONB,"
             "  created_by     TEXT,"
             "  created_at     TIMESTAMPTZ,"
+            "  row_filter     TEXT,"
+            "  pass_threshold INT,"
             "  CONSTRAINT uq_dq_pending_applications_binding_rule "
             "    UNIQUE (binding_id, rule_id)"
             ");"

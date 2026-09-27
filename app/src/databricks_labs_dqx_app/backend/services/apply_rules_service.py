@@ -718,6 +718,12 @@ class ApplyRulesService:
         rows = self._sql.query(sql)
         return [self._row_to_applied_rule(row) for row in rows]
 
+    def list_all(self) -> list[AppliedRule]:
+        """List every applied rule across all monitored-table bindings."""
+        sql = f"SELECT {self._select_cols} FROM {self._table} ORDER BY created_at DESC"  # noqa: S608
+        rows = self._sql.query(sql)
+        return [self._row_to_applied_rule(row) for row in rows]
+
     def list_bindings_for_rule(self, rule_id: str) -> list[AppliedRule]:
         """List every application of *rule_id*, across all monitored-table bindings.
 

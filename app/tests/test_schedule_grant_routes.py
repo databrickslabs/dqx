@@ -109,7 +109,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
         # t1 manageable, t2 not.
-        grant_svc.user_can_manage.side_effect = lambda fqn: fqn == "cat.sch.t1"
+        grant_svc.can_schedule.side_effect = lambda fqn: fqn == "cat.sch.t1"
         grant_svc.manage_holders.return_value = [{"principal": "bob@example.com", "type": "user"}]
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
@@ -125,7 +125,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
         svc.get.return_value = MagicMock()
-        grant_svc.user_can_manage.return_value = True
+        grant_svc.can_schedule.return_value = True
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.MonkeyPatch.context() as mp:
@@ -152,7 +152,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]
         svc.get.return_value = MagicMock()
-        grant_svc.user_can_manage.return_value = True
+        grant_svc.can_schedule.return_value = True
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.MonkeyPatch.context() as mp:
@@ -162,7 +162,7 @@ class TestDataProductScheduleGate:
             )
             update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
-        assert grant_svc.user_can_manage.call_count == 3
+        assert grant_svc.can_schedule.call_count == 3
         assert grant_svc.grant_select_precleared.call_count == 3
 
     def test_primes_identities_once_for_the_whole_save(self, obo_ws, perms, grant_svc):
@@ -170,7 +170,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
         svc.get.return_value = MagicMock()
-        grant_svc.user_can_manage.return_value = True
+        grant_svc.can_schedule.return_value = True
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.MonkeyPatch.context() as mp:
@@ -187,7 +187,7 @@ class TestDataProductScheduleGate:
         """A blocked member must stop the save before any grant is attempted."""
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
-        grant_svc.user_can_manage.return_value = False
+        grant_svc.can_schedule.return_value = False
         grant_svc.manage_holders.return_value = [{"principal": "bob@example.com", "type": "user"}]
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
@@ -208,7 +208,7 @@ class TestDataProductScheduleGate:
             )
             update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
-        grant_svc.user_can_manage.assert_not_called()
+        grant_svc.can_schedule.assert_not_called()
         grant_svc.grant_select_to_schedulers.assert_not_called()
         grant_svc.grant_select_precleared.assert_not_called()
 

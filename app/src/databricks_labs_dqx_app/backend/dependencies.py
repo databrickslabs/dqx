@@ -695,7 +695,10 @@ async def get_schedule_grant_service(
     Reads and grants run under the caller's OBO client; *sp_ws* is used only to
     resolve the app SP identity and derive the task-runner SP from the bound job.
     """
-    return ScheduleGrantService(obo_ws=obo_ws, sp_ws=sp_ws, job_id=conf.job_id)
+    resources = rt.require_resources()
+    return ScheduleGrantService(
+        obo_ws=obo_ws, sp_ws=sp_ws, job_id=conf.job_id, warehouse_id=resources.warehouse_id or ""
+    )
 
 
 async def get_preview_sql_executor(

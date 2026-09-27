@@ -803,6 +803,38 @@ class TestDeleteBuiltinRules:
 # ---------------------------------------------------------------------------
 
 
+class TestBackfillOwnerDisplayNames:
+    def test_writes_name_back_for_missing_rows_only(self, svc, sql):
+        svc.backfill_owner_display_names({"c.psafos@example.com": "Christos Psafos"})
+        assert sql.execute.call_count == 1
+        emitted = sql.execute.call_args[0][0]
+        assert "UPDATE" in emitted and "dq_rules" in emitted
+        assert "owner_display_name = 'Christos Psafos'" in emitted
+        assert "owner = 'c.psafos@example.com'" in emitted
+        # Only rows without a name are touched — never overwrites an explicit one.
+        assert "owner_display_name IS NULL OR owner_display_name = ''" in emitted
+
+    def test_skips_empty_owner_or_name(self, svc, sql):
+        svc.backfill_owner_display_names({"": "Nobody", "a@x.com": "", "b@x.com": "Bob"})
+        assert sql.execute.call_count == 1
+        assert "owner = 'b@x.com'" in sql.execute.call_args[0][0]
+
+    def test_escapes_sql_metacharacters(self, svc, sql):
+        svc.backfill_owner_display_names({"o'brien@x.com": "O'Brien"})
+        emitted = sql.execute.call_args[0][0]
+        assert "O''Brien" in emitted
+        assert "o''brien@x.com" in emitted
+
+    def test_write_failure_is_swallowed(self, svc, sql):
+        sql.execute.side_effect = RuntimeError("db down")
+        # Must not raise — the next read simply re-resolves.
+        svc.backfill_owner_display_names({"a@x.com": "Alice"})
+
+    def test_noop_for_empty_mapping(self, svc, sql):
+        svc.backfill_owner_display_names({})
+        sql.execute.assert_not_called()
+
+
 class TestListAndGet:
     def test_list_filters_by_status_in_sql(self, svc, sql):
         sql.query.return_value = []

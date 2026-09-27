@@ -21,8 +21,17 @@ as:
   derivation fails or is absent we still grant the app SP and log a warning —
   never fail the whole operation.
 
+A table the app SP can already read (it owns it, or it is readable by every
+principal like ``samples``) needs no grant, so the caller only has to be able to
+read it themselves instead of holding ``MANAGE``. The caller's own read access is
+always required: otherwise app-level edit rights would let a user schedule runs
+whose results expose a table Unity Catalog doesn't let them read.
+
 All reads and the grant run under the caller's OBO client, so Unity Catalog
-enforces exactly what the user is allowed to do. A user who cannot grant (no
+enforces exactly what the user is allowed to do. The grant is issued as a SQL
+``GRANT`` on the app's warehouse: the App's OBO token only carries read-only
+Unity Catalog API scopes, so the grants REST API rejects it, while the ``sql``
+scope lets the user run the statement under their own privileges. A user who cannot grant (no
 ``MANAGE`` privilege and not an owner — directly or via a group they belong to)
 is hard-blocked, and we surface the users/groups that *do* hold ``MANAGE`` so
 the UI can ask one of them to set the schedule up instead.
@@ -32,12 +41,14 @@ import asyncio
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import PermissionsChange, Privilege, SecurableType
+from databricks.sdk.service.sql import StatementState
 
-from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, quote_ident, validate_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +114,19 @@ _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 class ScheduleGrantService:
     """Check grantability and grant SELECT to the scheduler SPs, all via OBO."""
 
-    def __init__(self, obo_ws: WorkspaceClient, sp_ws: WorkspaceClient, job_id: str) -> None:
+    def __init__(
+        self,
+        obo_ws: WorkspaceClient,
+        sp_ws: WorkspaceClient,
+        job_id: str,
+        warehouse_id: str = "",
+    ) -> None:
         self._obo = obo_ws
         self._sp_ws = sp_ws
         self._job_id = (job_id or "").strip()
+        self._warehouse_id = (warehouse_id or "").strip()
+        self._scheduler_can_read_cache: dict[str, bool] = {}
+        self._user_can_read_cache: dict[str, bool] = {}
         # Per-request memoization of the (otherwise per-table) identity lookups.
         # The service is constructed per request (see ``get_schedule_grant_service``),
         # so caching here scopes each identity round-trip to a single request —
@@ -348,6 +368,45 @@ class ScheduleGrantService:
 
         return False
 
+    def scheduler_can_read(self, fqn: str) -> bool:
+        """Return whether the app SP can already ``SELECT`` from *fqn*.
+
+        Probed by running ``SELECT 1 ... LIMIT 0`` as the app SP, which covers
+        ownership, direct and inherited grants, and account-wide access (e.g.
+        ``samples``). Any failure — including no warehouse — reads as ``False``
+        so the caller falls back to granting. Memoized per request.
+        """
+        return self._probe_read(self._sp_ws, fqn, self._scheduler_can_read_cache)
+
+    def user_can_read(self, fqn: str) -> bool:
+        """Return whether the OBO caller can ``SELECT`` from *fqn* (same probe, as the caller)."""
+        return self._probe_read(self._obo, fqn, self._user_can_read_cache)
+
+    def _probe_read(self, ws: WorkspaceClient, fqn: str, cache: dict[str, bool]) -> bool:
+        if fqn not in cache:
+            readable = False
+            if self._warehouse_id and _is_real_three_part_fqn(fqn):
+                try:
+                    validate_fqn(fqn)
+                    self._run_sql(ws, f"SELECT 1 FROM {quote_fqn(fqn)} LIMIT 0")
+                    readable = True
+                except Exception:
+                    logger.debug("Read probe failed for %s", fqn, exc_info=True)
+            cache[fqn] = readable
+        return cache[fqn]
+
+    def _needs_no_grant(self, fqn: str) -> bool:
+        """The scheduler can already read *fqn* and so can the caller — nothing to grant."""
+        return self.scheduler_can_read(fqn) and self.user_can_read(fqn)
+
+    def can_schedule(self, fqn: str) -> bool:
+        """Return whether a schedule on *fqn* can be saved by the OBO caller.
+
+        True when both the scheduler and the caller can already read the table
+        (nothing to grant), or the caller can grant the scheduler access.
+        """
+        return self._needs_no_grant(fqn) or self.user_can_manage(fqn)
+
     def manage_holders(self, fqn: str) -> list[dict[str, str]]:
         """Return the users/groups that can grant on *fqn*: MANAGE holders + owners.
 
@@ -388,7 +447,7 @@ class ScheduleGrantService:
                 # Synthetic cross-table checks need no source-table grant — never block.
                 out.append(TablePreflight(fqn=fqn, can_manage=True, manage_holders=[]))
                 continue
-            can_manage = self.user_can_manage(fqn)
+            can_manage = self.can_schedule(fqn)
             holders = [] if can_manage else self.manage_holders(fqn)
             out.append(TablePreflight(fqn=fqn, can_manage=can_manage, manage_holders=holders))
         return out
@@ -397,7 +456,26 @@ class ScheduleGrantService:
     # Grant
     # ------------------------------------------------------------------
 
+    def _run_sql(self, ws: WorkspaceClient, statement: str) -> None:
+        """Run *statement* on the app warehouse as *ws*; raise with UC's message on failure."""
+        resp = ws.statement_execution.execute_statement(
+            statement=statement, warehouse_id=self._warehouse_id, wait_timeout="30s"
+        )
+        deadline = time.monotonic() + 90
+        while resp.status and resp.status.state in (StatementState.PENDING, StatementState.RUNNING):
+            if time.monotonic() > deadline or not resp.statement_id:
+                raise RuntimeError("Timed out waiting for the SQL warehouse.")
+            time.sleep(2)
+            resp = ws.statement_execution.get_statement(resp.statement_id)
+        state = resp.status.state if resp.status else None
+        if state != StatementState.SUCCEEDED:
+            error = resp.status.error if resp.status else None
+            raise RuntimeError((error.message if error and error.message else None) or f"Statement {state}")
+
     def _grant_select(self, fqn: str, principal: str) -> None:
+        if self._warehouse_id:
+            self._run_sql(self._obo, f"GRANT SELECT ON TABLE {quote_fqn(fqn)} TO {quote_ident(principal)}")
+            return
         self._obo.grants.update(
             _TABLE_SECURABLE,
             fqn,
@@ -418,6 +496,8 @@ class ScheduleGrantService:
             # Nothing to grant on a synthetic cross-table key.
             return []
 
+        if self._needs_no_grant(fqn):
+            return self._grant_to_schedulers_unchecked(fqn)
         if not self.user_can_manage(fqn):
             raise CannotManageError(fqn, self.manage_holders(fqn))
 
@@ -453,12 +533,13 @@ class ScheduleGrantService:
         if not _is_real_three_part_fqn(fqn):
             return []
 
+        granted: list[str] = []
         app_id = self.app_sp_id()
-        if not app_id:
-            raise RuntimeError("Could not resolve the app service principal identity to grant SELECT.")
-
-        self._grant_select(fqn, app_id)  # essential — propagate on failure
-        granted = [app_id]
+        if not self.scheduler_can_read(fqn):
+            if not app_id:
+                raise RuntimeError("Could not resolve the app service principal identity to grant SELECT.")
+            self._grant_select(fqn, app_id)  # essential — propagate on failure
+            granted.append(app_id)
 
         task_id = self.task_runner_sp_id()
         if task_id and task_id != app_id:
@@ -475,6 +556,9 @@ class ScheduleGrantService:
 
     async def preflight_async(self, fqns: list[str]) -> list[TablePreflight]:
         return await asyncio.to_thread(self.preflight, fqns)
+
+    async def can_schedule_async(self, fqn: str) -> bool:
+        return await asyncio.to_thread(self.can_schedule, fqn)
 
     async def user_can_manage_async(self, fqn: str) -> bool:
         return await asyncio.to_thread(self.user_can_manage, fqn)

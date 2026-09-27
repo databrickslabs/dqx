@@ -130,7 +130,8 @@
     "monitoredTables": "Tabelle",
     "importRules": "Importa Regole",
     "results": "Risultati",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "schedules": "Pianificazioni"
   },
   "userMenu": {
     "profile": "Profilo",
@@ -635,7 +636,7 @@
     "profileTitle": "Profila e genera",
     "profileDescription": "Profila i tuoi dati per generare automaticamente regole di qualità basate su statistiche di colonna.",
     "importTitle": "Importa regole",
-    "importDescription": "Importa in blocco da un file YAML di DQX o genera regole da un contratto dati ODCS v3.x.",
+    "importDescription": "Importa in blocco regole riutilizzabili da un file YAML di DQX.",
     "fromContractTitle": "Da contratto dati",
     "fromContractDescription": "Genera regole da un contratto dati ODCS v3.x — schema, vincoli e controlli DQX espliciti.",
     "schemaTitle": "Valida schema della tabella",
@@ -828,8 +829,8 @@
     "title": "Importa",
     "sectionRules": "Importa regole",
     "sectionTables": "Importa nelle tabelle",
-    "scopeNoteRules": "Le regole finiscono solo nel Registro Regole: nessuna tabella viene registrata e nulla viene eseguito. Applica le regole approvate a una tabella dalla sua scheda Applica regole, oppure passa a Importa nelle tabelle per fare entrambe le cose in una volta.",
-    "scopeNoteTables": "Ogni schema del contratto viene registrato come tabella monitorata e le sue regole vengono create nel registro. Le regole che si mappano automaticamente alla tabella vengono applicate; le altre restano nel registro per la mappatura manuale.",
+    "scopeNoteRules": "Aggiungi regole riutilizzabili al registro. Le tabelle non cambiano.",
+    "scopeNoteTables": "Registra le tabelle e applica le regole corrispondenti in un'unica importazione.",
     "tabYaml": "YAML di DQX",
     "tabContract": "Contratto dati ODCS",
     "importFromYaml": "Importa da YAML",
@@ -897,7 +898,10 @@
     "thousandRows": "1.000 righe",
     "fiveThousandRows": "5.000 righe",
     "tenThousandRows": "10.000 righe",
-    "dryRunTooltip": "L'esecuzione di prova valida solo le prime 1–10.000 righe della tabella di destinazione — è un'anteprima rapida, non una validazione completa. Per eseguire le regole importate su ogni riga dopo l'approvazione, vai a Esegui Regole e seleziona \"Tutte le righe\"."
+    "dryRunTooltip": "L'esecuzione di prova valida solo le prime 1–10.000 righe della tabella di destinazione — è un'anteprima rapida, non una validazione completa. Per eseguire le regole importate su ogni riga dopo l'approvazione, vai a Esegui Regole e seleziona \"Tutte le righe\".",
+    "exampleFile": "File di esempio",
+    "downloadExample": "Scarica esempio",
+    "functionsNotLoaded": "Le funzioni delle regole sono ancora in caricamento. Riprova tra un momento."
   },
   "rulesCreateSql": {
     "breadcrumb": "Regole tra tabelle",
@@ -1917,7 +1921,30 @@
     "joinPickCatalogPlaceholder": "Seleziona catalogo…",
     "joinPickSchemaPlaceholder": "Seleziona schema…",
     "joinPickTablePlaceholder": "Seleziona tabella…",
-    "sourceMarketplace": "Marketplace"
+    "sourceMarketplace": "Marketplace",
+    "groupByLabel": "Raggruppa per",
+    "groupUncategorized": "Senza categoria",
+    "groupUnowned": "Senza responsabile",
+    "columnTypeGroup": {
+      "any": "Qualsiasi tipo di colonna",
+      "numeric": "Colonne numeriche",
+      "text": "Colonne di testo",
+      "temporal": "Colonne di data e ora",
+      "boolean": "Colonne booleane",
+      "mixed": "Più tipi di colonna",
+      "table": "Regole a livello di tabella"
+    },
+    "appliedTablesTitle": "Tabelle applicate",
+    "appliedTablesViewResults": "Visualizza risultati",
+    "appliedTablesNotRun": "Non eseguita",
+    "appliedTablesRestricted_one": "{{count}} tabella aggiuntiva è nascosta dalle autorizzazioni di Unity Catalog.",
+    "appliedTablesRestricted_other": "{{count}} tabelle aggiuntive sono nascoste dalle autorizzazioni di Unity Catalog.",
+    "groupByNone": "Nessuno",
+    "groupByColumnType": "Tipo di colonna",
+    "groupByDimension": "Dimensione",
+    "groupBySeverity": "Gravità",
+    "groupByRuleType": "Tipo di regola",
+    "groupByOwner": "Responsabile"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle",
@@ -2388,7 +2415,30 @@
     "bulkDeleted": "Eliminate",
     "bulkSucceeded_one": "{{msg}} ({{count}} tabella)",
     "bulkSucceeded_other": "{{msg}} ({{count}} tabelle)",
-    "bulkPartial": "{{ok}} riuscite, {{fail}} fallite{{reason}}"
+    "bulkPartial": "{{ok}} riuscite, {{fail}} fallite{{reason}}",
+    "groupByLabel": "Raggruppa per",
+    "groupByTable": "Tabella",
+    "groupByRule": "Regola",
+    "expandRulesAria": "Mostra le regole applicate a {{name}}",
+    "collapseRulesAria": "Nascondi le regole applicate a {{name}}",
+    "implementedRules": {
+      "colTable": "Tabella",
+      "colRule": "Regola",
+      "colTables": "Tabelle",
+      "colColumns": "Colonne",
+      "colThreshold": "Soglia di superamento",
+      "colRowFilter": "Filtro righe",
+      "colSource": "Origine",
+      "wholeTable": "Intera tabella",
+      "ruleDefault": "Valore della regola",
+      "allRows": "Tutte le righe",
+      "expand": "Espandi {{name}}",
+      "collapse": "Comprimi {{name}}",
+      "empty": "Nessuna regola è ancora applicata a una tabella.",
+      "emptySearch": "Nessuna regola applicata corrisponde a questa ricerca.",
+      "noneForTable": "Nessuna regola applicata disponibile per questa tabella.",
+      "searchPlaceholder": "Cerca regole, tabelle o colonne…"
+    }
   },
   "dataProducts": {
     "title": "Raccolte",
@@ -2701,7 +2751,9 @@
     "stewardGrantDialogConfirm": "Conferma",
     "ownerGrantDialogConfirm": "Conferma",
     "stewardGrantFailed": "Responsabile impostato, ma impossibile scrivere il grant di autorizzazione.",
-    "ownerGrantFailed": "Responsabile impostato, ma impossibile scrivere il grant di autorizzazione."
+    "ownerGrantFailed": "Responsabile impostato, ma impossibile scrivere il grant di autorizzazione.",
+    "ownerNotFound": "Questo proprietario non corrisponde a nessun utente, gruppo o entità servizio di Databricks.",
+    "ownerNotFoundEditable": "Questo proprietario non corrisponde a nessun utente, gruppo o entità servizio di Databricks. Scegli il proprietario corretto qui sopra."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "numero",
@@ -2867,7 +2919,13 @@
     "invalidSamplesUnavailable": "I campioni non validi non possono essere mostrati per questa tabella.",
     "breachWarnTooltip": "Tasso di superamento sotto la soglia",
     "breachErrorTooltip": "Tasso di superamento sotto la soglia",
-    "breachTooltipWithThreshold": "Tasso di superamento sotto la soglia ({{pct}}%)"
+    "breachTooltipWithThreshold": "Tasso di superamento sotto la soglia ({{pct}}%)",
+    "chipOutcome": "Esito: {{value}}",
+    "outcomeFailed": "Con errori",
+    "outcomePassed": "Superato",
+    "filterAllOutcomes": "Tutti gli esiti",
+    "filterSearchOutcomes": "Cerca esiti…",
+    "filterNoOutcomes": "Nessun esito"
   },
   "genie": {
     "iconTitle": "Databricks Genie",
@@ -2974,5 +3032,42 @@
     },
     "instructions": "Come risolvere",
     "diagnosticCode": "Codice: {{code}}"
+  },
+  "schedules": {
+    "title": "Pianificazioni",
+    "subtitle": "Gestisci le pianificazioni di tabelle, raccolte e ambiti con nome.",
+    "count": "{{count}} pianificazioni",
+    "search": "Cerca pianificazioni",
+    "filterType": "Filtra per tipo",
+    "filterStatus": "Filtra per stato",
+    "filterOwner": "Filtra per proprietario",
+    "allTypes": "Tutti i tipi",
+    "allStatuses": "Tutti gli stati",
+    "allOwners": "Tutti i proprietari",
+    "typeTable": "Tabella",
+    "typeCollection": "Raccolta",
+    "typeScope": "Ambito con nome",
+    "active": "Attiva",
+    "paused": "In pausa",
+    "failing": "Richiede attenzione",
+    "failed": "Non riuscita",
+    "partial": "Errore parziale",
+    "name": "Pianificazione",
+    "type": "Tipo",
+    "cadence": "Frequenza",
+    "owner": "Proprietario",
+    "health": "Stato",
+    "nextRun": "Prossima esecuzione",
+    "lastRun": "Ultima esecuzione",
+    "actions": "Azioni",
+    "deleteSchedule": "Elimina pianificazione",
+    "pause": "Pausa",
+    "resume": "Riprendi",
+    "saved": "Pianificazione aggiornata",
+    "removed": "Pianificazione rimossa",
+    "removeConfirm": "Rimuovere la pianificazione «{{name}}»?",
+    "empty": "Nessuna pianificazione corrisponde ai filtri.",
+    "duplicateWarning": "Questa tabella viene eseguita anche da una raccolta pianificata.",
+    "viewRuns": "Visualizza esecuzioni"
   }
 }

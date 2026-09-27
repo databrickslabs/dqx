@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from databricks.sdk.service.catalog import Privilege
+from databricks.sdk.service.sql import StatementState
 
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
@@ -338,3 +339,76 @@ class TestPreclearedGrant:
     async def test_precleared_grant_synthetic_is_noop(self, service, obo):
         assert await service.grant_select_precleared_async("__sql_check__/x") == []
         obo.grants.update.assert_not_called()
+
+
+def _stmt(state=StatementState.SUCCEEDED, message=None):
+    return SimpleNamespace(
+        statement_id="s-1",
+        status=SimpleNamespace(state=state, error=SimpleNamespace(message=message) if message else None),
+    )
+
+
+class TestWarehouseBackedGrants:
+    """With a warehouse the grant is SQL (the OBO token has no UC write API scope)."""
+
+    @pytest.fixture
+    def wh_service(self, obo, sp, monkeypatch):
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
+        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="wh-1")
+
+    def test_readable_table_needs_no_manage_and_no_app_grant(self, wh_service, obo, sp):
+        # e.g. samples.*: every principal reads it, nobody can grant on it.
+        sp.statement_execution.execute_statement.return_value = _stmt()
+
+        def _obo_sql(*, statement, warehouse_id, wait_timeout):
+            return _stmt() if statement.startswith("SELECT") else _stmt(StatementState.FAILED, "no MANAGE")
+
+        obo.statement_execution.execute_statement.side_effect = _obo_sql
+
+        assert wh_service.can_schedule(FQN) is True
+        assert wh_service.grant_select_to_schedulers(FQN) == []
+        obo.tables.get.assert_not_called()
+        obo.grants.update.assert_not_called()
+        probe = sp.statement_execution.execute_statement.call_args.kwargs
+        assert probe["statement"] == "SELECT 1 FROM `cat`.`sch`.`tbl` LIMIT 0"
+        assert probe["warehouse_id"] == "wh-1"
+        assert sp.statement_execution.execute_statement.call_count == 1  # memoized
+
+    def test_scheduler_readable_but_caller_cannot_read_still_needs_manage(self, wh_service, obo, sp):
+        # App-level edit rights alone must not schedule runs over a table the
+        # caller can't read in Unity Catalog, even when the app SP can.
+        sp.statement_execution.execute_statement.return_value = _stmt()
+        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "PERMISSION_DENIED")
+
+        assert wh_service.can_schedule(FQN) is False
+        with pytest.raises(CannotManageError):
+            wh_service.grant_select_to_schedulers(FQN)
+
+    def test_unreadable_table_is_granted_via_sql_as_the_caller(self, wh_service, obo, sp):
+        sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
+        obo.statement_execution.execute_statement.return_value = _stmt()
+        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
+
+        assert wh_service.grant_select_to_schedulers(FQN) == ["app-sp-id", "task-runner-sp"]
+        statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
+        assert statements == [
+            "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `app-sp-id`",
+            "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `task-runner-sp`",
+        ]
+        obo.grants.update.assert_not_called()
+
+    def test_sql_grant_failure_carries_the_warehouse_message(self, wh_service, obo, sp):
+        sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
+        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "PERMISSION_DENIED")
+        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
+
+        with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
+            wh_service.grant_select_to_schedulers(FQN)
+
+    def test_unreadable_and_unmanageable_still_blocks(self, wh_service, obo, sp):
+        sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
+
+        assert wh_service.can_schedule(FQN) is False
+        with pytest.raises(CannotManageError):
+            wh_service.grant_select_to_schedulers(FQN)
+        obo.statement_execution.execute_statement.assert_not_called()

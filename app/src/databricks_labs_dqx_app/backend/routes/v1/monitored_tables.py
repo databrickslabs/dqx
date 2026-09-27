@@ -7,9 +7,11 @@ plus the live link of applied registry rules and the materializer that
 renders them into ``dq_resolved_rules`` (Phase 3C).
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound, PermissionDenied
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
@@ -58,6 +60,7 @@ from databricks_labs_dqx_app.backend.models import (
     BatchRecordPendingApplicationsOut,
     BulkRegisterMonitoredTablesIn,
     BulkRegisterMonitoredTablesOut,
+    ImplementedRuleOut,
     LifecycleRationaleIn,
     MonitoredTableDetailOut,
     MonitoredTableOut,
@@ -85,7 +88,10 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.registry_models import (
     MonitoredTable,
+    get_rule_dimension,
     get_rule_name,
+    get_rule_pass_threshold,
+    get_rule_severity,
     RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
@@ -111,6 +117,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -222,6 +229,46 @@ def _apply_snapshot_check_counts(
 
 
 @router.get(
+    "/implemented-rules",
+    response_model=list[ImplementedRuleOut],
+    operation_id="listImplementedRules",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_implemented_rules(
+    tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    applied_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+) -> list[ImplementedRuleOut]:
+    """List every rule application across the monitored tables, enriched with the table FQN.
+
+    Powers the Tables overview's "group by rule" view and the per-table rule
+    expansion. Applications whose binding no longer resolves to a listed
+    monitored table are skipped.
+    """
+    try:
+        table_by_binding = {s.table.binding_id: s.table.table_fqn for s in tables.list_monitored_tables()}
+        applied = [row for row in applied_rules.list_all() if row.binding_id in table_by_binding]
+        rules = registry.get_rules_many({row.rule_id for row in applied})
+        result: list[ImplementedRuleOut] = []
+        for row in applied:
+            base = AppliedRuleOut.from_domain(row).model_dump()
+            rule = rules.get(row.rule_id)
+            if rule is not None:
+                base.update(
+                    rule_name=get_rule_name(rule.user_metadata),
+                    rule_dimension=get_rule_dimension(rule.user_metadata),
+                    rule_severity=get_rule_severity(rule.user_metadata),
+                    rule_pass_threshold=get_rule_pass_threshold(rule.user_metadata),
+                    rule_source=rule.source,
+                )
+            result.append(ImplementedRuleOut(**base, table_fqn=table_by_binding[row.binding_id]))
+        return result
+    except Exception as e:
+        logger.error(f"Failed to list implemented rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list implemented rules.")
+
+
+@router.get(
     "/{binding_id}",
     response_model=MonitoredTableDetailOut,
     operation_id="getMonitoredTable",
@@ -316,6 +363,57 @@ def register_monitored_table(
         raise HTTPException(status_code=500, detail=f"Failed to register monitored table: {e}")
 
 
+_UC_VERIFY_WORKERS = 8
+
+
+def _verify_tables_accessible(obo_ws: WorkspaceClient, table_fqns: list[str]) -> None:
+    """Raise 422 if any syntactically valid FQN is missing or not readable in Unity Catalog.
+
+    Invalid FQNs are skipped here — :meth:`MonitoredTableService.bulk_register`
+    already reports them in the summary. Lookups run concurrently so a large
+    onboarding batch stays bounded in latency.
+    """
+    candidates: list[str] = []
+    for fqn in dict.fromkeys(table_fqns):
+        try:
+            validate_fqn(fqn)
+        except ValueError:
+            continue
+        candidates.append(fqn)
+    if not candidates:
+        return
+
+    def _check(fqn: str) -> str | None:
+        try:
+            obo_ws.tables.get(full_name=fqn)
+            return None
+        except (NotFound, PermissionDenied):
+            return fqn
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(_UC_VERIFY_WORKERS, len(candidates))) as pool:
+            unavailable = [fqn for fqn in pool.map(_check, candidates) if fqn is not None]
+    except Exception as e:
+        logger.error(f"Failed to verify bulk-registered tables in Unity Catalog: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "import_table_validation_failed",
+                "message": "Could not verify the tables in Unity Catalog. Please try again.",
+            },
+        )
+    if unavailable:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "import_tables_unavailable",
+                "message": "Registration blocked: one or more tables do not exist or are not accessible "
+                "in Unity Catalog.",
+                "tables": unavailable,
+            },
+        )
+
+
 @router.post(
     "/bulk",
     response_model=BulkRegisterMonitoredTablesOut,
@@ -334,15 +432,20 @@ def bulk_register_monitored_tables(
     back in the summary rather than failing the whole batch — see
     :meth:`MonitoredTableService.bulk_register`.
 
+    Every syntactically valid FQN is first verified in Unity Catalog with the
+    caller's OBO identity. If any table does not exist or is not accessible,
+    the whole import is rejected (422, listing the tables) before any binding
+    is written — otherwise the caller would be left with bindings that can
+    never be profiled or run.
+
     Unlike single register, bulk register does **not** resolve each table's
-    Unity Catalog owner: that would be one ``tables.get`` round-trip per table
-    (N calls, plus rate-limit exposure) on a path meant for onboarding many
-    tables quickly. When no owner is pinned, every binding defaults to the
+    Unity Catalog owner. When no owner is pinned, every binding defaults to the
     creator; a per-table owner can be assigned afterwards from the table's
     Permissions tab.
     """
     try:
         user_email = _current_user_email(obo_ws)
+        _verify_tables_accessible(obo_ws, body.table_fqns)
         result = svc.bulk_register(body.table_fqns, user_email, owner=body.owner)
         # Apply-on-tag: auto-attach matches for only the NEWLY-registered tables
         # (never skipped_existing/invalid). ``BulkRegisterResult.registered`` is a
@@ -360,6 +463,8 @@ def bulk_register_monitored_tables(
             except Exception:
                 logger.warning("Tag auto-apply after bulk-register failed (non-fatal)", exc_info=True)
         return BulkRegisterMonitoredTablesOut.from_domain(result)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to bulk-register monitored tables: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to bulk-register monitored tables: {e}")
@@ -500,7 +605,7 @@ def update_monitored_table_schedule(
             logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail="Could not grant the scheduler read access to this table. Please try again.",
+                detail=f"Could not grant the scheduler read access to this table: {e}",
             )
 
     try:
@@ -804,7 +909,14 @@ def batch_record_pending_applications(
     user_email = _current_user_email(obo_ws)
     for index, entry in enumerate(body.applications):
         try:
-            pending.record(entry.binding_id, entry.rule_id, entry.column_mapping, user_email)
+            pending.record(
+                entry.binding_id,
+                entry.rule_id,
+                entry.column_mapping,
+                user_email,
+                row_filter=entry.row_filter,
+                pass_threshold=entry.pass_threshold,
+            )
             recorded += 1
         except Exception as e:
             logger.error(
@@ -873,6 +985,8 @@ def list_pending_applications(
                     rule_name=get_rule_name(rule.user_metadata) if rule else None,
                     rule_status=rule.status if rule else None,
                     column_mapping=row.column_mapping,
+                    row_filter=row.row_filter,
+                    pass_threshold=row.pass_threshold,
                     created_by=row.created_by,
                     created_at=row.created_at.isoformat() if row.created_at else None,
                 )

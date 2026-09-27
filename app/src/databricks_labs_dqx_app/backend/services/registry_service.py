@@ -41,7 +41,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import canonicalize_owner
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, WhereIn
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -147,6 +147,34 @@ class RegistryService:
     def count(self) -> int:
         """Total registry rules, any status (homepage stat card)."""
         return self._sql.count(self._table)
+
+    def backfill_owner_display_names(self, resolved: dict[str, str]) -> None:
+        """Persist resolved owner display names onto rows that stored NULL.
+
+        Imported rules take their ``owner`` straight from the contract/YAML (an
+        email), and rows written while SCIM was unavailable keep a NULL
+        ``owner_display_name`` that renders as a raw email. Once the read path
+        resolves the owner, this writes the name back so it shows consistently
+        on every surface instead of being re-resolved on each request.
+
+        Only rows still missing a name for that owner are touched, so an
+        explicitly-set name is never overwritten, and ``updated_at`` is left
+        alone because this is a cosmetic backfill, not a user edit.
+        Best-effort: a failure is swallowed (the next read re-resolves).
+        """
+        for owner, display_name in resolved.items():
+            if not owner or not display_name:
+                continue
+            e_owner = escape_sql_string(owner)
+            e_name = escape_sql_string(display_name)
+            sql = (
+                f"UPDATE {self._table} SET owner_display_name = '{e_name}' "  # noqa: S608
+                f"WHERE owner = '{e_owner}' AND (owner_display_name IS NULL OR owner_display_name = '')"
+            )
+            try:
+                self._sql.execute(sql)
+            except Exception:
+                logger.warning("Owner display-name backfill failed for %s (non-fatal)", owner, exc_info=True)
 
     def list_rules(
         self,
@@ -589,8 +617,11 @@ class RegistryService:
         # Resolve the owner's display name at write time when the caller did
         # not already supply one (the principal picker does). Best-effort — a
         # group / unresolvable owner or SCIM failure stores NULL.
+        # An imported free-text owner (e.g. a mis-cased email) is replaced by
+        # the matched principal's canonical identity; unmatched owners are kept.
         if owner_display_name is None:
-            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
+            canonical, owner_display_name = canonicalize_owner(resolved_owner, self._sp_ws)
+            resolved_owner = canonical or resolved_owner
         rule = RegistryRule(
             rule_id=uuid4().hex[:16],
             mode=mode,
@@ -739,7 +770,8 @@ class RegistryService:
             # Owner changed without an explicit display name → resolve it at
             # write time (best-effort). An explicitly-supplied name below wins.
             if owner_display_name is None:
-                rule.owner_display_name = resolve_owner_display_name(owner, self._sp_ws)
+                canonical, rule.owner_display_name = canonicalize_owner(owner, self._sp_ws)
+                rule.owner = canonical or owner
         if owner_display_name is not None:
             rule.owner_display_name = owner_display_name
         if author_kind is not None:

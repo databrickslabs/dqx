@@ -130,7 +130,8 @@
     "monitoredTables": "Tables",
     "importRules": "Importer des règles",
     "results": "Résultats",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "schedules": "Planifications"
   },
   "userMenu": {
     "profile": "Profil",
@@ -635,7 +636,7 @@
     "profileTitle": "Profiler et générer",
     "profileDescription": "Profilez vos données pour générer automatiquement des règles de qualité basées sur les statistiques des colonnes.",
     "importTitle": "Importer des règles",
-    "importDescription": "Importez en masse depuis un fichier YAML DQX ou générez des règles à partir d'un contrat de données ODCS v3.x.",
+    "importDescription": "Importez en masse des règles réutilisables depuis un fichier YAML DQX.",
     "fromContractTitle": "Depuis un contrat de données",
     "fromContractDescription": "Générez des règles à partir d'un contrat de données ODCS v3.x — schéma, contraintes et contrôles DQX explicites.",
     "schemaTitle": "Valider le schéma de la table",
@@ -828,8 +829,8 @@
     "title": "Importer",
     "sectionRules": "Importer des règles",
     "sectionTables": "Importer vers des tables",
-    "scopeNoteRules": "Les règles arrivent uniquement dans le registre des règles — aucune table n'est enregistrée et rien n'est exécuté. Appliquez les règles approuvées à une table depuis son onglet Appliquer des règles, ou passez à Importer vers des tables pour faire les deux en une fois.",
-    "scopeNoteTables": "Chaque schéma de contrat est enregistré comme table surveillée et ses règles sont créées dans le registre. Les règles qui correspondent automatiquement à la table sont appliquées ; les autres restent dans le registre pour un mappage manuel.",
+    "scopeNoteRules": "Ajoutez des règles réutilisables au registre. Les tables ne changent pas.",
+    "scopeNoteTables": "Enregistrez les tables et appliquez les règles correspondantes en un import.",
     "tabYaml": "YAML DQX",
     "tabContract": "Contrat de données ODCS",
     "importFromYaml": "Importer depuis un YAML",
@@ -897,7 +898,10 @@
     "thousandRows": "1 000 lignes",
     "fiveThousandRows": "5 000 lignes",
     "tenThousandRows": "10 000 lignes",
-    "dryRunTooltip": "L'exécution à blanc ne valide que les 1 à 10 000 premières lignes de la table cible — c'est un aperçu rapide, pas une validation complète. Pour exécuter les règles importées sur chaque ligne après approbation, allez dans Exécuter les règles et choisissez « Toutes les lignes »."
+    "dryRunTooltip": "L'exécution à blanc ne valide que les 1 à 10 000 premières lignes de la table cible — c'est un aperçu rapide, pas une validation complète. Pour exécuter les règles importées sur chaque ligne après approbation, allez dans Exécuter les règles et choisissez « Toutes les lignes ».",
+    "exampleFile": "Fichier d'exemple",
+    "downloadExample": "Télécharger l'exemple",
+    "functionsNotLoaded": "Les fonctions de règles sont encore en cours de chargement. Réessayez dans un instant."
   },
   "rulesCreateSql": {
     "breadcrumb": "Règles inter-tables",
@@ -1917,7 +1921,30 @@
     "joinPickCatalogPlaceholder": "Sélectionner un catalogue…",
     "joinPickSchemaPlaceholder": "Sélectionner un schéma…",
     "joinPickTablePlaceholder": "Sélectionner une table…",
-    "sourceMarketplace": "Marketplace"
+    "sourceMarketplace": "Marketplace",
+    "groupByLabel": "Regrouper par",
+    "groupUncategorized": "Non catégorisé",
+    "groupUnowned": "Sans propriétaire",
+    "columnTypeGroup": {
+      "any": "Tout type de colonne",
+      "numeric": "Colonnes numériques",
+      "text": "Colonnes de texte",
+      "temporal": "Colonnes de date et heure",
+      "boolean": "Colonnes booléennes",
+      "mixed": "Plusieurs types de colonnes",
+      "table": "Règles au niveau table"
+    },
+    "appliedTablesTitle": "Tables concernées",
+    "appliedTablesViewResults": "Voir les résultats",
+    "appliedTablesNotRun": "Non exécutée",
+    "appliedTablesRestricted_one": "{{count}} table supplémentaire est masquée par vos autorisations Unity Catalog.",
+    "appliedTablesRestricted_other": "{{count}} tables supplémentaires sont masquées par vos autorisations Unity Catalog.",
+    "groupByNone": "Aucun",
+    "groupByColumnType": "Type de colonne",
+    "groupByDimension": "Dimension",
+    "groupBySeverity": "Sévérité",
+    "groupByRuleType": "Type de règle",
+    "groupByOwner": "Propriétaire"
   },
   "monitoredTables": {
     "breadcrumb": "Tables",
@@ -2388,7 +2415,30 @@
     "bulkDeleted": "Supprimé",
     "bulkSucceeded_one": "{{msg}} ({{count}} table)",
     "bulkSucceeded_other": "{{msg}} ({{count}} tables)",
-    "bulkPartial": "{{ok}} réussie(s), {{fail}} échouée(s){{reason}}"
+    "bulkPartial": "{{ok}} réussie(s), {{fail}} échouée(s){{reason}}",
+    "groupByLabel": "Grouper par",
+    "groupByTable": "Table",
+    "groupByRule": "Règle",
+    "expandRulesAria": "Afficher les règles appliquées à {{name}}",
+    "collapseRulesAria": "Masquer les règles appliquées à {{name}}",
+    "implementedRules": {
+      "colTable": "Table",
+      "colRule": "Règle",
+      "colTables": "Tables",
+      "colColumns": "Colonnes",
+      "colThreshold": "Seuil de réussite",
+      "colRowFilter": "Filtre de lignes",
+      "colSource": "Source",
+      "wholeTable": "Table entière",
+      "ruleDefault": "Valeur de la règle",
+      "allRows": "Toutes les lignes",
+      "expand": "Développer {{name}}",
+      "collapse": "Réduire {{name}}",
+      "empty": "Aucune règle n'est encore appliquée à une table.",
+      "emptySearch": "Aucune règle appliquée ne correspond à cette recherche.",
+      "noneForTable": "Aucune règle appliquée n'est disponible pour cette table.",
+      "searchPlaceholder": "Rechercher des règles, tables ou colonnes…"
+    }
   },
   "dataProducts": {
     "title": "Collections",
@@ -2701,7 +2751,9 @@
     "stewardGrantDialogConfirm": "Confirmer",
     "ownerGrantDialogConfirm": "Confirmer",
     "stewardGrantFailed": "Propriétaire attribué, mais échec de l'écriture de l'autorisation.",
-    "ownerGrantFailed": "Propriétaire attribué, mais échec de l'écriture de l'autorisation."
+    "ownerGrantFailed": "Propriétaire attribué, mais échec de l'écriture de l'autorisation.",
+    "ownerNotFound": "Ce propriétaire ne correspond à aucun utilisateur, groupe ou principal de service Databricks.",
+    "ownerNotFoundEditable": "Ce propriétaire ne correspond à aucun utilisateur, groupe ou principal de service Databricks. Choisissez le bon propriétaire ci-dessus."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "nombre",
@@ -2867,7 +2919,13 @@
     "invalidSamplesUnavailable": "Impossible d'afficher les échantillons non valides pour cette table.",
     "breachWarnTooltip": "Taux de réussite inférieur au seuil",
     "breachErrorTooltip": "Taux de réussite inférieur au seuil",
-    "breachTooltipWithThreshold": "Taux de réussite inférieur au seuil ({{pct}} %)"
+    "breachTooltipWithThreshold": "Taux de réussite inférieur au seuil ({{pct}} %)",
+    "chipOutcome": "Résultat : {{value}}",
+    "outcomeFailed": "En échec",
+    "outcomePassed": "Réussi",
+    "filterAllOutcomes": "Tous les résultats",
+    "filterSearchOutcomes": "Rechercher des résultats…",
+    "filterNoOutcomes": "Aucun résultat"
   },
   "genie": {
     "iconTitle": "Databricks Genie",
@@ -2974,5 +3032,42 @@
     },
     "instructions": "Comment résoudre ce problème",
     "diagnosticCode": "Code : {{code}}"
+  },
+  "schedules": {
+    "title": "Planifications",
+    "subtitle": "Gérez les planifications des tables, collections et périmètres nommés.",
+    "count": "{{count}} planifications",
+    "search": "Rechercher des planifications",
+    "filterType": "Filtrer par type",
+    "filterStatus": "Filtrer par état",
+    "filterOwner": "Filtrer par propriétaire",
+    "allTypes": "Tous les types",
+    "allStatuses": "Tous les états",
+    "allOwners": "Tous les propriétaires",
+    "typeTable": "Table",
+    "typeCollection": "Collection",
+    "typeScope": "Périmètre nommé",
+    "active": "Active",
+    "paused": "En pause",
+    "failing": "Attention requise",
+    "failed": "Échec",
+    "partial": "Échec partiel",
+    "name": "Planification",
+    "type": "Type",
+    "cadence": "Fréquence",
+    "owner": "Propriétaire",
+    "health": "État",
+    "nextRun": "Prochaine exécution",
+    "lastRun": "Dernière exécution",
+    "actions": "Actions",
+    "deleteSchedule": "Supprimer la planification",
+    "pause": "Mettre en pause",
+    "resume": "Reprendre",
+    "saved": "Planification mise à jour",
+    "removed": "Planification supprimée",
+    "removeConfirm": "Supprimer la planification « {{name}} » ?",
+    "empty": "Aucune planification ne correspond à ces filtres.",
+    "duplicateWarning": "Cette table est aussi exécutée par une collection planifiée.",
+    "viewRuns": "Voir les exécutions"
   }
 }

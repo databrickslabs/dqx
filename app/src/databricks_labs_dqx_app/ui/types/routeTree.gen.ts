@@ -20,6 +20,7 @@ import { Route as SidebarResultsRouteImport } from './../routes/_sidebar/results
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRunsHistoryRouteImport } from './../routes/_sidebar/runs-history'
+import { Route as SidebarSchedulesRouteImport } from './../routes/_sidebar/schedules'
 import { Route as SidebarSettingsRouteImport } from './../routes/_sidebar/settings'
 import { Route as SidebarCollectionsIndexRouteImport } from './../routes/_sidebar/collections.index'
 import { Route as SidebarCollectionsProductIdRouteImport } from './../routes/_sidebar/collections.$productId'
@@ -29,6 +30,7 @@ import { Route as SidebarDataProductsProductIdRouteImport } from './../routes/_s
 import { Route as SidebarDataProductsNewRouteImport } from './../routes/_sidebar/data-products.new'
 import { Route as SidebarMonitoredTablesIndexRouteImport } from './../routes/_sidebar/monitored-tables.index'
 import { Route as SidebarMonitoredTablesBindingIdRouteImport } from './../routes/_sidebar/monitored-tables.$bindingId'
+import { Route as SidebarMonitoredTablesImportRouteImport } from './../routes/_sidebar/monitored-tables.import'
 import { Route as SidebarMonitoredTablesNewRouteImport } from './../routes/_sidebar/monitored-tables.new'
 import { Route as SidebarRegistryRulesIndexRouteImport } from './../routes/_sidebar/registry-rules.index'
 import { Route as SidebarRegistryRulesRuleIdRouteImport } from './../routes/_sidebar/registry-rules.$ruleId'
@@ -104,6 +106,11 @@ const SidebarRunsHistoryRoute = SidebarRunsHistoryRouteImport.update({
   path: '/runs-history',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
+const SidebarSchedulesRoute = SidebarSchedulesRouteImport.update({
+  id: '/schedules',
+  path: '/schedules',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
 const SidebarSettingsRoute = SidebarSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -152,6 +159,12 @@ const SidebarMonitoredTablesBindingIdRoute =
   SidebarMonitoredTablesBindingIdRouteImport.update({
     id: '/monitored-tables/$bindingId',
     path: '/monitored-tables/$bindingId',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarMonitoredTablesImportRoute =
+  SidebarMonitoredTablesImportRouteImport.update({
+    id: '/monitored-tables/import',
+    path: '/monitored-tables/import',
     getParentRoute: () => SidebarRouteRoute,
   } as any)
 const SidebarMonitoredTablesNewRoute =
@@ -274,12 +287,14 @@ export interface FileRoutesByFullPath {
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
+  '/schedules': typeof SidebarSchedulesRoute
   '/settings': typeof SidebarSettingsRoute
   '/collections/$productId': typeof SidebarCollectionsProductIdRoute
   '/collections/new': typeof SidebarCollectionsNewRoute
   '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/data-products/new': typeof SidebarDataProductsNewRoute
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/monitored-tables/import': typeof SidebarMonitoredTablesImportRoute
   '/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
   '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
   '/registry-rules/bulk-import': typeof SidebarRegistryRulesBulkImportRoute
@@ -313,12 +328,14 @@ export interface FileRoutesByTo {
   '/profiler': typeof SidebarProfilerRoute
   '/results': typeof SidebarResultsRoute
   '/runs-history': typeof SidebarRunsHistoryRoute
+  '/schedules': typeof SidebarSchedulesRoute
   '/settings': typeof SidebarSettingsRoute
   '/collections/$productId': typeof SidebarCollectionsProductIdRoute
   '/collections/new': typeof SidebarCollectionsNewRoute
   '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/data-products/new': typeof SidebarDataProductsNewRoute
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/monitored-tables/import': typeof SidebarMonitoredTablesImportRoute
   '/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
   '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
   '/registry-rules/bulk-import': typeof SidebarRegistryRulesBulkImportRoute
@@ -356,12 +373,14 @@ export interface FileRoutesById {
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
+  '/_sidebar/schedules': typeof SidebarSchedulesRoute
   '/_sidebar/settings': typeof SidebarSettingsRoute
   '/_sidebar/collections/$productId': typeof SidebarCollectionsProductIdRoute
   '/_sidebar/collections/new': typeof SidebarCollectionsNewRoute
   '/_sidebar/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/_sidebar/data-products/new': typeof SidebarDataProductsNewRoute
   '/_sidebar/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/_sidebar/monitored-tables/import': typeof SidebarMonitoredTablesImportRoute
   '/_sidebar/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
   '/_sidebar/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
   '/_sidebar/registry-rules/bulk-import': typeof SidebarRegistryRulesBulkImportRoute
@@ -399,12 +418,14 @@ export interface FileRouteTypes {
     | '/rules'
     | '/runs'
     | '/runs-history'
+    | '/schedules'
     | '/settings'
     | '/collections/$productId'
     | '/collections/new'
     | '/data-products/$productId'
     | '/data-products/new'
     | '/monitored-tables/$bindingId'
+    | '/monitored-tables/import'
     | '/monitored-tables/new'
     | '/registry-rules/$ruleId'
     | '/registry-rules/bulk-import'
@@ -438,12 +459,14 @@ export interface FileRouteTypes {
     | '/profiler'
     | '/results'
     | '/runs-history'
+    | '/schedules'
     | '/settings'
     | '/collections/$productId'
     | '/collections/new'
     | '/data-products/$productId'
     | '/data-products/new'
     | '/monitored-tables/$bindingId'
+    | '/monitored-tables/import'
     | '/monitored-tables/new'
     | '/registry-rules/$ruleId'
     | '/registry-rules/bulk-import'
@@ -480,12 +503,14 @@ export interface FileRouteTypes {
     | '/_sidebar/rules'
     | '/_sidebar/runs'
     | '/_sidebar/runs-history'
+    | '/_sidebar/schedules'
     | '/_sidebar/settings'
     | '/_sidebar/collections/$productId'
     | '/_sidebar/collections/new'
     | '/_sidebar/data-products/$productId'
     | '/_sidebar/data-products/new'
     | '/_sidebar/monitored-tables/$bindingId'
+    | '/_sidebar/monitored-tables/import'
     | '/_sidebar/monitored-tables/new'
     | '/_sidebar/registry-rules/$ruleId'
     | '/_sidebar/registry-rules/bulk-import'
@@ -595,6 +620,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRunsHistoryRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/schedules': {
+      id: '/_sidebar/schedules'
+      path: '/schedules'
+      fullPath: '/schedules'
+      preLoaderRoute: typeof SidebarSchedulesRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/settings': {
       id: '/_sidebar/settings'
       path: '/settings'
@@ -656,6 +688,13 @@ declare module '@tanstack/react-router' {
       path: '/monitored-tables/$bindingId'
       fullPath: '/monitored-tables/$bindingId'
       preLoaderRoute: typeof SidebarMonitoredTablesBindingIdRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/monitored-tables/import': {
+      id: '/_sidebar/monitored-tables/import'
+      path: '/monitored-tables/import'
+      fullPath: '/monitored-tables/import'
+      preLoaderRoute: typeof SidebarMonitoredTablesImportRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/monitored-tables/new': {
@@ -853,12 +892,14 @@ interface SidebarRouteRouteChildren {
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
   SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
+  SidebarSchedulesRoute: typeof SidebarSchedulesRoute
   SidebarSettingsRoute: typeof SidebarSettingsRoute
   SidebarCollectionsProductIdRoute: typeof SidebarCollectionsProductIdRoute
   SidebarCollectionsNewRoute: typeof SidebarCollectionsNewRoute
   SidebarDataProductsProductIdRoute: typeof SidebarDataProductsProductIdRoute
   SidebarDataProductsNewRoute: typeof SidebarDataProductsNewRoute
   SidebarMonitoredTablesBindingIdRoute: typeof SidebarMonitoredTablesBindingIdRoute
+  SidebarMonitoredTablesImportRoute: typeof SidebarMonitoredTablesImportRoute
   SidebarMonitoredTablesNewRoute: typeof SidebarMonitoredTablesNewRoute
   SidebarRegistryRulesRuleIdRoute: typeof SidebarRegistryRulesRuleIdRoute
   SidebarRegistryRulesBulkImportRoute: typeof SidebarRegistryRulesBulkImportRoute
@@ -883,12 +924,14 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
   SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,
+  SidebarSchedulesRoute: SidebarSchedulesRoute,
   SidebarSettingsRoute: SidebarSettingsRoute,
   SidebarCollectionsProductIdRoute: SidebarCollectionsProductIdRoute,
   SidebarCollectionsNewRoute: SidebarCollectionsNewRoute,
   SidebarDataProductsProductIdRoute: SidebarDataProductsProductIdRoute,
   SidebarDataProductsNewRoute: SidebarDataProductsNewRoute,
   SidebarMonitoredTablesBindingIdRoute: SidebarMonitoredTablesBindingIdRoute,
+  SidebarMonitoredTablesImportRoute: SidebarMonitoredTablesImportRoute,
   SidebarMonitoredTablesNewRoute: SidebarMonitoredTablesNewRoute,
   SidebarRegistryRulesRuleIdRoute: SidebarRegistryRulesRuleIdRoute,
   SidebarRegistryRulesBulkImportRoute: SidebarRegistryRulesBulkImportRoute,

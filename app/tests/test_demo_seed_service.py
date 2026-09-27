@@ -1495,6 +1495,69 @@ def test_run_profiling_failure_does_not_fail_the_whole_seed():
     assert last.state == "succeeded"
 
 
+def test_wait_for_profile_stops_when_job_ends_without_a_result_row(monkeypatch):
+    # A profiler Job whose own result write failed never produces a row; the seed
+    # must move on as soon as the Job has ended, not wait out the 15-minute deadline.
+    from databricks_labs_dqx_app.backend.demo import seed_service
+    from databricks_labs_dqx_app.backend.services.job_service import RunStatus
+
+    def _no_sleep(_seconds):
+        raise AssertionError("must not sleep once the job has ended")
+
+    monkeypatch.setattr(seed_service.time, "sleep", _no_sleep)
+    job_service = MagicMock()
+    job_service.get_run_status.return_value = RunStatus(
+        state="INTERNAL_ERROR", result_state="FAILED", message="Workload failed"
+    )
+    svc, deps = _svc(job_service=job_service)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.return_value = []
+
+    assert svc._wait_for_profile("r1", job_service, 42) == "JOB_FAILED"
+    job_service.get_run_status.assert_called_once_with(42)
+
+
+def test_wait_for_profile_keeps_polling_while_job_runs(monkeypatch):
+    from databricks_labs_dqx_app.backend.demo import seed_service
+    from databricks_labs_dqx_app.backend.services.job_service import RunStatus
+
+    monkeypatch.setattr(seed_service.time, "sleep", lambda _s: None)
+    job_service = MagicMock()
+    job_service.get_run_status.return_value = RunStatus(state="RUNNING")
+    svc, deps = _svc(job_service=job_service)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = [[], [], [{"status": "SUCCESS"}]]
+
+    assert svc._wait_for_profile("r1", job_service, 42) == "SUCCESS"
+
+
+def test_wait_for_profile_prefers_a_row_written_just_before_the_job_ended(monkeypatch):
+    from databricks_labs_dqx_app.backend.demo import seed_service
+    from databricks_labs_dqx_app.backend.services.job_service import RunStatus
+
+    monkeypatch.setattr(seed_service.time, "sleep", lambda _s: None)
+    job_service = MagicMock()
+    job_service.get_run_status.return_value = RunStatus(state="TERMINATED", result_state="SUCCESS")
+    svc, deps = _svc(job_service=job_service)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = [[], [{"status": "SUCCESS"}]]
+
+    assert svc._wait_for_profile("r1", job_service, 42) == "SUCCESS"
+
+
+def test_wait_for_profile_falls_back_to_row_polling_when_jobs_api_fails(monkeypatch):
+    from databricks_labs_dqx_app.backend.demo import seed_service
+
+    monkeypatch.setattr(seed_service.time, "sleep", lambda _s: None)
+    job_service = MagicMock()
+    job_service.get_run_status.side_effect = RuntimeError("jobs api down")
+    svc, deps = _svc(job_service=job_service)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = [[], [{"status": "FAILED"}]]
+
+    assert svc._wait_for_profile("r1", job_service, 42) == "FAILED"
+
+
 def test_view_service_names_views_from_its_sql_executor_schema():
     """Regression guard: ViewService.create_view derives the view name from its
     *sql* executor's schema, not from the sp_sql executor.  This is the invariant

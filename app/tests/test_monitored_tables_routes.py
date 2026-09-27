@@ -10,6 +10,7 @@ behaviour is already covered by ``test_monitored_table_service.py``.
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -41,6 +42,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     get_monitored_table,
     get_monitored_table_profile,
     list_monitored_table_versions,
+    list_implemented_rules,
     list_monitored_tables,
     list_pending_applications,
     list_tag_suggestions,
@@ -452,6 +454,72 @@ class TestBulkRegister:
             body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions
         )
         assert result.registered == ["cat.schema.t1"]
+
+    def test_bulk_register_rejects_whole_batch_when_a_table_is_unavailable(self):
+        svc = MagicMock()
+        obo = _mock_obo_ws()
+
+        def _get(full_name: str):
+            if full_name == "cat.schema.missing":
+                raise NotFound("no such table")
+            if full_name == "cat.schema.hidden":
+                raise PermissionDenied("nope")
+            return MagicMock()
+
+        obo.tables.get.side_effect = _get
+        body = BulkRegisterMonitoredTablesIn(
+            table_fqns=["cat.schema.ok", "cat.schema.missing", "cat.schema.hidden", "bad-fqn"]
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail["code"] == "import_tables_unavailable"
+        assert sorted(excinfo.value.detail["tables"]) == ["cat.schema.hidden", "cat.schema.missing"]
+        svc.bulk_register.assert_not_called()
+
+    def test_bulk_register_uc_lookup_failure_is_502(self):
+        svc = MagicMock()
+        obo = _mock_obo_ws()
+        obo.tables.get.side_effect = RuntimeError("UC down")
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
+        with pytest.raises(HTTPException) as excinfo:
+            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+        assert excinfo.value.status_code == 502
+        svc.bulk_register.assert_not_called()
+
+
+class TestListImplementedRules:
+    def test_enriches_applications_with_table_and_rule_tags_and_skips_orphans(self):
+        tables = MagicMock()
+        tables.list_monitored_tables.return_value = [
+            MonitoredTableSummary(table=_table(binding_id="b1", table_fqn="cat.sch.orders"), applied_rule_count=1)
+        ]
+        applied = MagicMock()
+        applied.list_all.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}]),
+            AppliedRule(id="a2", binding_id="gone", rule_id="r1"),
+        ]
+        registry = MagicMock()
+        rule = MagicMock()
+        rule.user_metadata = {"name": "Not null", "dimension": "completeness", "severity": "high"}
+        rule.source = "ui"
+        registry.get_rules_many.return_value = {"r1": rule}
+
+        result = list_implemented_rules(tables=tables, applied_rules=applied, registry=registry)
+
+        assert len(result) == 1
+        row = result[0]
+        assert row.table_fqn == "cat.sch.orders"
+        assert row.rule_id == "r1"
+        assert row.rule_source == "ui"
+        assert row.column_mapping == [{"column": "id"}]
+
+    def test_failure_is_500(self):
+        tables = MagicMock()
+        tables.list_monitored_tables.side_effect = RuntimeError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            list_implemented_rules(tables=tables, applied_rules=MagicMock(), registry=MagicMock())
+        assert excinfo.value.status_code == 500
 
 
 class TestDelete:
