@@ -670,8 +670,7 @@ def test_extract_failed_columns_includes_null_run_id(
     )
     try:
         failed = {
-            row[0]
-            for row in extract_failed_columns(spark, output_location, run_id="integration-lineage-run").collect()
+            row[0] for row in extract_failed_columns(spark, output_location, run_id="integration-lineage-run").collect()
         }
         assert failed == {"value", "other"}, f"null-run_id and current-run failures expected, got {failed}"
     finally:

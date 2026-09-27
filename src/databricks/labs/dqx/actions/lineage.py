@@ -36,7 +36,6 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
-from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
@@ -410,10 +409,8 @@ def extract_failed_columns(
     for issues_col in (errors_column, warnings_column):
         if issues_col not in present_columns:
             continue
-        exploded = (
-            df
-            .select(F.explode(F.col(issues_col)).alias("issue"))
-            .where((F.col("issue.run_id") == F.lit(run_id)) | F.col("issue.run_id").isNull())
+        exploded = df.select(F.explode(F.col(issues_col)).alias("issue")).where(
+            (F.col("issue.run_id") == F.lit(run_id)) | F.col("issue.run_id").isNull()
         )
         issue_frames.append(exploded.select(F.explode(F.col("issue.columns")).alias(_FAILED_COLUMN_NAME)))
 
@@ -621,7 +618,7 @@ def _collect_lineage_rows(
 def _lookup_target_delta_version(spark: SparkSession, table: str) -> DataFrame | None:
     """Best-effort per-target Delta log read; returns *None* on failure with a sanitised warning."""
     try:
-        history = DeltaTable.forName(spark, table).history(1)
+        history = spark.sql(f"DESCRIBE HISTORY {_fully_qualified_identifier(table)} LIMIT 1")
     except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
         logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")
         return None
@@ -632,7 +629,12 @@ def _lookup_target_delta_version(spark: SparkSession, table: str) -> DataFrame |
 
 
 def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -> DataFrame:
-    """Populate *target_delta_version* with the latest Delta version of each *target_table*."""
+    """Populate *target_delta_version* with the latest Delta version of each *target_table*.
+
+    Each lookup runs ``DESCRIBE HISTORY`` on the driver (LIST + latest checkpoint read), so with
+    a wide lineage graph the per-target fan-out (up to ~4×*max_nodes*) is run in parallel via
+    *Threads.gather*; per-target failures stay best-effort and leave *target_delta_version* NULL.
+    """
     distinct_targets = [
         row["target_table"]
         for row in lineage_df.select("target_table").where(F.col("target_table").isNotNull()).distinct().collect()
