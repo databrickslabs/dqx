@@ -828,7 +828,7 @@ def _column_direction_df(
     depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
     # nosec B608: identifiers + validated ints only; the anchor table name is escaped and
     # wrapped by *_sql_str_literal* before interpolation, the failed-columns view name is a
-    # UUID-suffixed identifier generated internally by *_collect_column_lineage_df* (never
+    # UUID-suffixed identifier generated internally by *_register_failed_columns_view* (never
     # user input), and *max_depth* (when set), *lookback_days*, and *max_nodes* are validated
     # Pydantic ints (>= 1).
     query = (

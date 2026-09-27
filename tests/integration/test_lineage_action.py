@@ -46,9 +46,13 @@ from pyspark.sql.types import ArrayType, IntegerType, StringType, StructField, S
 from databricks.sdk import WorkspaceClient
 from databricks.labs.pytester.fixtures.baseline import factory
 
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.actions import lineage as lineage_module
+from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.delivery import WebhookClient
+from databricks.labs.dqx.actions.destinations import DQCallbackAlertDestination
+from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.lineage import (
     CollectLineageAction,
     LINEAGE_TABLE_COMMENT,
@@ -57,8 +61,12 @@ from databricks.labs.dqx.actions.lineage import (
     LineageSearchConfig,
     extract_failed_columns,
 )
+from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secrets import SecretResolver
-from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
 
 
@@ -862,3 +870,123 @@ def test_column_lineage_reads_failures_from_quarantine(
     column_rows = persisted.where(persisted["edge_type"] == "column_downstream").collect()
     source_columns = {row["source_column"] for row in column_rows}
     assert "value" in source_columns, f"quarantine-only failure did not seed column lineage: {source_columns}"
+
+
+def test_end_to_end_via_dqengine(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+    make_schema,
+    make_random,
+) -> None:
+    """End-to-end: engine → evaluator → CollectLineageAction wired via *apply_checks_and_save_in_table*.
+
+    Every other test in this module drives the action directly via ``action.execute`` with a
+    hand-built *ActionContext*, which exercises the action's internals but never crosses the
+    *DQEngine* / *ActionEvaluator* boundary. This test mirrors the demo path — configure a
+    *DQEngine* with the action, produce real ``_errors`` via
+    ``apply_checks_and_save_in_table``, and confirm the fully-assembled mechanism works:
+
+    1. **Engine → evaluator → action wiring** — the lineage sink table is created and
+       populated after the batch run completes (not stubbed / injected).
+    2. **Condition gating end-to-end** — ``condition="error_row_count > 0"`` fires only
+       because the seeded null id row drives the observed metric above 0; the evaluator
+       resolves the condition against the *DQMetricsObserver* output.
+    3. **Extras propagation** — the ``lineage_location`` payload emitted by
+       *CollectLineageAction* reaches a downstream *DQAlert* consumer via the evaluator's
+       ``_record_extras`` accumulation into ``ActionContext.extras``.
+    4. **Result-column-name coupling** — the failed ``id`` column read from the engine's
+       ``_errors`` output surfaces in column lineage, proving the default
+       *LineageActionConfig* column names line up with the engine's output.
+
+    The stubbed ``system.access.*`` tables are unchanged — those views populate
+    asynchronously in the real platform and can't be driven deterministically in CI.
+    """
+    schema = make_schema()
+    input_table = f"{schema.full_name}.e2e_input_{make_random(6).lower()}"
+    output_table = f"{schema.full_name}.e2e_output_{make_random(6).lower()}"
+    downstream_table = f"{schema.full_name}.e2e_downstream_{make_random(6).lower()}"
+
+    # One null id row so is_not_null produces a failure — drives both the condition
+    # (error_row_count > 0) and populates _errors with the failed column name that the
+    # lineage action seeds column-lineage from.
+    spark.createDataFrame(
+        [[1, "alice"], [None, "bob"]], "id: int, name: string"
+    ).write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    _seed_table_lineage(spark, patched_lineage_constants.table_lineage, [(input_table, downstream_table)])
+    _seed_column_lineage(
+        spark,
+        patched_lineage_constants.column_lineage,
+        [(input_table, "id", downstream_table, "id_dst")],
+    )
+
+    lineage_location = make_lineage_sink()
+    lineage_action = DQAction(
+        action=CollectLineageAction(output_config=OutputConfig(location=lineage_location, mode="append")),
+        condition="error_row_count > 0",
+        name="collect_lineage",
+    )
+
+    # Downstream consumer for extras propagation: a callback destination records the delivered
+    # AlertMessage so we can assert the lineage_location extras entry reached it.
+    captured_alerts: list[AlertMessage] = []
+
+    def capture_alert(message: AlertMessage, _context: ActionContext) -> None:
+        captured_alerts.append(message)
+
+    alert_action = DQAction(
+        action=DQAlert(destinations=[DQCallbackAlertDestination(name="capture", callback=capture_alert)]),
+        condition="error_row_count > 0",
+        name="alert_on_errors",
+    )
+
+    checks = [
+        DQRowRule(
+            name="id_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="id",
+        )
+    ]
+
+    engine = DQEngine(
+        ws,
+        spark=spark,
+        observer=DQMetricsObserver(),
+        actions=[lineage_action, alert_action],
+    )
+    engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
+    )
+
+    # (1) Engine → evaluator → action wiring: sink table was created by the action.
+    assert spark.catalog.tableExists(lineage_location), f"lineage sink not created at {lineage_location}"
+    persisted = spark.read.table(lineage_location)
+    downstream_edges = {
+        (row["depth"], row["target_table"])
+        for row in persisted.where(
+            (persisted["edge_type"] == "downstream") & (persisted["source_table"] == input_table)
+        ).collect()
+    }
+    assert (1, downstream_table) in downstream_edges, downstream_edges
+
+    # (4) Result-column-name coupling: id populated in _errors by the engine surfaces via
+    # the seeded column_lineage row.
+    column_source_columns = {
+        row["source_column"]
+        for row in persisted.where(persisted["edge_type"] == "column_downstream").collect()
+    }
+    assert "id" in column_source_columns, (
+        f"failed 'id' column not seeded from engine-written _errors; got {column_source_columns}"
+    )
+
+    # (2) + (3) Condition gating fired and extras produced by CollectLineageAction reached
+    # the downstream DQAlert consumer.
+    assert len(captured_alerts) == 1, f"alert should fire exactly once, got {len(captured_alerts)}"
+    assert captured_alerts[0].extras.get("collect_lineage") == {"lineage_location": lineage_location}, (
+        captured_alerts[0].extras
+    )
