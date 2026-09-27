@@ -283,20 +283,13 @@ from databricks.labs.dqx.actions import (
     DQAlert,
     DQLogAlertDestination,
 )
-from databricks.labs.dqx.actions.lineage import (
-    LineageActionConfig,
-    LineageSearchConfig,
-)
 from databricks.labs.dqx.config import OutputConfig
 
+# Uses LineageActionConfig defaults: depth=None (unbounded — cycle detection + max_nodes keep the walk
+# finite) and lookback_days=30 (window over system.access.*_lineage). Set LineageSearchConfig.depth
+# to add a hop-count safety guardrail per direction; override other knobs via LineageActionConfig.
 lineage_action = CollectLineageAction(
     output_config=OutputConfig(location=lineage_sink_table, mode="append"),
-    config=LineageActionConfig(
-        upstream=LineageSearchConfig(depth=3, lookback_days=7),
-        downstream=LineageSearchConfig(depth=3, lookback_days=7),
-        column_upstream=LineageSearchConfig(depth=1, lookback_days=7),
-        column_downstream=LineageSearchConfig(depth=1, lookback_days=7),
-    ),
 )
 
 log_alert = DQAlert(

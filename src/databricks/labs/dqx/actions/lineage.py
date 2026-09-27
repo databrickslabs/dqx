@@ -61,8 +61,6 @@ LINEAGE_COLUMN_LINEAGE = "system.access.column_lineage"
 _DEFAULT_ERRORS_COLUMN = "_errors"
 _DEFAULT_WARNINGS_COLUMN = "_warnings"
 
-# Schema of the failed-columns DataFrame threaded between *extract_failed_columns* and
-# *_collect_column_lineage_df*. A single STRING column keeps the join predicate trivial.
 _FAILED_COLUMN_NAME = "col_name"
 _FAILED_COLUMNS_SCHEMA = StructType([StructField(_FAILED_COLUMN_NAME, StringType(), nullable=True)])
 
@@ -154,30 +152,34 @@ class LineageSearchConfig(BaseModel):
     """Search parameters for one lineage traversal direction (upstream, downstream, or columns).
 
     Attributes:
-        depth: Maximum walk depth from the source table in hops. Must be ``>= 1``. Bounds the
-            recursion depth for both the table-lineage and column-lineage walks.
+        depth: Optional maximum walk depth from the source table in hops. When set, must be
+            ``>= 1`` and acts as a **safety guardrail** capping recursion depth for both the
+            table-lineage and column-lineage walks. Defaults to *None* (unbounded) — the
+            in-CTE full-path cycle guard plus *max_nodes* still keep the traversal finite;
+            set an explicit *depth* when a stricter hop cap is required.
         lookback_days: How far back to consider lineage entries in *system.access.table_lineage*
             / *system.access.column_lineage*. Must be ``>= 1``.
         max_nodes: Guardrail row cap applied both **inside** each member of the recursive
             lineage CTE (bounding the frontier per hop, so intermediate expansion is capped
             per iteration) and once at the tail (bounding total output). Must be ``>= 1``
-            (default 100). Together with *depth* this bounds the traversal's materialised
-            row count to ``O(depth * max_nodes)``. This is a safety limit — it does **not**
-            guarantee which rows survive when the graph produces more edges than the cap
-            (no ordering contract).
+            (default 100). Together with *depth* (when set) this bounds the traversal's
+            materialised row count to ``O(depth * max_nodes)``; with unbounded *depth* the
+            cap only bounds per-hop expansion and total output. This is a safety limit — it
+            does **not** guarantee which rows survive when the graph produces more edges
+            than the cap (no ordering contract).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    depth: int = 1
+    depth: int | None = None
     lookback_days: int = 30
     max_nodes: int = 100
 
     @field_validator("depth")
     @classmethod
-    def _validate_depth(cls, value: int) -> int:
-        if value < 1:
-            raise InvalidActionError(f"LineageSearchConfig.depth must be >= 1, got {value}.")
+    def _validate_depth(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise InvalidActionError(f"LineageSearchConfig.depth must be >= 1 when set, got {value}.")
         return value
 
     @field_validator("lookback_days")
@@ -242,8 +244,8 @@ class LineageActionConfig(BaseModel):
 class CollectLineageAction(Action):
     """Collect table / column lineage into a Delta table.
 
-    On every run, gathers upstream/downstream tables (recursive-CTE walk bounded by *depth*)
-    and recursive per-failed-column lineage (upstream and downstream, seeded from failure
+    On every run, gathers upstream/downstream tables (recursive-CTE walk, optionally bounded
+    by *depth*) and recursive per-failed-column lineage (upstream and downstream, seeded from failure
     records in *output_location* and/or *quarantine_location* per *config.failures_source*),
     and writes one row per edge to the Delta table specified by *output_config*. The action
     never fails the pipeline — collection errors are logged and turned into *CONFIG_ERROR*
@@ -717,17 +719,22 @@ def _walk_lineage(
     sanitised warning is logged.
 
     *table_full_name* is inlined as a single-quoted SQL string literal via *_sql_str_literal*
-    (escapes embedded quotes). *search.depth*, *search.lookback_days*, and *search.max_nodes*
-    are validated Pydantic ints (>= 1) and interpolated as bare constants. Spark SQL does not
-    accept parameter markers inside ``INTERVAL n DAYS`` literals or after ``LIMIT``, so the
-    whole query is built via Python string interpolation rather than ``spark.sql`` args.
+    (escapes embedded quotes). *search.depth* is an optional validated Pydantic int (>= 1 when
+    set); *search.lookback_days* and *search.max_nodes* are validated Pydantic ints (>= 1). All
+    are interpolated as bare constants. Spark SQL does not accept parameter markers inside
+    ``INTERVAL n DAYS`` literals or after ``LIMIT``, so the whole query is built via Python
+    string interpolation rather than ``spark.sql`` args.
+
+    When *search.depth* is *None* the recursive member omits the ``e.depth < N`` predicate — the
+    walk is bounded only by the in-CTE cycle guard, the *lookback_days* window, and *max_nodes*.
 
     *search.max_nodes* is applied as a ``LIMIT`` inside **both** the anchor and the recursive
     members of the CTE (bounding the frontier per hop, so intermediate expansion cannot exceed
     ``max_nodes`` rows per iteration) and once more at the tail (bounding the total output).
-    Combined with the depth cap this yields an ``O(max_depth * max_nodes)`` upper bound on the
-    row count Spark has to materialise. This is a *guardrail* — it does **not** guarantee which
-    rows survive when the graph produces more edges than the cap (no ordering contract).
+    With a set *depth* this yields an ``O(depth * max_nodes)`` upper bound on the materialised
+    row count; with unbounded *depth* the cap bounds per-hop expansion and total output only.
+    This is a *guardrail* — it does **not** guarantee which rows survive when the graph
+    produces more edges than the cap (no ordering contract).
 
     Returns:
         DataFrame conforming to *LINEAGE_TABLE_SCHEMA* — one row per discovered edge, with the
@@ -735,13 +742,14 @@ def _walk_lineage(
     """
     key_source = "target_table_full_name" if direction == _EDGE_UPSTREAM else "source_table_full_name"
     key_other = "source_table_full_name" if direction == _EDGE_UPSTREAM else "target_table_full_name"
-    max_depth = int(search.depth)
+    max_depth = int(search.depth) if search.depth is not None else None
     lookback_days = int(search.lookback_days)
     max_nodes = int(search.max_nodes)
     table_literal = _sql_str_literal(table_full_name)
+    depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
     # nosec B608: identifiers + validated ints only; the anchor table name is escaped and wrapped
-    # by *_sql_str_literal* before interpolation. *max_depth*, *lookback_days*, and *max_nodes*
-    # are validated Pydantic ints (>= 1) interpolated as bare constants.
+    # by *_sql_str_literal* before interpolation. *max_depth* (when set), *lookback_days*, and
+    # *max_nodes* are validated Pydantic ints (>= 1) interpolated as bare constants.
     query = (
         "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ("
         " ("
@@ -760,8 +768,7 @@ def _walk_lineage(
         f"         array_append(e.path, t.{key_other}), t.event_time "
         f"  FROM edges e JOIN {LINEAGE_TABLE_LINEAGE} t "
         f"    ON t.{key_source} = e.neighbour "
-        f"  WHERE e.depth < {max_depth} "
-        f"    AND t.{key_other} IS NOT NULL "
+        f"  WHERE {depth_predicate}t.{key_other} IS NOT NULL "
         f"    AND NOT array_contains(e.path, t.{key_other}) "
         f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f"  LIMIT {max_nodes} "
@@ -799,16 +806,21 @@ def _column_direction_df(
 
     Mirrors *_walk_lineage*: a single ``WITH RECURSIVE`` query against
     *LINEAGE_COLUMN_LINEAGE* with in-CTE full-path cycle detection carried as a ``path
-    ARRAY<STRING>`` of ``<table>.<column>`` identifiers. *search.depth*, *search.lookback_days*,
-    and *search.max_nodes* are validated Pydantic ints (>= 1) and interpolated as bare
-    constants. *failed_columns_view* is the name of a session-scoped temp view (registered by
-    *_collect_column_lineage_df*) with a single ``col_name STRING`` column; the CTE references
-    it via ``IN (SELECT col_name FROM <view>)`` rather than inlining a driver-collected literal.
+    ARRAY<STRING>`` of ``<table>.<column>`` identifiers. *search.depth* is an optional
+    validated Pydantic int (>= 1 when set); *search.lookback_days* and *search.max_nodes* are
+    validated Pydantic ints (>= 1). All are interpolated as bare constants.
+    *failed_columns_view* is the name of a session-scoped temp view with a single
+    ``col_name STRING`` column; the CTE references it via ``IN (SELECT col_name FROM <view>)``
+    rather than inlining a driver-collected literal.
+
+    When *search.depth* is *None* the recursive member omits the ``e.depth < N`` predicate — the
+    walk is bounded only by the in-CTE cycle guard, the *lookback_days* window, and *max_nodes*.
 
     *search.max_nodes* is applied as a ``LIMIT`` inside **both** the anchor and the recursive
     members of the CTE (bounding the frontier per hop) and once more at the tail (bounding
-    total output) — same ``O(max_depth * max_nodes)`` bound and same "no ordering contract"
-    semantics as *_walk_lineage*.
+    total output). With a set *depth* this yields an ``O(depth * max_nodes)`` bound; with
+    unbounded *depth* the cap bounds per-hop expansion and total output only. Same "no
+    ordering contract" semantics as *_walk_lineage*.
 
     The recursive member also drops any hop that would return to an originally-failed
     ``(anchor_table, failed_col)`` pair — ``NOT (t.frontier_table = <anchor> AND
@@ -824,16 +836,17 @@ def _column_direction_df(
         anchor_key, anchor_col_key = "source_table_full_name", "source_column"
         frontier_key, frontier_col_key = "target_table_full_name", "target_column"
 
-    max_depth = int(search.depth)
+    max_depth = int(search.depth) if search.depth is not None else None
     lookback_days = int(search.lookback_days)
     max_nodes = int(search.max_nodes)
     table_literal = _sql_str_literal(source_table)
     failed_in_subquery = f"SELECT {_FAILED_COLUMN_NAME} FROM {failed_columns_view}"
+    depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
     # nosec B608: identifiers + validated ints only; the anchor table name is escaped and
     # wrapped by *_sql_str_literal* before interpolation, the failed-columns view name is a
     # UUID-suffixed identifier generated internally by *_collect_column_lineage_df* (never
-    # user input), and *max_depth*, *lookback_days*, and *max_nodes* are validated Pydantic
-    # ints (>= 1).
+    # user input), and *max_depth* (when set), *lookback_days*, and *max_nodes* are validated
+    # Pydantic ints (>= 1).
     query = (
         "WITH RECURSIVE edges("
         "frontier_table, frontier_column, neighbour, source_column, target_column, "
@@ -862,8 +875,7 @@ def _column_direction_df(
         f"  FROM edges e JOIN {LINEAGE_COLUMN_LINEAGE} t "
         f"    ON t.{anchor_key} = e.frontier_table "
         f"   AND t.{anchor_col_key} = e.frontier_column "
-        f"  WHERE e.depth < {max_depth} "
-        f"    AND t.{frontier_key} IS NOT NULL "
+        f"  WHERE {depth_predicate}t.{frontier_key} IS NOT NULL "
         f"    AND t.{frontier_col_key} IS NOT NULL "
         f"    AND NOT array_contains(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) "
         f"    AND NOT (t.{frontier_key} = {table_literal} "
