@@ -26,6 +26,7 @@ for the recursive-CTE SQL feature.
 
 import logging
 import uuid
+from functools import partial
 from typing import Any, Literal
 
 from pydantic import (
@@ -40,6 +41,7 @@ from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
 
+from databricks.labs.blueprint.parallel import Threads
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.registry import register_action
@@ -616,6 +618,19 @@ def _collect_lineage_rows(
     return _resolve_target_delta_versions(spark, result)
 
 
+def _lookup_target_delta_version(spark: SparkSession, table: str) -> DataFrame | None:
+    """Best-effort per-target Delta log read; returns *None* on failure with a sanitised warning."""
+    try:
+        history = DeltaTable.forName(spark, table).history(1)
+    except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
+        logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")
+        return None
+    return history.select(
+        F.col("version").cast(LongType()).alias("resolved_delta_version"),
+        F.lit(table).alias("target_table"),
+    )
+
+
 def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -> DataFrame:
     """Populate *target_delta_version* with the latest Delta version of each *target_table*."""
     distinct_targets = [
@@ -625,19 +640,9 @@ def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -
     if not distinct_targets:
         return lineage_df
 
-    per_target_frames: list[DataFrame] = []
-    for table in distinct_targets:
-        try:
-            history = DeltaTable.forName(spark, table).history(1)
-        except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
-            logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")
-            continue
-        per_target_frames.append(
-            history.select(
-                F.col("version").cast(LongType()).alias("resolved_delta_version"),
-                F.lit(table).alias("target_table"),
-            )
-        )
+    tasks = [partial(_lookup_target_delta_version, spark, table) for table in distinct_targets]
+    results, _ = Threads.gather("resolve delta target versions", tasks)
+    per_target_frames = [frame for frame in results if frame is not None]
 
     if not per_target_frames:
         return lineage_df
