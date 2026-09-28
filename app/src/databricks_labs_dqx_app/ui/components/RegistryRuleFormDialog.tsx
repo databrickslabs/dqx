@@ -112,6 +112,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  collectAstColumnRefs,
   EMPTY_LOWCODE_AST,
   isV2Ast,
   renameColumnInAst,
@@ -2421,24 +2422,10 @@ export function RegistryRuleFormDialog({
       });
     }
     if (mode === "lowcode") {
-      // Collect all plain (non-qualified) column_ref values used in the AST
-      const astRefs = new Set<string>();
-      for (const row of lowcodeAst.rows) {
-        if (row.column_ref && !row.column_ref.includes(".")) astRefs.add(row.column_ref);
-        // aggregated rows may also reference a nested column_ref in value
-        if (row.kind === "aggregated") {
-          const v = row.value;
-          if (v && typeof v === "object" && !Array.isArray(v)) {
-            const nested = (v as Record<string, unknown>).column_ref;
-            if (typeof nested === "string" && !nested.includes(".")) astRefs.add(nested);
-          }
-        }
-      }
-      for (const j of lowcodeAst.joins) {
-        for (const k of j.keys ?? []) {
-          if (k.column_ref && !k.column_ref.includes(".")) astRefs.add(k.column_ref);
-        }
-      }
+      // Every plain (non-qualified) column the AST references — LHS column_ref,
+      // RHS value (a `{ $col }` reference at any depth: scalar, `between` bound,
+      // `in` entry, or an aggregated row's comparison spec), and join keys.
+      const astRefs = collectAstColumnRefs(lowcodeAst);
       return sqlSlots.filter((s) => {
         if (astRefs.has(s.name)) return false;
         if (groupBy.includes(`{{${s.name}}}`)) return false;
