@@ -872,7 +872,7 @@ def test_column_lineage_reads_failures_from_quarantine(
     assert "value" in source_columns, f"quarantine-only failure did not seed column lineage: {source_columns}"
 
 
-def test_end_to_end_via_dqengine(
+def test_apply_checks_and_save_collects_lineage(
     spark: SparkSession,
     ws: WorkspaceClient,
     patched_lineage_constants: _StubLineageLocations,
