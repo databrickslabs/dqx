@@ -82,6 +82,18 @@ dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
 dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
 # COMMAND ----------
+# DBTITLE 1,Keep the output readable
+
+# MLflow prints these straight to stderr rather than through its logger, so raising its log level does
+# not reach them. Each is a documented switch. Turned off here so this walkthrough's output shows what
+# DQX did rather than six model URLs per training run; leave them on in your own work if the links help.
+import os
+
+os.environ["MLFLOW_PRINT_MODEL_URLS_ON_CREATION"] = "false"   # "View Logged Model at: ..."
+os.environ["MLFLOW_SUPPRESS_PRINTING_URL_TO_STDOUT"] = "true"  # "View run ... at: ..."
+os.environ["_MLFLOW_ENABLE_UC_TRACE_UPSELL"] = "false"         # the Unity Catalog trace-migration notice
+
+# COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Section 1: Setup & Data Generation
