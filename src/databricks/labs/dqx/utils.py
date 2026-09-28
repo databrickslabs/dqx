@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeGuard, TypeVar, overload, Annotated
+from typing import Any, TypeAlias, TypeGuard, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
