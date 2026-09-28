@@ -1005,6 +1005,7 @@ anomaly = [
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "shap" },
+    { name = "threadpoolctl" },
 ]
 cli = [
     { name = "databricks-connect", version = "16.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1115,6 +1116,7 @@ requires-dist = [
     { name = "shap", marker = "extra == 'anomaly'", specifier = ">=0.42.0,<0.50" },
     { name = "spacy", marker = "extra == 'pii'", specifier = "~=3.8" },
     { name = "sqlalchemy", specifier = ">=2.0,<3.0" },
+    { name = "threadpoolctl", marker = "extra == 'anomaly'", specifier = ">=3.3.0" },
 ]
 provides-extras = ["anomaly", "cli", "datacontract", "llm", "pii"]
 

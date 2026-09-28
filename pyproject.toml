@@ -79,6 +79,18 @@ anomaly = [
     # Capped below 4.0 rather than pinned exactly, so the resolver takes the latest 3.x.
     "mlflow[databricks]>=3.13.0,<4.0",  # Unity Catalog support + azure-cli auth type support
     "scikit-learn>=1.0,<2.0",
+    # scikit-learn's own hard requirement, floored here on purpose. Databricks runtimes ship
+    # threadpoolctl 2.2.0, and scikit-learn only asks for >=2.0.0, so nothing in this extra used to pull
+    # a newer one -- leaving the runtime's copy in charge. 2.x looks up only the unsuffixed
+    # `openblas_get_config`, and the runtime's numpy ships an ILP64 OpenBLAS
+    # (libopenblas64_p-*.so, USE64BITINT) that exposes only `openblas_get_config64_`. The lookup then
+    # returns NULL, 2.x calls .split() on it, and every import of this module prints an "Exception
+    # ignored ... AttributeError: 'NoneType' object has no attribute 'split'" traceback from inside a
+    # ctypes callback -- unreachable by try/except, warnings filters or log levels, because CPython
+    # writes it straight to stderr. 3.0.0 added the suffixed lookup (joblib/threadpoolctl#101) and a
+    # maintainer confirms that traceback is fixed in >=3 (joblib/threadpoolctl#131); 3.3.0 additionally
+    # identifies libraries by symbol rather than filename prefix. Nothing in DQX imports threadpoolctl.
+    "threadpoolctl>=3.3.0",
     "cloudpickle>=3.0,<4.0",  # For serializing sklearn models in pandas UDFs
     "shap>=0.42.0,<0.50",  # For TreeSHAP-based feature contributions
 ]
