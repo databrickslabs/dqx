@@ -17,6 +17,13 @@ import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/c
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
 import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
+import {
+  CollapsibleCellContent,
+  MAX_ANIMATED_GROUP_ROWS,
+  RowCollapse,
+  combinePhases,
+  rowCollapseRowClass,
+} from "@/components/data-table/row-collapse";
 import { RuleAppliedTablesPanel } from "@/components/monitored-tables/ImplementedRulesExplorer";
 import {
   STICKY_ACTIONS_HEAD_CLASS,
@@ -105,7 +112,12 @@ function AppliedTablesToggle({ r, ctx }: { r: RegistryRuleOut; ctx: RulesTableRe
       })}
       aria-expanded={expanded}
     >
-      <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
+      <ChevronRight
+        className={cn(
+          "h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none",
+          expanded && "rotate-90",
+        )}
+      />
     </button>
   );
 }
@@ -737,7 +749,11 @@ export function RulesTable<F extends string = string>({
               const group = groups[rowIndex];
               const showGroupHeader = !!group && group.key !== groups[rowIndex - 1]?.key;
               const expanded = !group || forceGroupsExpanded || expandedGroups.has(group.key);
-              const showAppliedTables = expanded && orderedKeys.includes("appliedTables") && expandedRuleIds.has(r.rule_id);
+              // Snap instead of animating for "expand all while searching"
+              // and for groups too large to animate smoothly.
+              const groupInstant =
+                forceGroupsExpanded || (!!group && (groupCounts.get(group.key) ?? 0) > MAX_ANIMATED_GROUP_ROWS);
+              const showAppliedTables = orderedKeys.includes("appliedTables") && expandedRuleIds.has(r.rule_id);
               return (
               <Fragment key={r.rule_id}>
               {showGroupHeader && group && (
@@ -749,13 +765,19 @@ export function RulesTable<F extends string = string>({
                   colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
                 />
               )}
-              {expanded && (
-              <TableRow className="group cursor-pointer" onClick={() => onRowClick(r)}>
+              <RowCollapse open={expanded} instant={groupInstant}>
+              {(rowPhase) => (
+              <>
+              <TableRow
+                className={cn("group cursor-pointer", rowCollapseRowClass(rowPhase))}
+                onClick={() => onRowClick(r)}
+              >
                 {showSelection && (
                   <TableCell
-                    className="w-10 p-2 align-middle"
+                    className="w-10 px-2 py-0 align-middle"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <CollapsibleCellContent phase={rowPhase} className="py-2">
                     {selection!.selectableRuleIds.has(r.rule_id) ? (
                       <Checkbox
                         checked={selection!.selectedIds.has(r.rule_id)}
@@ -771,6 +793,7 @@ export function RulesTable<F extends string = string>({
                         )}
                       />
                     ) : null}
+                    </CollapsibleCellContent>
                   </TableCell>
                 )}
                 {orderedKeys.map((k) => {
@@ -780,34 +803,47 @@ export function RulesTable<F extends string = string>({
                       key={k}
                       style={{ width, minWidth: width, maxWidth: width }}
                       // Condensed to dqlake's compact row density (p-2
-                      // instead of the shared primitive's default p-3).
+                      // instead of the shared primitive's default p-3; the
+                      // vertical half lives in CollapsibleCellContent so a
+                      // collapsed row is zero height).
                       // align-middle keeps badge cells (status/dimension/
                       // severity/mode) vertically centered in the row.
                       // The actions cell is pinned right and frozen under
                       // horizontal scroll — same treatment as the Drafts &
                       // Review table (routes/_sidebar/rules.drafts.tsx).
                       className={cn(
-                        "overflow-hidden p-2 align-middle",
+                        "overflow-hidden px-2 py-0 align-middle",
                         k === "actions" && STICKY_ACTIONS_CELL_CLASS,
                       )}
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >
-                      {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
+                      <CollapsibleCellContent phase={rowPhase} className="py-2">
+                        {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
+                      </CollapsibleCellContent>
                     </TableCell>
                   );
                 })}
               </TableRow>
+              <RowCollapse open={showAppliedTables}>
+                {(panelPhase) => {
+                  const phase = combinePhases(rowPhase, panelPhase);
+                  return (
+                    <TableRow className={cn("hover:bg-transparent", rowCollapseRowClass(phase))}>
+                      <TableCell
+                        colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
+                        className="bg-muted/15 px-10 py-0"
+                      >
+                        <CollapsibleCellContent phase={phase} className="py-3">
+                          <RuleAppliedTablesPanel ruleId={r.rule_id} />
+                        </CollapsibleCellContent>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }}
+              </RowCollapse>
+              </>
               )}
-              {showAppliedTables && (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell
-                    colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
-                    className="bg-muted/15 px-10 py-3"
-                  >
-                    <RuleAppliedTablesPanel ruleId={r.rule_id} />
-                  </TableCell>
-                </TableRow>
-              )}
+              </RowCollapse>
               </Fragment>
               );
             })}

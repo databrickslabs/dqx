@@ -26,6 +26,13 @@ import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/c
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
 import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
+import {
+  CollapsibleCellContent,
+  MAX_ANIMATED_GROUP_ROWS,
+  RowCollapse,
+  combinePhases,
+  rowCollapseRowClass,
+} from "@/components/data-table/row-collapse";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
@@ -105,7 +112,12 @@ function AppliedRulesToggle({ r, ctx }: { r: MonitoredTableSummaryOut; ctx: Moni
       })}
       aria-expanded={expanded}
     >
-      <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
+      <ChevronRight
+        className={cn(
+          "h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none",
+          expanded && "rotate-90",
+        )}
+      />
     </button>
   );
 }
@@ -700,6 +712,10 @@ export function MonitoredTablesTable<F extends string = string>({
               const group = groups[rowIndex];
               const showGroupHeader = !!group && group.key !== groups[rowIndex - 1]?.key;
               const groupExpanded = !group || forceGroupsExpanded || expandedGroups.has(group.key);
+              // Snap instead of animating for "expand all while searching"
+              // and for groups too large to animate smoothly.
+              const groupInstant =
+                forceGroupsExpanded || (!!group && (groupCounts.get(group.key) ?? 0) > MAX_ANIMATED_GROUP_ROWS);
               return (
                 <Fragment key={bindingId}>
                 {showGroupHeader && group && (
@@ -711,14 +727,19 @@ export function MonitoredTablesTable<F extends string = string>({
                     colSpan={colSpan}
                   />
                 )}
-                {groupExpanded && (
+                <RowCollapse open={groupExpanded} instant={groupInstant}>
+                {(rowPhase) => (
                 <>
-                <TableRow className="group cursor-pointer" onClick={() => onRowClick(r)}>
+                <TableRow
+                  className={cn("group cursor-pointer", rowCollapseRowClass(rowPhase))}
+                  onClick={() => onRowClick(r)}
+                >
                   {showSelection && (
                     <TableCell
-                      className="w-10 p-2 align-middle"
+                      className="w-10 px-2 py-0 align-middle"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <CollapsibleCellContent phase={rowPhase} className="py-2">
                       {selection!.selectableIds.has(bindingId) ? (
                         <Checkbox
                           checked={selection!.selectedIds.has(bindingId)}
@@ -732,6 +753,7 @@ export function MonitoredTablesTable<F extends string = string>({
                           )}
                         />
                       ) : null}
+                      </CollapsibleCellContent>
                     </TableCell>
                   )}
                   {visibleKeys.map((k) => {
@@ -742,38 +764,52 @@ export function MonitoredTablesTable<F extends string = string>({
                         style={{ width, minWidth: width, maxWidth: width }}
                         // Condensed to dqlake's compact row density (p-2
                         // instead of the shared primitive's default p-3) —
-                        // kept consistent with RulesTable's body cells.
+                        // kept consistent with RulesTable's body cells. The
+                        // vertical half lives in CollapsibleCellContent so a
+                        // collapsed row is zero height.
                         // align-middle keeps the status badge cell
                         // vertically centered in the row.
-                        className="overflow-hidden p-2 align-middle"
+                        className="overflow-hidden px-2 py-0 align-middle"
                       >
-                        {COLUMNS[k].renderCell(r, ctx)}
+                        <CollapsibleCellContent phase={rowPhase} className="py-2">
+                          {COLUMNS[k].renderCell(r, ctx)}
+                        </CollapsibleCellContent>
                       </TableCell>
                     );
                   })}
                   {hasActions && (
                     <TableCell
                       style={{ width: ACTIONS_COL_WIDTH }}
-                      className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
+                      className={cn("text-right px-2 py-0", STICKY_ACTIONS_CELL_CLASS)}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {busy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
-                      ) : (
-                        renderActions?.(r)
-                      )}
+                      <CollapsibleCellContent phase={rowPhase} className="py-2">
+                        {busy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
+                        ) : (
+                          renderActions?.(r)
+                        )}
+                      </CollapsibleCellContent>
                     </TableCell>
                   )}
                 </TableRow>
-                {isExpanded && (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={colSpan} className="bg-muted/15 px-10 py-3">
-                      <TableAppliedRulesPanel bindingId={bindingId} />
-                    </TableCell>
-                  </TableRow>
-                )}
+                <RowCollapse open={isExpanded}>
+                  {(panelPhase) => {
+                    const phase = combinePhases(rowPhase, panelPhase);
+                    return (
+                      <TableRow className={cn("hover:bg-transparent", rowCollapseRowClass(phase))}>
+                        <TableCell colSpan={colSpan} className="bg-muted/15 px-10 py-0">
+                          <CollapsibleCellContent phase={phase} className="py-3">
+                            <TableAppliedRulesPanel bindingId={bindingId} />
+                          </CollapsibleCellContent>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }}
+                </RowCollapse>
                 </>
                 )}
+                </RowCollapse>
                 </Fragment>
               );
             })}

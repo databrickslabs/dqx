@@ -28,7 +28,10 @@ export function GroupHeaderRow({ label, count, expanded, onToggle, colSpan }: Gr
           onClick={onToggle}
         >
           <ChevronDown
-            className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !expanded && "-rotate-90")}
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out motion-reduce:transition-none",
+              !expanded && "-rotate-90",
+            )}
             aria-hidden
           />
           <span>{label}</span>
