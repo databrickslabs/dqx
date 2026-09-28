@@ -489,36 +489,101 @@ class TestBulkRegister:
 
 
 class TestListImplementedRules:
-    def test_enriches_applications_with_table_and_rule_tags_and_skips_orphans(self):
-        tables = MagicMock()
-        tables.list_monitored_tables.return_value = [
-            MonitoredTableSummary(table=_table(binding_id="b1", table_fqn="cat.sch.orders"), applied_rule_count=1)
-        ]
-        applied = MagicMock()
-        applied.list_all.return_value = [
-            AppliedRule(id="a1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}]),
-            AppliedRule(id="a2", binding_id="gone", rule_id="r1"),
-        ]
+    @staticmethod
+    def _registry_with_rule() -> MagicMock:
         registry = MagicMock()
         rule = MagicMock()
         rule.user_metadata = {"name": "Not null", "dimension": "completeness", "severity": "high"}
         rule.source = "ui"
         registry.get_rules_many.return_value = {"r1": rule}
+        return registry
 
-        result = list_implemented_rules(tables=tables, applied_rules=applied, registry=registry)
+    def test_enriches_applications_with_table_and_rule_tags_and_skips_orphans(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders"}
+        applied = MagicMock()
+        applied.list_all.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}]),
+            AppliedRule(id="a2", binding_id="gone", rule_id="r1"),
+        ]
+
+        result = list_implemented_rules(tables=tables, applied_rules=applied, registry=self._registry_with_rule())
 
         assert len(result) == 1
         row = result[0]
         assert row.table_fqn == "cat.sch.orders"
         assert row.rule_id == "r1"
+        assert row.rule_name == "Not null"
         assert row.rule_source == "ui"
         assert row.column_mapping == [{"column": "id"}]
+        tables.get_table_fqns.assert_called_once_with({"b1", "gone"})
+
+    def test_binding_scope_reads_only_that_tables_applications(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders"}
+        applied = MagicMock()
+        applied.list_applied.return_value = [AppliedRule(id="a1", binding_id="b1", rule_id="r1")]
+
+        result = list_implemented_rules(
+            tables=tables, applied_rules=applied, registry=self._registry_with_rule(), binding_id="b1"
+        )
+
+        assert [(r.binding_id, r.table_fqn) for r in result] == [("b1", "cat.sch.orders")]
+        applied.list_applied.assert_called_once_with("b1")
+        applied.list_all.assert_not_called()
+        applied.list_bindings_for_rule.assert_not_called()
+        # The scoped read never lists (and enriches) every monitored table.
+        tables.list_monitored_tables.assert_not_called()
+        tables.get_table_fqns.assert_called_once_with({"b1"})
+
+    def test_rule_scope_lists_every_table_the_rule_is_applied_to(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders", "b2": "cat.hr.people"}
+        applied = MagicMock()
+        applied.list_bindings_for_rule.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1"),
+            AppliedRule(id="a2", binding_id="b2", rule_id="r1"),
+        ]
+
+        result = list_implemented_rules(
+            tables=tables, applied_rules=applied, registry=self._registry_with_rule(), rule_id="r1"
+        )
+
+        assert sorted(r.table_fqn for r in result) == ["cat.hr.people", "cat.sch.orders"]
+        applied.list_bindings_for_rule.assert_called_once_with("r1")
+        applied.list_all.assert_not_called()
+        tables.list_monitored_tables.assert_not_called()
+
+    def test_binding_and_rule_scope_combine(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders"}
+        applied = MagicMock()
+        applied.list_applied.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1"),
+            AppliedRule(id="a2", binding_id="b1", rule_id="r2"),
+        ]
+
+        result = list_implemented_rules(
+            tables=tables, applied_rules=applied, registry=self._registry_with_rule(), binding_id="b1", rule_id="r1"
+        )
+
+        assert [r.rule_id for r in result] == ["r1"]
+
+    def test_empty_scope_returns_empty(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {}
+        applied = MagicMock()
+        applied.list_applied.return_value = []
+        registry = MagicMock()
+        registry.get_rules_many.return_value = {}
+
+        assert list_implemented_rules(tables=tables, applied_rules=applied, registry=registry, binding_id="b1") == []
 
     def test_failure_is_500(self):
-        tables = MagicMock()
-        tables.list_monitored_tables.side_effect = RuntimeError("boom")
+        applied = MagicMock()
+        applied.list_all.side_effect = RuntimeError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            list_implemented_rules(tables=tables, applied_rules=MagicMock(), registry=MagicMock())
+            list_implemented_rules(tables=MagicMock(), applied_rules=applied, registry=MagicMock())
         assert excinfo.value.status_code == 500
 
 

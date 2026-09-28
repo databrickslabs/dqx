@@ -12,6 +12,7 @@ from databricks_labs_dqx_app.backend.services.owner_display_name_service import 
     ResolvedOwner,
     canonicalize_owner,
     fill_missing_owner_display_names,
+    fill_owner_display_names_from_cache,
     lookup_owners,
     resolve_emails_to_display_names,
     resolve_owner_display_name,
@@ -273,6 +274,71 @@ class TestFillMissingOwnerDisplayNames:
         row = _Owned("tasha@example.com")
         fill_missing_owner_display_names([row], sp_ws, sql, "t")
         assert row.owner_display_name == "Tasha Yang"
+
+
+class TestFillOwnerDisplayNamesFromCache:
+    """Non-blocking list-read fill: cache only on the request path, SCIM deferred."""
+
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+        self.deferred: list = []
+
+    def teardown_method(self) -> None:
+        # Run anything still queued so its in-flight claim is released.
+        while self.deferred:
+            self.deferred.pop()()
+
+    def _defer(self, task) -> None:
+        self.deferred.append(task)
+
+    def test_read_never_calls_scim_and_defers_resolution(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        row = _Owned("tasha@example.com")
+        fill_owner_display_names_from_cache([row], sp_ws, sql, "t", defer=self._defer)
+        sp_ws.users.list.assert_not_called()
+        sql.execute.assert_not_called()
+        assert row.owner_display_name is None
+        assert len(self.deferred) == 1
+
+    def test_deferred_task_resolves_and_persists_then_next_read_is_filled(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        fill_owner_display_names_from_cache([_Owned("tasha@example.com")], sp_ws, sql, "cat.sch.t", defer=self._defer)
+        self.deferred.pop()()
+        [stmt] = [c.args[0] for c in sql.execute.call_args_list]
+        assert "WHEN 'tasha@example.com' THEN 'Tasha Yang'" in stmt
+
+        row = _Owned("tasha@example.com")
+        fill_owner_display_names_from_cache([row], sp_ws, sql, "cat.sch.t", defer=self._defer)
+        assert row.owner_display_name == "Tasha Yang"
+        assert self.deferred == []
+
+    def test_concurrent_reads_do_not_queue_the_same_owner_twice(self) -> None:
+        sp_ws = _make_sp_ws([])
+        sql = MagicMock()
+        fill_owner_display_names_from_cache([_Owned("a@example.com")], sp_ws, sql, "t", defer=self._defer)
+        fill_owner_display_names_from_cache([_Owned("a@example.com")], sp_ws, sql, "t", defer=self._defer)
+        assert len(self.deferred) == 1
+        self.deferred.pop()()
+        # Released after the lookup, so a later cache expiry can re-queue it.
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+        owner_display_name_service.release_owner_resolution(["a@example.com"])
+
+    def test_deferred_write_failure_is_swallowed(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        sql.execute.side_effect = RuntimeError("db down")
+        fill_owner_display_names_from_cache([_Owned("tasha@example.com")], sp_ws, sql, "t", defer=self._defer)
+        self.deferred.pop()()
+
+    def test_nothing_deferred_without_a_client_or_missing_names(self) -> None:
+        sql = MagicMock()
+        fill_owner_display_names_from_cache([_Owned("a@example.com")], None, sql, "t", defer=self._defer)
+        fill_owner_display_names_from_cache(
+            [_Owned("b@example.com", "B")], _make_sp_ws([]), sql, "t", defer=self._defer
+        )
+        assert self.deferred == []
 
 
 class TestEmailFilterFallback:

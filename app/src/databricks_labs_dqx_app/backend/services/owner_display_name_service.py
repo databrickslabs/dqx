@@ -23,7 +23,8 @@ every read.
 import logging
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import islice
 from typing import Literal, Protocol
@@ -278,6 +279,62 @@ def fill_missing_owner_display_names(
         sql.execute(stmt)
     except Exception:
         logger.warning("Owner display-name backfill failed for %s (non-fatal)", table, exc_info=True)
+
+
+DeferredTaskRunner = Callable[[Callable[[], None]], None]
+"""Runs a zero-argument task later (a background worker in production, inline in tests)."""
+
+_background_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="owner-display-name")
+
+
+def run_in_background(task: Callable[[], None]) -> None:
+    """Default :data:`DeferredTaskRunner`: queue *task* on a small in-process worker pool."""
+    _background_pool.submit(task)
+
+
+def fill_owner_display_names_from_cache(
+    objects: Sequence[_OwnedObject],
+    sp_ws: WorkspaceClient | None,
+    sql: _SqlExecutor,
+    table: str,
+    *,
+    defer: DeferredTaskRunner = run_in_background,
+) -> None:
+    """Non-blocking counterpart of :func:`fill_missing_owner_display_names` for list reads.
+
+    Fills NULL ``owner_display_name`` values on *objects* from the shared
+    resolver cache only, so a list endpoint never waits on SCIM. Owners with no
+    fresh cache entry are resolved through *defer* (off the request path),
+    which writes their names back to *table* in one batched ``UPDATE`` so the
+    next read has them. Concurrent reads never queue the same owner twice.
+    """
+    missing = [o.owner for o in objects if o.owner and not o.owner_display_name]
+    if not missing:
+        return
+    cached, uncached = peek_owners(missing)
+    for obj in objects:
+        if not obj.owner or obj.owner_display_name:
+            continue
+        match = cached.get(obj.owner.strip())
+        if match is not None and match.kind != "group" and match.display_name:
+            obj.owner_display_name = match.display_name
+    if sp_ws is None:
+        return
+    claimed = claim_owner_resolution(uncached)
+    if claimed:
+        defer(lambda: _resolve_and_backfill(claimed, sp_ws, sql, table))
+
+
+def _resolve_and_backfill(owners: list[str], sp_ws: WorkspaceClient, sql: _SqlExecutor, table: str) -> None:
+    """Resolve *owners* against SCIM and persist their display names to *table* (best-effort)."""
+    try:
+        stmt = owner_display_name_backfill_sql(table, resolve_owners_cached(owners, sp_ws))
+        if stmt is not None:
+            sql.execute(stmt)
+    except Exception:
+        logger.warning("Background owner display-name backfill failed for %s (non-fatal)", table, exc_info=True)
+    finally:
+        release_owner_resolution(owners)
 
 
 def owner_display_name_backfill_sql(table: str, resolved: dict[str, str]) -> str | None:

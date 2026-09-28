@@ -81,6 +81,8 @@ import {
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { OptionRow } from "@/components/imports/OptionRow";
+import { ImportAsSelect } from "@/components/imports/ImportAsSelect";
+import { shouldAutoApproveImport, type ImportStatus } from "@/components/imports/import-status";
 import { usePermissions } from "@/hooks/use-permissions";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { cn } from "@/lib/utils";
@@ -154,9 +156,9 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
   const [strictSchema, setStrictSchema] = useState(true);
   // App-severity axis (Low/Medium/High/Critical), not raw DQX error/warn.
   const [defaultSeverity, setDefaultSeverity] = useState<string>("High");
-  // Approvers only: publish imported rules outright so mapped ones apply
-  // immediately instead of waiting in the approval queue.
-  const [skipApproval, setSkipApproval] = useState(false);
+  // "published" (approvers only) creates and approves the rules in one step so
+  // mapped ones apply immediately instead of waiting in the approval queue.
+  const [importStatus, setImportStatus] = useState<ImportStatus>("draft");
 
   const [phase, setPhase] = useState<Phase>("config");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -425,7 +427,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             const resp = await batchImportRegistryRulesWithDedup({
               rules: ruleChunk,
               also_submit: true,
-              auto_approve: skipApproval && canApproveRules,
+              auto_approve: shouldAutoApproveImport(importStatus, canApproveRules),
               skip_duplicates: true,
               // Contract rules are per column; create them as generic rules so
               // every column with the same check shares one registry rule.
@@ -826,16 +828,12 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
                 </SelectContent>
               </Select>
             </div>
-            {canApproveRules && (
-              <OptionRow
-                compact
-                checked={skipApproval}
-                onChange={setSkipApproval}
-                disabled={busy}
-                label={t("rulesBulkImport.options.skipApproval")}
-                hint={t("rulesBulkImport.options.skipApprovalHint")}
-              />
-            )}
+            <ImportAsSelect
+              value={importStatus}
+              onChange={setImportStatus}
+              canPublish={canApproveRules}
+              disabled={busy}
+            />
           </OptionGroup>
 
           <Separator />

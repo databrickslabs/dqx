@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
+import { Fragment, useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -34,6 +34,12 @@ import {
   Undo2,
   GitCompare,
   FileDown,
+  Columns3,
+  Gauge,
+  List,
+  Shapes,
+  UserRound,
+  Workflow,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -75,6 +81,12 @@ import { Pagination } from "@/components/Pagination";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
+import { GroupBySelect, type GroupBySelectOption } from "@/components/data-table/GroupBySelect";
+import {
+  filterLayoutMenuConfig,
+  useFilterLayout,
+  type FilterLayoutDef,
+} from "@/components/data-table/filter-layout";
 import {
   RulesTable,
   getRulesTableSortValue,
@@ -143,14 +155,25 @@ const ALL = "all";
 const PAGE_SIZE = 25;
 const FILTER_CLASS = FILTER_TRIGGER_CLASS;
 type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "owner";
-const GROUP_BY_OPTIONS: { value: RuleGroupBy; labelKey: string }[] = [
-  { value: "none", labelKey: "rulesRegistry.groupByNone" },
-  { value: "columnType", labelKey: "rulesRegistry.groupByColumnType" },
-  { value: "dimension", labelKey: "rulesRegistry.groupByDimension" },
-  { value: "severity", labelKey: "rulesRegistry.groupBySeverity" },
-  { value: "mode", labelKey: "rulesRegistry.groupByRuleType" },
-  { value: "owner", labelKey: "rulesRegistry.groupByOwner" },
+const GROUP_BY_OPTIONS: readonly (Omit<GroupBySelectOption<RuleGroupBy>, "label"> & { labelKey: string })[] = [
+  { value: "none", labelKey: "rulesRegistry.groupByNone", icon: List },
+  { value: "columnType", labelKey: "rulesRegistry.groupByColumnType", icon: Columns3 },
+  { value: "dimension", labelKey: "rulesRegistry.groupByDimension", icon: Shapes },
+  { value: "severity", labelKey: "rulesRegistry.groupBySeverity", icon: Gauge },
+  { value: "mode", labelKey: "rulesRegistry.groupByRuleType", icon: Workflow },
+  { value: "owner", labelKey: "rulesRegistry.groupByOwner", icon: UserRound },
 ];
+
+type RulesFilterKey = "search" | "dimension" | "severity" | "owner" | "labels" | "groupBy";
+const FILTER_ORDER: readonly RulesFilterKey[] = ["search", "dimension", "severity", "owner", "labels", "groupBy"];
+const FILTERS: Record<RulesFilterKey, FilterLayoutDef> = {
+  search: { labelKey: "rulesRegistry.filterSearch", defaultVisible: true },
+  dimension: { labelKey: "rulesRegistry.filterDimensions", defaultVisible: true },
+  severity: { labelKey: "rulesRegistry.filterSeverities", defaultVisible: true },
+  owner: { labelKey: "rulesRegistry.filterOwners", defaultVisible: true },
+  labels: { labelKey: "rulesRegistry.filterLabels", defaultVisible: true },
+  groupBy: { labelKey: "common.groupBy", defaultVisible: false },
+};
 
 function RegistryRulesPage() {
   const { t } = useTranslation();
@@ -901,8 +924,34 @@ function RegistryRulesPage() {
     </BulkActionBar>
   );
 
-  const filterControls = (
-    <>
+  // Which filter pills show, and in what order (Edit Columns > Filters).
+  // Hiding a filter clears it so it can't keep narrowing the list unseen.
+  const resetFilter = useCallback((key: RulesFilterKey) => {
+    setPage(1);
+    switch (key) {
+      case "search":
+        return setNameSearch("");
+      case "dimension":
+        return setDimensionFilter(ALL);
+      case "severity":
+        return setSeverityFilter(ALL);
+      case "owner":
+        return setOwnerFilter(ALL);
+      case "labels":
+        return setLabelFilter(new Map());
+      case "groupBy":
+        return setGroupBy("none");
+    }
+  }, []);
+  const filterLayout = useFilterLayout<RulesFilterKey>({
+    storageKey: "dqx.rulesRegistry.filters",
+    defaultOrder: FILTER_ORDER,
+    filters: FILTERS,
+    onHide: resetFilter,
+  });
+
+  const filterPills: Record<RulesFilterKey, ReactNode> = {
+    search: (
       <div className="relative w-56">
         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <Input
@@ -912,6 +961,8 @@ function RegistryRulesPage() {
           className="h-8 text-xs pl-7"
         />
       </div>
+    ),
+    dimension: (
       <Select value={dimensionFilter} onValueChange={applyFilter(setDimensionFilter)}>
         <SelectTrigger className={FILTER_CLASS}>
           <SelectValue />
@@ -928,6 +979,8 @@ function RegistryRulesPage() {
           ))}
         </SelectContent>
       </Select>
+    ),
+    severity: (
       <Select value={severityFilter} onValueChange={applyFilter(setSeverityFilter)}>
         <SelectTrigger className={FILTER_CLASS}>
           <SelectValue />
@@ -944,6 +997,8 @@ function RegistryRulesPage() {
           ))}
         </SelectContent>
       </Select>
+    ),
+    owner: (
       <SearchableSelect
         value={ownerFilter}
         onChange={applyFilter(setOwnerFilter)}
@@ -958,6 +1013,8 @@ function RegistryRulesPage() {
         emptyText={t("common.noMatches")}
         ariaLabel={t("rulesRegistry.ownerPlaceholder")}
       />
+    ),
+    labels: (
       <LabelFilter
         available={availableLabels}
         selected={labelFilter}
@@ -967,25 +1024,24 @@ function RegistryRulesPage() {
         }}
         className={FILTER_CLASS}
       />
-      <Select
+    ),
+    groupBy: (
+      <GroupBySelect
         value={groupBy}
-        onValueChange={(value) => {
-          setGroupBy(value as RuleGroupBy);
+        onChange={(value) => {
+          setGroupBy(value);
           setPage(1);
         }}
-      >
-        <SelectTrigger className={FILTER_CLASS} aria-label={t("rulesRegistry.groupByLabel")}>
-          <span className="text-muted-foreground">{t("rulesRegistry.groupByLabel")}:</span>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {GROUP_BY_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value} className="text-xs">
-              {t(option.labelKey)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        options={GROUP_BY_OPTIONS.map(({ value, labelKey, icon }) => ({ value, label: t(labelKey), icon }))}
+      />
+    ),
+  };
+
+  const filterControls = (
+    <>
+      {filterLayout.visibleKeys.map((key) => (
+        <Fragment key={key}>{filterPills[key]}</Fragment>
+      ))}
       {hasActiveFilters && (
         <Button
           variant="ghost"
@@ -1069,6 +1125,7 @@ function RegistryRulesPage() {
               renderActions={renderActionsCell}
               toolbarExtra={filterControls}
               selection={tableSelection}
+              filterLayout={filterLayoutMenuConfig(filterLayout, (key) => t(FILTERS[key].labelKey))}
               emptyMessage={
                 isPending ? (
                   <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">

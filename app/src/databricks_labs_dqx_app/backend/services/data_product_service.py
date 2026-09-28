@@ -72,6 +72,7 @@ from databricks_labs_dqx_app.backend.services.score_cache_service import CachedS
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     canonicalize_owner,
     fill_missing_owner_display_names,
+    fill_owner_display_names_from_cache,
 )
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
@@ -261,7 +262,7 @@ class DataProductService:
         scored = self._fetch_products_with_scores()
         if not scored:
             return []
-        fill_missing_owner_display_names([p for p, _ in scored], self._sp_ws, self._sql, self._products_table)
+        fill_owner_display_names_from_cache([p for p, _ in scored], self._sp_ws, self._sql, self._products_table)
         table_map = self._table_summary_map()
         product_ids = [product.product_id for product, _ in scored]
         members_by_product = self._fetch_members_by_product(product_ids)

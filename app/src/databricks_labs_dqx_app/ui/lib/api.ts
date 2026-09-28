@@ -5326,6 +5326,17 @@ schema?: string | null;
 name?: string | null;
 };
 
+export type ListImplementedRulesParams = {
+/**
+ * Only this monitored table's rule applications
+ */
+binding_id?: string | null;
+/**
+ * Only this registry rule's applications
+ */
+rule_id?: string | null;
+};
+
 export type DeleteMonitoredTable200 = {[key: string]: string};
 
 export type RemoveAppliedRule200 = {[key: string]: string};
@@ -15829,43 +15840,48 @@ export const useRegisterMonitoredTable = <TError = AxiosError<HTTPValidationErro
     }
     
 /**
- * List every rule application across the monitored tables, enriched with the table FQN.
+ * List rule applications, enriched with each monitored table's FQN and the rule's tags.
 
-Powers the Tables overview's "group by rule" view and the per-table rule
-expansion. Applications whose binding no longer resolves to a listed
-monitored table are skipped.
+Scoped reads power the lazy row expansions on the overviews: *binding_id*
+lists one table's applied rules (Tables overview), *rule_id* lists the
+tables one rule is applied to (Rules overview). With neither, every
+application is listed. Each scope is a single filtered query plus one
+batched table-FQN lookup and one batched rule lookup. Applications whose
+binding no longer resolves to a monitored table are skipped.
  * @summary List Implemented Rules
  */
 export const listImplementedRules = (
-     options?: AxiosRequestConfig
+    params?: ListImplementedRulesParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<ImplementedRuleOut[]>> => {
     
     
     return axios.default.get(
-      `/api/v1/monitored-tables/implemented-rules`,options
+      `/api/v1/monitored-tables/implemented-rules`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getListImplementedRulesQueryKey = () => {
+export const getListImplementedRulesQueryKey = (params?: ListImplementedRulesParams,) => {
     return [
-    `/api/v1/monitored-tables/implemented-rules`
+    `/api/v1/monitored-tables/implemented-rules`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getListImplementedRulesQueryOptions = <TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListImplementedRulesQueryOptions = <TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListImplementedRulesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListImplementedRulesQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listImplementedRules>>> = ({ signal }) => listImplementedRules({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listImplementedRules>>> = ({ signal }) => listImplementedRules(params, { signal, ...axiosOptions });
 
       
 
@@ -15879,7 +15895,7 @@ export type ListImplementedRulesQueryError = AxiosError<HTTPValidationError>
 
 
 export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>> & Pick<
+ params: undefined |  ListImplementedRulesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listImplementedRules>>,
           TError,
@@ -15889,7 +15905,7 @@ export function useListImplementedRules<TData = Awaited<ReturnType<typeof listIm
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>> & Pick<
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listImplementedRules>>,
           TError,
@@ -15899,7 +15915,7 @@ export function useListImplementedRules<TData = Awaited<ReturnType<typeof listIm
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -15907,11 +15923,11 @@ export function useListImplementedRules<TData = Awaited<ReturnType<typeof listIm
  */
 
 export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListImplementedRulesQueryOptions(options)
+  const queryOptions = getListImplementedRulesQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -15923,16 +15939,16 @@ export function useListImplementedRules<TData = Awaited<ReturnType<typeof listIm
 
 
 
-export const getListImplementedRulesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListImplementedRulesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListImplementedRulesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListImplementedRulesQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listImplementedRules>>> = ({ signal }) => listImplementedRules({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listImplementedRules>>> = ({ signal }) => listImplementedRules(params, { signal, ...axiosOptions });
 
       
 
@@ -15946,15 +15962,15 @@ export type ListImplementedRulesSuspenseQueryError = AxiosError<HTTPValidationEr
 
 
 export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params: undefined |  ListImplementedRulesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -15962,11 +15978,11 @@ export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeo
  */
 
 export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListImplementedRulesSuspenseQueryOptions(options)
+  const queryOptions = getListImplementedRulesSuspenseQueryOptions(params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

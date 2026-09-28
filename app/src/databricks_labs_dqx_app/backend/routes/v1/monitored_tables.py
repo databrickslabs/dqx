@@ -238,16 +238,31 @@ def list_implemented_rules(
     tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     applied_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    binding_id: Annotated[str | None, Query(description="Only this monitored table's rule applications")] = None,
+    rule_id: Annotated[str | None, Query(description="Only this registry rule's applications")] = None,
 ) -> list[ImplementedRuleOut]:
-    """List every rule application across the monitored tables, enriched with the table FQN.
+    """List rule applications, enriched with each monitored table's FQN and the rule's tags.
 
-    Powers the Tables overview's "group by rule" view and the per-table rule
-    expansion. Applications whose binding no longer resolves to a listed
-    monitored table are skipped.
+    Scoped reads power the lazy row expansions on the overviews: *binding_id*
+    lists one table's applied rules (Tables overview), *rule_id* lists the
+    tables one rule is applied to (Rules overview). With neither, every
+    application is listed. Each scope is a single filtered query plus one
+    batched table-FQN lookup and one batched rule lookup. Applications whose
+    binding no longer resolves to a monitored table are skipped.
     """
     try:
-        table_by_binding = {s.table.binding_id: s.table.table_fqn for s in tables.list_monitored_tables()}
-        applied = [row for row in applied_rules.list_all() if row.binding_id in table_by_binding]
+        if binding_id:
+            applied = applied_rules.list_applied(binding_id)
+            if rule_id:
+                applied = [row for row in applied if row.rule_id == rule_id]
+        elif rule_id:
+            applied = applied_rules.list_bindings_for_rule(rule_id)
+        else:
+            applied = applied_rules.list_all()
+        table_by_binding = tables.get_table_fqns({row.binding_id for row in applied})
+        applied = [row for row in applied if row.binding_id in table_by_binding]
+
+        # Enrich with rule metadata
         rules = registry.get_rules_many({row.rule_id for row in applied})
         result: list[ImplementedRuleOut] = []
         for row in applied:

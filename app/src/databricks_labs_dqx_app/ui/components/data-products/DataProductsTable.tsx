@@ -14,7 +14,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Check, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
-import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
+import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
+import { FilterToolbar } from "@/components/data-table/FilterToolbar";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
@@ -386,7 +387,7 @@ export interface DataProductsTableSelection {
   onToggleAll: () => void;
 }
 
-export interface DataProductsTableProps {
+export interface DataProductsTableProps<F extends string = string> {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: DataProductOut[];
   sortKey: DataProductsSortKey | null;
@@ -400,6 +401,8 @@ export interface DataProductsTableProps {
   emptyState?: ReactNode;
   /** When set, renders a leading checkbox column for bulk actions. */
   selection?: DataProductsTableSelection;
+  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  filterLayout?: SortableToggleListConfig<F>;
 }
 
 /**
@@ -412,7 +415,7 @@ export interface DataProductsTableProps {
  * DQ Score column reads the cached aggregate the list endpoint LEFT
  * JOINs from dq_score_cache (P3.4).
  */
-export function DataProductsTable({
+export function DataProductsTable<F extends string = string>({
   rows,
   sortKey,
   sortDir,
@@ -423,7 +426,8 @@ export function DataProductsTable({
   toolbarExtra,
   emptyState,
   selection,
-}: DataProductsTableProps) {
+  filterLayout,
+}: DataProductsTableProps<F>) {
   const { t } = useTranslation();
   const showSelection = !!selection;
   const selectableCount = selection?.selectableIds.size ?? 0;
@@ -460,18 +464,21 @@ export function DataProductsTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {toolbarExtra}
-        <EditColumnsDropdown
-          order={colOrder}
-          labelOf={(key) => t(COLUMNS[key].labelKey)}
-          toggleableOf={(key) => COLUMNS[key].toggleable}
-          isChecked={(key) => visibleKeys.includes(key)}
-          onToggle={toggleColumn}
-          onDragEnd={handleDragEnd}
-          sensors={sensors}
-        />
-      </div>
+      <FilterToolbar
+        filters={toolbarExtra}
+        editColumns={
+          <EditColumnsDropdown
+            order={colOrder}
+            labelOf={(key) => t(COLUMNS[key].labelKey)}
+            toggleableOf={(key) => COLUMNS[key].toggleable}
+            isChecked={(key) => visibleKeys.includes(key)}
+            onToggle={toggleColumn}
+            onDragEnd={handleDragEnd}
+            sensors={sensors}
+            filters={filterLayout}
+          />
+        }
+      />
 
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>

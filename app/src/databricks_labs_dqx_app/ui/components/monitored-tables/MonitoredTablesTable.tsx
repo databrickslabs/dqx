@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronRight, ChevronUp, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, ListTree, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import {
@@ -23,7 +23,8 @@ import {
 } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
-import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
+import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
+import { FilterToolbar } from "@/components/data-table/FilterToolbar";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
@@ -32,8 +33,8 @@ import {
   ACTIONS_COL_WIDTH,
 } from "@/components/data-table/sticky-actions";
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
-import type { ImplementedRuleOut, MonitoredTableSummaryOut } from "@/lib/api";
-import { RuleAssignmentsList } from "./ImplementedRulesExplorer";
+import type { MonitoredTableSummaryOut } from "@/lib/api";
+import { TableAppliedRulesPanel } from "./ImplementedRulesExplorer";
 
 /** Effective owner for display/filter/sort — the owner's resolved display
  *  name wins, then the raw owner identity, then the creator. */
@@ -57,6 +58,9 @@ export type MonitoredTablesSortKey =
   | "severity"
   | "status";
 
+/** Every column key: the sortable ones plus the "All rules" row expander. */
+type ColumnKey = MonitoredTablesSortKey | "allRules";
+
 interface ColumnDef {
   labelKey: string;
   toggleable: boolean;
@@ -72,11 +76,37 @@ interface ColumnDef {
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
-  renderCell(r: MonitoredTableSummaryOut, ctx?: MonitoredTablesRenderContext): ReactNode;
+  renderCell(r: MonitoredTableSummaryOut, ctx: MonitoredTablesRenderContext): ReactNode;
 }
 
 interface MonitoredTablesRenderContext {
   labelDefinitions: LabelColorDefinition[];
+  isExpanded: (bindingId: string) => boolean;
+  onToggleExpanded: (bindingId: string) => void;
+}
+
+/** Chevron that expands a row to list the table's applied rules (fetched on expand). */
+function AllRulesToggle({ r, ctx }: { r: MonitoredTableSummaryOut; ctx: MonitoredTablesRenderContext }) {
+  const { t } = useTranslation();
+  if ((r.applied_rule_count ?? 0) === 0) return null;
+  const bindingId = r.table.binding_id;
+  const expanded = ctx.isExpanded(bindingId);
+  return (
+    <button
+      type="button"
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
+      onClick={(e) => {
+        e.stopPropagation();
+        ctx.onToggleExpanded(bindingId);
+      }}
+      aria-label={t(expanded ? "monitoredTables.collapseRulesAria" : "monitoredTables.expandRulesAria", {
+        name: r.table.table_fqn,
+      })}
+      aria-expanded={expanded}
+    >
+      <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
+    </button>
+  );
 }
 
 /**
@@ -183,7 +213,28 @@ function splitFqn(fqn: string): { catalog: string; schema: string; table: string
   return { catalog: parts[0] ?? "", schema: parts[1] ?? "", table: parts[2] ?? fqn };
 }
 
-const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
+const COLUMNS: Record<ColumnKey, ColumnDef> = {
+  allRules: {
+    // Optional row expander listing the table's applied rules. Hidden by
+    // default: the rules are fetched per row on expand, never on page load.
+    labelKey: "monitoredTables.colAllRules",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 48,
+    sortable: false,
+    resizable: false,
+    renderHeader: (label) => (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <ListTree className="h-4 w-4" aria-label={label} />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    ),
+    renderCell: (r, ctx) => <AllRulesToggle r={r} ctx={ctx} />,
+  },
   catalog: {
     labelKey: "monitoredTables.colCatalog",
     toggleable: true,
@@ -309,7 +360,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     sortable: true,
     renderHeader: (label) => label,
     renderCell: (r, ctx) => (
-      <DimensionBadges labels={r.dimensions ?? []} labelDefinitions={ctx?.labelDefinitions ?? []} />
+      <DimensionBadges labels={r.dimensions ?? []} labelDefinitions={ctx.labelDefinitions} />
     ),
   },
   severity: {
@@ -322,7 +373,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r, ctx) => (
-      <SeverityBadges labels={r.severities ?? []} labelDefinitions={ctx?.labelDefinitions ?? []} />
+      <SeverityBadges labels={r.severities ?? []} labelDefinitions={ctx.labelDefinitions} />
     ),
   },
   status: {
@@ -344,7 +395,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
 
 // Checks/Rules column order matches dqlake's `BindingsTable` DEFAULT_ORDER
 // (owner, rulesCount, checksCount, ...) — Rules before Checks.
-const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
+const DEFAULT_ORDER: ColumnKey[] = [
+  "allRules",
   "catalog",
   "schema",
   "table",
@@ -445,7 +497,7 @@ export interface MonitoredTablesTableSelection {
   onToggleAll: () => void;
 }
 
-export interface MonitoredTablesTableProps {
+export interface MonitoredTablesTableProps<F extends string = string> {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: MonitoredTableSummaryOut[];
   sortKey: MonitoredTablesSortKey | null;
@@ -461,11 +513,8 @@ export interface MonitoredTablesTableProps {
   selection?: MonitoredTablesTableSelection;
   /** Label-definition colors for dimension / severity badge cells. */
   labelDefinitions?: LabelColorDefinition[];
-  /** When set, renders a leading chevron that expands a row to list its applied rules. */
-  onToggleExpanded?: (bindingId: string) => void;
-  expandedBindingIds?: Set<string>;
-  rulesByBindingId?: Map<string, ImplementedRuleOut[]>;
-  rulesLoading?: boolean;
+  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  filterLayout?: SortableToggleListConfig<F>;
 }
 
 /**
@@ -475,7 +524,7 @@ export interface MonitoredTablesTableProps {
  * fields — see the `checksCount`/`dqScore`/`description` column comments
  * above for fields dqlake has that DQX's API doesn't expose yet.
  */
-export function MonitoredTablesTable({
+export function MonitoredTablesTable<F extends string = string>({
   rows,
   sortKey,
   sortDir,
@@ -487,13 +536,24 @@ export function MonitoredTablesTable({
   emptyState,
   selection,
   labelDefinitions = [],
-  onToggleExpanded,
-  expandedBindingIds,
-  rulesByBindingId,
-  rulesLoading = false,
-}: MonitoredTablesTableProps) {
+  filterLayout,
+}: MonitoredTablesTableProps<F>) {
   const { t } = useTranslation();
-  const ctx = useMemo<MonitoredTablesRenderContext>(() => ({ labelDefinitions }), [labelDefinitions]);
+  const [expandedBindingIds, setExpandedBindingIds] = useState<Set<string>>(new Set());
+  const ctx = useMemo<MonitoredTablesRenderContext>(
+    () => ({
+      labelDefinitions,
+      isExpanded: (bindingId) => expandedBindingIds.has(bindingId),
+      onToggleExpanded: (bindingId) =>
+        setExpandedBindingIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(bindingId)) next.delete(bindingId);
+          else next.add(bindingId);
+          return next;
+        }),
+    }),
+    [labelDefinitions, expandedBindingIds],
+  );
   const showSelection = !!selection;
   const selectableCount = selection?.selectableIds.size ?? 0;
   const allSelected =
@@ -509,45 +569,46 @@ export function MonitoredTablesTable({
     handleDragEnd,
     sensors,
     onResizeStart,
-  } = useColumnLayout<MonitoredTablesSortKey>({
+  } = useColumnLayout<ColumnKey>({
     storageKey: LS_KEY_LAYOUT,
     defaultOrder: DEFAULT_ORDER,
-    columns: COLUMNS as Record<MonitoredTablesSortKey, ColumnLayoutDef>,
+    columns: COLUMNS as Record<ColumnKey, ColumnLayoutDef>,
   });
 
   const hasActions = !!renderActions;
-  const showExpand = !!onToggleExpanded;
+  const showAllRules = visibleKeys.includes("allRules");
 
-  function handleHeaderClick(key: MonitoredTablesSortKey) {
-    if (!COLUMNS[key].sortable) return;
+  function handleHeaderClick(key: ColumnKey) {
+    if (key === "allRules" || !COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
   const totalWidth =
-    (showExpand ? 40 : 0) +
     (showSelection ? 40 : 0) +
     visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
     (hasActions ? ACTIONS_COL_WIDTH : 0);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {toolbarExtra}
-        <EditColumnsDropdown
-          order={colOrder}
-          labelOf={(key) => t(COLUMNS[key].labelKey)}
-          toggleableOf={(key) => COLUMNS[key].toggleable}
-          isChecked={(key) => visibleKeys.includes(key)}
-          onToggle={toggleColumn}
-          onDragEnd={handleDragEnd}
-          sensors={sensors}
-        />
-      </div>
+      <FilterToolbar
+        filters={toolbarExtra}
+        editColumns={
+          <EditColumnsDropdown
+            order={colOrder}
+            labelOf={(key) => t(COLUMNS[key].labelKey)}
+            toggleableOf={(key) => COLUMNS[key].toggleable}
+            isChecked={(key) => visibleKeys.includes(key)}
+            onToggle={toggleColumn}
+            onDragEnd={handleDragEnd}
+            sensors={sensors}
+            filters={filterLayout}
+          />
+        }
+      />
 
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
           <colgroup>
-            {showExpand && <col style={{ width: 40, minWidth: 40, maxWidth: 40 }} />}
             {showSelection && <col style={{ width: 40, minWidth: 40, maxWidth: 40 }} />}
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
@@ -556,7 +617,6 @@ export function MonitoredTablesTable({
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
-              {showExpand && <TableHead className="w-10 px-2" />}
               {showSelection && (
                 <TableHead className="w-10 px-2">
                   <Checkbox
@@ -622,30 +682,11 @@ export function MonitoredTablesTable({
             {rows.map((r) => {
               const bindingId = r.table.binding_id;
               const busy = pendingBindingId === bindingId;
-              const isExpanded = expandedBindingIds?.has(bindingId) ?? false;
-              const nestedRules = rulesByBindingId?.get(bindingId) ?? [];
-              const colSpan = (showExpand ? 1 : 0) + (showSelection ? 1 : 0) + visibleKeys.length + (hasActions ? 1 : 0);
+              const isExpanded = showAllRules && expandedBindingIds.has(bindingId);
+              const colSpan = (showSelection ? 1 : 0) + visibleKeys.length + (hasActions ? 1 : 0);
               return (
                 <Fragment key={bindingId}>
                 <TableRow className="group cursor-pointer" onClick={() => onRowClick(r)}>
-                  {showExpand && (
-                    <TableCell className="w-10 p-2 align-middle" onClick={(e) => e.stopPropagation()}>
-                      {(r.applied_rule_count ?? 0) > 0 && (
-                        <button
-                          type="button"
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
-                          onClick={() => onToggleExpanded?.(bindingId)}
-                          aria-label={t(
-                            isExpanded ? "monitoredTables.collapseRulesAria" : "monitoredTables.expandRulesAria",
-                            { name: r.table.table_fqn },
-                          )}
-                          aria-expanded={isExpanded}
-                        >
-                          <ChevronRight className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-90")} />
-                        </button>
-                      )}
-                    </TableCell>
-                  )}
                   {showSelection && (
                     <TableCell
                       className="w-10 p-2 align-middle"
@@ -700,18 +741,7 @@ export function MonitoredTablesTable({
                 {isExpanded && (
                   <TableRow className="hover:bg-transparent">
                     <TableCell colSpan={colSpan} className="bg-muted/15 px-10 py-3">
-                      {rulesLoading ? (
-                        <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          {t("common.loading")}
-                        </div>
-                      ) : nestedRules.length > 0 ? (
-                        <RuleAssignmentsList rows={nestedRules} showTable={false} />
-                      ) : (
-                        <p className="py-4 text-xs text-muted-foreground">
-                          {t("monitoredTables.implementedRules.noneForTable")}
-                        </p>
-                      )}
+                      <TableAppliedRulesPanel bindingId={bindingId} />
                     </TableCell>
                   </TableRow>
                 )}

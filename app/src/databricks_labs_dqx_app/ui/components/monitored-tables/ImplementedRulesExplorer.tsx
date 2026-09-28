@@ -1,24 +1,20 @@
-import { Fragment, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import type { ImplementedRuleOut } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { useListImplementedRules, type ImplementedRuleOut, type ListImplementedRulesParams } from "@/lib/api";
 
 /** Distinct mapped columns of one rule application, or "" for a table-level rule. */
 export function mappedRuleColumns(mapping: Array<Record<string, string>> | undefined): string {
   const columns = (mapping ?? []).flatMap((group) => Object.values(group));
   return Array.from(new Set(columns)).join(", ");
+}
+
+/** Orders rule applications for display: by table FQN (a rule's tables) or by rule name (a table's rules). */
+export function sortImplementedRules(rows: ImplementedRuleOut[], by: "table" | "rule"): ImplementedRuleOut[] {
+  const keyOf = (row: ImplementedRuleOut) => (by === "table" ? row.table_fqn : (row.rule_name ?? row.rule_id));
+  return [...rows].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
 }
 
 /** Concrete rule applications, listed under a table (showTable=false) or a rule (showTable=true). */
@@ -86,115 +82,66 @@ export function RuleAssignmentsList({
   );
 }
 
-export interface RuleGroup {
-  ruleId: string;
-  name: string;
-  dimension?: string | null;
-  severity?: string | null;
-  source?: string | null;
-  rows: ImplementedRuleOut[];
-}
-
-/** Groups rule applications by registry rule, filtered by a free-text query over rule, table and columns. */
-export function groupImplementedRules(rows: ImplementedRuleOut[], query: string): RuleGroup[] {
-  const needle = query.trim().toLocaleLowerCase();
-  const grouped = new Map<string, RuleGroup>();
-  for (const row of rows) {
-    const searchable = [row.rule_name, row.rule_id, row.table_fqn, mappedRuleColumns(row.column_mapping)].some(
-      (value) => value?.toLocaleLowerCase().includes(needle),
-    );
-    if (needle && !searchable) continue;
-    const group = grouped.get(row.rule_id) ?? {
-      ruleId: row.rule_id,
-      name: row.rule_name ?? row.rule_id,
-      dimension: row.rule_dimension,
-      severity: row.rule_severity,
-      source: row.rule_source,
-      rows: [],
-    };
-    group.rows.push(row);
-    grouped.set(row.rule_id, group);
-  }
-  return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** The Tables page's "Group by: Rule" view — one expandable row per applied registry rule. */
-export function RulesGroupedTable({ rows, query }: { rows: ImplementedRuleOut[]; query: string }) {
+/** Fetches one scope of rule applications on mount (i.e. only once its row is expanded) and lists them. */
+function ImplementedRulesPanel({
+  params,
+  showTable,
+  emptyText,
+}: {
+  params: ListImplementedRulesParams;
+  showTable: boolean;
+  emptyText: string;
+}) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const groups = useMemo(() => groupImplementedRules(rows, query), [rows, query]);
+  const { data, isPending, isError, refetch } = useListImplementedRules(params);
+  const rows = useMemo(
+    () => sortImplementedRules(data?.data ?? [], showTable ? "table" : "rule"),
+    [data, showTable],
+  );
 
-  const toggle = (ruleId: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(ruleId)) next.delete(ruleId);
-      else next.add(ruleId);
-      return next;
-    });
-  };
+  if (isPending) {
+    return (
+      <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        {t("common.loading")}
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="flex items-center gap-3 py-4 text-xs text-muted-foreground">
+        {t("common.loadFailed")}
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => void refetch()}>
+          <RotateCcw className="h-3 w-3" />
+          {t("common.retry")}
+        </Button>
+      </div>
+    );
+  }
+  if (rows.length === 0) return <p className="py-4 text-xs text-muted-foreground">{emptyText}</p>;
+  return <RuleAssignmentsList rows={rows} showTable={showTable} />;
+}
 
+/** A monitored table's applied rules — the Tables overview's "All rules" row expansion. */
+export function TableAppliedRulesPanel({ bindingId }: { bindingId: string }) {
+  const { t } = useTranslation();
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/50 hover:bg-muted/50">
-            <TableHead className="w-10" />
-            <TableHead className="text-xs font-medium">{t("monitoredTables.implementedRules.colRule")}</TableHead>
-            <TableHead className="text-xs font-medium">{t("monitoredTables.implementedRules.colTables")}</TableHead>
-            <TableHead className="text-xs font-medium">{t("monitoredTables.colDimension")}</TableHead>
-            <TableHead className="text-xs font-medium">{t("monitoredTables.colSeverity")}</TableHead>
-            <TableHead className="text-xs font-medium">{t("monitoredTables.implementedRules.colSource")}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {groups.map((group) => {
-            const isOpen = expanded.has(group.ruleId);
-            return (
-              <Fragment key={group.ruleId}>
-                <TableRow className="cursor-pointer" onClick={() => toggle(group.ruleId)}>
-                  <TableCell className="w-10 p-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      aria-label={t(
-                        isOpen ? "monitoredTables.implementedRules.collapse" : "monitoredTables.implementedRules.expand",
-                        { name: group.name },
-                      )}
-                      aria-expanded={isOpen}
-                    >
-                      <ChevronRight className={cn("h-4 w-4 transition-transform", isOpen && "rotate-90")} />
-                    </Button>
-                  </TableCell>
-                  <TableCell className="p-2 text-sm font-medium">{group.name}</TableCell>
-                  <TableCell className="p-2 tabular-nums">{group.rows.length}</TableCell>
-                  <TableCell className="p-2">{group.dimension || "—"}</TableCell>
-                  <TableCell className="p-2">{group.severity || "—"}</TableCell>
-                  <TableCell className="p-2">
-                    {group.source ? <Badge variant="outline">{group.source}</Badge> : "—"}
-                  </TableCell>
-                </TableRow>
-                {isOpen && (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={6} className="bg-muted/15 px-10 py-3">
-                      <RuleAssignmentsList rows={group.rows} showTable />
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            );
-          })}
-          {groups.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
-                {query.trim()
-                  ? t("monitoredTables.implementedRules.emptySearch")
-                  : t("monitoredTables.implementedRules.empty")}
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </div>
+    <ImplementedRulesPanel
+      params={{ binding_id: bindingId }}
+      showTable={false}
+      emptyText={t("monitoredTables.implementedRules.noneForTable")}
+    />
+  );
+}
+
+/** The monitored tables a registry rule is applied to — the Rules overview's "Applied tables" row expansion. */
+export function RuleAppliedTablesPanel({ ruleId }: { ruleId: string }) {
+  const { t } = useTranslation();
+  return (
+    <ImplementedRulesPanel
+      params={{ rule_id: ruleId }}
+      showTable
+      emptyText={t("monitoredTables.implementedRules.noneForRule")}
+    />
   );
 }

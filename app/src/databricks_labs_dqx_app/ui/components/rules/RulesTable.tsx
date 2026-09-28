@@ -11,10 +11,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ListTree, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
-import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
+import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
+import { FilterToolbar } from "@/components/data-table/FilterToolbar";
+import { RuleAppliedTablesPanel } from "@/components/monitored-tables/ImplementedRulesExplorer";
 import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
@@ -57,7 +59,7 @@ export type RulesTableSortKey =
   | "modified"
   | "mode";
 
-type ColumnKey = RulesTableSortKey | "actions";
+type ColumnKey = RulesTableSortKey | "appliedTables" | "actions";
 
 interface ColumnDef {
   labelKey: string;
@@ -81,6 +83,30 @@ interface ColumnDef {
 
 interface RulesTableRenderContext {
   labelDefinitions: LabelColorDefinition[];
+  isExpanded: (ruleId: string) => boolean;
+  onToggleExpanded: (ruleId: string) => void;
+}
+
+/** Chevron that expands a rule row to list the tables it is applied to (fetched on expand). */
+function AppliedTablesToggle({ r, ctx }: { r: RegistryRuleOut; ctx: RulesTableRenderContext }) {
+  const { t } = useTranslation();
+  const expanded = ctx.isExpanded(r.rule_id);
+  return (
+    <button
+      type="button"
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
+      onClick={(e) => {
+        e.stopPropagation();
+        ctx.onToggleExpanded(r.rule_id);
+      }}
+      aria-label={t(expanded ? "rulesRegistry.collapseAppliedTablesAria" : "rulesRegistry.expandAppliedTablesAria", {
+        name: getTag(r, RESERVED_NAME_KEY) || r.rule_id,
+      })}
+      aria-expanded={expanded}
+    >
+      <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
+    </button>
+  );
 }
 
 /**
@@ -193,6 +219,27 @@ function NameCell({ r }: { r: RegistryRuleOut }) {
 }
 
 const COLUMNS: Record<ColumnKey, ColumnDef> = {
+  appliedTables: {
+    // Optional row expander listing the monitored tables the rule is applied
+    // to. Hidden by default; the tables are fetched per row on expand.
+    labelKey: "rulesRegistry.colAppliedTables",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 48,
+    sortable: false,
+    resizable: false,
+    renderHeader: (label) => (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <ListTree className="h-4 w-4" aria-label={label} />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    ),
+    renderCell: (r, ctx) => <AppliedTablesToggle r={r} ctx={ctx} />,
+  },
   aiAuthorship: {
     labelKey: "rulesRegistry.colAiAuthorship",
     toggleable: true,
@@ -376,6 +423,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
 };
 
 const DEFAULT_ORDER: ColumnKey[] = [
+  "appliedTables",
   "aiAuthorship",
   "name",
   "description",
@@ -478,7 +526,7 @@ export interface RulesTableGroup {
   label: string;
 }
 
-export interface RulesTableProps {
+export interface RulesTableProps<F extends string = string> {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: RegistryRuleOut[];
   labelDefinitions: LabelColorDefinition[];
@@ -503,6 +551,8 @@ export interface RulesTableProps {
   emptyMessage?: ReactNode;
   /** When set, renders a leading checkbox column for bulk lifecycle actions. */
   selection?: RulesTableSelection;
+  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  filterLayout?: SortableToggleListConfig<F>;
 }
 
 /**
@@ -512,7 +562,7 @@ export interface RulesTableProps {
  * to DQX's registry-rule fields (dimension/severity/tags live in
  * `user_metadata` rather than as top-level columns).
  */
-export function RulesTable({
+export function RulesTable<F extends string = string>({
   rows,
   labelDefinitions,
   groupForRule,
@@ -525,9 +575,24 @@ export function RulesTable({
   toolbarExtra,
   emptyMessage,
   selection,
-}: RulesTableProps) {
+  filterLayout,
+}: RulesTableProps<F>) {
   const { t } = useTranslation();
-  const ctx = useMemo<RulesTableRenderContext>(() => ({ labelDefinitions }), [labelDefinitions]);
+  const [expandedRuleIds, setExpandedRuleIds] = useState<Set<string>>(new Set());
+  const ctx = useMemo<RulesTableRenderContext>(
+    () => ({
+      labelDefinitions,
+      isExpanded: (ruleId) => expandedRuleIds.has(ruleId),
+      onToggleExpanded: (ruleId) =>
+        setExpandedRuleIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(ruleId)) next.delete(ruleId);
+          else next.add(ruleId);
+          return next;
+        }),
+    }),
+    [labelDefinitions, expandedRuleIds],
+  );
   const showSelection = !!selection;
   const selectableCount = selection?.selectableRuleIds.size ?? 0;
   const allSelected =
@@ -550,7 +615,7 @@ export function RulesTable({
   });
 
   function handleHeaderClick(key: ColumnKey) {
-    if (key === "actions" || !COLUMNS[key].sortable) return;
+    if (key === "actions" || key === "appliedTables" || !COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
@@ -588,18 +653,21 @@ export function RulesTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {toolbarExtra}
-        <EditColumnsDropdown
-          order={editableOrder}
-          labelOf={(key) => t(COLUMNS[key].labelKey)}
-          toggleableOf={(key) => COLUMNS[key].toggleable}
-          isChecked={(key) => visibleKeys.includes(key)}
-          onToggle={toggleColumn}
-          onDragEnd={handleDragEnd}
-          sensors={sensors}
-        />
-      </div>
+      <FilterToolbar
+        filters={toolbarExtra}
+        editColumns={
+          <EditColumnsDropdown
+            order={editableOrder}
+            labelOf={(key) => t(COLUMNS[key].labelKey)}
+            toggleableOf={(key) => COLUMNS[key].toggleable}
+            isChecked={(key) => visibleKeys.includes(key)}
+            onToggle={toggleColumn}
+            onDragEnd={handleDragEnd}
+            sensors={sensors}
+            filters={filterLayout}
+          />
+        }
+      />
 
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
@@ -676,6 +744,7 @@ export function RulesTable({
               const group = groups[rowIndex];
               const showGroupHeader = !!group && group.key !== groups[rowIndex - 1]?.key;
               const expanded = !group || forceGroupsExpanded || expandedGroups.has(group.key);
+              const showAppliedTables = expanded && orderedKeys.includes("appliedTables") && expandedRuleIds.has(r.rule_id);
               return (
               <Fragment key={r.rule_id}>
               {showGroupHeader && group && (
@@ -753,6 +822,16 @@ export function RulesTable({
                   );
                 })}
               </TableRow>
+              )}
+              {showAppliedTables && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell
+                    colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
+                    className="bg-muted/15 px-10 py-3"
+                  >
+                    <RuleAppliedTablesPanel ruleId={r.rule_id} />
+                  </TableCell>
+                </TableRow>
               )}
               </Fragment>
               );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ImplementedRuleOut } from "@/lib/api";
-import { groupImplementedRules, mappedRuleColumns } from "./ImplementedRulesExplorer";
+import { mappedRuleColumns, sortImplementedRules } from "./ImplementedRulesExplorer";
 
 function row(overrides: Partial<ImplementedRuleOut>): ImplementedRuleOut {
   return {
@@ -23,23 +23,28 @@ describe("mappedRuleColumns", () => {
   });
 });
 
-describe("groupImplementedRules", () => {
+describe("sortImplementedRules", () => {
   const rows = [
-    row({ id: "1", rule_id: "r2", rule_name: "Unique", binding_id: "b1", column_mapping: [{ col: "id" }] }),
-    row({ id: "2", rule_id: "r1", rule_name: "Not null", binding_id: "b1" }),
-    row({ id: "3", rule_id: "r1", rule_name: "Not null", binding_id: "b2", table_fqn: "main.hr.people" }),
+    row({ id: "1", rule_id: "r2", rule_name: "Unique", table_fqn: "main.sales.orders" }),
+    row({ id: "2", rule_id: "r1", rule_name: "Not null", table_fqn: "main.hr.people" }),
+    row({ id: "3", rule_id: "r3", rule_name: undefined, table_fqn: "main.fin.ledger" }),
   ];
 
-  it("groups applications by rule, sorted by rule name", () => {
-    const groups = groupImplementedRules(rows, "");
-    expect(groups.map((g) => [g.name, g.rows.length])).toEqual([
-      ["Not null", 2],
-      ["Unique", 1],
+  it("orders a table's rules by rule name, falling back to the rule id", () => {
+    expect(sortImplementedRules(rows, "rule").map((r) => r.id)).toEqual(["2", "3", "1"]);
+  });
+
+  it("orders a rule's tables by table FQN", () => {
+    expect(sortImplementedRules(rows, "table").map((r) => r.table_fqn)).toEqual([
+      "main.fin.ledger",
+      "main.hr.people",
+      "main.sales.orders",
     ]);
   });
 
-  it("filters on table and column as well as rule name", () => {
-    expect(groupImplementedRules(rows, "people").map((g) => g.ruleId)).toEqual(["r1"]);
-    expect(groupImplementedRules(rows, "ID").map((g) => g.ruleId)).toEqual(["r2"]);
+  it("does not mutate its input", () => {
+    const input = [...rows];
+    sortImplementedRules(input, "table");
+    expect(input).toEqual(rows);
   });
 });

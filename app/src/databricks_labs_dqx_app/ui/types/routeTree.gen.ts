@@ -20,7 +20,6 @@ import { Route as SidebarResultsRouteImport } from './../routes/_sidebar/results
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRunsHistoryRouteImport } from './../routes/_sidebar/runs-history'
-import { Route as SidebarSchedulesRouteImport } from './../routes/_sidebar/schedules'
 import { Route as SidebarSettingsRouteImport } from './../routes/_sidebar/settings'
 import { Route as SidebarCollectionsIndexRouteImport } from './../routes/_sidebar/collections.index'
 import { Route as SidebarCollectionsProductIdRouteImport } from './../routes/_sidebar/collections.$productId'
@@ -48,6 +47,8 @@ import { Route as SidebarRulesImportRouteImport } from './../routes/_sidebar/rul
 import { Route as SidebarRulesSingleTableRouteImport } from './../routes/_sidebar/rules.single-table'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
+import { Route as SidebarSchedulesIndexRouteImport } from './../routes/_sidebar/schedules.index'
+import { Route as SidebarSchedulesNewRouteImport } from './../routes/_sidebar/schedules.new'
 import { Route as SidebarTableSpacesIndexRouteImport } from './../routes/_sidebar/table-spaces.index'
 import { Route as SidebarTableSpacesProductIdRouteImport } from './../routes/_sidebar/table-spaces.$productId'
 import { Route as SidebarTableSpacesNewRouteImport } from './../routes/_sidebar/table-spaces.new'
@@ -104,11 +105,6 @@ const SidebarRunsRoute = SidebarRunsRouteImport.update({
 const SidebarRunsHistoryRoute = SidebarRunsHistoryRouteImport.update({
   id: '/runs-history',
   path: '/runs-history',
-  getParentRoute: () => SidebarRouteRoute,
-} as any)
-const SidebarSchedulesRoute = SidebarSchedulesRouteImport.update({
-  id: '/schedules',
-  path: '/schedules',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarSettingsRoute = SidebarSettingsRouteImport.update({
@@ -259,6 +255,16 @@ const SidebarRunsRunNameRoute = SidebarRunsRunNameRouteImport.update({
   path: '/$runName',
   getParentRoute: () => SidebarRunsRoute,
 } as any)
+const SidebarSchedulesIndexRoute = SidebarSchedulesIndexRouteImport.update({
+  id: '/schedules/',
+  path: '/schedules/',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarSchedulesNewRoute = SidebarSchedulesNewRouteImport.update({
+  id: '/schedules/new',
+  path: '/schedules/new',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
 const SidebarTableSpacesIndexRoute = SidebarTableSpacesIndexRouteImport.update({
   id: '/table-spaces/',
   path: '/table-spaces/',
@@ -287,7 +293,6 @@ export interface FileRoutesByFullPath {
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
-  '/schedules': typeof SidebarSchedulesRoute
   '/settings': typeof SidebarSettingsRoute
   '/collections/$productId': typeof SidebarCollectionsProductIdRoute
   '/collections/new': typeof SidebarCollectionsNewRoute
@@ -309,6 +314,7 @@ export interface FileRoutesByFullPath {
   '/rules/import': typeof SidebarRulesImportRoute
   '/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
+  '/schedules/new': typeof SidebarSchedulesNewRoute
   '/table-spaces/$productId': typeof SidebarTableSpacesProductIdRoute
   '/table-spaces/new': typeof SidebarTableSpacesNewRoute
   '/collections/': typeof SidebarCollectionsIndexRoute
@@ -317,6 +323,7 @@ export interface FileRoutesByFullPath {
   '/registry-rules/': typeof SidebarRegistryRulesIndexRoute
   '/rules/': typeof SidebarRulesIndexRoute
   '/runs/': typeof SidebarRunsIndexRoute
+  '/schedules/': typeof SidebarSchedulesIndexRoute
   '/table-spaces/': typeof SidebarTableSpacesIndexRoute
 }
 export interface FileRoutesByTo {
@@ -328,7 +335,6 @@ export interface FileRoutesByTo {
   '/profiler': typeof SidebarProfilerRoute
   '/results': typeof SidebarResultsRoute
   '/runs-history': typeof SidebarRunsHistoryRoute
-  '/schedules': typeof SidebarSchedulesRoute
   '/settings': typeof SidebarSettingsRoute
   '/collections/$productId': typeof SidebarCollectionsProductIdRoute
   '/collections/new': typeof SidebarCollectionsNewRoute
@@ -350,6 +356,7 @@ export interface FileRoutesByTo {
   '/rules/import': typeof SidebarRulesImportRoute
   '/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
+  '/schedules/new': typeof SidebarSchedulesNewRoute
   '/table-spaces/$productId': typeof SidebarTableSpacesProductIdRoute
   '/table-spaces/new': typeof SidebarTableSpacesNewRoute
   '/collections': typeof SidebarCollectionsIndexRoute
@@ -358,6 +365,7 @@ export interface FileRoutesByTo {
   '/registry-rules': typeof SidebarRegistryRulesIndexRoute
   '/rules': typeof SidebarRulesIndexRoute
   '/runs': typeof SidebarRunsIndexRoute
+  '/schedules': typeof SidebarSchedulesIndexRoute
   '/table-spaces': typeof SidebarTableSpacesIndexRoute
 }
 export interface FileRoutesById {
@@ -373,7 +381,6 @@ export interface FileRoutesById {
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
-  '/_sidebar/schedules': typeof SidebarSchedulesRoute
   '/_sidebar/settings': typeof SidebarSettingsRoute
   '/_sidebar/collections/$productId': typeof SidebarCollectionsProductIdRoute
   '/_sidebar/collections/new': typeof SidebarCollectionsNewRoute
@@ -395,6 +402,7 @@ export interface FileRoutesById {
   '/_sidebar/rules/import': typeof SidebarRulesImportRoute
   '/_sidebar/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
+  '/_sidebar/schedules/new': typeof SidebarSchedulesNewRoute
   '/_sidebar/table-spaces/$productId': typeof SidebarTableSpacesProductIdRoute
   '/_sidebar/table-spaces/new': typeof SidebarTableSpacesNewRoute
   '/_sidebar/collections/': typeof SidebarCollectionsIndexRoute
@@ -403,6 +411,7 @@ export interface FileRoutesById {
   '/_sidebar/registry-rules/': typeof SidebarRegistryRulesIndexRoute
   '/_sidebar/rules/': typeof SidebarRulesIndexRoute
   '/_sidebar/runs/': typeof SidebarRunsIndexRoute
+  '/_sidebar/schedules/': typeof SidebarSchedulesIndexRoute
   '/_sidebar/table-spaces/': typeof SidebarTableSpacesIndexRoute
 }
 export interface FileRouteTypes {
@@ -418,7 +427,6 @@ export interface FileRouteTypes {
     | '/rules'
     | '/runs'
     | '/runs-history'
-    | '/schedules'
     | '/settings'
     | '/collections/$productId'
     | '/collections/new'
@@ -440,6 +448,7 @@ export interface FileRouteTypes {
     | '/rules/import'
     | '/rules/single-table'
     | '/runs/$runName'
+    | '/schedules/new'
     | '/table-spaces/$productId'
     | '/table-spaces/new'
     | '/collections/'
@@ -448,6 +457,7 @@ export interface FileRouteTypes {
     | '/registry-rules/'
     | '/rules/'
     | '/runs/'
+    | '/schedules/'
     | '/table-spaces/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -459,7 +469,6 @@ export interface FileRouteTypes {
     | '/profiler'
     | '/results'
     | '/runs-history'
-    | '/schedules'
     | '/settings'
     | '/collections/$productId'
     | '/collections/new'
@@ -481,6 +490,7 @@ export interface FileRouteTypes {
     | '/rules/import'
     | '/rules/single-table'
     | '/runs/$runName'
+    | '/schedules/new'
     | '/table-spaces/$productId'
     | '/table-spaces/new'
     | '/collections'
@@ -489,6 +499,7 @@ export interface FileRouteTypes {
     | '/registry-rules'
     | '/rules'
     | '/runs'
+    | '/schedules'
     | '/table-spaces'
   id:
     | '__root__'
@@ -503,7 +514,6 @@ export interface FileRouteTypes {
     | '/_sidebar/rules'
     | '/_sidebar/runs'
     | '/_sidebar/runs-history'
-    | '/_sidebar/schedules'
     | '/_sidebar/settings'
     | '/_sidebar/collections/$productId'
     | '/_sidebar/collections/new'
@@ -525,6 +535,7 @@ export interface FileRouteTypes {
     | '/_sidebar/rules/import'
     | '/_sidebar/rules/single-table'
     | '/_sidebar/runs/$runName'
+    | '/_sidebar/schedules/new'
     | '/_sidebar/table-spaces/$productId'
     | '/_sidebar/table-spaces/new'
     | '/_sidebar/collections/'
@@ -533,6 +544,7 @@ export interface FileRouteTypes {
     | '/_sidebar/registry-rules/'
     | '/_sidebar/rules/'
     | '/_sidebar/runs/'
+    | '/_sidebar/schedules/'
     | '/_sidebar/table-spaces/'
   fileRoutesById: FileRoutesById
 }
@@ -618,13 +630,6 @@ declare module '@tanstack/react-router' {
       path: '/runs-history'
       fullPath: '/runs-history'
       preLoaderRoute: typeof SidebarRunsHistoryRouteImport
-      parentRoute: typeof SidebarRouteRoute
-    }
-    '/_sidebar/schedules': {
-      id: '/_sidebar/schedules'
-      path: '/schedules'
-      fullPath: '/schedules'
-      preLoaderRoute: typeof SidebarSchedulesRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/settings': {
@@ -816,6 +821,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRunsRunNameRouteImport
       parentRoute: typeof SidebarRunsRoute
     }
+    '/_sidebar/schedules/': {
+      id: '/_sidebar/schedules/'
+      path: '/schedules'
+      fullPath: '/schedules/'
+      preLoaderRoute: typeof SidebarSchedulesIndexRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/schedules/new': {
+      id: '/_sidebar/schedules/new'
+      path: '/schedules/new'
+      fullPath: '/schedules/new'
+      preLoaderRoute: typeof SidebarSchedulesNewRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/table-spaces/': {
       id: '/_sidebar/table-spaces/'
       path: '/table-spaces'
@@ -892,7 +911,6 @@ interface SidebarRouteRouteChildren {
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
   SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
-  SidebarSchedulesRoute: typeof SidebarSchedulesRoute
   SidebarSettingsRoute: typeof SidebarSettingsRoute
   SidebarCollectionsProductIdRoute: typeof SidebarCollectionsProductIdRoute
   SidebarCollectionsNewRoute: typeof SidebarCollectionsNewRoute
@@ -905,12 +923,14 @@ interface SidebarRouteRouteChildren {
   SidebarRegistryRulesBulkImportRoute: typeof SidebarRegistryRulesBulkImportRoute
   SidebarRegistryRulesImportRoute: typeof SidebarRegistryRulesImportRoute
   SidebarRegistryRulesNewRoute: typeof SidebarRegistryRulesNewRoute
+  SidebarSchedulesNewRoute: typeof SidebarSchedulesNewRoute
   SidebarTableSpacesProductIdRoute: typeof SidebarTableSpacesProductIdRoute
   SidebarTableSpacesNewRoute: typeof SidebarTableSpacesNewRoute
   SidebarCollectionsIndexRoute: typeof SidebarCollectionsIndexRoute
   SidebarDataProductsIndexRoute: typeof SidebarDataProductsIndexRoute
   SidebarMonitoredTablesIndexRoute: typeof SidebarMonitoredTablesIndexRoute
   SidebarRegistryRulesIndexRoute: typeof SidebarRegistryRulesIndexRoute
+  SidebarSchedulesIndexRoute: typeof SidebarSchedulesIndexRoute
   SidebarTableSpacesIndexRoute: typeof SidebarTableSpacesIndexRoute
 }
 
@@ -924,7 +944,6 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
   SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,
-  SidebarSchedulesRoute: SidebarSchedulesRoute,
   SidebarSettingsRoute: SidebarSettingsRoute,
   SidebarCollectionsProductIdRoute: SidebarCollectionsProductIdRoute,
   SidebarCollectionsNewRoute: SidebarCollectionsNewRoute,
@@ -937,12 +956,14 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarRegistryRulesBulkImportRoute: SidebarRegistryRulesBulkImportRoute,
   SidebarRegistryRulesImportRoute: SidebarRegistryRulesImportRoute,
   SidebarRegistryRulesNewRoute: SidebarRegistryRulesNewRoute,
+  SidebarSchedulesNewRoute: SidebarSchedulesNewRoute,
   SidebarTableSpacesProductIdRoute: SidebarTableSpacesProductIdRoute,
   SidebarTableSpacesNewRoute: SidebarTableSpacesNewRoute,
   SidebarCollectionsIndexRoute: SidebarCollectionsIndexRoute,
   SidebarDataProductsIndexRoute: SidebarDataProductsIndexRoute,
   SidebarMonitoredTablesIndexRoute: SidebarMonitoredTablesIndexRoute,
   SidebarRegistryRulesIndexRoute: SidebarRegistryRulesIndexRoute,
+  SidebarSchedulesIndexRoute: SidebarSchedulesIndexRoute,
   SidebarTableSpacesIndexRoute: SidebarTableSpacesIndexRoute,
 }
 
