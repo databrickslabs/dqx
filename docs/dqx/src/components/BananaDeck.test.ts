@@ -47,7 +47,7 @@ test('DQM and DQX remain complementary layers in the comparison', () => {
 
 test('the profiles and baseline notes do not promise sequence forecasting or automatic retraining', () => {
   const html = renderToStaticMarkup(createElement(BananaDeck));
-  assert.match(renderSlide(4), /profile=&quot;tabular&quot;/);
+  assert.match(renderSlide(4), /profile=&quot;distribution&quot;/);
   assert.match(renderSlide(4), /profile=&quot;correlation&quot;/);
   assert.match(
     renderSlide(11),

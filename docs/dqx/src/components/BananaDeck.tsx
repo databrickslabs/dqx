@@ -58,8 +58,8 @@ const notes = [
   'Databricks Data Quality Monitoring (DQM) includes table-health anomaly monitoring for freshness and completeness. DQX combines explicit quality rules with checks for unusual rows. This picture highlights complementary layers, not an exhaustive product comparison or a guarantee of complete coverage.',
   'Use required-field, range and membership rules for known requirements. Statistical rarity alone does not establish a defect.',
   'Choose representative training history. Exclude identifiers and labels from model features. Keep a separate validation slice to evaluate the results.',
-  'tabular is the default general-purpose profile. correlation is the relationship-sensitive profile. Both score rows independently. Neither is a sequence forecaster.',
-  'Illustration: historical lengths span 15–24 cm and weights span 80–143 g. The new reading is 22 cm and 94 g, inside both ranges but away from their usual relationship. This is not a model execution or a claim that tabular can never detect a relationship departure.',
+  'distribution is the default general-purpose profile. correlation is the relationship-sensitive profile. Both score rows independently. Neither is a sequence forecaster.',
+  'Illustration: historical lengths span 15–24 cm and weights span 80–143 g. The new reading is 22 cm and 94 g, inside both ranges but away from their usual relationship. This is not a model execution or a claim that distribution can never detect a relationship departure.',
   'baseline_by adds learned group-level context. It does not automatically create a different relationship model per group. An unseen group can remain unscored.',
   'baseline_over_time uses a time-dependent expectation fitted during training. It requires enough representative history. The same timestamp must not also be a model feature. A continuing pattern and a newly changed regime are different cases.',
   'The displayed scores are invented teaching values. Threshold 95 refers to fitted severity calibration. It is not a 95% chance of error or a guarantee that 5% of future rows will flag. Validate settings on separate data.',
@@ -769,7 +769,7 @@ export function BananaSlide({ index }: { index: number }): ReactNode {
       return (
         <div className="bd-profile-pair">
           <section>
-            <code>profile="tabular"</code>
+            <code>profile="distribution"</code>
             <div className="bd-profile-fruit">
               <Fruit />
               <Fruit />
