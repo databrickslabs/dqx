@@ -267,6 +267,20 @@ print("\n💡 DQX auto-discovered patterns and registered a model for scoring.")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### About that warning
+# MAGIC
+# MAGIC Auto-discovery picked `date` as a feature, and DQX warned about it. That warning is worth reading
+# MAGIC rather than scrolling past: a timestamp in `columns` becomes seven cyclical calendar features, which
+# MAGIC is what you want when *when* something happened carries meaning, and is noise otherwise. The warning
+# MAGIC names both escapes — `exclude_columns=['date']` to drop it, or `baseline_over_time='date'` to use it
+# MAGIC as a time axis instead.
+# MAGIC
+# MAGIC It is left in here so the quickstart shows what auto-discovery actually does with your schema. On
+# MAGIC this dataset it costs little, because the injected anomalies are large. See
+# MAGIC [Comparing against time](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection/tuning#comparing-against-time)
+# MAGIC for how to choose, and the `dqx_row_anomaly_distribution_transactions` demo for a dataset where it
+# MAGIC changes the answer.
+# MAGIC
 # MAGIC ### Optional: View Models in the UI
 # MAGIC
 # MAGIC Your models are stored in Unity Catalog and registered within MLflow.
@@ -601,6 +615,9 @@ for threshold in thresholds:
     print(f"   {threshold:>3d}   |   {anomaly_count:4d}    |  {percentage:5.1f}%  | {interpretation}")
 
 print("\n💡 Start at 95, then explore thresholds on your data to balance noise vs. missed anomalies.")
+print("   Read the threshold as an alert budget rather than a confidence score: 95 means 'the top 5% of")
+print("   training severity', so this batch flagging more than 5% is the injected problems being found,")
+print("   not a fault. A row at severity 97 is in the top 3% most unusual; it is not 97% likely to be bad.")
 
 # COMMAND ----------
 # DBTITLE 1,Tuning the Threshold
@@ -699,6 +716,8 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC **Training options (`AnomalyEngine.train` / `AnomalyParams`):**
 # MAGIC - `columns` (list[str]): explicit feature list (disables auto‑discovery)
 # MAGIC - `baseline_by` (list[str]): columns naming the group each metric is judged against
+# MAGIC - `baseline_over_time` (str): a timestamp column used as the *axis* each metric is measured along,
+# MAGIC   rather than as calendar features
 # MAGIC - `sample_fraction`, `max_rows`: training sample controls
 # MAGIC - `ensemble_size`: number of models in the ensemble
 # MAGIC - `profile` (str): which detector decides a row is unusual, `"distribution"` (default) or `"correlation"`
