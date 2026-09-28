@@ -48,6 +48,10 @@ from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refres
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
+    ResourceTaggingService,
+    startup_tag_targets,
+)
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
@@ -218,12 +222,15 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
         )
         return None
 
+    resource_tagger = ResourceTaggingService(sp_ws)
     context = StartupContext(
         resources=resources,
         runtime=application_runtime,
         oltp_executor=pg_executor,
         register_oltp=set_oltp_executor,
-        activation_hooks=(lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources),),
+        activation_hooks=(
+            lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources, resource_tagger),
+        ),
         background_hooks=(
             lambda: _start_scheduler(sp_ws, sp_sql, pg_executor, resources),
             lambda: _maybe_start_ai_bootstrap(app, sp_ws, sp_sql, pg_executor),
@@ -420,11 +427,17 @@ async def _run_post_migration_startup(
     delta_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
     resources: ActiveResources,
+    resource_tagger: ResourceTaggingService,
 ) -> None:
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
     _ensure_entitlement_objects(delta_sql, resources)
     _grant_user_view_access(delta_sql, resources)
+    targets = startup_tag_targets(
+        resources,
+        include_bundle_resources=conf.tag_bundle_owned_resources,
+    )
+    await asyncio.to_thread(resource_tagger.reconcile, targets)
     await asyncio.to_thread(_ensure_genie_space, workspace, resources, oltp)
 
     settings = AppSettingsService(sql=oltp)
