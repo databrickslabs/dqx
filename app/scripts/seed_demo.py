@@ -275,6 +275,7 @@ def main() -> int:
         ws=ws,
         job_id=conf.job_id,
         sql=sp_sql,
+        oltp_sql=oltp,
         warehouse_id=warehouse_id,
     )
     binding_run = BindingRunService(
