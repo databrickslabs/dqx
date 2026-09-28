@@ -184,6 +184,7 @@ import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { computeMergeColumnsAutofill } from "@/lib/mergeColumnsAutofill";
 import { AI_EXAMPLE_COUNT, pickAiExampleKey } from "@/lib/aiExamplePrompt";
+import { DEFAULT_PAGE_TAB, type PageTab } from "@/lib/registry-rule-page-tab";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -206,10 +207,7 @@ type DecisionPointChoice = {
 };
 type Polarity = "pass" | "fail";
 
-// Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
-// page so browser back/forward moves between them, mirroring the old dqx
-// editor's page-based structure.
-export type PageTab = "about" | "permissions" | "implementation" | "test" | "history" | "results";
+export type { PageTab };
 
 // Mirrors the backend's `forbidden_statements` list verbatim — see
 // `is_sql_query_safe()` in `src/databricks/labs/dqx/utils.py`, the source of
@@ -1814,9 +1812,11 @@ export function RegistryRuleFormDialog({
   const setPageTab = useCallback(
     (tab: PageTab) => {
       setInternalPageTab(tab);
-      onActiveTabChange?.(tab);
+      // Skip no-op switches (e.g. validate() jumping to the tab already open)
+      // so the routed page never pushes a duplicate history entry.
+      if (tab !== pageTab) onActiveTabChange?.(tab);
     },
-    [onActiveTabChange],
+    [onActiveTabChange, pageTab],
   );
   const [functionName, setFunctionName] = useState("");
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
@@ -2018,7 +2018,10 @@ export function RegistryRuleFormDialog({
       setDecisionPointChosen(true);
       setAuthorKind(sourceRule.author_kind ?? undefined);
       setMode(sourceRule.mode);
-      setPageTab("about");
+      // Reset only the uncontrolled tab: when the routed page owns the tab via
+      // ?tab=, hydration must not push a navigation (that added a second
+      // history entry on every rule open, and clobbered deep-linked tabs).
+      setInternalPageTab(DEFAULT_PAGE_TAB);
       setPolarity(sourceRule.polarity ?? "pass");
       if (sourceRule.mode === "dqx_native") {
         const fn = String((sourceRule.definition?.body ?? {}).function ?? "");
@@ -2095,7 +2098,7 @@ export function RegistryRuleFormDialog({
       setDecisionPointChosen(false);
       setAuthorKind("human");
       setMode("lowcode");
-      setPageTab("about");
+      setInternalPageTab(DEFAULT_PAGE_TAB);
       setFunctionName("");
       setParamRawValues({});
       setSqlPredicate("");
@@ -2108,7 +2111,7 @@ export function RegistryRuleFormDialog({
       setPolarity("pass");
       setFilter("");
     }
-  }, [open, sourceRule, setPageTab]);
+  }, [open, sourceRule]);
 
   const selectedFn = useMemo(
     () => checkFunctions.find((f) => f.name === functionName),
