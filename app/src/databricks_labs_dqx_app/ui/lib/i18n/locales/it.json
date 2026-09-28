@@ -92,7 +92,7 @@
     "copy": "Copia",
     "copied": "Copiato",
     "reset": "Reimposta",
-    "editColumns": "Modifica colonne",
+    "editColumns": "Modifica vista",
     "relativeJustNow": "proprio ora",
     "relativeMinutesAgo": "{{count}}m fa",
     "relativeHoursAgo": "{{count}}h fa",
@@ -1580,7 +1580,7 @@
     "colDescription": "Descrizione",
     "colCreatedBy": "Creato da",
     "colSlots": "Tipo/i di colonna",
-    "editColumns": "Modifica colonne",
+    "editColumns": "Modifica vista",
     "emptyState": "Nessuna regola del registro corrisponde ancora a questi filtri.",
     "emptyStateNoRulesCta": "Ancora nessuna regola — clicca su \"Nuova regola\" per crearne una.",
     "emptyStateNoRules": "Ancora nessuna regola nel registro.",
@@ -2444,7 +2444,12 @@
       "noneForRule": "Questa regola non è ancora applicata a nessuna tabella."
     },
     "importButton": "Importa",
-    "colAllRules": "Tutte le regole",
+    "colAppliedRules": "Regole applicate",
+    "groupByNone": "Nessuno",
+    "groupByDqScore": "Punteggio qualità",
+    "groupByCatalog": "Catalogo",
+    "groupBySchema": "Schema",
+    "groupUnknown": "Sconosciuto",
     "filterSearch": "Ricerca"
   },
   "dataProducts": {

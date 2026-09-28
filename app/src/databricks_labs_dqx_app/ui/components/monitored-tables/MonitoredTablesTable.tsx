@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
+import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
@@ -59,7 +60,7 @@ export type MonitoredTablesSortKey =
   | "status";
 
 /** Every column key: the sortable ones plus the "All rules" row expander. */
-type ColumnKey = MonitoredTablesSortKey | "allRules";
+type ColumnKey = MonitoredTablesSortKey | "appliedRules";
 
 interface ColumnDef {
   labelKey: string;
@@ -86,7 +87,7 @@ interface MonitoredTablesRenderContext {
 }
 
 /** Chevron that expands a row to list the table's applied rules (fetched on expand). */
-function AllRulesToggle({ r, ctx }: { r: MonitoredTableSummaryOut; ctx: MonitoredTablesRenderContext }) {
+function AppliedRulesToggle({ r, ctx }: { r: MonitoredTableSummaryOut; ctx: MonitoredTablesRenderContext }) {
   const { t } = useTranslation();
   if ((r.applied_rule_count ?? 0) === 0) return null;
   const bindingId = r.table.binding_id;
@@ -214,10 +215,10 @@ function splitFqn(fqn: string): { catalog: string; schema: string; table: string
 }
 
 const COLUMNS: Record<ColumnKey, ColumnDef> = {
-  allRules: {
+  appliedRules: {
     // Optional row expander listing the table's applied rules. Hidden by
     // default: the rules are fetched per row on expand, never on page load.
-    labelKey: "monitoredTables.colAllRules",
+    labelKey: "monitoredTables.colAppliedRules",
     toggleable: true,
     defaultVisible: false,
     defaultWidth: 48,
@@ -233,7 +234,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
     ),
-    renderCell: (r, ctx) => <AllRulesToggle r={r} ctx={ctx} />,
+    renderCell: (r, ctx) => <AppliedRulesToggle r={r} ctx={ctx} />,
   },
   catalog: {
     labelKey: "monitoredTables.colCatalog",
@@ -396,7 +397,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
 // Checks/Rules column order matches dqlake's `BindingsTable` DEFAULT_ORDER
 // (owner, rulesCount, checksCount, ...) — Rules before Checks.
 const DEFAULT_ORDER: ColumnKey[] = [
-  "allRules",
+  "appliedRules",
   "catalog",
   "schema",
   "table",
@@ -515,6 +516,10 @@ export interface MonitoredTablesTableProps<F extends string = string> {
   labelDefinitions?: LabelColorDefinition[];
   /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
   filterLayout?: SortableToggleListConfig<F>;
+  /** Inserts collapsible group headers; rows must arrive sorted by group. Omit for the flat table. */
+  groupForRow?: (row: MonitoredTableSummaryOut) => { key: string; label: string };
+  /** Expands every group (e.g. while searching, so matches are never hidden). */
+  forceGroupsExpanded?: boolean;
 }
 
 /**
@@ -537,8 +542,13 @@ export function MonitoredTablesTable<F extends string = string>({
   selection,
   labelDefinitions = [],
   filterLayout,
+  groupForRow,
+  forceGroupsExpanded = false,
 }: MonitoredTablesTableProps<F>) {
   const { t } = useTranslation();
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const groups = useMemo(() => rows.map((r) => groupForRow?.(r)), [rows, groupForRow]);
+  const groupCounts = useMemo(() => countByGroup(groups), [groups]);
   const [expandedBindingIds, setExpandedBindingIds] = useState<Set<string>>(new Set());
   const ctx = useMemo<MonitoredTablesRenderContext>(
     () => ({
@@ -576,10 +586,10 @@ export function MonitoredTablesTable<F extends string = string>({
   });
 
   const hasActions = !!renderActions;
-  const showAllRules = visibleKeys.includes("allRules");
+  const showAppliedRules = visibleKeys.includes("appliedRules");
 
   function handleHeaderClick(key: ColumnKey) {
-    if (key === "allRules" || !COLUMNS[key].sortable) return;
+    if (key === "appliedRules" || !COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
@@ -647,7 +657,10 @@ export function MonitoredTablesTable<F extends string = string>({
                     onClick={def.sortable ? () => handleHeaderClick(k) : undefined}
                     aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                   >
-                    <span className="inline-flex items-center gap-1">
+                    {/* Block-level flex so the icon-only Applied Rules header
+                        centres in the row like the text headers (an inline box
+                        with no text would sit on the text baseline, riding high). */}
+                    <span className="flex items-center gap-1">
                       {def.renderHeader(label)}
                       {isSorted &&
                         (sortDir === "asc" ? (
@@ -679,13 +692,27 @@ export function MonitoredTablesTable<F extends string = string>({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => {
+            {rows.map((r, rowIndex) => {
               const bindingId = r.table.binding_id;
               const busy = pendingBindingId === bindingId;
-              const isExpanded = showAllRules && expandedBindingIds.has(bindingId);
+              const isExpanded = showAppliedRules && expandedBindingIds.has(bindingId);
               const colSpan = (showSelection ? 1 : 0) + visibleKeys.length + (hasActions ? 1 : 0);
+              const group = groups[rowIndex];
+              const showGroupHeader = !!group && group.key !== groups[rowIndex - 1]?.key;
+              const groupExpanded = !group || forceGroupsExpanded || expandedGroups.has(group.key);
               return (
                 <Fragment key={bindingId}>
+                {showGroupHeader && group && (
+                  <GroupHeaderRow
+                    label={group.label}
+                    count={groupCounts.get(group.key) ?? 0}
+                    expanded={groupExpanded}
+                    onToggle={() => setExpandedGroups((prev) => toggleGroupKey(prev, group.key))}
+                    colSpan={colSpan}
+                  />
+                )}
+                {groupExpanded && (
+                <>
                 <TableRow className="group cursor-pointer" onClick={() => onRowClick(r)}>
                   {showSelection && (
                     <TableCell
@@ -744,6 +771,8 @@ export function MonitoredTablesTable<F extends string = string>({
                       <TableAppliedRulesPanel bindingId={bindingId} />
                     </TableCell>
                   </TableRow>
+                )}
+                </>
                 )}
                 </Fragment>
               );

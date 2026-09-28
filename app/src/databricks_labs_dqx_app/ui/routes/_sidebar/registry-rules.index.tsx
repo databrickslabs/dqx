@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
+import { useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -34,12 +34,6 @@ import {
   Undo2,
   GitCompare,
   FileDown,
-  Columns3,
-  Gauge,
-  List,
-  Shapes,
-  UserRound,
-  Workflow,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -81,7 +75,8 @@ import { Pagination } from "@/components/Pagination";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
-import { GroupBySelect, type GroupBySelectOption } from "@/components/data-table/GroupBySelect";
+import { GroupBySelect } from "@/components/data-table/GroupBySelect";
+import { FilterPills } from "@/components/data-table/FilterToolbar";
 import {
   filterLayoutMenuConfig,
   useFilterLayout,
@@ -155,24 +150,25 @@ const ALL = "all";
 const PAGE_SIZE = 25;
 const FILTER_CLASS = FILTER_TRIGGER_CLASS;
 type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "owner";
-const GROUP_BY_OPTIONS: readonly (Omit<GroupBySelectOption<RuleGroupBy>, "label"> & { labelKey: string })[] = [
-  { value: "none", labelKey: "rulesRegistry.groupByNone", icon: List },
-  { value: "columnType", labelKey: "rulesRegistry.groupByColumnType", icon: Columns3 },
-  { value: "dimension", labelKey: "rulesRegistry.groupByDimension", icon: Shapes },
-  { value: "severity", labelKey: "rulesRegistry.groupBySeverity", icon: Gauge },
-  { value: "mode", labelKey: "rulesRegistry.groupByRuleType", icon: Workflow },
-  { value: "owner", labelKey: "rulesRegistry.groupByOwner", icon: UserRound },
+const GROUP_BY_OPTIONS: readonly { value: RuleGroupBy; labelKey: string }[] = [
+  { value: "none", labelKey: "rulesRegistry.groupByNone" },
+  { value: "columnType", labelKey: "rulesRegistry.groupByColumnType" },
+  { value: "dimension", labelKey: "rulesRegistry.groupByDimension" },
+  { value: "severity", labelKey: "rulesRegistry.groupBySeverity" },
+  { value: "mode", labelKey: "rulesRegistry.groupByRuleType" },
+  { value: "owner", labelKey: "rulesRegistry.groupByOwner" },
 ];
 
 type RulesFilterKey = "search" | "dimension" | "severity" | "owner" | "labels" | "groupBy";
-const FILTER_ORDER: readonly RulesFilterKey[] = ["search", "dimension", "severity", "owner", "labels", "groupBy"];
+// Group by is pinned: always first, divided from the other pills, not reorderable.
+const FILTER_ORDER: readonly RulesFilterKey[] = ["groupBy", "search", "dimension", "severity", "owner", "labels"];
 const FILTERS: Record<RulesFilterKey, FilterLayoutDef> = {
   search: { labelKey: "rulesRegistry.filterSearch", defaultVisible: true },
   dimension: { labelKey: "rulesRegistry.filterDimensions", defaultVisible: true },
   severity: { labelKey: "rulesRegistry.filterSeverities", defaultVisible: true },
   owner: { labelKey: "rulesRegistry.filterOwners", defaultVisible: true },
   labels: { labelKey: "rulesRegistry.filterLabels", defaultVisible: true },
-  groupBy: { labelKey: "common.groupBy", defaultVisible: false },
+  groupBy: { labelKey: "common.groupBy", defaultVisible: false, pinned: true },
 };
 
 function RegistryRulesPage() {
@@ -1032,16 +1028,18 @@ function RegistryRulesPage() {
           setGroupBy(value);
           setPage(1);
         }}
-        options={GROUP_BY_OPTIONS.map(({ value, labelKey, icon }) => ({ value, label: t(labelKey), icon }))}
+        options={GROUP_BY_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
       />
     ),
   };
 
   const filterControls = (
     <>
-      {filterLayout.visibleKeys.map((key) => (
-        <Fragment key={key}>{filterPills[key]}</Fragment>
-      ))}
+      <FilterPills
+        keys={filterLayout.visibleKeys}
+        isPinned={filterLayout.isPinned}
+        renderPill={(key) => filterPills[key]}
+      />
       {hasActiveFilters && (
         <Button
           variant="ghost"

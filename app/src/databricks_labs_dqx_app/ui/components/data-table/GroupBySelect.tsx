@@ -8,7 +8,8 @@ import { FILTER_TRIGGER_CLASS } from "./filter-bar";
 export interface GroupBySelectOption<V extends string> {
   value: V;
   label: string;
-  icon: LucideIcon;
+  /** Shown beside the label in the option list and the selected value; omit for a text-only select. */
+  icon?: LucideIcon;
 }
 
 export interface GroupBySelectProps<V extends string> {
@@ -20,9 +21,10 @@ export interface GroupBySelectProps<V extends string> {
 
 /**
  * The shared "Group by" control: a muted Layers icon and label, then a compact
- * select whose value and options show an icon beside the label. Used by every
- * overview filter bar and the collection tables picker so grouping looks the
- * same everywhere; the trigger shares the filter pills' size token.
+ * select. Options with an *icon* show it beside the label (the collection
+ * tables picker); overview filter bars pass text-only options. Used everywhere
+ * grouping is offered so it looks the same; the trigger shares the filter
+ * pills' size token.
  */
 export function GroupBySelect<V extends string>({ value, onChange, options, className }: GroupBySelectProps<V>) {
   const { t } = useTranslation();
@@ -44,9 +46,13 @@ export function GroupBySelect<V extends string>({ value, onChange, options, clas
         <SelectContent>
           {options.map(({ value: optionValue, label: optionLabel, icon: Icon }) => (
             <SelectItem key={optionValue} value={optionValue} className="text-xs">
-              <span className="flex items-center gap-1.5">
-                <Icon className="h-3 w-3" /> {optionLabel}
-              </span>
+              {Icon ? (
+                <span className="flex items-center gap-1.5">
+                  <Icon className="h-3 w-3" /> {optionLabel}
+                </span>
+              ) : (
+                optionLabel
+              )}
             </SelectItem>
           ))}
         </SelectContent>

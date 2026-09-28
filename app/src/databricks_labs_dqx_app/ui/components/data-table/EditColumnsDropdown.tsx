@@ -7,6 +7,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,33 @@ interface SortableItemProps<K extends string> {
   checked: boolean;
   onCheckedChange: () => void;
   disabled?: boolean;
+}
+
+function ToggleItem({ label, checked, onCheckedChange, disabled }: Omit<SortableItemProps<string>, "id">) {
+  return (
+    <DropdownMenuCheckboxItem
+      className="flex-1"
+      checked={checked}
+      onCheckedChange={disabled ? undefined : onCheckedChange}
+      disabled={disabled}
+      onSelect={(e) => e.preventDefault()}
+    >
+      {label}
+    </DropdownMenuCheckboxItem>
+  );
+}
+
+/** A pinned entry: toggleable, but with no drag handle and outside the sortable list. */
+function PinnedItem({ label, checked, onCheckedChange, disabled }: Omit<SortableItemProps<string>, "id">) {
+  return (
+    <div className="flex items-center">
+      {/* Same footprint as the drag handle so labels line up with the sortable rows. */}
+      <span className="px-1" aria-hidden>
+        <span className="block h-4 w-4" />
+      </span>
+      <ToggleItem label={label} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+    </div>
+  );
 }
 
 function SortableItem<K extends string>({ id, label, checked, onCheckedChange, disabled }: SortableItemProps<K>) {
@@ -39,21 +67,13 @@ function SortableItem<K extends string>({ id, label, checked, onCheckedChange, d
       >
         <GripVertical className="h-4 w-4" />
       </span>
-      <DropdownMenuCheckboxItem
-        className="flex-1"
-        checked={checked}
-        onCheckedChange={disabled ? undefined : onCheckedChange}
-        disabled={disabled}
-        onSelect={(e) => e.preventDefault()}
-      >
-        {label}
-      </DropdownMenuCheckboxItem>
+      <ToggleItem label={label} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
     </div>
   );
 }
 
 /**
- * A drag-reorderable, toggleable list of keys — one view of the Edit Columns
+ * A drag-reorderable, toggleable list of keys — one view of the Edit View
  * menu. The column view is fed by `useColumnLayout`; the filter view by
  * `useFilterLayout` (adapt it with `filterLayoutMenuConfig`).
  */
@@ -63,6 +83,9 @@ export interface SortableToggleListConfig<K extends string> {
   labelOf: (id: K) => string;
   /** False locks an entry on (shown checked and disabled). */
   toggleableOf: (id: K) => boolean;
+  /** True pins an entry to the top: listed first with no drag handle, never
+   *  reorderable, and nothing can be dropped above it. Still toggleable. */
+  pinnedOf?: (id: K) => boolean;
   isChecked: (id: K) => boolean;
   onToggle: (id: K) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -73,26 +96,35 @@ function SortableToggleList<K extends string>({
   order,
   labelOf,
   toggleableOf,
+  pinnedOf,
   isChecked,
   onToggle,
   onDragEnd,
   sensors,
 }: SortableToggleListConfig<K>) {
+  const pinned = pinnedOf ? order.filter(pinnedOf) : [];
+  const sortable = pinnedOf ? order.filter((key) => !pinnedOf(key)) : order;
+  const itemProps = (key: K) => ({
+    label: labelOf(key),
+    checked: toggleableOf(key) ? isChecked(key) : true,
+    onCheckedChange: () => onToggle(key),
+    disabled: !toggleableOf(key),
+  });
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <SortableContext items={order} strategy={verticalListSortingStrategy}>
-        {order.map((key) => (
-          <SortableItem
-            key={key}
-            id={key}
-            label={labelOf(key)}
-            checked={toggleableOf(key) ? isChecked(key) : true}
-            onCheckedChange={() => onToggle(key)}
-            disabled={!toggleableOf(key)}
-          />
-        ))}
-      </SortableContext>
-    </DndContext>
+    <>
+      {pinned.map((key) => (
+        <PinnedItem key={key} {...itemProps(key)} />
+      ))}
+      {pinned.length > 0 && sortable.length > 0 && <DropdownMenuSeparator />}
+      {/* Only unpinned keys are sortable, so a drag can never land above a pinned entry. */}
+      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+        <SortableContext items={sortable} strategy={verticalListSortingStrategy}>
+          {sortable.map((key) => (
+            <SortableItem key={key} id={key} {...itemProps(key)} />
+          ))}
+        </SortableContext>
+      </DndContext>
+    </>
   );
 }
 
@@ -117,7 +149,7 @@ export interface EditColumnsDropdownProps<K extends string, F extends string = s
 }
 
 /**
- * The "Edit Columns" trigger + dropdown shared by every overview table: toggle
+ * The "Edit View" trigger + dropdown shared by every overview table: toggle
  * and drag-reorder columns and, when `filters` is given, the filter pills.
  * Ported from dqlake's `BindingsTable` dropdown so the lists behave identically.
  */
@@ -140,8 +172,17 @@ export function EditColumnsDropdown<K extends string, F extends string = string>
           <div
             role="radiogroup"
             aria-label={t("common.editColumnsView")}
-            className="mb-1 grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5"
+            className="relative mb-1 grid grid-cols-2 rounded-md bg-muted p-0.5"
           >
+            {/* Sliding thumb: one segment wide, moved a full width to the right for Filters. */}
+            <span
+              aria-hidden
+              className={cn(
+                "absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-[5px] bg-background shadow-sm",
+                "transition-transform duration-200 ease-out motion-reduce:transition-none",
+                view === "filters" && "translate-x-full",
+              )}
+            />
             {(["columns", "filters"] as const).map((option) => (
               <button
                 key={option}
@@ -150,10 +191,8 @@ export function EditColumnsDropdown<K extends string, F extends string = string>
                 aria-checked={view === option}
                 onClick={() => setView(option)}
                 className={cn(
-                  "h-7 rounded-[5px] px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                  view === option
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
+                  "relative h-7 rounded-[5px] px-2 text-xs font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
+                  view === option ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {option === "columns" ? t("common.editColumnsColumns") : t("common.editColumnsFilters")}

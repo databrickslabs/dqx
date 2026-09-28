@@ -130,7 +130,7 @@ function loadLayout<K extends string>(
 
 /**
  * Shared column visibility/order/width/resize state for tables with a
- * drag-reorderable, toggleable "Edit Columns" dropdown. Ported from
+ * drag-reorderable, toggleable "Edit View" dropdown. Ported from
  * dqlake's `BindingsTable` and used by both the Rules Registry list
  * (`RulesTable`) and the Monitored Tables list (`MonitoredTablesTable`) so
  * the two don't drift in behavior.

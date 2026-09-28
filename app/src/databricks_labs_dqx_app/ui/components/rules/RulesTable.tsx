@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
+import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
 import { RuleAppliedTablesPanel } from "@/components/monitored-tables/ImplementedRulesExplorer";
 import {
   STICKY_ACTIONS_HEAD_CLASS,
@@ -634,21 +635,10 @@ export function RulesTable<F extends string = string>({
     : visibleKeys;
 
   const groups = useMemo(() => rows.map((r) => groupForRule?.(r)), [rows, groupForRule]);
-  const groupCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const group of groups) {
-      if (group) counts.set(group.key, (counts.get(group.key) ?? 0) + 1);
-    }
-    return counts;
-  }, [groups]);
+  const groupCounts = useMemo(() => countByGroup(groups), [groups]);
 
   function toggleGroup(key: string) {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExpandedGroups((prev) => toggleGroupKey(prev, key));
   }
 
   return (
@@ -716,7 +706,10 @@ export function RulesTable<F extends string = string>({
                     onClick={def.sortable ? () => handleHeaderClick(k) : undefined}
                     aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                   >
-                    <span className="inline-flex items-center gap-1">
+                    {/* Block-level flex so icon-only headers centre in the
+                        row like text ones (an inline box with no text would
+                        sit on the text baseline, riding high). */}
+                    <span className={cn("flex items-center gap-1", k === "actions" && "justify-end")}>
                       {def.renderHeader(label)}
                       {isSorted &&
                         (sortDir === "asc" ? (
@@ -748,31 +741,13 @@ export function RulesTable<F extends string = string>({
               return (
               <Fragment key={r.rule_id}>
               {showGroupHeader && group && (
-                <TableRow className="hover:bg-muted/30">
-                  <TableCell
-                    colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
-                    className="bg-muted/30 p-0 text-xs font-semibold text-foreground"
-                  >
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted"
-                      aria-expanded={expanded}
-                      onClick={() => toggleGroup(group.key)}
-                    >
-                      <ChevronDown
-                        className={cn(
-                          "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                          !expanded && "-rotate-90",
-                        )}
-                        aria-hidden
-                      />
-                      <span>{group.label}</span>
-                      <Badge variant="secondary" className="min-w-6 justify-center text-[10px]">
-                        {groupCounts.get(group.key) ?? 0}
-                      </Badge>
-                    </button>
-                  </TableCell>
-                </TableRow>
+                <GroupHeaderRow
+                  label={group.label}
+                  count={groupCounts.get(group.key) ?? 0}
+                  expanded={expanded}
+                  onToggle={() => toggleGroup(group.key)}
+                  colSpan={orderedKeys.length + (showSelection ? 1 : 0)}
+                />
               )}
               {expanded && (
               <TableRow className="group cursor-pointer" onClick={() => onRowClick(r)}>

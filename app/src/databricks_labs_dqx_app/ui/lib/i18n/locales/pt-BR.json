@@ -92,7 +92,7 @@
     "copy": "Copiar",
     "copied": "Copiado",
     "reset": "Redefinir",
-    "editColumns": "Editar colunas",
+    "editColumns": "Editar visualização",
     "relativeJustNow": "agora mesmo",
     "relativeMinutesAgo": "há {{count}}m",
     "relativeHoursAgo": "há {{count}}h",
@@ -1580,7 +1580,7 @@
     "colDescription": "Descrição",
     "colCreatedBy": "Criado por",
     "colSlots": "Tipo(s) de coluna",
-    "editColumns": "Editar colunas",
+    "editColumns": "Editar visualização",
     "emptyState": "Nenhuma regra do registro corresponde a esses filtros ainda.",
     "emptyStateNoRulesCta": "Ainda não há regras — clique em \"Nova regra\" para criar uma.",
     "emptyStateNoRules": "Ainda não há regras no registro.",
@@ -2444,7 +2444,12 @@
       "noneForRule": "Esta regra ainda não está aplicada a nenhuma tabela."
     },
     "importButton": "Importar",
-    "colAllRules": "Todas as regras",
+    "colAppliedRules": "Regras aplicadas",
+    "groupByNone": "Nenhum",
+    "groupByDqScore": "Pontuação de qualidade",
+    "groupByCatalog": "Catálogo",
+    "groupBySchema": "Esquema",
+    "groupUnknown": "Desconhecido",
     "filterSearch": "Pesquisa"
   },
   "dataProducts": {

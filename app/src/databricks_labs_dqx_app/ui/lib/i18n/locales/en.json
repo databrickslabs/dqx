@@ -92,7 +92,7 @@
     "copy": "Copy",
     "copied": "Copied",
     "reset": "Reset",
-    "editColumns": "Edit Columns",
+    "editColumns": "Edit View",
     "relativeJustNow": "just now",
     "relativeMinutesAgo": "{{count}}m ago",
     "relativeHoursAgo": "{{count}}h ago",
@@ -1580,7 +1580,7 @@
     "colDescription": "Description",
     "colCreatedBy": "Created By",
     "colSlots": "Column Type(s)",
-    "editColumns": "Edit Columns",
+    "editColumns": "Edit View",
     "emptyState": "No registry rules match these filters yet.",
     "emptyStateNoRulesCta": "No rules yet — click \"New rule\" to create one.",
     "emptyStateNoRules": "No registry rules yet.",
@@ -2444,7 +2444,12 @@
       "noneForRule": "This rule isn't applied to any tables yet."
     },
     "importButton": "Import",
-    "colAllRules": "All Rules",
+    "colAppliedRules": "Applied Rules",
+    "groupByNone": "None",
+    "groupByDqScore": "DQ score",
+    "groupByCatalog": "Catalog",
+    "groupBySchema": "Schema",
+    "groupUnknown": "Unknown",
     "filterSearch": "Search"
   },
   "dataProducts": {

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
+import { useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -65,6 +65,14 @@ import {
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
+import { FilterPills } from "@/components/data-table/FilterToolbar";
+import { GroupBySelect } from "@/components/data-table/GroupBySelect";
+import {
+  sortTablesByGroup,
+  tableGroupOf,
+  type GroupableTable,
+  type TableGroupBy,
+} from "@/components/monitored-tables/table-grouping";
 import {
   filterLayoutMenuConfig,
   useFilterLayout,
@@ -76,9 +84,18 @@ import { isFqnLikeTableSearch, matchesTableFqnSearch } from "./monitored-tables-
 const PAGE_SIZE = 25;
 const ALL = "all";
 
-type TablesFilterKey = "search" | "catalog" | "schema" | "owner" | "dqScore";
-const FILTER_ORDER: readonly TablesFilterKey[] = ["search", "catalog", "schema", "owner", "dqScore"];
+const GROUP_BY_OPTIONS: readonly { value: TableGroupBy; labelKey: string }[] = [
+  { value: "none", labelKey: "monitoredTables.groupByNone" },
+  { value: "dqScore", labelKey: "monitoredTables.groupByDqScore" },
+  { value: "catalog", labelKey: "monitoredTables.groupByCatalog" },
+  { value: "schema", labelKey: "monitoredTables.groupBySchema" },
+];
+
+type TablesFilterKey = "groupBy" | "search" | "catalog" | "schema" | "owner" | "dqScore";
+// Group by is pinned: always first, divided from the other pills, not reorderable.
+const FILTER_ORDER: readonly TablesFilterKey[] = ["groupBy", "search", "catalog", "schema", "owner", "dqScore"];
 const FILTERS: Record<TablesFilterKey, FilterLayoutDef> = {
+  groupBy: { labelKey: "common.groupBy", defaultVisible: false, pinned: true },
   search: { labelKey: "monitoredTables.filterSearch", defaultVisible: true },
   catalog: { labelKey: "monitoredTables.colCatalog", defaultVisible: true },
   schema: { labelKey: "monitoredTables.colSchema", defaultVisible: true },
@@ -142,6 +159,10 @@ function splitFqn(fqn: string): { catalog: string; schema: string } {
   return { catalog: parts[0] ?? "", schema: parts[1] ?? "" };
 }
 
+function toGroupableTable(row: MonitoredTableSummaryOut): GroupableTable {
+  return { tableFqn: row.table.table_fqn, score: row.score };
+}
+
 function MonitoredTablesPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
@@ -154,6 +175,7 @@ function MonitoredTablesPage() {
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
+  const [groupBy, setGroupBy] = useState<TableGroupBy>("none");
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
@@ -230,25 +252,35 @@ function MonitoredTablesPage() {
     [sortKey, sortDir],
   );
 
+  // Grouped views sort by group first (a stable sort, so the active column
+  // sort still orders rows within each group).
   const sortedTables = useMemo(() => {
-    if (!sortKey) return visibleTables;
-    const { nullsFirst } = getMonitoredTablesSortConfig(sortKey);
     const copy = [...visibleTables];
-    copy.sort((a, b) =>
-      compareSortValues(
-        getMonitoredTablesSortValue(sortKey, a),
-        getMonitoredTablesSortValue(sortKey, b),
-        sortDir,
-        nullsFirst,
-      ),
-    );
-    return copy;
-  }, [visibleTables, sortKey, sortDir]);
+    if (sortKey) {
+      const { nullsFirst } = getMonitoredTablesSortConfig(sortKey);
+      copy.sort((a, b) =>
+        compareSortValues(
+          getMonitoredTablesSortValue(sortKey, a),
+          getMonitoredTablesSortValue(sortKey, b),
+          sortDir,
+          nullsFirst,
+        ),
+      );
+    }
+    return sortTablesByGroup(copy, groupBy, toGroupableTable);
+  }, [visibleTables, sortKey, sortDir, groupBy]);
+
+  const groupForRow = useCallback(
+    (row: MonitoredTableSummaryOut) => tableGroupOf(toGroupableTable(row), groupBy, (key) => t(key)),
+    [groupBy, t],
+  );
 
   const pagedTables = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return sortedTables.slice(start, start + PAGE_SIZE);
   }, [sortedTables, page]);
+  // Groups collapse to headers, so the grouped view lists every table unpaginated.
+  const visibleRows = groupBy === "none" ? pagedTables : sortedTables;
 
   const hasActiveFilters =
     ownerFilter !== ALL ||
@@ -282,6 +314,8 @@ function MonitoredTablesPage() {
         return setOwnerFilter(ALL);
       case "dqScore":
         return setScoreFilter(DQ_SCORE_FILTER_ALL);
+      case "groupBy":
+        return setGroupBy("none");
     }
   }, []);
   const filterLayout = useFilterLayout<TablesFilterKey>({
@@ -580,6 +614,16 @@ function MonitoredTablesPage() {
   };
 
   const filterControls: Record<TablesFilterKey, ReactNode> = {
+    groupBy: (
+      <GroupBySelect
+        value={groupBy}
+        onChange={(value) => {
+          setGroupBy(value);
+          setPage(1);
+        }}
+        options={GROUP_BY_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
+      />
+    ),
     search: (
       <div className="relative w-56">
         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -690,7 +734,9 @@ function MonitoredTablesPage() {
         <div className="relative">
           {bulkToolbar}
           <MonitoredTablesTable
-          rows={pagedTables}
+          rows={visibleRows}
+          groupForRow={groupBy === "none" ? undefined : groupForRow}
+          forceGroupsExpanded={nameSearch.trim().length > 0}
           sortKey={sortKey}
           sortDir={sortDir}
           onHeaderClick={handleHeaderClick}
@@ -701,9 +747,13 @@ function MonitoredTablesPage() {
           pendingBindingId={pendingId}
           selection={tableSelection}
           filterLayout={filterLayoutMenuConfig(filterLayout, (key) => t(FILTERS[key].labelKey))}
-          toolbarExtra={filterLayout.visibleKeys.map((key) => (
-            <Fragment key={key}>{filterControls[key]}</Fragment>
-          ))}
+          toolbarExtra={
+            <FilterPills
+              keys={filterLayout.visibleKeys}
+              isPinned={filterLayout.isPinned}
+              renderPill={(key) => filterControls[key]}
+            />
+          }
           renderActions={
             // Canonical order (mirrors collections): Run → Approve → Reject →
             // View changes → Revert → Delete. Approve/reject gated on
@@ -853,7 +903,7 @@ function MonitoredTablesPage() {
           />
         </div>
 
-        {visibleTables.length > 0 && (
+        {groupBy === "none" && visibleTables.length > 0 && (
           <Pagination page={page} totalItems={visibleTables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>
