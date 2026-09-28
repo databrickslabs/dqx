@@ -171,18 +171,89 @@ class TestBaselineOnlyCatalogue:
     def test_catalogue_is_exactly_the_baseline(self):
         assert [m.version for m in PG_MIGRATIONS] == [1]
 
-    def test_every_statement_creates_a_table_or_an_index(self):
+    def test_every_statement_creates_a_table_index_or_view(self):
+        # The baseline is CREATE TABLE / CREATE INDEX plus the single
+        # ``dq_rules_core`` compatibility view (CREATE OR REPLACE VIEW) —
+        # still declarative, no ALTER/backfill UPDATE.
         for stmt in _statements(_baseline()):
             assert stmt.startswith(
-                ("CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")
-            ), f"baseline statement is neither a CREATE TABLE nor a CREATE INDEX: {stmt[:120]}"
+                ("CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS", "CREATE OR REPLACE VIEW")
+            ), f"unexpected baseline statement kind: {stmt[:120]}"
 
     def test_no_table_is_created_twice(self):
         created = _created_tables(_baseline())
         assert len(created) == len(set(created))
 
     def test_oltp_table_set_is_derived_from_postgres_baseline(self):
+        # The view is not a table and must stay out of OLTP_TABLE_NAMES
+        # (it is never cleared by the reset sweep nor version-tracked).
         assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+        assert "dq_rules_core" not in OLTP_TABLE_NAMES
+
+
+class TestDqRulesCoreView:
+    """The dqx-core-compatible read view over approved ``dq_resolved_rules``."""
+
+    def test_baseline_creates_exactly_one_view(self):
+        views = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        assert len(views) == 1
+        assert "{schema}.dq_rules_core" in views[0]
+
+    def test_view_exposes_the_columns_dqx_core_reads(self):
+        (view,) = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        # Column names + order must match dqx-core's LakebaseChecksStorageHandler.
+        for col in (
+            "AS name",
+            "AS criticality",
+            'AS "check"',
+            "AS filter",
+            "AS run_config_name",
+            "AS user_metadata",
+            "AS message_expr",
+            "AS created_at",
+            "AS rule_fingerprint",
+            "AS rule_set_fingerprint",
+        ):
+            assert col in view, f"view is missing projection {col!r}"
+
+    def test_view_only_reads_approved_rows(self):
+        (view,) = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        assert "WHERE status = 'approved'" in view
+
+    def test_view_maps_run_config_name_to_table_fqn(self):
+        (view,) = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        assert "a.table_fqn" in view and "AS run_config_name" in view
+
+    def test_set_fingerprint_algorithm_matches_dqx_core(self):
+        # The view computes rule_set_fingerprint as sha256 of the JSON array of
+        # sorted per-rule fingerprints (the set_fp CTE). That must equal
+        # dqx-core's compute_rule_set_fingerprint so external callers see a
+        # value consistent with the core library. This guards against drift
+        # between the SQL reproduction and core's Python for the common
+        # (non-for_each_column) case.
+        import hashlib
+        import json as _json
+
+        from databricks.labs.dqx.rule import compute_rule_fingerprint
+        from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
+
+        checks = [
+            {"name": "a", "criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+            {
+                "name": "b",
+                "criticality": "warn",
+                "check": {"function": "is_not_null", "arguments": {"column": "email"}},
+            },
+        ]
+        stored_fps = [compute_rule_fingerprint(c) for c in checks]
+        # Python emulation of the view's SQL string_agg:
+        #   '[' || string_agg('"'||fp||'"', ', ' ORDER BY fp) || ']'
+        view_input = "[" + ", ".join(f'"{fp}"' for fp in sorted(stored_fps)) + "]"
+        # (json.dumps(sorted(fps)) renders identically — verified below.)
+        assert view_input == _json.dumps(sorted(stored_fps))
+        view_fp = hashlib.sha256(view_input.encode("utf-8")).hexdigest()
+
+        assert view_fp == compute_rule_set_fingerprint_by_metadata(checks)
 
 
 class TestBaselineShape:

@@ -6,16 +6,58 @@ import Admonition from '@theme/Admonition';
 
 #  Demos
 
-## DQX Studio built-in demo
+## DQX Core
 
-If you're using [DQX Studio](/docs/studio/), the no-code web app, you don't need
-a notebook to try it out. Studio ships with a **built-in demo** so you can
+Import the following notebooks in the Databricks workspace to try DQX Core out:
+
+### Use as Library
+* [DQX Quick Start Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_quick_start_demo_library.py) - quickstart DQX usage as a library.
+* [DQX Intermediate Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_intermediate_demo_library.py) - intermediate-level DQX usage as a library.
+* [DQX Comprehensive Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_library.py) - comprehensive DQX usage as a library.
+* [DQX Demo Notebook for Data Quality Summary Metrics](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_summary_metrics.py) - demonstrates how to generate summary-level data quality metrics when validating data with DQX.
+* [DQX Demo Notebook for Actions and Alerting](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_alerting.py) - demonstrates how to react to data quality problems by firing alerts (driver log, with optional Slack) when summary metrics cross a threshold.
+* [DQX Demo Notebook for Profiling and Applying Checks at Scale on Multiple Tables](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_multi_table_demo.py) - demonstrates how to use DQX as a library at scale to apply checks on multiple tables.
+* [DQX Demo Notebook for Row Anomaly Detection](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_row_anomaly_detection_demo.py) - comprehensive demo showing how to use DQX Row Anomaly Detection to detect unusual patterns in your data.
+* [DQX Demo Notebook for AI-assisted checks generation](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_ai_assisted_checks_generation.py) - demonstrates how to generate DQX rules/checks with LLM using natural language.
+* [DQX Demo Notebook for Data Contract Integration (ODCS)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_datacontract_odcs.py) - demonstrates how to generate DQX quality rules from ODCS (Open Data Contract Standard) data contracts, including predefined rules from schema constraints, explicit custom rules, and contract metadata tracking.
+* [DQX Demo Notebook for Spark Structured Streaming (Native End-to-End Approach)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_streaming_demo_native.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, using the built-in end-to-end method to handle both reading and writing.
+* [DQX Demo Notebook for Spark Structured Streaming (DIY Approach)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_streaming_demo_diy.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, while handling reading and writing on your own outside DQX using Spark API.
+* [DQX Demo Notebook for Lakeflow Pipelines (formerly DLT)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo.py) - demonstrates how to use DQX in a Lakeflow Pipeline, reporting issues as additional columns and computing data quality summary metrics.
+* [DQX Demo Notebook for Lakeflow Pipelines with Quarantine](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline to split valid and invalid records into valid and quarantine tables and compute summary metrics.
+* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo_foreach_batch.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink, reporting issues as additional columns and computing summary metrics incrementally.
+* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink and Quarantine](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo_foreach_batch_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink to split valid and invalid records into separate tables in the same batch and compute summary metrics incrementally.
+* [DQX usage with Declarative Automation Bundles](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_asset_bundle/README.md) - demonstrates how to use DQX as a library with Declarative Automation Bundles (formerly Databricks Asset Bundles).
+* [DQX usage with dbt](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_dbt/README.md) - demonstrates how to use DQX as a library with dbt projects.
+* [DQX Demo on Primary-Key detection](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_llm_pk_detection.py) - demonstrates how to detect primary keys and generate uniqueness rules.
+
+### Use as Workspace Tool
+* [DQX Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool when installed in the workspace.
+
+### Industry Accelerators
+* [DQX for Banking / FSI Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_banking_demo.py) - showcases DQX data quality rules tailored for the Banking and Financial Services industry, focusing on fraud detection, transaction structuring, and regulatory compliance.
+* [DQX for Fashion & Retail Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_fashion_demo.py) - demonstrates DQX rules tailored for the Fashion and Retail industry, including SKU validation, hex color formats, and pricing compliance.
+* [DQX for Manufacturing Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_manufacturing_demo.py) - demonstrates how to use DQX to check data quality for Manufacturing Industry datasets, specifically for machine maintenance and sensor data.
+* [DQX for Customer 360 Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_customer_360_demo.py) - demonstrates DQX data quality rules for Customer 360 datasets, including customer identity, email format, revenue, ticket counts, purchase dates, and active customer flag consistency.
+
+### Use Cases
+* [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_pii_detection.py) - demonstrates how to use DQX to check data for Personally Identifiable Information (PII).
+
+<br />
+<Admonition type="tip" title="Execution Environment">
+You don't have to run DQX from a Notebook. DQX can be run from any Python script as long as it runs on Databricks.
+For example, you can run it from a Databricks job by adding DQX as a dependent library.
+When DQX is installed in the workspace as a tool, it provides a suite of command-line tools for executing DQX jobs (see the [User Guide](/docs/guide)).
+</Admonition>
+
+## DQX Studio
+
+If you're using [DQX Studio](/docs/studio/), the no-code web app, you can try the **app built-in demo** so you can
 explore every feature against realistic data before pointing it at your own
 tables. It creates a small set of sample tables, a library of reusable rules,
 monitored tables, collections, and past runs — enough to see scores, trends,
 failing records, and the approval workflow in action.
 
-An admin deploys the demo from the [Marketplace](/docs/studio/authoring/marketplace)
+An admin deploys the demo from the [Rule Marketplace](/docs/studio/authoring/rule-marketplace)
 — it's the **Deploy demo content** action at the top of the page. Deploying it
 sets up the sample catalog, seeds the rules and monitored tables, and generates a
 history of runs so the results views have something to show. Once it's in place
@@ -36,47 +78,5 @@ they do to the demo touches production data.
 <Admonition type="note" title="Admin only">
 Only the **Admin** role can deploy or remove the demo, since it creates sample
 data and app content. See
-[Set up DQX Studio for your organization](/docs/studio/governance/).
-</Admonition>
-
-## Notebook demos
-
-Import the following notebooks in the Databricks workspace to try DQX out:
-## Use as Library
-* [DQX Quick Start Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_quick_start_demo_library.py) - quickstart DQX usage as a library.
-* [DQX Intermediate Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_intermediate_demo_library.py) - intermediate-level DQX usage as a library.
-* [DQX Comprehensive Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_library.py) - comprehensive DQX usage as a library.
-* [DQX Demo Notebook for Data Quality Summary Metrics](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_summary_metrics.py) - demonstrates how to generate summary-level data quality metrics when validating data with DQX.
-* [DQX Demo Notebook for Actions and Alerting](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_alerting.py) - demonstrates how to react to data quality problems by firing alerts (driver log, with optional Slack) when summary metrics cross a threshold.
-* [DQX Demo Notebook for Profiling and Applying Checks at Scale on Multiple Tables](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_multi_table_demo.py) - demonstrates how to use DQX as a library at scale to apply checks on multiple tables.
-* [DQX Demo Notebook for Row Anomaly Detection](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_row_anomaly_detection_demo.py) - comprehensive demo showing how to use DQX Row Anomaly Detection to detect unusual patterns in your data.
-* [DQX Demo Notebook for AI-assisted checks generation](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_ai_assisted_checks_generation.py) - demonstrates how to generate DQX rules/checks with LLM using natural language.
-* [DQX Demo Notebook for Data Contract Integration (ODCS)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_datacontract_odcs.py) - demonstrates how to generate DQX quality rules from ODCS (Open Data Contract Standard) data contracts, including predefined rules from schema constraints, explicit custom rules, and contract metadata tracking.
-* [DQX Demo Notebook for Spark Structured Streaming (Native End-to-End Approach)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_streaming_demo_native.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, using the built-in end-to-end method to handle both reading and writing.
-* [DQX Demo Notebook for Spark Structured Streaming (DIY Approach)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_streaming_demo_diy.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, while handling reading and writing on your own outside DQX using Spark API.
-* [DQX Demo Notebook for Lakeflow Pipelines (formerly DLT)](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo.py) - demonstrates how to use DQX in a Lakeflow Pipeline, reporting issues as additional columns and computing data quality summary metrics.
-* [DQX Demo Notebook for Lakeflow Pipelines with Quarantine](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline to split valid and invalid records into valid and quarantine tables and compute summary metrics.
-* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo_foreach_batch.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink, reporting issues as additional columns and computing summary metrics incrementally.
-* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink and Quarantine](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_ldp_demo_foreach_batch_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink to split valid and invalid records into separate tables in the same batch and compute summary metrics incrementally.
-* [DQX usage with Declarative Automation Bundles](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_asset_bundle/README.md) - demonstrates how to use DQX as a library with Declarative Automation Bundles (formerly Databricks Asset Bundles).
-* [DQX usage with dbt](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_dbt/README.md) - demonstrates how to use DQX as a library with dbt projects.
-* [DQX Demo on Primary-Key detection](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_llm_pk_detection.py) - demonstrates how to detect primary keys and generate uniqueness rules.
-
-## Deploy as Workspace Tool
-* [DQX Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool when installed in the workspace.
-
-## Industry Accelerators
-* [DQX for Banking / FSI Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_banking_demo.py) - showcases DQX data quality rules tailored for the Banking and Financial Services industry, focusing on fraud detection, transaction structuring, and regulatory compliance.
-* [DQX for Fashion & Retail Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_fashion_demo.py) - demonstrates DQX rules tailored for the Fashion and Retail industry, including SKU validation, hex color formats, and pricing compliance.
-* [DQX for Manufacturing Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_manufacturing_demo.py) - demonstrates how to use DQX to check data quality for Manufacturing Industry datasets, specifically for machine maintenance and sensor data.
-* [DQX for Customer 360 Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_industry/dqx_customer_360_demo.py) - demonstrates DQX data quality rules for Customer 360 datasets, including customer identity, email format, revenue, ticket counts, purchase dates, and active customer flag consistency.
-
-## Use Cases
-* [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_demo_pii_detection.py) - demonstrates how to use DQX to check data for Personally Identifiable Information (PII).
-
-<br />
-<Admonition type="tip" title="Execution Environment">
-You don't have to run DQX from a Notebook. DQX can be run from any Python script as long as it runs on Databricks.
-For example, you can run it from a Databricks job by adding DQX as a dependent library.
-When DQX is installed in the workspace as a tool, it provides a suite of command-line tools for executing DQX jobs (see the [User Guide](/docs/guide)).
+[Configure DQX Studio](/docs/studio/governance/).
 </Admonition>

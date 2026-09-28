@@ -6,7 +6,7 @@ import Button from '../components/Button';
 import {
   AppWindow, Code, Sparkles, BarChart2, ShieldCheck, LineChart, ScrollText,
   Boxes, Store, ArrowRight, Library,
-  Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar, Calculator,
+  Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar,
   Bell, BotMessageSquare,
 } from 'lucide-react';
 
@@ -41,7 +41,7 @@ const Hero = (): JSX.Element => {
             notebooks — batch and streaming.
           </p>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-semibold px-2.5 py-1 mb-3">
-            Used by 700+ Databricks customers
+            Battle-tested data quality framework
           </span>
           <span className="text-blue-600 dark:text-blue-400 text-sm font-medium inline-flex items-center gap-1 mt-auto">
             Open the Core guide
@@ -94,11 +94,17 @@ const coreFeatures = [
 
 const studioFeatures = [
   { title: 'Reusable rules repository', description: 'Build reusable checks in low code, with a built-in AI assistant.', icon: Library, link: '/docs/studio/authoring/create-a-rule' },
+  { title: 'Row & column-level rules', description: 'Define quality rules at both the row and column level.', icon: Grid, link: '/docs/studio/authoring/create-a-rule' },
+  { title: 'Rich failure detail', description: 'Drill into exactly which rows failed and why, right down to the failing records.', icon: Info, link: '/docs/studio/running/' },
+  { title: 'Custom reactions to failures', description: 'Set pass thresholds and severities to decide what a failure means and how to triage it.', icon: AlertTriangle, link: '/docs/studio/monitoring/assign-rules' },
+  { title: 'Profiling & rule generation', description: 'Point the app at a table to profile it and auto-generate tailored rule candidates.', icon: PieChart, link: '/docs/studio/monitoring/profiling' },
+  { title: 'Data contracts support', description: 'Generate quality rules from ODCS data contracts, schema validation included.', icon: ScrollText, link: '/docs/studio/authoring/import-rules' },
   { title: 'Monitor tables & thresholds', description: 'Apply rules to tables, set pass thresholds, and improve quality gradually.', icon: BarChart2, link: '/docs/studio/monitoring/assign-rules' },
   { title: 'Suggest rules with AI', description: 'Point the app at a table and it proposes a tailored set of checks for its columns and data.', icon: Sparkles, link: '/docs/studio/monitoring/assign-rules#suggest-rules-with-ai' },
   { title: 'Data products with Collections', description: 'Group related tables into a data product and see quality across all of them at once.', icon: Boxes, link: '/docs/studio/monitoring/collections' },
   { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/' },
   { title: 'Governed by design', description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog.', icon: ShieldCheck, link: '/docs/studio/governance/approval-workflow' },
+  { title: 'Marketplace-based installation', description: 'A one-click installation into your workspace using the Databricks Marketplace — no manual deployment steps.', icon: Store, link: '/docs/installation#dqx-studio-installation' },
 ];
 
 const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'core' | 'studio') => void }): JSX.Element => {
@@ -199,82 +205,6 @@ const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'cor
   );
 };
 
-const Marketplace = (): JSX.Element => {
-  return (
-    <div className="px-4 md:px-10 py-12 w-full">
-      <div className="max-w-5xl mx-auto rounded-2xl border border-dashed border-purple-300 dark:border-purple-800/60 bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-950/20 dark:to-blue-950/20 p-8 md:p-12 text-center">
-        <span className="inline-flex items-center gap-2 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-xs font-semibold px-3 py-1 mb-4">
-          <Store className="w-3.5 h-3.5" /> COMING SOON
-        </span>
-        <h2 className="text-2xl md:text-3xl font-semibold mb-3">
-          DQX Studio on the Databricks Marketplace
-        </h2>
-        <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto text-balance">
-          A one-click listing on the Databricks Marketplace to install DQX Studio into
-          your workspace — no manual deployment steps. We’re working on it.
-        </p>
-      </div>
-    </div>
-  );
-};
-
-const CostCalculator = (): JSX.Element => {
-  // Placeholder inputs — the calculator itself is not wired up yet.
-  const inputs = [
-    { label: 'Table size', value: '250 GB', min: '1 GB', max: '10 TB' },
-    { label: 'Results views per user per day', value: '20', min: '1', max: '200' },
-    { label: 'Number of users', value: '50', min: '1', max: '1,000' },
-  ];
-
-  return (
-    <div className="px-4 md:px-10 py-12 w-full">
-      <div className="max-w-5xl mx-auto rounded-2xl border border-dashed border-emerald-300 dark:border-emerald-800/60 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/20 dark:to-teal-950/20 p-8 md:p-12">
-        <div className="text-center">
-          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold px-3 py-1 mb-4">
-            <Calculator className="w-3.5 h-3.5" /> COMING SOON
-          </span>
-          <h2 className="text-2xl md:text-3xl font-semibold mb-3">
-            Cost Calculator
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto text-balance mb-8">
-            Estimate what running DQX Studio will cost for your workspace. Set your
-            table size, how often people look at results, and how many users you
-            have — we’ll do the maths. We’re working on it.
-          </p>
-        </div>
-
-        {/* Preview of the inputs — disabled until the calculator ships */}
-        <div
-          className="max-w-2xl mx-auto flex flex-col gap-6 opacity-60 select-none pointer-events-none"
-          aria-hidden="true"
-        >
-          {inputs.map((input, i) => (
-            <div key={i}>
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="text-sm font-medium text-gray-900 dark:text-white">{input.label}</span>
-                <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">{input.value}</span>
-              </div>
-              <input
-                type="range"
-                disabled
-                readOnly
-                min={0}
-                max={100}
-                defaultValue={i === 0 ? 30 : i === 1 ? 45 : 55}
-                className="w-full accent-emerald-500 cursor-not-allowed"
-              />
-              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-500 mt-1">
-                <span>{input.min}</span>
-                <span>{input.max}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 export default function Home(): JSX.Element {
   const [tab, setTab] = useState<'core' | 'studio'>('core');
   return (
@@ -283,12 +213,6 @@ export default function Home(): JSX.Element {
         <div className="flex flex-col items-center mx-auto w-full max-w-screen-xl">
           <Hero />
           <FeatureTabs tab={tab} setTab={setTab} />
-          {tab === 'studio' && (
-            <>
-              <Marketplace />
-              <CostCalculator />
-            </>
-          )}
         </div>
       </main>
     </Layout>

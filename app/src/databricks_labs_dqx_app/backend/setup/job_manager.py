@@ -17,7 +17,8 @@ from databricks.sdk.service.jobs import (
 
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 
-_MANAGED_TAGS = {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
+_DISCOVERY_TAGS = {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
+_MANAGED_TAGS = {"app": "dqx-studio", **_DISCOVERY_TAGS}
 _JOB_NAME = "dqx-studio-task-runner"
 _TASK_KEY = "run_task"
 _ENVIRONMENT_KEY = "default"
@@ -46,7 +47,7 @@ class TaskRunnerJobManager:
         for job in self.workspace.jobs.list(expand_tasks=True):
             settings = getattr(job, "settings", None)
             tags = getattr(settings, "tags", None) or {}
-            if all(tags.get(key) == value for key, value in _MANAGED_TAGS.items()):
+            if all(tags.get(key) == value for key, value in _DISCOVERY_TAGS.items()):
                 job_id = getattr(job, "job_id", None)
                 if isinstance(job_id, int):
                     return ResolvedJob(job_id=job_id, created=False)
