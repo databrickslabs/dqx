@@ -17,6 +17,7 @@ from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_defin
 from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
+from databricks_labs_dqx_app.backend.models import CheckFunctionDef
 from databricks_labs_dqx_app.backend.lowcode_compile import (
     CompiledLowcodeBody,
     brace_bare_slot_refs,
@@ -1208,9 +1209,7 @@ class AiRulesService:
             ``cardinality``, ``arg_key``), or ``[]`` when the function is
             unknown or has no column parameters.
         """
-        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
-
-        fn_def = next((f for f in _introspect_check_functions() if f.name == function), None)
+        fn_def = AiRulesService._check_function_def(function)
         if fn_def is None:
             return []
 
@@ -1285,21 +1284,29 @@ class AiRulesService:
         Returns:
             True when the proposal cannot be authored as a native rule.
         """
-        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
-
-        fn_def = next((f for f in _introspect_check_functions() if f.name == function), None)
+        fn_def = AiRulesService._check_function_def(function)
         if fn_def is None:
             return False
         column_params = [p for p in fn_def.params if p.kind in ("column", "columns")]
         # A list-typed column argument is the one check shape that legitimately
-        # targets several columns (a composite key), and the editor binds it fine.
-        if any(p.kind == "columns" for p in column_params):
-            return False
-        if len(slots) > 1:
+        # binds several columns (a composite key), so the slot COUNT says nothing
+        # about bindability there — but the value arguments are still checked
+        # below, rather than exempting the whole function.
+        if not any(p.kind == "columns" for p in column_params) and len(slots) > 1:
             return True
         # A second column smuggled into a value argument: the value names one of
         # the columns the model itself declared, or is a {{placeholder}} — either
         # way the editor renders that argument as a literal, not a column binding.
+        #
+        # KNOWN GAP: a BARE column name the model did not also declare in
+        # ``columns`` is not recognised here, and cannot be without a column
+        # universe to check against — this endpoint has none, because a registry
+        # rule is table-agnostic (the authoring form sends only the description).
+        # A purely textual test would misread legitimate string literals, which
+        # are shaped identically to a column name in exactly these arguments
+        # (``is_equal_to(value="emea")``, ``is_valid_national_id(country="GB")``).
+        # `_DQX_NATIVE_MULTI_COLUMN_GUIDANCE` is the primary defence; this is the
+        # backstop for the forms that ARE recognisable.
         declared = {
             AiRulesService._sanitize_slot_name(name) for name in AiRulesService._declared_column_names(ai_columns)
         }
@@ -1312,6 +1319,17 @@ class AiRulesService:
             if AiRulesService._sanitize_slot_name(value) in declared:
                 return True
         return False
+
+    @staticmethod
+    def _check_function_def(function: str) -> CheckFunctionDef | None:
+        """The introspected definition of one check function, or None when unknown.
+
+        Shared by the slot derivation and the bindability guard so both read the
+        same (lru_cached) catalog through one lookup.
+        """
+        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
+
+        return next((f for f in _introspect_check_functions() if f.name == function), None)
 
     @staticmethod
     def _slot_names_from_arg(value: object) -> list[str]:

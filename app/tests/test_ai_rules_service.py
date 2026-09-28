@@ -721,6 +721,30 @@ class TestGenerateRulePrefersBuiltInCheck:
         assert [slot["name"] for slot in result["slots"]] == ["order_id", "line_number"]
         assert gateway.query.call_count == 1
 
+    async def test_composite_key_check_still_checks_its_value_arguments(self):
+        # The list-typed `columns` argument exempts the SLOT COUNT (a composite key
+        # legitimately binds several columns) — not the whole function. An
+        # unbindable {{placeholder}} in a value argument is still caught, so the
+        # exemption stays as narrow as it claims to be.
+        native = json.dumps(
+            {
+                "name": "Order schema",
+                "description": "order table must match the expected schema",
+                "definition": {
+                    "function": "has_valid_schema",
+                    "arguments": {"columns": ["order_id"], "expected_schema": "{{schema_ddl}}"},
+                },
+                "columns": [{"name": "order_id", "family": "any"}],
+            }
+        )
+        gateway = _gateway_returning(native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="order table must match its schema", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 2
+
     def test_native_prompt_asks_for_a_decline_on_a_multi_column_requirement(self):
         # The prompt half of the fix: the model is told a built-in targets one
         # column, so it declines col-vs-col requirements instead of bending a

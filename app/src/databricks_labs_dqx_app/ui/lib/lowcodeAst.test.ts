@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { collectAstColumnRefs, type AnyRow, type LowcodeAstV2 } from "./lowcodeAst";
+import { collectAstColumnRefs, renameColumnInAst, type AnyRow, type LowcodeAstV2 } from "./lowcodeAst";
 
 // Unit tests for the AST reference scan that the authoring form's
 // "unused declared column(s)" gate rests on: a column the scan misses reads as
@@ -64,5 +64,58 @@ describe("collectAstColumnRefs", () => {
   test("ignores literal values and an empty AST", () => {
     expect([...collectAstColumnRefs(ast([row({ operator: "=", value: "SHIPPED" })]))]).toEqual(["ship_date"]);
     expect(collectAstColumnRefs(ast([])).size).toBe(0);
+  });
+});
+
+describe("renameColumnInAst", () => {
+  // The rename walker must cover the SAME reference sites collectAstColumnRefs
+  // counts: a site only one of them knows about leaves a renamed rule pointing
+  // at a slot that no longer exists, which the unused-column gate then passes.
+  test("renames a column used as a between bound", () => {
+    const renamed = renameColumnInAst(
+      ast([row({ operator: "between", value: [{ $col: "window_start" }, 5] })]),
+      "window_start",
+      "period_start",
+    );
+    expect(renamed.rows[0].value).toEqual([{ $col: "period_start" }, 5]);
+  });
+
+  test("renames a column used as an in entry", () => {
+    const renamed = renameColumnInAst(
+      ast([row({ column_ref: "status", operator: "in", value: ["OPEN", { $col: "default_status" }] })]),
+      "default_status",
+      "fallback_status",
+    );
+    expect(renamed.rows[0].value).toEqual(["OPEN", { $col: "fallback_status" }]);
+  });
+
+  test("renames a column in an aggregated row's comparison spec", () => {
+    const aggregatedRow: AnyRow = {
+      kind: "aggregated",
+      combinator: null,
+      aggregate: "sum",
+      column_ref: "net_amount",
+      operator: "<=",
+      value: { aggregate: "sum", column_ref: "gross_amount" },
+    };
+    const renamed = renameColumnInAst(ast([aggregatedRow]), "gross_amount", "gross_total");
+    expect(renamed.rows[0].value).toEqual({ aggregate: "sum", column_ref: "gross_total" });
+  });
+
+  test("leaves literals and unrelated columns untouched", () => {
+    const original = ast([row({ operator: "=", value: "SHIPPED" })]);
+    const renamed = renameColumnInAst(original, "delivered_date", "delivery_date");
+    expect(renamed.rows[0]).toEqual(original.rows[0]);
+  });
+
+  // Every column the rename touched must still be found by the scan — the two
+  // walkers agreeing is the actual invariant.
+  test("a renamed AST reports the new name to the reference scan", () => {
+    const renamed = renameColumnInAst(
+      ast([row({ operator: "between", value: [{ $col: "window_start" }, { $col: "window_end" }] })]),
+      "window_end",
+      "period_end",
+    );
+    expect([...collectAstColumnRefs(renamed)].sort()).toEqual(["period_end", "ship_date", "window_start"]);
   });
 });
