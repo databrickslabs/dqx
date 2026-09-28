@@ -77,6 +77,7 @@ import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { GroupBySelect } from "@/components/data-table/GroupBySelect";
 import { FilterPills } from "@/components/data-table/FilterToolbar";
+import { compareSeverityGroups } from "@/components/rules/severity-group-order";
 import {
   filterLayoutMenuConfig,
   useFilterLayout,
@@ -330,7 +331,14 @@ function RegistryRulesPage() {
         const groupOrder =
           groupBy === "columnType"
             ? compareRuleColumnTypeGroups(a, b)
-            : groupForRule(a).label.localeCompare(groupForRule(b).label);
+            : groupBy === "severity"
+              ? // Settings order (as the admin editor and severity filter list it), not alphabetical.
+                compareSeverityGroups(
+                  getTag(a, RESERVED_SEVERITY_KEY),
+                  getTag(b, RESERVED_SEVERITY_KEY),
+                  severityValues,
+                )
+              : groupForRule(a).label.localeCompare(groupForRule(b).label);
         if (groupOrder !== 0) return groupOrder;
       }
       if (!sortKey || !sortConfig) return 0;
@@ -342,7 +350,7 @@ function RegistryRulesPage() {
       );
     });
     return copy;
-  }, [rules, sortKey, sortDir, groupBy, groupForRule]);
+  }, [rules, sortKey, sortDir, groupBy, groupForRule, severityValues]);
 
   const pagedRules = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
