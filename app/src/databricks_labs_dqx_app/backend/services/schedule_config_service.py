@@ -47,6 +47,7 @@ class ScheduleTrackerEntry:
     next_run_at: str | None = None
     last_run_id: str | None = None
     status: str | None = None
+    paused: bool = False
 
 
 class ScheduleConfigService:
@@ -95,7 +96,7 @@ class ScheduleConfigService:
         ts = self._sql.ts_text
         rows = self._sql.query(
             f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "  # noqa: S608
-            f"last_run_id, status FROM {self._runs_table}"
+            f"last_run_id, status, paused FROM {self._runs_table}"
         )
         return {
             str(row[0]): ScheduleTrackerEntry(
@@ -104,17 +105,23 @@ class ScheduleConfigService:
                 next_run_at=row[2],
                 last_run_id=row[3],
                 status=row[4],
+                paused=len(row) > 5 and row[5] in (True, "true", "t", 1),
             )
             for row in rows
             if row and row[0]
         }
 
     def set_tracker_paused(self, schedule_name: str, paused: bool) -> None:
-        """Pause or resume a table/collection schedule without discarding its cron."""
+        """Pause or resume a table/collection schedule without discarding its cron.
+
+        Only the ``paused`` flag changes: the last run's ``status`` and the
+        ``next_run_at`` pointer are left for the scheduler, which never writes
+        ``paused``, so a pause can't be overwritten by a run finishing.
+        """
         self._sql.upsert(
             self._runs_table,
             key_cols={"schedule_name": schedule_name},
-            value_cols={"status": "paused" if paused else "pending", "updated_at": RawSql("now()")},
+            value_cols={"paused": paused, "updated_at": RawSql("now()")},
         )
 
     def list_schedules(self) -> list[ScheduleConfigEntry]:

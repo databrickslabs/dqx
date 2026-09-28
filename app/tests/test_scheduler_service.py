@@ -699,6 +699,7 @@ def _tracker_row(
     next_run_at: str,
     status: str = "success",
     last_run_at: str | None = "2026-04-30T09:00:00+00:00",
+    paused: bool = False,
 ) -> tuple:
     """One ``dq_schedule_runs`` row as ``_get_tracker`` reads it.
 
@@ -709,7 +710,7 @@ def _tracker_row(
     a *future* occurrence is left alone must therefore pass the ``last_run_at``
     that occurrence actually follows.
     """
-    return (schedule_name, last_run_at, next_run_at, "run_old", status)
+    return (schedule_name, last_run_at, next_run_at, "run_old", status, paused)
 
 
 class TestTickOneProduct:
@@ -1029,6 +1030,33 @@ class TestTickOneTable:
         value_cols = kwargs["value_cols"]
         assert value_cols["status"] == "success"
         assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_paused_table_is_skipped_even_when_due(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00", paused=True)]
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_not_called()
+
+    def test_finishing_a_firing_never_writes_the_pause_flag(self, make_scheduler):
+        """A pause issued while a run is in flight must survive that run's bookkeeping write."""
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert "paused" not in value_cols
+        assert value_cols["status"] == "success"
 
     def test_due_table_passes_the_schedules_sample_size(self, make_scheduler):
         """A schedule with a run scope samples; without one it stays full-table."""

@@ -14,11 +14,14 @@ application id — and returns the canonical identity plus display name.
 Resolution is strictly best-effort and NEVER raises: a SCIM error leaves the
 owner *unknown* (not cached, not reported as missing), whereas a successful
 lookup with no match is a confirmed *not found* that the UI flags so the
-owner can be corrected. A short in-process TTL cache keeps repeated writes
-and list reads from re-hitting SCIM.
+owner can be corrected. An in-process TTL cache keeps repeated writes and
+list reads from re-hitting SCIM; confirmed misses are cached longer because
+nothing is written back for them, so they would otherwise be re-resolved on
+every read.
 """
 
 import logging
+import threading
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -57,7 +60,13 @@ _SP_ATTRIBUTES = "applicationId,displayName"
 
 # Keyed by the lower-cased owner. ``None`` = confirmed no matching principal.
 _RESOLVE_CACHE_TTL_SECS = 300.0
+_MISS_CACHE_TTL_SECS = 3600.0
 _resolve_cache: dict[str, tuple[float, ResolvedOwner | None]] = {}
+
+# Owners whose SCIM resolution is already queued, so concurrent reads don't
+# schedule duplicate lookups for the same owner.
+_inflight: set[str] = set()
+_inflight_lock = threading.Lock()
 
 
 def _key(owner: str) -> str:
@@ -147,9 +156,41 @@ def lookup_owners(owners: list[str], sp_ws: WorkspaceClient | None) -> dict[str,
             except Exception:
                 logger.warning("SCIM group/SP lookup failed during owner resolution (non-fatal)", exc_info=True)
                 continue
-        _resolve_cache[_key(owner)] = (now + _RESOLVE_CACHE_TTL_SECS, resolved)
+        ttl = _RESOLVE_CACHE_TTL_SECS if resolved is not None else _MISS_CACHE_TTL_SECS
+        _resolve_cache[_key(owner)] = (now + ttl, resolved)
         result[owner] = resolved
     return result
+
+
+def peek_owners(owners: list[str]) -> tuple[dict[str, ResolvedOwner | None], list[str]]:
+    """Cache-only counterpart of :func:`lookup_owners`; never calls SCIM.
+
+    Returns ``(cached, uncached)``: fresh cache entries keyed like
+    :func:`lookup_owners`, plus the stripped owners with no fresh entry.
+    """
+    now = time.time()
+    cached: dict[str, ResolvedOwner | None] = {}
+    uncached: list[str] = []
+    for owner in dict.fromkeys(o.strip() for o in owners if o and o.strip()):
+        hit = _resolve_cache.get(_key(owner))
+        if hit is not None and hit[0] > now:
+            cached[owner] = hit[1]
+        else:
+            uncached.append(owner)
+    return cached, uncached
+
+
+def claim_owner_resolution(owners: list[str]) -> list[str]:
+    """Mark *owners* as queued for resolution; returns only those not already queued."""
+    with _inflight_lock:
+        claimed = [o for o in owners if _key(o) not in _inflight]
+        _inflight.update(_key(o) for o in claimed)
+    return claimed
+
+
+def release_owner_resolution(owners: list[str]) -> None:
+    with _inflight_lock:
+        _inflight.difference_update(_key(o) for o in owners)
 
 
 def canonicalize_owner(owner: str | None, sp_ws: WorkspaceClient | None) -> tuple[str | None, str | None]:
@@ -230,16 +271,30 @@ def fill_missing_owner_display_names(
     for obj in objects:
         if obj.owner and not obj.owner_display_name:
             obj.owner_display_name = resolved.get(obj.owner.strip())
-    for owner, display_name in resolved.items():
-        e_owner = escape_sql_string(owner)
-        e_name = escape_sql_string(display_name)
-        try:
-            sql.execute(
-                f"UPDATE {table} SET owner_display_name = '{e_name}' "  # noqa: S608
-                f"WHERE owner = '{e_owner}' AND (owner_display_name IS NULL OR owner_display_name = '')"
-            )
-        except Exception:
-            logger.warning("Owner display-name backfill failed for %s (non-fatal)", owner, exc_info=True)
+    stmt = owner_display_name_backfill_sql(table, resolved)
+    if stmt is None:
+        return
+    try:
+        sql.execute(stmt)
+    except Exception:
+        logger.warning("Owner display-name backfill failed for %s (non-fatal)", table, exc_info=True)
+
+
+def owner_display_name_backfill_sql(table: str, resolved: dict[str, str]) -> str | None:
+    """One ``UPDATE`` that fills NULL/empty ``owner_display_name`` for every owner in *resolved*.
+
+    Rows that already carry a name are never touched. Returns ``None`` when
+    there is nothing to write.
+    """
+    pairs = [(escape_sql_string(o), escape_sql_string(n)) for o, n in resolved.items() if o and n]
+    if not pairs:
+        return None
+    cases = " ".join(f"WHEN '{o}' THEN '{n}'" for o, n in pairs)
+    owners = ", ".join(f"'{o}'" for o, _ in pairs)
+    return (
+        f"UPDATE {table} SET owner_display_name = CASE owner {cases} END "  # noqa: S608
+        f"WHERE owner IN ({owners}) AND (owner_display_name IS NULL OR owner_display_name = '')"
+    )
 
 
 def _chunks(lst: list[str], size: int) -> Iterator[list[str]]:

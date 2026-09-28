@@ -1,5 +1,6 @@
 """Tests for ScheduleGrantService — grantability checks + scheduler grants (Task 12)."""
 
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -391,7 +392,7 @@ class TestWarehouseBackedGrants:
 
         assert wh_service.grant_select_to_schedulers(FQN) == ["app-sp-id", "task-runner-sp"]
         statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
-        assert statements == [
+        assert [st for st in statements if st.startswith("GRANT")] == [
             "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `app-sp-id`",
             "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `task-runner-sp`",
         ]
@@ -405,10 +406,30 @@ class TestWarehouseBackedGrants:
         with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
             wh_service.grant_select_to_schedulers(FQN)
 
+    def test_preflight_runs_every_read_probe_concurrently(self, wh_service, obo, sp):
+        fqns = ["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]
+        # Six probes (scheduler + caller per table) must all be in flight at once
+        # to pass the barrier; sequential probes would time out and read as False.
+        barrier = threading.Barrier(2 * len(fqns), timeout=5)
+
+        def _probe(**_kwargs):
+            barrier.wait()
+            return _stmt()
+
+        sp.statement_execution.execute_statement.side_effect = _probe
+        obo.statement_execution.execute_statement.side_effect = _probe
+
+        result = wh_service.preflight(fqns)
+
+        assert [r.can_manage for r in result] == [True, True, True]
+        assert sp.statement_execution.execute_statement.call_count == 3
+        assert obo.statement_execution.execute_statement.call_count == 3
+
     def test_unreadable_and_unmanageable_still_blocks(self, wh_service, obo, sp):
         sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
 
         assert wh_service.can_schedule(FQN) is False
         with pytest.raises(CannotManageError):
             wh_service.grant_select_to_schedulers(FQN)
-        obo.statement_execution.execute_statement.assert_not_called()
+        statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
+        assert not [st for st in statements if st.startswith("GRANT")]

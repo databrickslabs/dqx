@@ -197,7 +197,7 @@ def list_schedule_overview(
             if not table.schedule_cron:
                 continue
             tracker = trackers.get(f"table:{table.binding_id}")
-            paused = bool(tracker and tracker.status == "paused")
+            paused = bool(tracker and tracker.paused)
             rows.append(
                 ScheduleOverviewOut(
                     source_type="table",
@@ -224,7 +224,7 @@ def list_schedule_overview(
             if not product.schedule_cron:
                 continue
             tracker = trackers.get(f"product:{product.product_id}")
-            paused = bool(tracker and tracker.status == "paused")
+            paused = bool(tracker and tracker.paused)
             rows.append(
                 ScheduleOverviewOut(
                     source_type="collection",

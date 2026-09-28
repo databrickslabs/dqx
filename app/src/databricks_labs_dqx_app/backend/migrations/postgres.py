@@ -233,9 +233,13 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  last_run_id   TEXT,"
             "  status        TEXT,"
             "  updated_at    TIMESTAMPTZ,"
+            # Pause is its own flag, not a status: the scheduler rewrites
+            # ``status`` after every firing, which would silently undo a pause
+            # issued mid-run, and resuming would erase the last run's outcome.
+            "  paused        BOOLEAN NOT NULL DEFAULT FALSE,"
             "  CONSTRAINT chk_dq_schedule_runs_status "
             "    CHECK (status IS NULL OR status IN "
-            "      ('pending','success','partial_failure','failed','paused'))"
+            "      ('pending','success','partial_failure','failed'))"
             ");"
             # The scheduler loop polls "next_run_at <= now() AND status
             # IS NOT 'pending'" every tick; a btree index on

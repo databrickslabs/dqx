@@ -246,8 +246,9 @@ class TestFillMissingOwnerDisplayNames:
         fill_missing_owner_display_names(rows, sp_ws, sql, "cat.sch.dq_data_products")
         assert [r.owner_display_name for r in rows] == ["Tasha Yang", "Mina A"]
         [stmt] = [c.args[0] for c in sql.execute.call_args_list]
-        assert "UPDATE cat.sch.dq_data_products SET owner_display_name = 'Tasha Yang'" in stmt
-        assert "WHERE owner = 'tasha@example.com'" in stmt
+        assert "UPDATE cat.sch.dq_data_products SET owner_display_name = CASE owner" in stmt
+        assert "WHEN 'tasha@example.com' THEN 'Tasha Yang'" in stmt
+        assert "WHERE owner IN ('tasha@example.com')" in stmt
         assert "owner_display_name IS NULL" in stmt
 
     def test_no_scim_call_when_every_row_has_a_name(self) -> None:
@@ -290,3 +291,17 @@ class TestEmailFilterFallback:
         ws.users.list.side_effect = _list
         assert resolve_owners_cached(["tasha@example.com"], ws) == {"tasha@example.com": "Tasha Yang"}
         assert ws.users.list.call_count == 2
+
+
+class TestMissCacheTtl:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_confirmed_miss_is_cached_longer_than_a_match(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        lookup_owners(["tasha@example.com", "jhon.doe@example.com"], sp_ws)
+        hit_expiry = owner_display_name_service._resolve_cache["tasha@example.com"][0]
+        miss_expiry = owner_display_name_service._resolve_cache["jhon.doe@example.com"][0]
+        assert miss_expiry - hit_expiry >= (
+            owner_display_name_service._MISS_CACHE_TTL_SECS - owner_display_name_service._RESOLVE_CACHE_TTL_SECS - 1
+        )

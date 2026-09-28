@@ -42,6 +42,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from databricks.sdk import WorkspaceClient
@@ -54,6 +55,10 @@ logger = logging.getLogger(__name__)
 
 # UC securable type is passed to the grants API as a string.
 _TABLE_SECURABLE = SecurableType.TABLE.value
+
+# Upper bound on concurrent read-probe statements per request, so a large
+# collection can't flood the app warehouse.
+_PROBE_CONCURRENCY = 8
 
 
 class CannotManageError(Exception):
@@ -395,8 +400,28 @@ class ScheduleGrantService:
             cache[fqn] = readable
         return cache[fqn]
 
+    def prime_read_probes(self, fqns: list[str]) -> None:
+        """Run the scheduler and caller read probes for *fqns* concurrently.
+
+        Each probe is a warehouse round-trip, so checking N tables one probe at
+        a time costs up to 2N sequential statements. This fills the per-request
+        caches in parallel; later checks read from them.
+        """
+        if not self._warehouse_id:
+            return
+        targets = [f for f in dict.fromkeys(fqns) if f and _is_real_three_part_fqn(f)]
+        jobs = [(self._sp_ws, f, self._scheduler_can_read_cache) for f in targets] + [
+            (self._obo, f, self._user_can_read_cache) for f in targets
+        ]
+        jobs = [job for job in jobs if job[1] not in job[2]]
+        if len(jobs) < 2:
+            return
+        with ThreadPoolExecutor(max_workers=min(_PROBE_CONCURRENCY, len(jobs))) as pool:
+            list(pool.map(lambda job: self._probe_read(*job), jobs))
+
     def _needs_no_grant(self, fqn: str) -> bool:
         """The scheduler can already read *fqn* and so can the caller — nothing to grant."""
+        self.prime_read_probes([fqn])
         return self.scheduler_can_read(fqn) and self.user_can_read(fqn)
 
     def can_schedule(self, fqn: str) -> bool:
@@ -432,6 +457,7 @@ class ScheduleGrantService:
 
     def preflight(self, fqns: list[str]) -> list[TablePreflight]:
         """Per-table grantability + manage-holder enumeration for the UI editor."""
+        self.prime_read_probes(fqns)
         out: list[TablePreflight] = []
         seen: set[str] = set()
         for fqn in fqns:
@@ -462,10 +488,12 @@ class ScheduleGrantService:
             statement=statement, warehouse_id=self._warehouse_id, wait_timeout="30s"
         )
         deadline = time.monotonic() + 90
+        delay = 0.25
         while resp.status and resp.status.state in (StatementState.PENDING, StatementState.RUNNING):
             if time.monotonic() > deadline or not resp.statement_id:
                 raise RuntimeError("Timed out waiting for the SQL warehouse.")
-            time.sleep(2)
+            time.sleep(delay)
+            delay = min(delay * 2, 2.0)
             resp = ws.statement_execution.get_statement(resp.statement_id)
         state = resp.status.state if resp.status else None
         if state != StatementState.SUCCEEDED:

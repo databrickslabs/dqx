@@ -259,6 +259,7 @@ def update_data_product(
         # Resolve the caller identity once so the per-table MANAGE gate below
         # reads it from cache instead of re-issuing current_user.me() each time.
         grant_svc.prime_caller_identity()
+        grant_svc.prime_read_probes(member_fqns)
         blocked: list[tuple[str, list[dict[str, str]]]] = []
         for fqn in member_fqns:
             if not grant_svc.can_schedule(fqn):

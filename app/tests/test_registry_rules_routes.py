@@ -7,10 +7,11 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
+import time
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
@@ -21,6 +22,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
+from databricks_labs_dqx_app.backend.services import owner_display_name_service
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import ResolvedOwner
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
@@ -79,87 +81,112 @@ class TestListAndGet:
     def test_list_maps_domain_rules_to_dto(self):
         svc = MagicMock()
         svc.list_rules.return_value = [_rule()]
-        result = list_registry_rules(svc=svc, status="draft")
+        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks(), status="draft")
         assert len(result) == 1
         assert result[0].rule_id == "r1"
         svc.list_rules.assert_called_once_with(status="draft", dimension=None, severity=None, owner=None, tag=None)
 
-    def test_list_backfills_missing_owner_display_name_on_read(self, monkeypatch):
-        # A row that persisted a NULL owner_display_name (e.g. written before the
-        # write-time resolver, or when SCIM was down) is resolved on read so the
-        # Owners filter/column shows a friendly name instead of a raw email.
+    @pytest.fixture(autouse=True)
+    def _clear_owner_cache(self):
+        owner_display_name_service._resolve_cache.clear()
+        owner_display_name_service._inflight.clear()
+        yield
+        owner_display_name_service._resolve_cache.clear()
+        owner_display_name_service._inflight.clear()
+
+    @staticmethod
+    def _owned_rule(owner: str) -> RegistryRule:
         rule = _rule()
-        rule.owner = "c.psafos@example.com"
+        rule.owner = owner
         rule.owner_display_name = None
+        return rule
+
+    @staticmethod
+    def _cache(owner: str, resolved: ResolvedOwner | None) -> None:
+        owner_display_name_service._resolve_cache[owner.lower()] = (time.time() + 60, resolved)
+
+    def test_list_fills_cached_owner_display_name_without_scim(self, monkeypatch):
         svc = MagicMock()
-        svc.list_rules.return_value = [rule]
+        svc.list_rules.return_value = [self._owned_rule("c.psafos@example.com")]
+        self._cache("c.psafos@example.com", ResolvedOwner("c.psafos@example.com", "Christos Psafos", "user"))
+        scim = MagicMock()
+        monkeypatch.setattr(owner_display_name_service, "_lookup_users", scim)
+        tasks = BackgroundTasks()
+
+        result = list_registry_rules(svc=svc, background_tasks=tasks, sp_ws=MagicMock())
+
+        assert result[0].owner_display_name == "Christos Psafos"
+        assert result[0].owner_unverified is False
+        scim.assert_not_called()
+        assert not tasks.tasks
+
+    def test_list_defers_uncached_owner_resolution_to_a_background_task(self, monkeypatch):
+        svc = MagicMock()
+        svc.list_rules.return_value = [self._owned_rule("c.psafos@example.com")]
+        tasks = BackgroundTasks()
+        sp_ws = MagicMock()
+
+        result = list_registry_rules(svc=svc, background_tasks=tasks, sp_ws=sp_ws)
+
+        # The response doesn't wait on SCIM: the raw owner shows until the task backfills.
+        assert result[0].owner_display_name is None
+        assert result[0].owner_unverified is False
+        svc.backfill_owner_display_names.assert_not_called()
+        [task] = tasks.tasks
 
         import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
 
         monkeypatch.setattr(
             mod,
             "lookup_owners",
-            lambda owners, sp_ws: {
+            lambda owners, ws: {
                 "c.psafos@example.com": ResolvedOwner("c.psafos@example.com", "Christos Psafos", "user")
             },
         )
-        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
-        assert result[0].owner_display_name == "Christos Psafos"
-        assert result[0].owner_unverified is False
-        # The resolved name is written back so the assignment is durable.
+        task.func(*task.args, **task.kwargs)
         svc.backfill_owner_display_names.assert_called_once_with({"c.psafos@example.com": "Christos Psafos"})
+        assert not owner_display_name_service._inflight
 
-    def test_list_keeps_group_owner_verified_without_display_name(self, monkeypatch):
-        rule = _rule()
-        rule.owner = "data-eng-group"
-        rule.owner_display_name = None
+    def test_concurrent_reads_queue_one_resolution_per_owner(self):
         svc = MagicMock()
-        svc.list_rules.return_value = [rule]
+        svc.list_rules.return_value = [self._owned_rule("c.psafos@example.com")]
+        first, second = BackgroundTasks(), BackgroundTasks()
 
-        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
+        list_registry_rules(svc=svc, background_tasks=first, sp_ws=MagicMock())
+        list_registry_rules(svc=svc, background_tasks=second, sp_ws=MagicMock())
 
-        monkeypatch.setattr(
-            mod,
-            "lookup_owners",
-            lambda owners, sp_ws: {"data-eng-group": ResolvedOwner("data-eng-group", "data-eng-group", "group")},
-        )
-        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        assert len(first.tasks) == 1
+        assert not second.tasks
+
+    def test_list_keeps_group_owner_verified_without_display_name(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [self._owned_rule("data-eng-group")]
+        self._cache("data-eng-group", ResolvedOwner("data-eng-group", "data-eng-group", "group"))
+        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks(), sp_ws=MagicMock())
         assert result[0].owner_display_name is None
         assert result[0].owner == "data-eng-group"
         assert result[0].owner_unverified is False
-        svc.backfill_owner_display_names.assert_not_called()
 
-    def test_list_flags_owner_with_no_databricks_principal(self, monkeypatch):
-        rule = _rule()
-        rule.owner = "jhon.doe@example.com"
-        rule.owner_display_name = None
+    def test_list_flags_owner_with_no_databricks_principal(self):
         svc = MagicMock()
-        svc.list_rules.return_value = [rule]
-
-        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
-
-        monkeypatch.setattr(mod, "lookup_owners", lambda owners, sp_ws: {"jhon.doe@example.com": None})
-        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        svc.list_rules.return_value = [self._owned_rule("jhon.doe@example.com")]
+        self._cache("jhon.doe@example.com", None)
+        tasks = BackgroundTasks()
+        result = list_registry_rules(svc=svc, background_tasks=tasks, sp_ws=MagicMock())
         assert result[0].owner == "jhon.doe@example.com"
         assert result[0].owner_unverified is True
+        assert not tasks.tasks
 
-    def test_list_does_not_flag_owner_when_lookup_failed(self, monkeypatch):
-        rule = _rule()
-        rule.owner = "alice@example.com"
-        rule.owner_display_name = None
+    def test_list_does_not_flag_owner_before_it_is_resolved(self):
         svc = MagicMock()
-        svc.list_rules.return_value = [rule]
-
-        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
-
-        monkeypatch.setattr(mod, "lookup_owners", lambda owners, sp_ws: {})
-        result = list_registry_rules(svc=svc, sp_ws=MagicMock())
+        svc.list_rules.return_value = [self._owned_rule("alice@example.com")]
+        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks(), sp_ws=MagicMock())
         assert result[0].owner_unverified is False
 
     def test_get_returns_detail_with_no_version_when_unpublished(self):
         svc = MagicMock()
         svc.get_rule_with_version.return_value = (_rule(), None)
-        result = get_registry_rule("r1", svc=svc)
+        result = get_registry_rule("r1", svc=svc, background_tasks=BackgroundTasks())
         assert result.rule.rule_id == "r1"
         assert result.current_version is None
 
@@ -167,7 +194,7 @@ class TestListAndGet:
         svc = MagicMock()
         svc.get_rule_with_version.return_value = None
         with pytest.raises(HTTPException) as excinfo:
-            get_registry_rule("missing", svc=svc)
+            get_registry_rule("missing", svc=svc, background_tasks=BackgroundTasks())
         assert excinfo.value.status_code == 404
 
     def test_get_surfaces_modified_display_status(self):
@@ -175,7 +202,7 @@ class TestListAndGet:
         rule = _rule(status="approved", version=1)
         rule.modified_since_publish = True
         svc.get_rule_with_version.return_value = (rule, None)
-        result = get_registry_rule("r1", svc=svc)
+        result = get_registry_rule("r1", svc=svc, background_tasks=BackgroundTasks())
         assert result.rule.modified_since_publish is True
         assert result.rule.display_status == "modified"
 

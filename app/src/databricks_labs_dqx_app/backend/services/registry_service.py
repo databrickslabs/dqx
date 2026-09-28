@@ -41,7 +41,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import canonicalize_owner
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    canonicalize_owner,
+    owner_display_name_backfill_sql,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, WhereIn
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -162,19 +165,13 @@ class RegistryService:
         alone because this is a cosmetic backfill, not a user edit.
         Best-effort: a failure is swallowed (the next read re-resolves).
         """
-        for owner, display_name in resolved.items():
-            if not owner or not display_name:
-                continue
-            e_owner = escape_sql_string(owner)
-            e_name = escape_sql_string(display_name)
-            sql = (
-                f"UPDATE {self._table} SET owner_display_name = '{e_name}' "  # noqa: S608
-                f"WHERE owner = '{e_owner}' AND (owner_display_name IS NULL OR owner_display_name = '')"
-            )
-            try:
-                self._sql.execute(sql)
-            except Exception:
-                logger.warning("Owner display-name backfill failed for %s (non-fatal)", owner, exc_info=True)
+        sql = owner_display_name_backfill_sql(self._table, resolved)
+        if sql is None:
+            return
+        try:
+            self._sql.execute(sql)
+        except Exception:
+            logger.warning("Owner display-name backfill failed (non-fatal)", exc_info=True)
 
     def list_rules(
         self,

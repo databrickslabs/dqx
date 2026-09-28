@@ -48,7 +48,7 @@ logger = get_logger("scheduler")
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
 
-_VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed", "paused"}
+_VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 
 # Schedule scope (B2-52): what a due schedule actually runs. Mirrors the
 # ``schedule_kind`` column on ``dq_monitored_tables`` / ``dq_data_products``.
@@ -796,7 +796,7 @@ class SchedulerService:
         schedule_name = f"product:{product_id}"
 
         tracker = self._get_tracker(schedule_name)
-        if tracker and tracker.get("status") == "paused":
+        if tracker and tracker.get("paused"):
             return
         next_run = tracker.get("next_run_at") if tracker else None
 
@@ -1023,7 +1023,7 @@ class SchedulerService:
         schedule_name = f"table:{binding_id}"
 
         tracker = self._get_tracker(schedule_name)
-        if tracker and tracker.get("status") == "paused":
+        if tracker and tracker.get("paused"):
             return
         next_run = tracker.get("next_run_at") if tracker else None
 
@@ -1665,7 +1665,7 @@ class SchedulerService:
     # Tracker (dq_schedule_runs)
     # ------------------------------------------------------------------
 
-    def _get_tracker(self, name: str) -> dict[str, str] | None:
+    def _get_tracker(self, name: str) -> dict[str, Any] | None:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
         validate_schedule_name(name)
@@ -1673,7 +1673,7 @@ class SchedulerService:
         ts = self._oltp_sql.ts_text
         sql = (
             f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "
-            f"last_run_id, status "
+            f"last_run_id, status, paused "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
         rows = self._oltp_sql.query(sql)
@@ -1686,12 +1686,13 @@ class SchedulerService:
             "next_run_at": row[2],
             "last_run_id": row[3],
             "status": row[4],
+            "paused": len(row) > 5 and row[5] in (True, "true", "t", 1),
         }
 
     def _realign_next_run(
         self,
         schedule_name: str,
-        tracker: dict[str, str],
+        tracker: dict[str, Any],
         next_run: Any,
         cron_expr: str,
         tz_name: str | None,
