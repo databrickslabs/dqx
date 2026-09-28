@@ -182,6 +182,7 @@ def main() -> int:
         from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
         from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
         from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+        from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService
         from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
         from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
         from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
@@ -306,6 +307,7 @@ def main() -> int:
         app_sql=sp_sql,
         oltp=oltp,
         sp_ws=ws,
+        resource_tagger=ResourceTaggingService(ws),
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,

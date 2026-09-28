@@ -16,7 +16,7 @@ from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironme
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
 
 from tests.constants import TEST_CATALOG
-from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
+from tests.e2e.conftest import new_classic_job_cluster, run_job_and_validate
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,7 @@ def test_run_dqx_demo_library(ws, make_notebook, make_schema, make_job, library_
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_library")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_library")
 
 
 def test_run_intermediate_dqx_demo_library(ws, make_notebook, make_schema, make_job, library_ref):
@@ -68,13 +62,7 @@ def test_run_intermediate_dqx_demo_library(ws, make_notebook, make_schema, make_
     )
     job = make_job(tasks=[Task(task_key="dqx_intermediate_demo_library", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_intermediate_demo_library")
+    run_job_and_validate(ws, job.job_id, "dqx_intermediate_demo_library")
 
 
 def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_schema, make_job, library_ref):
@@ -93,13 +81,7 @@ def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_sche
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_manufacturing_demo")
 
 
 def test_run_dqx_banking_demo(ws, make_notebook, make_schema, make_job, library_ref):
@@ -116,13 +98,7 @@ def test_run_dqx_banking_demo(ws, make_notebook, make_schema, make_job, library_
     )
     job = make_job(tasks=[Task(task_key="dqx_banking_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_banking_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_banking_demo")
 
 
 def test_run_dqx_fashion_demo(ws, make_notebook, make_schema, make_job, library_ref):
@@ -139,13 +115,7 @@ def test_run_dqx_fashion_demo(ws, make_notebook, make_schema, make_job, library_
     )
     job = make_job(tasks=[Task(task_key="dqx_fashion_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_fashion_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_fashion_demo")
 
 
 def test_run_dqx_customer_360_demo(ws, make_notebook, make_schema, make_job, library_ref):
@@ -162,13 +132,7 @@ def test_run_dqx_customer_360_demo(ws, make_notebook, make_schema, make_job, lib
     )
     job = make_job(tasks=[Task(task_key="dqx_customer_360_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_customer_360_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_customer_360_demo")
 
 
 def test_run_dqx_quick_start_demo_library(ws, make_notebook, make_job, library_ref):
@@ -180,13 +144,7 @@ def test_run_dqx_quick_start_demo_library(ws, make_notebook, make_job, library_r
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_quick_start_demo_library", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
+    run_job_and_validate(ws, job.job_id, "dqx_quick_start_demo_library")
 
 
 def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
@@ -201,13 +159,7 @@ def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_pii_detection")
 
 
 @pytest.mark.parametrize(
@@ -258,13 +210,7 @@ def test_run_dqx_dlt_demo(
     task_key = demo_notebook.removesuffix(".py")
     job = make_job(tasks=[Task(task_key=task_key, pipeline_task=pipeline_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for {demo_notebook}")
+    run_job_and_validate(ws, job.job_id, demo_notebook)
 
 
 def test_run_dqx_demo_tool(ws, installation_ctx, make_schema, make_notebook, make_job):
@@ -295,13 +241,7 @@ def test_run_dqx_demo_tool(ws, installation_ctx, make_schema, make_notebook, mak
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_tool")
 
 
 def test_run_dqx_streaming_demo_native(ws, make_notebook, make_schema, make_job, tmp_path, library_ref):
@@ -324,13 +264,7 @@ def test_run_dqx_streaming_demo_native(ws, make_notebook, make_schema, make_job,
     }
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters=base_parameters)
     job = make_job(tasks=[Task(task_key="dqx_streaming_demo", notebook_task=notebook_task)])
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, client=ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_streaming_demo")
 
 
 def test_run_dqx_streaming_demo_diy(ws, make_notebook, make_job, tmp_path, library_ref):
@@ -351,13 +285,7 @@ def test_run_dqx_streaming_demo_diy(ws, make_notebook, make_job, tmp_path, libra
     }
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters=base_parameters)
     job = make_job(tasks=[Task(task_key="dqx_streaming_demo", notebook_task=notebook_task)])
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, client=ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_streaming_demo")
 
 
 def test_run_dqx_demo_asset_bundle(ws, make_schema, make_random, library_ref):
@@ -444,13 +372,7 @@ def test_run_dqx_multi_table_demo(ws, make_notebook, make_schema, make_job, libr
     )
     job = make_job(tasks=[Task(task_key="dqx_multi_table_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_multi_table_demo")
+    run_job_and_validate(ws, job.job_id, "dqx_multi_table_demo")
 
 
 def test_run_dqx_demo_summary_metrics(ws, make_notebook, make_schema, make_job, library_ref):
@@ -473,13 +395,7 @@ def test_run_dqx_demo_summary_metrics(ws, make_notebook, make_schema, make_job, 
         tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task, new_cluster=new_classic_job_cluster())]
     )
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_summary_metrics")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_summary_metrics")
 
 
 def test_run_dqx_demo_alerting(ws, make_notebook, make_job, library_ref):
@@ -492,13 +408,7 @@ def test_run_dqx_demo_alerting(ws, make_notebook, make_job, library_ref):
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_demo_alerting", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_alerting")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_alerting")
 
 
 def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_job, library_ref):
@@ -510,13 +420,7 @@ def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_j
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_demo_ai_assisted_checks_generation", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_ai_assisted_checks_generation")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_ai_assisted_checks_generation")
 
 
 def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref):
@@ -529,13 +433,7 @@ def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_demo_datacontract_odcs", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_datacontract_odcs")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_datacontract_odcs")
 
 
 def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref):
@@ -547,13 +445,7 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_demo_llm_pk_detection", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_llm_pk_detection")
+    run_job_and_validate(ws, job.job_id, "dqx_demo_llm_pk_detection")
 
 
 @pytest.mark.parametrize(
@@ -592,13 +484,7 @@ def test_run_dqx_anomaly_demo(ws, make_notebook, make_schema, make_job, library_
     # These train a model and score with contributions + AI explanations (both on by default), which
     # makes them among the slowest e2e demos; a cold serverless start can exceed 30 minutes. Use a
     # 45-minute wait, still well within the e2e CI job's 2h wrapper.
-    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=45))
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=45),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for {task_key}")
+    run_job_and_validate(ws, job.job_id, task_key, timeout=timedelta(minutes=45))
 
 
 def test_dbt_demo(make_schema, library_ref, debug_env, ws):

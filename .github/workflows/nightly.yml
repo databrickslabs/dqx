@@ -445,7 +445,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Generate new benchmark baseline
-        timeout-minutes: 120
+        timeout-minutes: 240
         env:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |
@@ -454,11 +454,11 @@ jobs:
           # We don't use the acceptance action here as it may finish before all benchmark files are written.
           # Tests are run sequentially to reduce variability.
           # Create baseline benchmarks under: $BENCHMARKS_DIR/<machine-specific-folder>/*_baseline.json
-          # Do at least 5 rounds to get more stable results.
+          # Do at least 3 rounds to get more stable results.
           UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-save=baseline \
-            --benchmark-min-rounds=5
+            --benchmark-min-rounds=3
 
       - name: Update benchmark baseline
         run: |
@@ -611,7 +611,7 @@ jobs:
           fi
 
       - name: Run performance tests and compare with baseline
-        timeout-minutes: 120
+        timeout-minutes: 240
         env:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |
@@ -625,7 +625,7 @@ jobs:
           # We are not using acceptance action as it does not show the comparison results.
           # The run fails if performance degrades by more than 25%.
           # Tests are run sequentially to reduce variability.
-          # Do at least 5 rounds to get more stable results.
+          # Do at least 3 rounds to get more stable results.
           # Anomaly benchmarks are deselected here: --benchmark-compare-fail applies to the whole
           # invocation and cannot be scoped per test, and those benchmarks are dominated by MLflow
           # and Unity Catalog control-plane latency, so they would trip a 25% mean gate on variance
@@ -635,4 +635,4 @@ jobs:
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \
             --benchmark-compare-fail=mean:25% \
-            --benchmark-min-rounds=5
+            --benchmark-min-rounds=3

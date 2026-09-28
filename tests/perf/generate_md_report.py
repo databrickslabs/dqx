@@ -42,6 +42,9 @@ lines.append(
 )
 lines.append("* Benchmarks are created using Databricks Serverless cluster.")
 lines.append(
+    "* Each test runs for a minimum of 3 rounds; the reported statistics are aggregated across the rounds executed (see the Rounds column)."
+)
+lines.append(
     "* The provided benchmarks are indicative. You should always consider benchmarking results in the context of your own data and environment.\n"
 )
 

@@ -32,6 +32,11 @@ class AppConfig(BaseSettings):
     genie_schema_name: str = Field(default="genie", validation_alias="DQX_GENIE_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
+    tag_bundle_owned_resources: bool = Field(
+        default=False,
+        validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",
+        description="Tag DAB-created main schema, demo schema, and wheels volume as Studio-owned.",
+    )
     # Production deploys bind ``job_id`` and ``wheels_volume`` from
     # bundle resources, so missing values there indicate a misconfigured
     # deploy that would otherwise silently break profiler / dry-run /
