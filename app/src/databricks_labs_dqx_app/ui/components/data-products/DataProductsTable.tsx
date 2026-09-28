@@ -25,6 +25,7 @@ import {
 } from "@/components/data-table/sticky-actions";
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { DataProductOut } from "@/lib/api";
+import { StatusBadge } from "@/components/RegistryRuleBadges";
 
 /** Column keys that carry a comparable value and can drive client sort.
  *  `dqScore` renders the cached score LEFT-JOINed from dq_score_cache by
@@ -96,37 +97,6 @@ function TruncatedCell({
       )}
     </Tooltip>
   );
-}
-
-/** Status badge for a Table Space's `display_status` ('draft' | 'modified' |
- *  'pending_approval' | 'approved' | 'rejected' — review lifecycle, see
- *  backend `data_product_service.display_status`). */
-function DataProductStatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  switch (status) {
-    case "approved":
-      return <Badge variant="default" className="text-[10px]">{t("dataProducts.statusApproved")}</Badge>;
-    case "pending_approval":
-      return (
-        <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
-          {t("dataProducts.statusPendingApproval")}
-        </Badge>
-      );
-    case "rejected":
-      return (
-        <Badge variant="outline" className="text-[10px] border-red-500 text-red-600">
-          {t("dataProducts.statusRejected")}
-        </Badge>
-      );
-    case "modified":
-      return (
-        <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
-          {t("dataProducts.statusModified")}
-        </Badge>
-      );
-    default:
-      return <Badge variant="secondary" className="text-[10px]">{t("dataProducts.statusDraft")}</Badge>;
-  }
 }
 
 /** The product's approved snapshot version badge ("vN"), or an em dash at
@@ -202,7 +172,15 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultWidth: 140,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (p) => <DataProductStatusBadge status={p.display_status} />,
+    // Same pill as the Tables overview's Status column: the raw review
+    // lifecycle status (draft / pending_approval / approved / rejected). An
+    // approved collection with unpublished edits is a draft, exactly as an
+    // edited approved table is.
+    renderCell: (p) => (
+      <span className="flex flex-wrap items-center gap-1">
+        <StatusBadge status={p.status} />
+      </span>
+    ),
   },
   version: {
     labelKey: "dataProducts.colVersion",
@@ -304,16 +282,15 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
   },
 };
 
-/** Review-status sort rank (B2-92): a first-click ASC sort leads with the
- *  live/approved products, then approved-with-unpublished-edits and work in
+/** Review-status sort rank (B2-92), matching the Tables overview: a
+ *  first-click ASC sort leads with the live/approved products, then work in
  *  progress (pending approval, draft), with rejected products sinking to the
  *  bottom. */
 const STATUS_RANK: Record<string, number> = {
   approved: 0,
-  modified: 1,
-  pending_approval: 2,
-  draft: 3,
-  rejected: 4,
+  pending_approval: 1,
+  draft: 2,
+  rejected: 3,
 };
 
 /** Returns the sortable value for a given column + row — shared between
@@ -327,7 +304,7 @@ export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProduc
     case "description":
       return (p.description ?? "").toLowerCase() || null;
     case "status":
-      return STATUS_RANK[p.display_status] ?? Object.keys(STATUS_RANK).length;
+      return STATUS_RANK[p.status] ?? Object.keys(STATUS_RANK).length;
     case "version":
       return p.version && p.version > 0 ? p.version : null;
     case "owner":
