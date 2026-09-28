@@ -992,7 +992,11 @@ class AiRulesService:
                 # fall through so the requirement lands on the Condition Builder,
                 # which compares two columns natively (see
                 # _DQX_NATIVE_MULTI_COLUMN_GUIDANCE).
-                logger.info("AI-generated dqx_native rule dropped: check '%s' needs more than one column", function)
+                logger.info(
+                    "AI-generated dqx_native rule dropped: check '%s' is not authorable as a "
+                    "single-column native rule (needs multiple columns or an unbindable value argument)",
+                    function,
+                )
                 return None
         elif mode == "sql":
             sql_query = definition.get("sql_query")
