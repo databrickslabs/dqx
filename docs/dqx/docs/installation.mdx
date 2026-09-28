@@ -547,6 +547,11 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
    make app-deploy PROFILE=<your-profile> TARGET=<your-target>
    ```
 
+   On Windows, use PowerShell from the repository root:
+   ```powershell
+   .\make.ps1 app-deploy -Profile <your-profile> -Target <your-target>
+   ```
+
    This runs `make app-build`, `databricks bundle deploy`, and `databricks bundle run` in sequence. `bundle deploy` provisions the schemas, wheels volume, Lakebase Postgres project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** — there is no post-deploy grant script and no bind step. The stateful resources (schemas, volume, Postgres project) carry `lifecycle.prevent_destroy: true`. The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start.
 
 6. Open the deployed app from the **Apps** page in your Databricks workspace.

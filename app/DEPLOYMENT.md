@@ -211,6 +211,14 @@ Build, deploy, and start the app in a single command:
 make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 ```
 
+On Windows, run the equivalent PowerShell command from the repository root:
+
+```powershell
+.\make.ps1 app-deploy -Profile <your-profile> -Target <your-target>
+```
+
+The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.0+ on `PATH`. It runs the same build, bundle deploy, and bundle run steps as `make app-deploy`. Pass `-Force` to overwrite remote bundle edits, `-AppName` to override the app name, or `-BundleVars 'catalog_name=foo','other_name=value'` to forward bundle variables.
+
 `make app-deploy` runs the following steps automatically:
 1. `make app-build` — builds the frontend and wheels.
 2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
