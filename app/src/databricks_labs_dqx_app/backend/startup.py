@@ -78,7 +78,9 @@ from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.setup.resources import parse_volume_path, resolve_lakebase_connection
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
+from databricks_labs_dqx_app.backend.run_config_store import RUN_CONFIGS_TABLE
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import validate_object_id
 
 StartupHook = Callable[[], Awaitable[None] | None]
 
@@ -433,6 +435,7 @@ async def _run_post_migration_startup(
     await _ensure_metadata_dims(delta_sql, oltp, resources)
     _ensure_entitlement_objects(delta_sql, resources)
     _grant_user_view_access(delta_sql, resources)
+    _grant_task_runner_run_config_access(oltp)
     targets = startup_tag_targets(
         resources,
         include_bundle_resources=conf.tag_bundle_owned_resources,
@@ -496,6 +499,26 @@ _USER_READABLE_VIEWS = (
     ATTRIBUTION_VIEW_NAME,
     FAILING_ROWS_VIEW_NAME,
 )
+
+
+def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
+    """Grant the task-runner SP read/delete on ``dq_run_configs`` in Lakebase."""
+    role = conf.task_runner_postgres_role.strip()
+    if not role or getattr(oltp, "dialect", "") != "postgres":
+        return
+    validate_object_id(role)
+    schema = oltp.q(oltp.schema)
+    table = oltp.fqn(RUN_CONFIGS_TABLE)
+    quoted_role = oltp.q(role)
+    statements = [
+        f"GRANT USAGE ON SCHEMA {schema} TO {quoted_role}",
+        f"GRANT SELECT, DELETE ON {table} TO {quoted_role}",
+    ]
+    for statement in statements:
+        try:
+            oltp.execute(statement)
+        except Exception:
+            logger.warning("Could not grant the task-runner SP access to dq_run_configs")
 
 
 def _grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:

@@ -390,6 +390,16 @@ class PgExecutor:
     def database(self) -> str:
         return self._database
 
+    @property
+    def endpoint(self) -> str | None:
+        """Resolved Lakebase endpoint path, or ``None`` for a static-password connection."""
+        return self._endpoint
+
+    @property
+    def host(self) -> str:
+        """Resolved read/write Postgres host."""
+        return self._host
+
     # ------------------------------------------------------------------
     # Token-refresh observability
     # ------------------------------------------------------------------

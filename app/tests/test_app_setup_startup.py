@@ -423,3 +423,54 @@ async def test_startup_cleans_open_context_when_reconciliation_is_cancelled(
         await startup.start_studio(app)
 
     pg_executor.close.assert_called_once_with()
+
+
+class TestGrantTaskRunnerRunConfigAccess:
+    """The app grants the task-runner SP read/delete on ``dq_run_configs`` at startup."""
+
+    def _oltp(self, dialect: str = "postgres") -> MagicMock:
+        oltp = MagicMock(name="oltp")
+        oltp.dialect = dialect
+        oltp.schema = "studio"
+        oltp.q.side_effect = lambda value: f'"{value}"'
+        oltp.fqn.side_effect = lambda name: f'"studio"."{name}"'
+        return oltp
+
+    def test_grants_usage_and_select_delete_when_configured(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
+        oltp = self._oltp()
+        startup._grant_task_runner_run_config_access(oltp)
+
+        issued = [call.args[0] for call in oltp.execute.call_args_list]
+        assert issued == [
+            'GRANT USAGE ON SCHEMA "studio" TO "sp-runner"',
+            'GRANT SELECT, DELETE ON "studio"."dq_run_configs" TO "sp-runner"',
+        ]
+
+    def test_noop_when_no_role_configured(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "")
+        oltp = self._oltp()
+        startup._grant_task_runner_run_config_access(oltp)
+        oltp.execute.assert_not_called()
+
+    def test_noop_when_oltp_is_not_postgres(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
+        oltp = self._oltp(dialect="delta")
+        startup._grant_task_runner_run_config_access(oltp)
+        oltp.execute.assert_not_called()
+
+    def test_rejects_malformed_role(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        # A role that fails validate_object_id must not be interpolated into DDL.
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", 'evil"; DROP')
+        oltp = self._oltp()
+        with pytest.raises(ValueError):
+            startup._grant_task_runner_run_config_access(oltp)
+        oltp.execute.assert_not_called()

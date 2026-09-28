@@ -108,6 +108,9 @@ def prepare_config_json(
     if job_parameters_size(params) <= JOB_PARAMETERS_CHAR_LIMIT:
         return inline
 
+    # Validate the run_id to ensure a malformed id surfaces as ValueError
+    # instead of being caught below and mislabeled as a Lakebase staging failure.
+    validate_object_id(run_id)
     try:
         stage_config_to_table(sql, run_id, config)
     except RunConfigError:

@@ -16,6 +16,7 @@ import logging
 import sys
 import time
 import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -54,6 +55,24 @@ _RUN_CONFIGS_TABLE = "dq_run_configs"
 # file on the wheels volume. Superseded by the manifest table, but still read
 # here so any in-flight job submitted by an older app keeps working.
 _STAGED_CONFIG_KEY = "__staged__"
+
+
+@dataclass(frozen=True)
+class _LakebaseConn:
+    """Resolved Lakebase connection coordinates threaded from the app as job parameters.
+
+    The app resolves the *endpoint* (even in platform-bound mode, where it is
+    derived from the bound host), *host*, and *username* once and passes them
+    here, so the runner does not repeat that resolution — it only mints a fresh
+    OAuth token. *schema* qualifies ``dq_run_configs`` in the query.
+    """
+
+    endpoint: str
+    host: str
+    username: str
+    database: str
+    schema: str
+
 
 # User-facing observer names written to ``dq_metrics.run_name``. The
 # internal ``run_type`` token (``dryrun`` / ``scheduled`` / ``preview``)
@@ -283,56 +302,54 @@ def _pg_run_configs_table(schema: str) -> sql.Composable:
     return sql.Identifier(schema, _RUN_CONFIGS_TABLE)
 
 
-def _lakebase_connect(ws: WorkspaceClient, endpoint: str, database: str, schema: str):
-    """Open a short-lived psycopg connection to Lakebase as the task-runner Service Principal."""
-    if not endpoint:
+def _lakebase_connect(ws: WorkspaceClient, conn: _LakebaseConn):
+    """Open a short-lived psycopg connection to Lakebase as the task-runner Service Principal.
+
+    The app already resolved the endpoint (even in platform-bound mode), host,
+    and username and threaded them here, so this only mints a fresh OAuth token
+    and connects — it does not repeat the host/identity resolution the app's
+    ``pg_executor.build_pg_executor_from_connection`` performs.
+
+    The queries schema-qualify ``dq_run_configs`` via ``sql.Identifier``, so the
+    connection does not set ``search_path`` — avoiding an unescaped schema value
+    in the libpq options string.
+    """
+    if not conn.endpoint:
         raise RuntimeError("Lakebase endpoint was not provided to the task runner")
+    if not conn.host or not conn.username:
+        raise RuntimeError("Lakebase host/username were not provided to the task runner")
 
-    endpoint_obj = ws.postgres.get_endpoint(name=endpoint)
-    status = endpoint_obj.status
-    host = status.hosts.host if status and status.hosts else None
-    if not host:
-        raise RuntimeError(f"Lakebase endpoint {endpoint!r} has no read/write host")
-
-    me = ws.current_user.me()
-    username = me.user_name or me.id or ""
-    if not username:
-        raise RuntimeError("Could not determine workspace identity for the Lakebase connection")
-
-    credential = ws.postgres.generate_database_credential(endpoint=endpoint)
+    credential = ws.postgres.generate_database_credential(endpoint=conn.endpoint)
     if not credential.token:
-        raise RuntimeError(f"Lakebase credential response had no token (endpoint={endpoint})")
+        raise RuntimeError(f"Lakebase credential response had no token (endpoint={conn.endpoint})")
     return psycopg.connect(
-        host=host,
+        host=conn.host,
         port=5432,
-        dbname=database,
-        user=username,
+        dbname=conn.database,
+        user=conn.username,
         password=credential.token,
         sslmode="require",
-        options=f"-c search_path={schema}",
         connect_timeout=30,
     )
 
 
 def _read_manifest_config(
     ws: WorkspaceClient,
-    endpoint: str,
-    database: str,
-    schema: str,
+    conn: _LakebaseConn,
     run_id: str,
     max_retries: int = 5,
     initial_delay: float = 2.0,
     max_delay: float = 15.0,
 ) -> dict[str, Any]:
     """Load the staged run config for *run_id* from the ``dq_run_configs`` table."""
-    query = sql.SQL("SELECT config FROM {} WHERE run_id = %s").format(_pg_run_configs_table(schema))
+    query = sql.SQL("SELECT config FROM {} WHERE run_id = %s").format(_pg_run_configs_table(conn.schema))
     last_error: Exception | None = None
     delay = initial_delay
     for attempt in range(max_retries):
         row: tuple[Any, ...] | None = None
         try:
-            with _lakebase_connect(ws, endpoint, database, schema) as conn:
-                with conn.cursor() as cur:
+            with _lakebase_connect(ws, conn) as pg:
+                with pg.cursor() as cur:
                     cur.execute(query, (run_id,))
                     row = cur.fetchone()
         except Exception as e:
@@ -370,14 +387,12 @@ def _parse_manifest_config(value: object, run_id: str) -> dict[str, Any]:
 def _resolve_run_config(
     ws: WorkspaceClient,
     config_raw: dict[str, Any],
-    lakebase_endpoint: str,
-    lakebase_database: str,
-    lakebase_schema: str,
+    lakebase: _LakebaseConn,
     run_id: str,
 ) -> tuple[dict[str, Any], tuple[str, str | None] | None]:
     """Resolve the full run config from an inline manifest stub."""
     if config_raw.get(_MANIFEST_CONFIG_KEY):
-        config = _read_manifest_config(ws, lakebase_endpoint, lakebase_database, lakebase_schema, run_id)
+        config = _read_manifest_config(ws, lakebase, run_id)
         return config, ("manifest", None)
     staged = config_raw.get(_STAGED_CONFIG_KEY)
     if isinstance(staged, str) and staged.strip():
@@ -389,9 +404,7 @@ def _resolve_run_config(
 def _cleanup_run_config(
     ws: WorkspaceClient,
     cleanup: tuple[str, str | None] | None,
-    lakebase_endpoint: str,
-    lakebase_database: str,
-    lakebase_schema: str,
+    lakebase: _LakebaseConn,
     run_id: str,
 ) -> None:
     """Best-effort removal of a staged run config once the run has finished."""
@@ -399,24 +412,18 @@ def _cleanup_run_config(
         return
     kind, path = cleanup
     if kind == "manifest":
-        _delete_manifest_config(ws, lakebase_endpoint, lakebase_database, lakebase_schema, run_id)
+        _delete_manifest_config(ws, lakebase, run_id)
     elif kind == "volume" and path:
         _delete_staged_config(ws, path)
 
 
-def _delete_manifest_config(
-    ws: WorkspaceClient,
-    endpoint: str,
-    database: str,
-    schema: str,
-    run_id: str,
-) -> None:
+def _delete_manifest_config(ws: WorkspaceClient, conn: _LakebaseConn, run_id: str) -> None:
     try:
-        query = sql.SQL("DELETE FROM {} WHERE run_id = %s").format(_pg_run_configs_table(schema))
-        with _lakebase_connect(ws, endpoint, database, schema) as conn:
-            with conn.cursor() as cur:
+        query = sql.SQL("DELETE FROM {} WHERE run_id = %s").format(_pg_run_configs_table(conn.schema))
+        with _lakebase_connect(ws, conn) as pg:
+            with pg.cursor() as cur:
                 cur.execute(query, (run_id,))
-            conn.commit()
+            pg.commit()
         logger.info("Deleted manifest run config for %s", run_id)
     except Exception as exc:
         logger.debug("Could not delete manifest run config for %s: %s", run_id, exc)
@@ -446,9 +453,11 @@ def _parse_args() -> argparse.Namespace:
         help="Databricks job run id (wired as {{job.run_id}}) used to deep-link the run in the UI",
     )
     # Lakebase connection coordinates for reading a staged run config.
-    parser.add_argument("--lakebase_endpoint", default="", help="Lakebase endpoint path for staged run configs")
+    parser.add_argument("--lakebase_endpoint", default="", help="Resolved Lakebase endpoint path")
     parser.add_argument("--lakebase_database", default="", help="Lakebase database name")
     parser.add_argument("--lakebase_schema", default="", help="Lakebase schema holding dq_run_configs")
+    parser.add_argument("--lakebase_host", default="", help="Resolved Lakebase read/write host")
+    parser.add_argument("--lakebase_username", default="", help="Resolved Lakebase role (SP client id)")
     return parser.parse_args()
 
 
@@ -1481,19 +1490,19 @@ def main() -> None:
     ws = WorkspaceClient()
     spark = SparkSession.builder.getOrCreate()
     job_run_id = _parse_job_run_id(args.job_run_id)
+    lakebase = _LakebaseConn(
+        endpoint=args.lakebase_endpoint,
+        host=args.lakebase_host,
+        username=args.lakebase_username,
+        database=args.lakebase_database,
+        schema=args.lakebase_schema,
+    )
     config: dict[str, Any] = {}
     config_cleanup: tuple[str, str | None] | None = None
     source_table_fqn = ""
 
     try:
-        config, config_cleanup = _resolve_run_config(
-            ws,
-            config_raw,
-            args.lakebase_endpoint,
-            args.lakebase_database,
-            args.lakebase_schema,
-            args.run_id,
-        )
+        config, config_cleanup = _resolve_run_config(ws, config_raw, lakebase, args.run_id)
         source_table_fqn = config.get("source_table_fqn", "")
         if args.task_type == "profile":
             _run_profile(
@@ -1553,14 +1562,7 @@ def main() -> None:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
-        _cleanup_run_config(
-            ws,
-            config_cleanup,
-            args.lakebase_endpoint,
-            args.lakebase_database,
-            args.lakebase_schema,
-            args.run_id,
-        )
+        _cleanup_run_config(ws, config_cleanup, lakebase, args.run_id)
         # Best-effort belt-and-suspenders cleanup of the OBO-created temp view.
         #
         # The authoritative cleanup is the app's OBO ``drop_view`` (run as the

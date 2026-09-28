@@ -126,6 +126,15 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_LAKEBASE_SCHEMA",
         description="Postgres schema for app tables. Created at startup if missing.",
     )
+    # The task-runner job runs as a separate service principal and reads staged
+    # run configs from ``dq_run_configs`` over Postgres. Its Postgres role (the
+    # SP client id) is granted USAGE + SELECT/DELETE at startup by the app (the
+    # table owner). Empty when there is no separate runner SP.
+    task_runner_postgres_role: str = Field(
+        default="",
+        validation_alias="DQX_TASK_RUNNER_POSTGRES_ROLE",
+        description="Postgres role (service principal client id for the task runner). Granted read/delete on dq_run_configs.",
+    )
     # Default 0 so the pool can drain to zero idle connections and let a
     # scale-to-zero Lakebase endpoint suspend. A held-open connection (min_size
     # >= 1) is periodically re-established after suspension kills it, nudging

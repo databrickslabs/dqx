@@ -629,6 +629,11 @@ class _FakeConn:
         return False
 
 
+def _conn(runner_module, schema="sch"):
+    """Build a ``_LakebaseConn`` with the resolved coordinates the app threads."""
+    return runner_module._LakebaseConn(endpoint="ep", host="h", username="u", database="db", schema=schema)
+
+
 def _patch_connect(runner_module, monkeypatch, conns):
     """Patch ``_lakebase_connect`` to return the given fake connections in order.
 
@@ -636,7 +641,7 @@ def _patch_connect(runner_module, monkeypatch, conns):
     """
     calls = {"n": 0}
 
-    def fake_connect(ws, endpoint, database, schema):
+    def fake_connect(ws, conn):
         i = calls["n"]
         calls["n"] += 1
         item = conns[i] if i < len(conns) else conns[-1]
@@ -658,7 +663,7 @@ class TestResolveRunConfig:
         ws = MagicMock(name="ws")
         connected = _patch_connect(runner_module, monkeypatch, [])
         raw = {"checks": [{"name": "c1"}], "sample_size": 100}
-        config, cleanup = runner_module._resolve_run_config(ws, raw, "ep", "db", "sch", "run1")
+        config, cleanup = runner_module._resolve_run_config(ws, raw, _conn(runner_module), "run1")
         assert config == raw
         assert cleanup is None
         # Inline config never touches Lakebase or the volume.
@@ -670,7 +675,7 @@ class TestResolveRunConfig:
         full = {"checks": [{"name": "c1"}], "sample_size": 50}
         cur = _FakeCursor(fetch=(json.dumps(full),))
         _patch_connect(runner_module, monkeypatch, [_FakeConn(cur)])
-        config, cleanup = runner_module._resolve_run_config(ws, {"__manifest__": True}, "ep", "db", "sch", "run1")
+        config, cleanup = runner_module._resolve_run_config(ws, {"__manifest__": True}, _conn(runner_module), "run1")
         assert config == full
         assert cleanup == ("manifest", None)
         # run_id is bound, not interpolated, and the table is schema-qualified.
@@ -684,7 +689,7 @@ class TestResolveRunConfig:
         full = {"checks": [], "sample_size": 5}
         ws.files.download.return_value.contents.read.return_value = json.dumps(full).encode()
         path = "/Volumes/c/s/w/run-configs/run1.json"
-        config, cleanup = runner_module._resolve_run_config(ws, {"__staged__": path}, "ep", "db", "sch", "run1")
+        config, cleanup = runner_module._resolve_run_config(ws, {"__staged__": path}, _conn(runner_module), "run1")
         assert config == full
         assert cleanup == ("volume", path)
         assert connected["n"] == 0
@@ -706,7 +711,7 @@ class TestCleanupRunConfig:
         cur = _FakeCursor()
         conn = _FakeConn(cur)
         _patch_connect(runner_module, monkeypatch, [conn])
-        runner_module._cleanup_run_config(ws, ("manifest", None), "ep", "db", "sch", "run1")
+        runner_module._cleanup_run_config(ws, ("manifest", None), _conn(runner_module), "run1")
         sql, params = cur.executed[0]
         assert sql.startswith("DELETE FROM")
         assert "dq_run_configs" in sql
@@ -718,14 +723,14 @@ class TestCleanupRunConfig:
         ws = MagicMock(name="ws")
         connected = _patch_connect(runner_module, monkeypatch, [])
         path = "/Volumes/c/s/w/run-configs/run1.json"
-        runner_module._cleanup_run_config(ws, ("volume", path), "ep", "db", "sch", "run1")
+        runner_module._cleanup_run_config(ws, ("volume", path), _conn(runner_module), "run1")
         ws.files.delete.assert_called_once_with(path)
         assert connected["n"] == 0
 
     def test_none_cleanup_is_a_noop(self, runner_module, monkeypatch):
         ws = MagicMock(name="ws")
         connected = _patch_connect(runner_module, monkeypatch, [])
-        runner_module._cleanup_run_config(ws, None, "ep", "db", "sch", "run1")
+        runner_module._cleanup_run_config(ws, None, _conn(runner_module), "run1")
         ws.files.delete.assert_not_called()
         assert connected["n"] == 0
 
@@ -734,7 +739,7 @@ class TestCleanupRunConfig:
         # delete failure must not propagate out of the runner's finally block.
         ws = MagicMock(name="ws")
         _patch_connect(runner_module, monkeypatch, [RuntimeError("connection refused")])
-        runner_module._cleanup_run_config(ws, ("manifest", None), "ep", "db", "sch", "run1")
+        runner_module._cleanup_run_config(ws, ("manifest", None), _conn(runner_module), "run1")
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +778,7 @@ class TestReadManifestConfigRetry:
         monkeypatch.setattr(runner_module.time, "sleep", lambda s: slept.append(s))
 
         with pytest.raises(Exception):
-            runner_module._read_manifest_config(ws, "ep", "db", "sch", "run1")
+            runner_module._read_manifest_config(ws, _conn(runner_module), "run1")
 
         # One connection, no backoff sleeps — the parse failure short-circuits.
         assert connected["n"] == 1
@@ -787,7 +792,7 @@ class TestReadManifestConfigRetry:
         monkeypatch.setattr(runner_module.time, "sleep", lambda s: None)
 
         with pytest.raises(RuntimeError, match="No manifest run config row"):
-            runner_module._read_manifest_config(ws, "ep", "db", "sch", "run1", max_retries=3)
+            runner_module._read_manifest_config(ws, _conn(runner_module), "run1", max_retries=3)
 
         assert connected["n"] == 3
 
@@ -800,6 +805,6 @@ class TestReadManifestConfigRetry:
         connected = _patch_connect(runner_module, monkeypatch, conns)
         monkeypatch.setattr(runner_module.time, "sleep", lambda s: None)
 
-        result = runner_module._read_manifest_config(ws, "ep", "db", "sch", "run1", max_retries=3)
+        result = runner_module._read_manifest_config(ws, _conn(runner_module), "run1", max_retries=3)
         assert result == cfg
         assert connected["n"] == 2

@@ -37,7 +37,13 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
             genie_schema="genie",
         )
     )
+    # get_job_service reads the resolved Lakebase coordinates off the executor;
+    # give them concrete string values (a bare MagicMock would leak un-serializable
+    # attributes into the job parameters).
     oltp_mock = MagicMock(name="oltp_sql")
+    oltp_mock.endpoint = "projects/project/branches/branch/endpoints/primary"
+    oltp_mock.host = "pg.example.databricks.com"
+    oltp_mock.username = "sp-runner"
     try:
         service = asyncio.run(get_job_service(workspace, sql_executor_mock, oltp_mock, settings))
         result = service.submit_run("profile", "catalog.schema.view", {}, "run-1", "user@example.com")

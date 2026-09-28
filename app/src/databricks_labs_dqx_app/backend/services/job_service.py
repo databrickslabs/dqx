@@ -37,14 +37,22 @@ class JobService:
         lakebase_endpoint: str = "",
         lakebase_database: str = "",
         lakebase_schema: str = "",
+        lakebase_host: str = "",
+        lakebase_username: str = "",
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
         self._sql = sql
         self._oltp_sql = oltp_sql
+        # Lakebase connection coordinates threaded to the runner so it can read a
+        # staged config back over Postgres. ``endpoint``/``host``/``username`` are
+        # the values the app already resolved, so the runner does not re-run host/identity
+        # resolution — it only mints a fresh OAuth token.
         self._lakebase_endpoint = lakebase_endpoint
         self._lakebase_database = lakebase_database
         self._lakebase_schema = lakebase_schema
+        self._lakebase_host = lakebase_host
+        self._lakebase_username = lakebase_username
         # SQL warehouse the task runner uses for its temp-view cleanup path.
         # The admin-configured warehouse (``dq_app_settings`` → resolved by the
         # caller) wins; otherwise fall back to the SP executor's env-bound
@@ -77,6 +85,8 @@ class JobService:
             "lakebase_endpoint": self._lakebase_endpoint,
             "lakebase_database": self._lakebase_database,
             "lakebase_schema": self._lakebase_schema,
+            "lakebase_host": self._lakebase_host,
+            "lakebase_username": self._lakebase_username,
         }
         config_json = prepare_config_json(
             self._oltp_sql,

@@ -796,15 +796,22 @@ async def get_job_service(
     as job parameters so tasks can read the staged configs.
     """
     lakebase = rt.require_resources().lakebase
+    # Prefer the values the live OLTP executor already resolved.
+    # Fall back to the configured connection values.
+    resolved_endpoint = getattr(oltp, "endpoint", None) or lakebase.endpoint or ""
+    resolved_host = getattr(oltp, "host", None) or lakebase.host or ""
+    resolved_username = getattr(oltp, "username", None) or lakebase.username or ""
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
         sql=sql,
         oltp_sql=oltp,
         warehouse_id=resolve_warehouse_id(app_settings),
-        lakebase_endpoint=lakebase.endpoint or "",
+        lakebase_endpoint=resolved_endpoint,
         lakebase_database=lakebase.database or "",
         lakebase_schema=lakebase.schema or "",
+        lakebase_host=resolved_host,
+        lakebase_username=resolved_username,
     )
 
 
