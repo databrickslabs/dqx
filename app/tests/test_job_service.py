@@ -37,8 +37,9 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
             genie_schema="genie",
         )
     )
+    oltp_mock = MagicMock(name="oltp_sql")
     try:
-        service = asyncio.run(get_job_service(workspace, sql_executor_mock, settings))
+        service = asyncio.run(get_job_service(workspace, sql_executor_mock, oltp_mock, settings))
         result = service.submit_run("profile", "catalog.schema.view", {}, "run-1", "user@example.com")
     finally:
         setup_runtime.job_id = previous_job_id

@@ -772,6 +772,7 @@ def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    oltp: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> JobService:
     """Create a JobService using app (SP) credentials.
@@ -780,12 +781,21 @@ async def get_job_service(
     admin-configured SQL warehouse (``dq_app_settings``) is resolved here and
     threaded into the submitted run so the task runner's temp-view cleanup path
     honours it (env fallback when unset).
+
+    Oversized run configs are staged in the ``dq_run_configs`` Lakebase table via
+    the OLTP executor; the Lakebase connection settings are passed to the runner
+    as job parameters so tasks can read the staged configs.
     """
+    lakebase = rt.require_resources().lakebase
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
         sql=sql,
+        oltp_sql=oltp,
         warehouse_id=resolve_warehouse_id(app_settings),
+        lakebase_endpoint=lakebase.endpoint or "",
+        lakebase_database=lakebase.database or "",
+        lakebase_schema=lakebase.schema or "",
     )
 
 

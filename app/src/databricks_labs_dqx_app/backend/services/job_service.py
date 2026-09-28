@@ -11,7 +11,7 @@ from databricks.sdk import WorkspaceClient
 from pydantic import BaseModel
 
 from databricks_labs_dqx_app.backend.run_config_store import prepare_config_json
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,19 @@ class JobService:
         ws: WorkspaceClient,
         job_id: str,
         sql: SqlExecutor,
+        oltp_sql: OltpExecutorProtocol,
         warehouse_id: str | None = None,
+        lakebase_endpoint: str = "",
+        lakebase_database: str = "",
+        lakebase_schema: str = "",
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
         self._sql = sql
+        self._oltp_sql = oltp_sql
+        self._lakebase_endpoint = lakebase_endpoint
+        self._lakebase_database = lakebase_database
+        self._lakebase_schema = lakebase_schema
         # SQL warehouse the task runner uses for its temp-view cleanup path.
         # The admin-configured warehouse (``dq_app_settings`` → resolved by the
         # caller) wins; otherwise fall back to the SP executor's env-bound
@@ -66,9 +74,12 @@ class JobService:
             "run_id": run_id,
             "requesting_user": requesting_user,
             "warehouse_id": self._warehouse_id,
+            "lakebase_endpoint": self._lakebase_endpoint,
+            "lakebase_database": self._lakebase_database,
+            "lakebase_schema": self._lakebase_schema,
         }
         config_json = prepare_config_json(
-            self._sql,
+            self._oltp_sql,
             run_id=run_id,
             config=config,
             job_parameters_without_config=base_params,

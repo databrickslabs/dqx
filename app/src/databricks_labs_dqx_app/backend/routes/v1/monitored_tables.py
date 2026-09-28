@@ -102,7 +102,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     MissingSnapshotError,
     NeverApprovedError,
 )
-from databricks_labs_dqx_app.backend.run_config_store import RunConfigTooLargeError
+from databricks_labs_dqx_app.backend.run_config_store import RunConfigError
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
@@ -707,7 +707,7 @@ def run_monitored_table(
         raise HTTPException(status_code=422, detail=str(e))
     except BindingRunError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except RunConfigTooLargeError as e:
+    except RunConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to run monitored table {binding_id}: {e}", exc_info=True)

@@ -81,6 +81,7 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_schedule_configs          (OLTP*) per-schedule config (cron/interval, target rules)
  │   ├── dq_schedule_configs_history  (OLTP*) schedule config change audit log
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state (survives restarts)
+ │   ├── dq_run_configs               (OLTP*) staged run configs too large to inline in job params
  │   └── dq_migrations                (Delta) Delta migration version tracker
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
@@ -90,7 +91,7 @@ Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
          │   dq_quality_rules_history, dq_comments, dq_schedule_configs,
-         │   dq_schedule_configs_history, dq_schedule_runs
+         │   dq_schedule_configs_history, dq_schedule_runs, dq_run_configs
          └── dq_migrations             (Postgres migration version tracker)
 ```
 
@@ -511,7 +512,7 @@ choice is driven entirely by `databricks.yml`:
 | Backend | Tables | Why |
 |---------|--------|-----|
 | **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | Spark task runner writes these; high-volume append-mostly; columnar reads. |
-| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs`, `dq_run_configs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
 When Lakebase is **disabled** (no `lakebase_endpoint` set), the OLTP
 tables fall back to Delta — `MigrationRunner` runs both
