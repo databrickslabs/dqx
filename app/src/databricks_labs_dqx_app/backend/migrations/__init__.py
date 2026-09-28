@@ -85,7 +85,7 @@ Two status families intentionally use different casing:
   (``RUNNING``/``SUCCESS``/``FAILED``/``CANCELED``). These mirror the
   Databricks Jobs SDK ``life_cycle_state`` / ``result_state`` values
   that are passed straight through ``RunStatusOut`` to the frontend.
-- **App-domain workflow** (``dq_quality_rules.status``,
+- **App-domain workflow** (``dq_resolved_rules.status``,
   ``dq_schedule_runs.status``) — lowercase. These are pure DQX
   vocabulary (``draft``/``approved``, ``pending``/``partial_failure``)
   with no SDK counterpart.
@@ -255,7 +255,7 @@ class Migration:
 # - CHECK constraints ARE enforced — picking the right value-set on
 #   day one is cheap; loosening later is just an ALTER TABLE.
 # - ``VARIANT`` (DBR 15.3+ / serverless) replaces ad-hoc JSON-in-string
-#   for the largest blob columns (``dq_quality_rules.check``,
+#   for the largest blob columns (``dq_resolved_rules.check``,
 #   ``dq_quarantine_records.row_data``/``errors``).
 # - Run-lifecycle ``status`` columns use UPPERCASE values to mirror the
 #   Databricks Jobs SDK; app-domain ``status`` columns use lowercase.

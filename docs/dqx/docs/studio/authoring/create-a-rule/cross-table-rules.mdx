@@ -70,7 +70,7 @@ to real columns. The joined table is already named in the rule.
 Adding a join in the builder does **not** turn the rule into a single
 table-wide verdict. Results are still matched back to individual rows using the
 join keys. See
-[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).
+[Row-level vs dataset-level rules](/docs/studio/authoring/create-a-rule/row-and-dataset-level).
 </Admonition>
 
 ## Custom SQL
@@ -155,9 +155,9 @@ FROM {{input_view}} i
 JOIN catalog.schema.products p ON i.{{product_id}} = p.id
 ```
 
-### Table-level SQL
+### Dataset-level SQL
 
-One verdict for the whole table. Set **Applies to** to **Table-level**. The
+One verdict for the whole dataset. Set **Applies to** to **Dataset-level**. The
 query must aggregate to **exactly one row** and return a boolean `condition`
 (`TRUE` = fail).
 
@@ -179,10 +179,10 @@ JOIN catalog.schema.products p ON i.{{product_id}} = p.id
 ```
 
 <Admonition type="caution" title="Match the switch to the query">
-**Row-level** without merge keys, or **Table-level** without a single aggregated
+**Row-level** without merge keys, or **Dataset-level** without a single aggregated
 row, fails when the rule runs. The editor warns about these cases — don't ignore
 those messages. For more on when to pick each level, see
-[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).
+[Row-level vs dataset-level rules](/docs/studio/authoring/create-a-rule/row-and-dataset-level).
 </Admonition>
 
 ### Write or improve SQL with AI
@@ -191,7 +191,7 @@ In the SQL editor, use **Write with AI** / **Improve** to draft a cross-table
 predicate from a plain-English description. Mention:
 
 - the **fully qualified** reference table (`catalog.schema.table`)
-- whether the check should be **row-level** or **table-level** (the **Applies
+- whether the check should be **row-level** or **dataset-level** (the **Applies
   to** toggle is sent to the model as context)
 
 Always review the generated SQL and run **Test** before saving.
@@ -216,7 +216,7 @@ question — see
 | ------- | ------------ |
 | "Declare the join in the card below or write it in the query — not both" | The same join is declared in **Advanced → Joins** *and* typed in the SQL. Pick one. |
 | Query uses columns of the table being checked but never reads it | A full `SELECT` forgot `FROM {{input_view}}`. |
-| Rule fails at runtime with a single-row / merge error | **Applies to** doesn't match the query shape (row-level needs merge keys in the `SELECT`; table-level must return exactly one row). |
+| Rule fails at runtime with a single-row / merge error | **Applies to** doesn't match the query shape (row-level needs merge keys in the `SELECT`; dataset-level must return exactly one row). |
 | Test works, scheduled run fails | The schedule runs as the app identity, which may lack `SELECT` on the reference table. |
 | Unexpected failures after a join | Remember: in a full `SELECT`, `condition` is TRUE when the check **fails**. Don't invert it by accident. |
 
@@ -225,5 +225,5 @@ question — see
 Cross-table rules follow the same path as any other rule: test on sample data,
 save as draft or submit for approval, then
 [apply the rule](/docs/studio/monitoring/assign-rules) to the monitored table.
-To understand how row-level vs table-level choices show up in results, see
-[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-table-level).
+To understand how row-level vs dataset-level choices show up in results, see
+[Row-level vs dataset-level rules](/docs/studio/authoring/create-a-rule/row-and-dataset-level).

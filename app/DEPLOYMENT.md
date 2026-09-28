@@ -12,6 +12,39 @@ Lakebase is mandatory. Delta-backed application (OLTP) state was removed and can
 
 Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the canonical application source and Marketplace templates but excludes the generated `app/marketplace/` artifact. `app/scripts/release_marketplace.sh studio-vX.Y.Z` validates the requested version against the application at `HEAD`, creates `dqx-studio/marketplace/vX.Y.Z`, builds and force-stages the complete self-contained source, signs and verifies its local commit, then creates and verifies the annotated signed Studio version tag on that generated commit. This ordering is required because Marketplace checks out the tag and deploys the configured `app/marketplace/` source path. The build **copies** the committed, self-contained lock at `app/marketplace_templates/uv.lock` (a tracked template) rather than re-resolving: it runs no `uv lock` and downloads no wheels, so the artifact can't drift with the package index or a `uv` version, and needs no network. A test (`test_marketplace_template_lock_matches_app_runtime_closure`) keeps that template in step with the app's runtime dependencies. To refresh it after a dependency or DQX-version change, regenerate it deliberately in an environment with public-PyPI (or proxy) access — resolve the release dependencies with `uv lock` and normalize the URLs to public PyPI — then commit the result. Because `databricks-labs-dqx` currently pins `litellm<=1.82.6` (which has no Python 3.13/3.14 wheels), that regeneration must temporarily cap the app's `requires-python` to `<3.13` to avoid an unsolvable resolver fork; revert the cap after regenerating. The script never pushes; inspect the branch, then explicitly push both refs with `git push origin dqx-studio/marketplace/vX.Y.Z` and `git push origin studio-vX.Y.Z`. DAB deployment continues to consume `.build/`, not `app/marketplace/`.
 
+## Resource ownership tags
+
+DQX Studio marks resources it owns with the ungoverned ownership tag
+`app=dqx-studio`. The deployment path determines whether a resource is
+Studio-owned: Marketplace-bound resources may be shared with other workloads
+and are deliberately untouched.
+
+| Resource | DAB | Marketplace | Tag behavior |
+|---|---|---|---|
+| Task-runner job | Created | Created/reconciled | `app=dqx-studio` |
+| SQL warehouse | Created and dedicated | Existing binding | Tagged only for DAB |
+| Lakebase project | Created and dedicated | Existing binding | Tagged only for DAB |
+| Main UC schema and wheels volume | Created | Existing binding | Tagged only for DAB |
+| Temporary and Genie schemas | Created | Created by setup | Tagged in both paths |
+| Persistent Studio UC tables/views | Created by startup/migrations | Created by startup/migrations | Tagged in both paths |
+| Demo schema/tables | Created by bundle/demo workflow | Created only when demo is deployed | Tagged when Studio-owned |
+| App, dashboard, Genie Agent | Created | App/Genie created | Not implemented: no native DAB tag support in CLI 1.17.0 |
+| Service principals, roles, grants, ACLs, bindings | Mixed | Mixed | Not tagged |
+
+Temporary and Genie schemas, persistent Studio Unity Catalog tables and views,
+and Studio-created demo resources are reconciled by the applicable deployment,
+startup, setup, and demo paths. The task-runner job is tagged in both DAB and
+Marketplace paths.
+
+App, dashboard, and Genie Agent tagging is not implemented: Databricks CLI
+1.17.0 provides no native DAB tag field for those resource types. The separate
+Beta workspace entity-tag API may support them, but DQX Studio intentionally
+does not call it. Service principals, roles, grants, ACLs, and bindings are
+also not tagged.
+
+The Lakebase-internal Postgres schema and its tables do not receive Unity
+Catalog tags.
+
 ## Prerequisites
 
 Before you start, confirm you have **all** of the items below. The single most common deployment failure is missing one permission — and the error you see is almost always downstream of the missing grant, not on the grant itself.

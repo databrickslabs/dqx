@@ -42,7 +42,7 @@ interface RegistryRuleJsonDialogProps {
  * View the rule's native DQX-compatible check JSON — the exact
  * `{ criticality, check: { function, arguments }, user_metadata, name?,
  * message_expr? }` dict shape `materializer.render_check` stamps into the
- * materialized `dq_quality_rules.check` row, derived from the rule's stored
+ * materialized `dq_resolved_rules.check` row, derived from the rule's stored
  * `definition` and `user_metadata` (see `lib/registry-rule-conversion.ts`;
  * no separate stored copy — the `definition` already IS the persisted
  * structured form, per the Rules Registry design). `user_metadata` is

@@ -13,6 +13,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
@@ -494,6 +495,8 @@ def submit_data_product(
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
             svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            # Auto-approve activates any cron on the space — wake the scheduler.
+            scheduler_registry.notify_scheduler()
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)
@@ -529,6 +532,9 @@ def approve_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         svc.approve(product_id, user_email, rationale=body.rationale if body else None)
+        # Approval activates any cron on the space — wake the scheduler so its
+        # first run does not wait out the idle poll interval.
+        scheduler_registry.notify_scheduler()
         detail = svc.get(product_id)
         assert detail is not None  # just approved it
         return DataProductOut.from_domain(detail)

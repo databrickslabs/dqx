@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import type { RuleGranularity } from "@/lib/lowcodeCompile";
 
 /**
- * Row-level / table-level indicator for the rule being authored, built as the
+ * Row-level / dataset-level indicator for the rule being authored, built as the
  * same sliding two-way pill as {@link PredicatePolaritySwitch} so the two
  * semantic axes of a rule ("what counts as a pass", "what gets a verdict") read
  * as the same kind of control.

@@ -15,6 +15,8 @@ Parsed textually rather than via the Databricks CLI / PyYAML so the check needs 
 import re
 from pathlib import Path
 
+import yaml
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLE = _REPO_ROOT / "app" / "databricks.yml"
 _VERSION_MODULE = _REPO_ROOT / "src" / "databricks" / "labs" / "dqx" / "__version__.py"
@@ -60,3 +62,11 @@ def test_bundle_artifact_build_uses_the_frozen_app_lock() -> None:
     """Bundle builds must not re-resolve dependencies against a workspace package proxy."""
     text = _BUNDLE.read_text(encoding="utf-8")
     assert "uv run --frozen python scripts/build_app.py" in text
+
+
+def test_bundle_managed_warehouse_stops_after_ten_idle_minutes() -> None:
+    """The Studio warehouse must release idle compute promptly."""
+    bundle = yaml.safe_load(_BUNDLE.read_text(encoding="utf-8"))
+
+    warehouse = bundle["resources"]["sql_warehouses"]["dqx_sql_warehouse"]
+    assert warehouse["auto_stop_mins"] == 10

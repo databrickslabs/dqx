@@ -4,7 +4,7 @@ Layer 2 of the Rules Registry
 (``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §7): a thin
 binding recording that a table is under active Rules Registry governance,
 plus the live link of applied registry rules and the materializer that
-renders them into ``dq_quality_rules`` (Phase 3C).
+renders them into ``dq_resolved_rules`` (Phase 3C).
 """
 
 from typing import Annotated
@@ -12,6 +12,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
@@ -174,7 +175,7 @@ def _apply_snapshot_check_counts(
     B2-25: the overview "# Checks" must agree with the DQ score and the detail
     page. The score is derived from the FROZEN per-version snapshot (via
     ``dq_metrics``), whereas ``MonitoredTableService.list_monitored_tables``
-    counts live ``dq_quality_rules`` rows — a transient set that a
+    counts live ``dq_resolved_rules`` rows — a transient set that a
     re-materialization can (wrongly, pre-Fix-B) drop to zero, so a scored table
     could show 0 checks. Count from the snapshot instead:
 
@@ -383,7 +384,7 @@ def delete_monitored_table(
     the caller is an admin/approver.
 
     TODO(Phase 3C): once the materializer exists, block/handle
-    de-materialization of any ``dq_quality_rules`` rows tied to this
+    de-materialization of any ``dq_resolved_rules`` rows tied to this
     binding's applications before allowing deletion.
     """
     user_email = _current_user_email(obo_ws)
@@ -511,6 +512,11 @@ def update_monitored_table_schedule(
             schedule_kind=body.schedule_kind,
             schedule_sample_size=body.schedule_sample_size,
         )
+        # Setting a cron on an approved table activates it immediately (the
+        # schedule is orthogonal to the review lifecycle) — wake the scheduler
+        # so its first run does not wait out the idle poll interval.
+        if (body.schedule_cron or "").strip():
+            scheduler_registry.notify_scheduler()
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -982,7 +988,7 @@ def remove_applied_rule(
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+    """Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
@@ -1088,11 +1094,11 @@ def set_applied_rule_severity_override(
 # parallel status-mutation implementation, these routes REUSE the per-rule
 # transition path (``RulesCatalogService.set_status`` — the exact call
 # ``routes/v1/rules.py`` submit/approve/reject make) to move each of the
-# binding's materialized ``dq_quality_rules`` rows, so audit/history/version
+# binding's materialized ``dq_resolved_rules`` rows, so audit/history/version
 # semantics are identical for a table's checks whether they were submitted
 # one at a time from Drafts & Review or in bulk from here. The binding's own
 # status is then rolled up from its checks. The scheduler is untouched: it
-# still runs only ``dq_quality_rules`` rows at ``status='approved'``.
+# still runs only ``dq_resolved_rules`` rows at ``status='approved'``.
 # ------------------------------------------------------------------
 
 
@@ -1210,7 +1216,7 @@ def submit_monitored_table(
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
 
-    Materializes the binding's applied rules into ``dq_quality_rules`` (the
+    Materializes the binding's applied rules into ``dq_resolved_rules`` (the
     UI has already persisted any staged edits via ``saveAppliedRules``), then
     submits every freshly-materialized ``draft`` check for approval — reusing
     the same per-rule transition the Drafts & Review queue uses — and rolls
@@ -1332,7 +1338,7 @@ def approve_monitored_table(
     Reuses the per-rule approve transition so each check's audit trail is
     identical to a hand-approval, then rolls the binding up to ``approved``.
     From here the scheduler picks the checks up (it runs only ``approved``
-    ``dq_quality_rules`` rows).
+    ``dq_resolved_rules`` rows).
 
     Table approval is the ONLY event that bumps the monitored-table version:
     after the binding rolls up to ``approved`` the newly-approved rule set is

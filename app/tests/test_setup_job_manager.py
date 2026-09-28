@@ -29,7 +29,7 @@ def managed_job(job_id: int) -> Job:
     """Build the minimal Jobs API response for a Studio-managed job."""
     return Job(
         job_id=job_id,
-        settings=JobSettings(tags={"dqx_studio_managed": "true", "dqx_component": "task_runner"}),
+        settings=JobSettings(tags={"app": "dqx-studio", "dqx_studio_managed": "true", "dqx_component": "task_runner"}),
     )
 
 
@@ -64,6 +64,35 @@ def test_resolve_rediscovers_tagged_job_before_create(manager: TaskRunnerJobMana
     manager.workspace.jobs.create.assert_not_called()
 
 
+def test_resolve_rediscovers_and_upgrades_legacy_managed_job(manager: TaskRunnerJobManager) -> None:
+    """An upgraded installation reuses its legacy job and adds the ownership tag."""
+    legacy_job = Job(
+        job_id=45,
+        settings=JobSettings(
+            tags={
+                "owner": "data-platform",
+                "dqx_studio_managed": "true",
+                "dqx_component": "task_runner",
+            }
+        ),
+    )
+    manager.workspace.jobs.list.return_value = [legacy_job]
+    manager.workspace.jobs.get.return_value = legacy_job
+
+    resolved = manager.resolve(None)
+    manager.configure(resolved.job_id, ["/Volumes/c/s/v/runner.whl"])
+
+    assert resolved == ResolvedJob(job_id=45, created=False)
+    manager.workspace.jobs.create.assert_not_called()
+    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    assert settings.tags == {
+        "owner": "data-platform",
+        "app": "dqx-studio",
+        "dqx_studio_managed": "true",
+        "dqx_component": "task_runner",
+    }
+
+
 def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJobManager) -> None:
     """A first reconciliation creates a discoverable job the setup admin can manage."""
     manager.workspace.jobs.create.return_value.job_id = 44
@@ -71,7 +100,11 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
     assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)
 
     created = manager.workspace.jobs.create.call_args.kwargs
-    assert created["tags"] == {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
+    assert created["tags"] == {
+        "app": "dqx-studio",
+        "dqx_studio_managed": "true",
+        "dqx_component": "task_runner",
+    }
     assert created["access_control_list"][0].user_name == "admin@example.com"
 
 
@@ -131,6 +164,7 @@ def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) ->
         "owner": "data-platform",
         "cost_center": "finance",
         "governance": "regulated",
+        "app": "dqx-studio",
         "dqx_studio_managed": "true",
         "dqx_component": "task_runner",
     }

@@ -8,6 +8,8 @@ import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRul
 import type { LabelDefinition } from "@/lib/api-custom";
 import type { ColumnFamily } from "./ColumnPicker";
 
+export { extractApiError } from "@/lib/api-error";
+
 export const RESERVED_NAME_KEY = "name";
 export const RESERVED_DIMENSION_KEY = "dimension";
 export const RESERVED_SEVERITY_KEY = "severity";
@@ -26,11 +28,6 @@ export function getTag(rule: RegistryRuleOut, key: string): string {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
   const v = md[key];
   return typeof v === "string" ? v : "";
-}
-
-export function extractApiError(err: unknown, fallback: string): string {
-  const axErr = err as { response?: { data?: { detail?: string } } };
-  return axErr?.response?.data?.detail ?? fallback;
 }
 
 export function colorFor(defs: LabelDefinition[], key: string, value: string): string | undefined {

@@ -140,7 +140,7 @@ class TestDqAppliedRules:
 class TestDqQualityRulesProvenance:
     @pytest.mark.parametrize("baseline", _BASELINES)
     def test_provenance_columns_present(self, baseline: str) -> None:
-        cols = _columns(baseline, "dq_quality_rules")
+        cols = _columns(baseline, "dq_resolved_rules")
         assert {"registry_rule_id", "registry_version", "applied_rule_id"} <= cols
 
 
