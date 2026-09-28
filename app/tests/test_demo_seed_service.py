@@ -1584,3 +1584,194 @@ def test_view_service_names_views_from_its_sql_executor_schema():
         ), f"Expected view to be created in dqx_studio_tmp, got: {view_name}"
     finally:
         reset_tmp_schema_ready()
+
+
+# ---------------------------------------------------------------------------
+# Paused demo schedules
+# ---------------------------------------------------------------------------
+
+
+def _schedule_svc(**over):
+    """Seed service wired for the schedules phase, with an event log of schedule writes.
+
+    Bindings resolve to ``b-<table>`` and products to ``p-<n>`` so every
+    manifest schedule target has a distinct id. The returned ``events`` list
+    records pause / grant / cron writes in call order.
+    """
+    from databricks_labs_dqx_app.backend.services.schedule_config_service import ScheduleConfigService
+    from databricks_labs_dqx_app.backend.services.schedule_grant_service import ScheduleGrantService
+
+    schedule_config = create_autospec(ScheduleConfigService, instance=True)
+    schedule_grants = create_autospec(ScheduleGrantService, instance=True)
+    over.setdefault("schedule_config", schedule_config)
+    over.setdefault("schedule_grants", schedule_grants)
+    svc, deps = _svc(**over)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.side_effect = lambda fqn, _user: MagicMock(
+        binding_id=f"b-{fqn.rsplit('.', 1)[-1]}"
+    )
+    product_ids = iter(f"p-{i}" for i in range(len(manifest.DATA_PRODUCTS)))
+    deps["data_products"].create.side_effect = lambda *_a, **_k: MagicMock(product_id=next(product_ids))
+    deps["data_products"].member_table_fqns.side_effect = lambda pid: [f"dqx.demo.{pid}_member"]
+
+    events: list[tuple[str, str]] = []
+    deps["schedule_config"].set_tracker_paused.side_effect = lambda name, paused: events.append(
+        ("pause" if paused else "unpause", name)
+    )
+    deps["monitored_tables"].update_schedule.side_effect = lambda binding_id, *_a, **_k: events.append(
+        ("cron", f"table:{binding_id}")
+    )
+    deps["data_products"].update.side_effect = lambda product_id, *_a, **_k: events.append(
+        ("cron", f"product:{product_id}")
+    )
+    return svc, deps, events
+
+
+def _expected_schedule_keys() -> set[str]:
+    product_ids = {spec.name: f"p-{i}" for i, spec in enumerate(manifest.DATA_PRODUCTS)}
+    return {
+        f"table:b-{spec.target}" if spec.target_kind == "table" else f"product:{product_ids[spec.target]}"
+        for spec in manifest.SCHEDULES
+    }
+
+
+def test_manifest_schedules_cover_a_table_and_a_collection_with_valid_crons():
+    from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
+
+    kinds = {spec.target_kind for spec in manifest.SCHEDULES}
+    assert kinds == {"table", "collection"}
+    assert 2 <= len(manifest.SCHEDULES) <= 3
+    binding_tables = {b.table for b in manifest.BINDINGS}
+    product_names = {p.name for p in manifest.DATA_PRODUCTS}
+    after = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for spec in manifest.SCHEDULES:
+        targets = binding_tables if spec.target_kind == "table" else product_names
+        assert spec.target in targets, f"{spec.target} is not a seeded {spec.target_kind}"
+        # The scheduler must be able to evaluate the cron in its timezone.
+        assert SchedulerService._compute_next_cron_run(spec.cron, after, spec.timezone) > after
+
+
+def test_run_seeds_every_manifest_schedule_paused():
+    svc, deps, events = _schedule_svc()
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.schedules == len(manifest.SCHEDULES)
+    paused = {name for action, name in events if action == "pause"}
+    scheduled = {name for action, name in events if action == "cron"}
+    assert paused == scheduled == _expected_schedule_keys()
+    assert not any(action == "unpause" for action, _ in events)
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "succeeded"
+
+
+def test_schedules_are_paused_before_their_cron_is_written():
+    # The scheduler only considers a target once it has a cron and skips a
+    # paused tracker, so writing the pause first means no demo schedule can fire.
+    svc, _deps, events = _schedule_svc()
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    for key in _expected_schedule_keys():
+        assert events.index(("pause", key)) < events.index(("cron", key))
+
+
+def test_schedules_use_the_manifest_cron_timezone_and_a_schedule_only_product_update():
+    svc, deps, _events = _schedule_svc()
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    table_specs = [s for s in manifest.SCHEDULES if s.target_kind == "table"]
+    table_calls = deps["monitored_tables"].update_schedule.call_args_list
+    assert [(c.args[0], c.args[1], c.args[2]) for c in table_calls] == [
+        (f"b-{s.target}", s.cron, s.timezone) for s in table_specs
+    ]
+    assert [c.kwargs["schedule_kind"] for c in table_calls] == [s.kind for s in table_specs]
+
+    # Only schedule fields change, so DataProductService.update keeps the
+    # collection approved rather than flipping it back to draft.
+    schedule_fields = {"schedule_cron", "schedule_tz", "schedule_kind", "schedule_sample_size"}
+    collection_specs = [s for s in manifest.SCHEDULES if s.target_kind == "collection"]
+    product_calls = deps["data_products"].update.call_args_list
+    assert len(product_calls) == len(collection_specs)
+    for call, spec in zip(product_calls, collection_specs):
+        updates = call.args[1]
+        assert set(updates) == schedule_fields
+        assert (updates["schedule_cron"], updates["schedule_tz"], updates["schedule_kind"]) == (
+            spec.cron,
+            spec.timezone,
+            spec.kind,
+        )
+
+
+def test_reseed_rewrites_the_same_schedules_instead_of_adding_more():
+    schedule_config = MagicMock()
+    events_by_run: list[list[str]] = []
+    for _ in range(2):
+        svc, _deps, _events = _schedule_svc(schedule_config=schedule_config)
+        schedule_config.set_tracker_paused.reset_mock()
+        svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+        events_by_run.append(sorted(c.args[0] for c in schedule_config.set_tracker_paused.call_args_list))
+    # Same keyed upserts on both runs: one paused tracker per schedule, no extras.
+    assert events_by_run[0] == events_by_run[1] == sorted(_expected_schedule_keys())
+
+
+def test_wipe_first_resets_before_writing_schedules_and_clears_them():
+    from databricks_labs_dqx_app.backend.migrations import OLTP_TABLE_NAMES
+
+    order: list[str] = []
+    reset = MagicMock()
+    reset.reset_all_data.side_effect = lambda **_k: order.append("reset")
+    svc, _deps, events = _schedule_svc(reset_service=reset)
+    svc.run(user_email="admin@example.com", wipe_first=True, weeks=0)
+    order.extend(action for action, _ in events)
+
+    assert order[0] == "reset"
+    assert "pause" in order
+    # The reset clears every table a schedule lives in: trackers, table and
+    # collection crons, and scope configs.
+    assert {
+        "dq_schedule_runs",
+        "dq_schedule_configs",
+        "dq_monitored_tables",
+        "dq_data_products",
+    } <= set(OLTP_TABLE_NAMES)
+
+
+def test_schedule_grants_cover_every_target_table():
+    svc, deps, _events = _schedule_svc()
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    granted = {c.args[0] for c in deps["schedule_grants"].grant_select_to_schedulers.call_args_list}
+    expected: set[str] = set()
+    product_ids = {spec.name: f"p-{i}" for i, spec in enumerate(manifest.DATA_PRODUCTS)}
+    for spec in manifest.SCHEDULES:
+        if spec.target_kind == "table":
+            expected.add(f"dqx.{manifest.SOURCE_SCHEMA}.{spec.target}")
+        else:
+            expected.add(f"dqx.demo.{product_ids[spec.target]}_member")
+    assert granted == expected
+
+
+def test_schedule_grant_failure_never_fails_the_seed():
+    from databricks_labs_dqx_app.backend.services.schedule_grant_service import ScheduleGrantService
+
+    grants = create_autospec(ScheduleGrantService, instance=True)
+    grants.grant_select_to_schedulers.side_effect = RuntimeError("PERMISSION_DENIED")
+    svc, deps, events = _schedule_svc(schedule_grants=grants)
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.schedules == len(manifest.SCHEDULES)
+    assert {name for action, name in events if action == "cron"} == _expected_schedule_keys()
+    assert deps["status"].set.call_args_list[-1].args[0].state == "succeeded"
+
+
+def test_schedules_phase_is_a_noop_without_schedule_config():
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.schedules == 0
+    assert not deps["monitored_tables"].update_schedule.called
+    assert not deps["data_products"].update.called

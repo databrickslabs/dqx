@@ -989,6 +989,7 @@ async def get_demo_seed_service(
     status: Annotated[DemoStatusStore, Depends(get_demo_status_store)],
     reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    schedule_config: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
@@ -1004,6 +1005,9 @@ async def get_demo_seed_service(
       ``sql`` AND ``sp_sql`` slots are BOTH the SP executor — unlike the OBO
       ``get_view_service`` used on request paths — so background runs create
       their temp views with no user token.
+    * The :class:`ScheduleGrantService` for the paused demo schedules uses the
+      SP on both legs (``obo_ws`` too): the SP created the demo tables, so its
+      read probe passes and only the best-effort task-runner grant runs.
     """
     from .demo.seed_service import DemoSeedService
 
@@ -1065,6 +1069,10 @@ async def get_demo_seed_service(
         embeddings=embeddings,
         job_service=job_service,
         profiler_view=profiler_view,
+        schedule_config=schedule_config,
+        schedule_grants=ScheduleGrantService(
+            obo_ws=sp_ws, sp_ws=sp_ws, job_id=conf.job_id, warehouse_id=warehouse_id or ""
+        ),
         catalog=resources.volume.catalog,
     )
 
