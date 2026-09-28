@@ -189,7 +189,7 @@ def run_job_and_validate(
     last_error: OperationFailed | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            waiter = ws.jobs.run_now_and_wait(job_id)
+            waiter = ws.jobs.run_now_and_wait(job_id, timeout=timeout)
             run = ws.jobs.wait_get_run_job_terminated_or_skipped(
                 run_id=waiter.run_id,
                 timeout=timeout,
