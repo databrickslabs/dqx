@@ -350,6 +350,10 @@ once the others are accounted for, and removing one view of a column leaves a ne
 per-comparison number computed that way would look ordinary and name the wrong comparison. Reporting nothing
 is deliberate: `null` means *not measured*, never *nothing contributed*. Columns compared only one way are
 absent for the same reason — there is nothing to tell apart.
+
+A column is also absent whenever `contributions` gives it no share, including the case where `contributions`
+is all-`null` for the row. The two maps always agree about whether a column mattered: `basis_contributions`
+refines a share, so there is nothing for it to refine where none was attributed.
 </Admonition>
 
 ### Is this a data problem or a business change?

@@ -72,9 +72,14 @@ def test_each_column_splits_across_its_own_views_and_totals_one_hundred(
 
 
 def test_a_view_arguing_the_row_is_normal_earns_no_share(customer_metadata: SparkFeatureMetadata):
-    """Negatives are dropped here, the same rule format_shap_contributions applies to the column map."""
+    """Negatives are dropped here, the same rule format_shap_contributions applies to the column map.
+
+    The dissenting view is -1 rather than -4 on purpose: at -4 the block's signed sum is exactly zero, which
+    is the case the column map reads as "could not judge", and a split published beside it would contradict
+    it. That boundary has its own test below; this one is about a block that does qualify.
+    """
     keys = AttributionKeys.from_metadata(customer_metadata)
-    per_feature = np.array([[-4.0, 1.0, 3.0]])
+    per_feature = np.array([[-1.0, 1.0, 3.0]])
 
     basis = format_basis_contributions(per_feature, keys.blocks, keys.labels, np.array([True]), 1)
 
@@ -279,3 +284,50 @@ def test_the_split_names_the_time_comparison_when_time_is_the_reason(
     time_share = basis["units vs its expected level at that time"]
     assert time_share is not None
     assert time_share > 50.0, f"time should dominate, got {basis}"
+
+
+def test_a_column_whose_views_cancel_out_earns_no_split(customer_metadata: SparkFeatureMetadata):
+    """The two maps have to agree about whether a column mattered at all.
+
+    Found on published output rather than by reading the code: a scored transaction carried
+    ``contributions`` of ``{"amount": null, "item_count": null}`` -- the documented "could not judge"
+    sentinel -- beside a ``basis_contributions`` of ``{"amount vs its group baseline": 100}``. One map says
+    no evidence was attributable and the other apportions all of it, and both cannot be true.
+
+    The cause is that the two gated on different quantities. A column reaches the column map with a share
+    only when its block's *signed* sum is positive, because blocking sums before the clip. The split gated
+    on the positive part instead, so a block whose views cancelled -- the kind of marginal row that sits
+    just over a 95th-percentile threshold -- was skipped by one map and split by the other. The signed sum
+    is the right gate for both: there is no "given that this column mattered" to condition on when it did
+    not.
+    """
+    keys = AttributionKeys.from_metadata(customer_metadata)
+    # -6 + 2 + 3 = -1: one view argues the row is normal more strongly than the other two argue it is odd,
+    # so this column earns no share in the column map either.
+    per_feature = np.array([[-6.0, 2.0, 3.0]])
+
+    basis = format_basis_contributions(per_feature, keys.blocks, keys.labels, np.array([True]), 1)
+
+    assert basis[0] is None, "no column qualified, so there is nothing to split"
+
+
+def test_a_column_that_survives_a_negative_view_still_earns_its_split(
+    customer_metadata: SparkFeatureMetadata,
+):
+    """The other side of the same gate: qualifying is about the signed sum, not about having no negatives.
+
+    A block can hold a view arguing the row is normal and still matter overall. Once it qualifies, the
+    shares are apportioned over the positive parts, so the dissenting view earns nothing while its
+    siblings split the whole hundred.
+    """
+    keys = AttributionKeys.from_metadata(customer_metadata)
+    # -1 + 1 + 3 = +3: the column matters, and the negative view earns no share of why.
+    per_feature = np.array([[-1.0, 1.0, 3.0]])
+
+    basis = format_basis_contributions(per_feature, keys.blocks, keys.labels, np.array([True]), 1)
+
+    assert basis[0] == {
+        "units": 0.0,
+        "units vs its group baseline": 25.0,
+        "units vs its expected level at that time": 75.0,
+    }

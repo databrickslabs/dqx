@@ -236,6 +236,11 @@ def format_basis_contributions(
     *normal* is not a driver. The clip happens after blocking there and within the block here, so in both
     places the signed values survive exactly as long as they are still being combined.
 
+    A block qualifies for a split only when its **signed** sum is positive, which is exactly what earns the
+    column a share in the map beside this one. Both maps therefore agree about whether a column mattered:
+    where the column map falls back to its all-``None`` "could not judge" sentinel, this one stays silent
+    rather than apportioning evidence that was never attributed.
+
     Positions are bounded by *both* the attribution's width and the label list's length, rather than by the
     matrix alone. The two always agree when they come from
     *from_metadata*, which derives them
@@ -268,6 +273,15 @@ def format_basis_contributions(
         accumulated: dict[str, float] = {}
         for positions in multi_view.values():
             usable = [p for p in positions if 0 <= p < width]
+            # Qualifying is decided on the block's *signed* sum, which is the same quantity that decides
+            # whether the column reaches the column map at all: blocking sums the views and only then does
+            # *format_shap_contributions* clip. Gating on the positive part instead let the two maps
+            # disagree -- a block whose views cancelled was dropped by the column map, which then published
+            # its all-None "could not judge" sentinel, while the split confidently reported one comparison
+            # as 100% of the reason. Seen on a scored batch, not in review. There is no "given that this
+            # column mattered" to condition on when it did not.
+            if float(per_feature[valid_row, usable].sum()) <= 0.0:
+                continue
             magnitudes = np.maximum(per_feature[valid_row, usable], 0.0)
             total = float(magnitudes.sum())
             if total <= 0.0:
