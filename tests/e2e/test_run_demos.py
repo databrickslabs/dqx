@@ -16,7 +16,7 @@ from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironme
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
 
 from tests.constants import TEST_CATALOG
-from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
+from tests.e2e.conftest import new_classic_job_cluster, validate_run_status, run_job_and_validate
 
 logger = logging.getLogger(__name__)
 
@@ -529,13 +529,10 @@ def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_demo_datacontract_odcs", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_datacontract_odcs")
+    # This demo pip-installs the heavy [datacontract,llm] extras on a fresh serverless workload and
+    # calls an LLM endpoint, so it is prone to transient serverless INTERNAL_ERROR; retry those.
+    run_job_and_validate(ws, job.job_id, "dqx_demo_datacontract_odcs")
+    logging.info("Job run completed successfully for dqx_demo_datacontract_odcs")
 
 
 def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref):

@@ -1,10 +1,12 @@
 import logging
 import os
 import subprocess
+import time
 from datetime import timedelta
 from pathlib import Path
 import pytest
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import OperationFailed
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.jobs import NotebookTask, Task, TerminationTypeType, Run
 from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode, Kind
@@ -155,3 +157,56 @@ def validate_run_status(run: Run, client: WorkspaceClient) -> None:
         f"failed with message: {run_output.error}, "
         f"error trace: {run_output.error_trace}"
     )
+
+
+def run_job_and_validate(
+    ws: WorkspaceClient,
+    job_id: int,
+    task_key: str,
+    *,
+    timeout: timedelta = timedelta(minutes=30),
+    max_attempts: int = 3,
+) -> Run:
+    """Trigger a demo job, wait for it to succeed, and retry serverless ``INTERNAL_ERROR``.
+
+    Serverless workloads occasionally terminate in ``RunLifeCycleState.INTERNAL_ERROR`` — a
+    platform/environment transient (e.g. a cold-start library install or a model-serving blip on
+    demos that pip-install heavy extras or call an LLM) rather than a data-quality failure. The SDK
+    waiter surfaces that state as *OperationFailed*, so the run is re-submitted a few times with
+    backoff. A genuine task failure terminates normally and is caught by *validate_run_status*
+    (*AssertionError*), which is not a transient and is not retried.
+
+    Args:
+        ws: Workspace client used to trigger and poll the run.
+        job_id: The job to run.
+        task_key: Task key, used only for logging.
+        timeout: Per-attempt wait for the run to terminate.
+        max_attempts: Total attempts before giving up (>= 1).
+
+    Returns:
+        The successful terminated *Run*.
+    """
+    last_error: OperationFailed | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            waiter = ws.jobs.run_now_and_wait(job_id)
+            run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+                run_id=waiter.run_id,
+                timeout=timeout,
+                callback=lambda r: validate_run_status(r, ws),
+            )
+            logger.info(f"Job run {run.run_id} completed successfully for {task_key}")
+            return run
+        except OperationFailed as exc:
+            # Only serverless platform transients (INTERNAL_ERROR) are retried; every other
+            # OperationFailed (and any AssertionError from validate_run_status) propagates.
+            if "INTERNAL_ERROR" not in str(exc):
+                raise
+            last_error = exc
+            logger.warning(
+                f"'{task_key}' hit serverless INTERNAL_ERROR on attempt {attempt}/{max_attempts}; "
+                f"retrying: {exc}"
+            )
+            time.sleep(min(2**attempt, 30))
+    assert last_error is not None  # loop ran at least once
+    raise last_error
