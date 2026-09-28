@@ -101,7 +101,7 @@ def _train_both_profiles(spark, quick_model_factory, columns, train_rows):
     """Train one model per profile on identical data, returning ``{profile: (model, registry)}``."""
     train_schema = ", ".join(f"{col} double" for col in columns) + ", is_anomaly double"
     models = {}
-    for profile in ("correlation", "tabular"):
+    for profile in ("correlation", "distribution"):
         model, registry, _ = quick_model_factory(
             spark,
             columns=columns,
@@ -176,15 +176,15 @@ def _assert_registry_records_profile(spark: SparkSession, registry_table: str, m
     )
 
 
-def _assert_beats_tabular_and_baselines(correlation, tabular, columns: list[str]) -> None:
+def _assert_beats_distribution_and_baselines(correlation, distribution, columns: list[str]) -> None:
     """The detector beats the default profile, and beats doing almost nothing."""
     correlation_pr_auc = pr_auc(correlation["label"], correlation["score"])
-    tabular_pr_auc = pr_auc(tabular["label"], tabular["score"])
+    distribution_pr_auc = pr_auc(distribution["label"], distribution["score"])
 
     # The design claim: a broken correlation is close to invisible to a per-feature splitter.
-    assert correlation_pr_auc > tabular_pr_auc + MIN_PR_AUC_GAIN, (
-        f"the correlation profile should beat the tabular one on anomalies that are purely joint "
-        f"(tabular PR-AUC {tabular_pr_auc:.4f}, correlation {correlation_pr_auc:.4f})"
+    assert correlation_pr_auc > distribution_pr_auc + MIN_PR_AUC_GAIN, (
+        f"the correlation profile should beat the distribution one on anomalies that are purely joint "
+        f"(distribution PR-AUC {distribution_pr_auc:.4f}, correlation {correlation_pr_auc:.4f})"
     )
 
     # And it must beat doing almost nothing. max_abs_z is the honest floor here: the fixture preserves
@@ -231,7 +231,7 @@ def test_correlation_profile_end_to_end(
 
     models = _train_both_profiles(spark, quick_model_factory, columns, train_rows)
     correlation_model, correlation_registry = models["correlation"]
-    tabular_model, tabular_registry = models["tabular"]
+    distribution_model, distribution_registry = models["distribution"]
 
     # 1. The profile's choice is persisted and readable back.
     _assert_registry_records_profile(spark, correlation_registry, correlation_model)
@@ -250,10 +250,10 @@ def test_correlation_profile_end_to_end(
         enable_ai_explanation=True,
         ai_explanation_llm_model_config=ai_query_llm_config(ai_query_endpoint),
     )
-    tabular = _scored_frame(anomaly_scorer, test_df, tabular_model, tabular_registry, columns)
+    distribution = _scored_frame(anomaly_scorer, test_df, distribution_model, distribution_registry, columns)
 
     # 2. Detection quality: better than the default profile, and better than a one-liner.
-    _assert_beats_tabular_and_baselines(correlation, tabular, columns)
+    _assert_beats_distribution_and_baselines(correlation, distribution, columns)
 
     # 3. Contributions honour the persisted feature contract on every flagged row.
     engineered_names = set(_engineered_feature_names(spark, correlation_registry, correlation_model))
@@ -299,7 +299,7 @@ def test_a_grouped_correlation_model_trains_and_scores(ws, spark: SparkSession, 
     Feature engineering deliberately preserves the group key, so the engineered frame is wider than the
     feature list. Signature inference passed that whole frame to ``model.predict``, handing the estimator a
     string column it was never fitted on. Every grouped model on the single-model path hit it --
-    ``profile="correlation"`` always, and the tabular profile at ``ensemble_size=1`` -- while the default
+    ``profile="correlation"`` always, and the distribution profile at ``ensemble_size=1`` -- while the default
     three-model ensemble registers by URI and never comes through that code, which is why the existing
     coverage passed: it uses ``baseline_by=[]``.
     """
@@ -339,7 +339,7 @@ def test_a_grouped_correlation_model_trains_and_scores(ws, spark: SparkSession, 
 
 
 def test_a_grouped_single_forest_trains_and_scores(ws, spark: SparkSession, make_schema, make_random):
-    """The second live path into the same defect: the tabular profile with one model instead of three."""
+    """The second live path into the same defect: the distribution profile with one model instead of three."""
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(6).lower()
     model_name = f"{TEST_CATALOG}.{schema.name}.grouped_single_{suffix}"

@@ -190,7 +190,7 @@ def engineered_from(source: str, metadata: SparkFeatureMetadata) -> frozenset[st
 def source_blocks(metadata: SparkFeatureMetadata) -> dict[str, list[str]]:
     """Each source column mapped to the engineered features derived from it, in feature order.
 
-    The forward view of :func:`source_column`, and the grouping attribution needs: explaining one
+    The forward view of *source_column*, and the grouping attribution needs: explaining one
     engineered feature at a time is unsound when several of them carry the same source. Dropping one view
     of a metric leaves another copy behind, so the measured loss is small for every view, and normalising
     those small numbers hands almost all of the apparent blame to an unrelated metric. Measured on a
@@ -239,7 +239,7 @@ class AttributionKeys:
 def feature_labels(metadata: SparkFeatureMetadata) -> list[str]:
     """Reader-facing label for every engineered feature, in feature order.
 
-    The positional companion to :func:`source_block_indices`: that gives an attribution routine the
+    The positional companion to *source_block_indices*: that gives an attribution routine the
     feature positions making up each column, this gives it the words for those positions. Together they
     are what lets a within-column split be published as "units vs its expected level at that time" rather
     than as ``units_rel_time``.
@@ -257,7 +257,7 @@ def feature_labels(metadata: SparkFeatureMetadata) -> list[str]:
 
 
 def source_block_indices(metadata: SparkFeatureMetadata) -> dict[str, list[int]]:
-    """:func:`source_blocks` as positions into the feature matrix, which is what an estimator needs.
+    """*source_blocks* as positions into the feature matrix, which is what an estimator needs.
 
     Computed on the driver once per scoring run and closed over by the UDF, rather than per row or per
     partition: it is a pure function of the persisted metadata.

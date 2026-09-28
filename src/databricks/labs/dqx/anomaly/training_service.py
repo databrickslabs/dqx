@@ -452,7 +452,7 @@ class AnomalyTrainingService:
 
         # An explicitly injected strategy wins over the profile, so a test double is never silently
         # bypassed. Otherwise the profile decides, and may tighten parameters (the correlation-aware
-        # detector collapses the ensemble to one model); for the tabular profiles the returned params
+        # detector collapses the ensemble to one model); for the distribution profiles the returned params
         # are the very same object, so nothing is perturbed.
         strategy, params = resolve_training_profile(context.profile, context.params, self._strategy)
         logger.info(f"profile={context.profile or DEFAULT_PROFILE} -> algorithm strategy '{strategy.name}'")

@@ -1,6 +1,6 @@
 """A correlation-aware detector for multivariate metrics, and its exact feature attribution.
 
-IsolationForest splits on one randomly chosen feature at a time, which is why it is strong on tabular
+IsolationForest splits on one randomly chosen feature at a time, which is why it is strong on distribution
 data and weak on multivariate metrics whose anomalies are *broken correlations* rather than extreme
 single values. On real machine telemetry this detector surfaces substantially more incidents inside a
 fixed alert budget, and does so consistently across machines; the figures and the protocol they were
@@ -54,7 +54,7 @@ before training or narrow the input, because the detector will not do it for you
 action. Recorded in ``robust_gate.py`` and ``robust_gate2.py`` alongside the benchmark harness.
 
 **Attribution is leave-one-out, and non-negative by construction.** See
-:meth:`MahalanobisDetector.feature_contributions`.
+*feature_contributions*.
 """
 
 import logging
@@ -256,12 +256,12 @@ class MahalanobisDetector(BaseEstimator, OutlierMixin):
 
         For a block ``G``, the drop from marginalising the whole block out at once is
         ``(Pd)_G' inv(P_GG) (Pd)_G`` where ``P = Σ⁻¹`` and ``d = x−μ`` standardised. A single-feature block
-        reduces exactly to :meth:`feature_contributions`' ``aᵢ = (Pd)ᵢ²/(Σ⁻¹)ᵢᵢ``, which is asserted in the
+        reduces exactly to *feature_contributions*' ``aᵢ = (Pd)ᵢ²/(Σ⁻¹)ᵢᵢ``, which is asserted in the
         tests rather than argued here.
 
         **Not additive**, and deliberately so: block drops do not sum to ``d²``. Overlapping information
         between blocks belongs to no single block, and the additive alternative goes negative -- see
-        :meth:`feature_contributions` for why negative terms are unusable downstream.
+        *feature_contributions* for why negative terms are unusable downstream.
 
         ``Σ⁻¹`` is never formed. ``L⁻¹`` is recovered once per call from the stored Cholesky factor and
         each ``P_GG`` is built as ``(L⁻¹)_{:,G}' (L⁻¹)_{:,G}``, so nothing new is persisted and models
@@ -313,7 +313,7 @@ def fit_mahalanobis_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> 
     """Fit the detector on pre-engineered pandas features, wrapped as DQX wraps every model.
 
     Deliberately a sibling of ``core.fit_sklearn_model`` rather than a branch inside it: that keeps the
-    IsolationForest fit function literally untouched, so "the tabular path is unchanged" is a fact a
+    IsolationForest fit function literally untouched, so "the distribution path is unchanged" is a fact a
     reviewer reads off the diff rather than a claim to verify.
 
     The pipeline is single-step, matching the IsolationForest one, because standardisation lives inside

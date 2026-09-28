@@ -111,6 +111,7 @@ docs-install: ## Install docs site dependencies (yarn --frozen-lockfile)
 
 docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build)
 	$(UV_RUN) --group docs pydoc-markdown
+	$(UV_RUN) python docs/dqx/check_generated_api.py
 	yarn --cwd docs/dqx test
 	yarn --cwd docs/dqx build
 

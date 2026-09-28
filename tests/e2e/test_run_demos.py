@@ -560,7 +560,7 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     "demo_notebook",
     [
         "dqx_row_anomaly_detection_demo.py",
-        "dqx_row_anomaly_tabular_transactions.py",
+        "dqx_row_anomaly_distribution_transactions.py",
         "dqx_row_anomaly_correlation_fleet.py",
     ],
 )

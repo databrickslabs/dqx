@@ -39,7 +39,7 @@ def displayed_severity_decimals(threshold: float) -> int:
     """How many decimals the displayed severity needs so it can be compared against *threshold*.
 
     The threshold's own precision, and never fewer than one. See
-    :func:`displayed_severity_expr` for why the two have to match.
+    *displayed_severity_expr* for why the two have to match.
 
     Args:
         threshold: The severity percentile a row must reach to be flagged.
@@ -83,7 +83,7 @@ def displayed_severity_expr(severity: Column, threshold: float) -> Column:
     disagrees at none. The failing thresholds are all outside the commonly used range, which is exactly why
     a sweep of 90, 95, 99, 99.5 and 99.9 misses them -- so the tests sweep thresholds too, not only values.
 
-    ``floor(expr, scale)`` is called through :func:`pyspark.sql.functions.call_function` rather than
+    ``floor(expr, scale)`` is called through *call_function* rather than
     ``F.floor(col, scale)`` because the two-argument Python wrapper only exists in PySpark 4, while this
     package supports a ``databricks-connect`` floor of 15.4 whose client is PySpark 3.5. The SQL function
     itself has taken a scale since Spark 3.3, so every supported runtime provides it.
@@ -167,7 +167,7 @@ class UnseenGroupContext:
 class StaleBaselineContext:
     """Where to find the extrapolation verdict for a temporal baseline.
 
-    Bundled for the same reason :class:`UnseenGroupContext` is: the two column names are only meaningful
+    Bundled for the same reason *UnseenGroupContext* is: the two column names are only meaningful
     together. No ``flag_as_violation`` counterpart, because extrapolating is not a violation -- the score
     is still produced and is still accurate near the boundary.
     """
@@ -360,7 +360,7 @@ def _tail_severity_expr(score_expr: Column, anchor: Column, rate: Column) -> Col
     head_tail_probability = 100.0 - TAIL_ANCHOR_PERCENTILE
     base = head_tail_probability / (100.0 - TAIL_RATE_PERCENTILE)
     # A degenerate tail is not handled here: this function has only the two anchors, and the sensible
-    # fallback needs the knots above them. :func:`_piecewise_severity_expr` selects between the two.
+    # fallback needs the knots above them. *_piecewise_severity_expr* selects between the two.
     return F.lit(100.0) - F.lit(head_tail_probability) * F.pow(F.lit(base), -(score_expr - anchor) / span)
 
 
@@ -394,7 +394,7 @@ def _piecewise_severity_expr(score_expr: Column, points: list[tuple[float, Colum
     bound is a column read from a broadcast lookup of that row's group.
 
     Above p95 the knots are too sparse for linear interpolation to honour a threshold, so that range is
-    handled by :func:`_tail_severity_expr` instead. Both anchors it needs are ordinary knots, so nothing
+    handled by *_tail_severity_expr* instead. Both anchors it needs are ordinary knots, so nothing
     extra is persisted and a model trained before this existed is corrected simply by being scored.
 
     Args:

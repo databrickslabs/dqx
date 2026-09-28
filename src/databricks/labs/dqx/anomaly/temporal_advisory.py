@@ -1,6 +1,6 @@
 """Measure whether a table has enough structure over time for a temporal baseline to be worth fitting.
 
-Separate from :mod:`databricks.labs.dqx.anomaly.temporal` because that module is deliberately Spark-free:
+Separate from *temporal* because that module is deliberately Spark-free:
 it is pure numpy so it can be unit-tested and evaluated per row inside a pandas UDF. This one needs Spark,
 because the measurement runs over the training frame before any model exists.
 

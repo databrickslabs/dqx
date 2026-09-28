@@ -233,7 +233,7 @@ class AnomalyConfig:
     # Declares the basis each metric is judged against, on one pooled model. Optional, so installed
     # run-config YAML written before it existed still loads.
     baseline_by: list[str] | None = None
-    # Which detector to train. None means the tabular default, so YAML written before this existed
+    # Which detector to train. None means the distribution default, so YAML written before this existed
     # loads and trains exactly as it did. Scheduled retraining has to be able to pick the detector:
     # without this the choice was reachable only from the Python API, and a run config could not
     # reproduce a model a user had trained by hand.

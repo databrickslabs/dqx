@@ -1,7 +1,7 @@
 """Fit an expected level over time, so a metric can be judged against its own history.
 
 This is the third basis a metric can be compared against, beside the whole table and its own group. The
-shape is deliberately the same as the group-relative feature in :mod:`transformers`: observed value minus
+shape is deliberately the same as the group-relative feature in *transformers*: observed value minus
 an expected value. Only the source of the expectation changes, from a per-group median to a function of
 time, which is what lets it extrapolate to rows the training window never saw.
 

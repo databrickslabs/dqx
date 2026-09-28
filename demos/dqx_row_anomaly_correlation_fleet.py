@@ -41,7 +41,7 @@
 # MAGIC
 # MAGIC | Your data | `profile` | An anomaly looks like |
 # MAGIC |---|---|---|
-# MAGIC | **Independent records.** Card payments, insurance claims, customer records, product listings. | `"tabular"` (default) | A row whose values, or combination of values, is unusual |
+# MAGIC | **Independent records.** Card payments, insurance claims, customer records, product listings. | `"distribution"` (default) | A row whose values, or combination of values, is unusual |
 # MAGIC | **Repeated measurements of the same things.** Machine sensors, server metrics, patient vitals, smart meters. | `"correlation"` | Metrics that normally move **together** stop doing so, each staying in its own range |
 # MAGIC
 # MAGIC This notebook uses `"correlation"`, because the bearing story above is exactly its case. The default
@@ -699,7 +699,7 @@ display(
 # MAGIC   arrives already normalised, the same transform measured *worse* than leaving it off.
 # MAGIC - **A short training window.** A daily shape needs several complete days to be identifiable at all.
 # MAGIC   DQX fits one only where the window supports it, and logs the period it skipped and why.
-# MAGIC - **With `profile="tabular"`, keep other datetime columns out of `columns`.** Calendar features on
+# MAGIC - **With `profile="distribution"`, keep other datetime columns out of `columns`.** Calendar features on
 # MAGIC   top of the residual measured worse on every anomaly shape tested.
 # MAGIC
 # MAGIC It is also **not a forecaster**. It models the level expected *at* a time; it does not predict the
@@ -759,7 +759,7 @@ display(
 # MAGIC
 # MAGIC ### 📚 Resources
 # MAGIC
-# MAGIC - [Choosing a profile](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection#choosing-a-profile)
+# MAGIC - [Choosing a profile](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection/tuning#choosing-a-profile)
 # MAGIC - [Benchmarks](https://databrickslabs.github.io/dqx/docs/reference/benchmarks#anomaly-benchmarks) — measured detection quality and timings
 # MAGIC - [Row Anomaly Detection guide](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection)
 # MAGIC

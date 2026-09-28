@@ -89,7 +89,10 @@
   height: var(--bd-slide-height, 620px);
   min-height: var(--bd-slide-height, 620px);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* Deliberately NOT overscroll-behavior: contain. That forbids scroll chaining, and this element is 620px
+     tall -- most of a viewport -- so with the cursor anywhere over the deck the wheel did nothing at all and
+     the page could not be scrolled past it. A slide taller than the frame still scrolls inside it; reaching
+     the end now hands the scroll back to the page, which is what a reader expects. */
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;

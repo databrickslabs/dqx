@@ -4,11 +4,11 @@ Two detectors supply attribution by different means -- TreeSHAP for a tree model
 for the correlation-aware one -- and one invariant lets everything downstream treat them alike:
 **attribution is oriented so that a larger value means more responsible for the anomaly.** TreeSHAP does
 not arrive that way, because it explains a path length that *shrinks* as a row becomes more isolated, so
-:func:`_oriented_towards_anomaly` flips it.
+*_oriented_towards_anomaly* flips it.
 
 Attribution stays signed for as long as it is being combined. Averaging across ensemble members and
 summing a source column's engineered views both depend on SHAP's exact additivity, and a value arguing
-the row is normal has to be able to cancel one arguing it is not. :func:`format_shap_contributions` is
+the row is normal has to be able to cancel one arguing it is not. *format_shap_contributions* is
 the single place the sign is dropped, producing the public map: non-negative shares of the
 anomaly-driving evidence, totalling 100, keyed by the columns the caller passed.
 
@@ -75,7 +75,7 @@ def _oriented_towards_anomaly(shap_values: np.ndarray) -> np.ndarray:
     engineered views, because those operations rely on SHAP's exact additivity and the negatives are
     what makes them cancel correctly. Clipping first would overstate: two views at +3 and -1 net to 2,
     but clipping first sums to 3, and two ensemble members at +4 and -2 average to 1 rather than 2.
-    :func:`format_shap_contributions` is the one place the clip happens, once, at the very end.
+    *format_shap_contributions* is the one place the clip happens, once, at the very end.
 
     Args:
         shap_values: Raw TreeSHAP values, shape ``(n_rows, n_features)``.
@@ -95,7 +95,7 @@ def format_shap_contributions(
     """Normalise an attribution matrix into per-row percentage maps.
 
     Takes attribution oriented so that larger means more responsible for the anomaly -- TreeSHAP via
-    :func:`_oriented_towards_anomaly`, or the correlation-aware detector's own decomposition, which is
+    *_oriented_towards_anomaly*, or the correlation-aware detector's own decomposition, which is
     already oriented that way and already non-negative.
 
     **This is the one place the clip happens, and it has to be here rather than earlier.** Negative
@@ -176,7 +176,7 @@ class RowContributions:
     contributed. It is ``None`` for every row under the correlation-aware detector: its attribution is a
     leave-one-out drop, and dropping one view of a column leaves a near-duplicate behind, so each view
     measures almost nothing and normalising those numbers misattributes -- the exact error
-    :meth:`~databricks.labs.dqx.anomaly.correlation_detector.MahalanobisDetector.block_contributions`
+    *block_contributions*
     exists to remove. Reporting nothing is the honest answer there.
     """
 
@@ -199,16 +199,16 @@ def supports_basis_split(model: Any) -> bool:
 
     True only for an estimator that goes through TreeSHAP. SHAP is additive, so a column's share is the
     sum over its views and the split is those same values normalised within the block -- already computed
-    today and discarded by :func:`_sum_within_blocks`.
+    today and discarded by *_sum_within_blocks*.
 
     False for any estimator supplying attribution of its own, tested by the presence of
     ``feature_contributions`` rather than of ``block_contributions``. That is the wider of the two tests
     and deliberately so: the correlation-aware detector has both, but an older pickled copy of it can
     arrive with only the former, because the module is registered with cloudpickle *by value* and an
     older class definition travels inside a persisted model. Testing for the block method alone would let
-    that copy through and sum leave-one-out drops, which :func:`_attribute` refuses outright as unsound.
+    that copy through and sum leave-one-out drops, which *_attribute* refuses outright as unsound.
 
-    Unwraps a pipeline the same way :func:`compute_row_attributions` does, and duck-types for the same
+    Unwraps a pipeline the same way *compute_row_attributions* does, and duck-types for the same
     reason: importing a concrete estimator here would drag it into every module that imports this one.
     """
     estimator = getattr(model, "named_steps", {}).get("model", model)
@@ -232,22 +232,22 @@ def format_basis_contributions(
     and emitting ``{col: 100}`` for it would pad the map with rows carrying no information -- the same
     emptiness that makes a single-metric ``by_column`` map useless.
 
-    Negative values are dropped here, matching :func:`format_shap_contributions`: a view arguing the row is
+    Negative values are dropped here, matching *format_shap_contributions*: a view arguing the row is
     *normal* is not a driver. The clip happens after blocking there and within the block here, so in both
     places the signed values survive exactly as long as they are still being combined.
 
     Positions are bounded by *both* the attribution's width and the label list's length, rather than by the
     matrix alone. The two always agree when they come from
-    :meth:`~databricks.labs.dqx.anomaly.feature_naming.AttributionKeys.from_metadata`, which derives them
+    *from_metadata*, which derives them
     from one metadata object, but this function is public and reachable with hand-built arguments -- the same
-    reason :func:`format_shap_contributions` re-checks its own shape instead of trusting its caller. A short
+    reason *format_shap_contributions* re-checks its own shape instead of trusting its caller. A short
     label list drops the trailing features rather than raising, which keeps a partial answer available and
     cannot mislabel one feature's share as another's.
 
     Args:
         per_feature: Oriented per-feature attribution, shape ``(n_valid_rows, n_features)``. Signed.
         blocks: Source column -> its feature positions, from
-            :func:`~databricks.labs.dqx.anomaly.feature_naming.source_block_indices`.
+            *source_block_indices*.
         feature_labels: Reader-facing label per feature position, positionally matching *per_feature*.
         valid_indices: Boolean mask over the caller's rows, marking which reached the attribution.
         num_rows: Row count of the caller's frame, so the returned list aligns with it.
@@ -358,7 +358,7 @@ def compute_row_attributions(
 def _reject_malformed_attribution(attribution: np.ndarray, keys: list[str], expected_rows: int, estimator: Any) -> None:
     """Refuse an attribution whose shape does not match the keys it will be reported under.
 
-    :func:`format_shap_contributions` pairs column *j* with ``keys[j]`` and normalises across the full
+    *format_shap_contributions* pairs column *j* with ``keys[j]`` and normalises across the full
     width, so a mismatch does not raise anywhere -- it emits a plausible map built from the wrong columns.
     Observed when an estimator supplied one value per engineered feature while the keys were source
     columns: three columns, two keys, and a published map of ``{'x': 0.0, 'y': 0.0}`` on a row whose score
@@ -397,7 +397,7 @@ def _attribute(
     quietly attributed per feature. Summing leave-one-out drops would reinstate the error blocking exists to
     remove -- each view of a shared source measures almost nothing on its own -- and returning per-feature
     values under source-column keys silently pairs numbers with the wrong names. This is reachable because
-    :mod:`databricks.labs.dqx.anomaly.correlation_detector` is registered with cloudpickle *by value*, so an
+    *correlation_detector* is registered with cloudpickle *by value*, so an
     older class definition travels inside a persisted model and can be restored without the method. A
     version string cannot substitute for the check: the capability is a property of the restored object.
 
@@ -446,7 +446,7 @@ def _sum_within_blocks(attribution: np.ndarray, block_indices: list[list[int]]) 
 
     Returns:
         Array of shape ``(n_rows, len(block_indices))``. Signed, like its input: the clip belongs to
-        :func:`format_shap_contributions`, after this.
+        *format_shap_contributions*, after this.
     """
     return np.column_stack([attribution[:, indices].sum(axis=1) for indices in block_indices])
 
@@ -468,7 +468,7 @@ def mean_row_attributions(
 
     Averaging is the aggregate that matches what the score does. SHAP is additive per member, so the mean
     of the per-feature values decomposes the mean predicted path length exactly -- which is why
-    :func:`_oriented_towards_anomaly` must not clip before this runs.
+    *_oriented_towards_anomaly* must not clip before this runs.
 
     One honest caveat. The reported score is ``mean(-score_samples)``, and ``score_samples`` is a strictly
     monotone but *nonlinear* transform of path length, so this decomposes the mean path length rather than
@@ -485,10 +485,10 @@ def mean_row_attributions(
             single-model attribution untouched, with no averaging.
         feature_matrix: Rows to attribute, already engineered.
         engineered_feature_cols: Feature names, positionally matching *feature_matrix*.
-        blocks: Optional source-column grouping, forwarded to :func:`compute_row_attributions`.
+        blocks: Optional source-column grouping, forwarded to *compute_row_attributions*.
 
     Returns:
-        ``(attribution, valid_indices, keys)``, matching :func:`compute_row_attributions`.
+        ``(attribution, valid_indices, keys)``, matching *compute_row_attributions*.
 
     Raises:
         InvalidParameterError: If *models* is empty, or if members disagree on the attribution's shape or
@@ -584,7 +584,7 @@ def compute_gated_shap_contributions(
     for all rows (previous behaviour).
 
     *models* is the set of models behind the reported score, not one model: for an ensemble that is every
-    member, and the attribution is their mean via :func:`mean_row_attributions`. The parameter is a
+    member, and the attribution is their mean via *mean_row_attributions*. The parameter is a
     sequence rather than a single model precisely so the ensemble mistake this replaced -- scoring with a
     committee and explaining with whichever member trained first -- cannot be made again by omission. A
     single-element sequence behaves exactly as passing that model alone did. Note that an sklearn
@@ -600,19 +600,19 @@ def compute_gated_shap_contributions(
     the cost is *enable_contributions=False*, which already exists.
 
     Args:
-        models: The models behind the reported score. See :func:`mean_row_attributions`.
+        models: The models behind the reported score. See *mean_row_attributions*.
         feature_matrix: Rows to attribute, already engineered.
         engineered_feature_cols: Feature names, positionally matching *feature_matrix*.
         scores: Raw anomaly scores for the same rows, used to gate.
         quantile_points: Severity calibration knots; with *threshold*, what makes the gate possible.
         threshold: Severity the row must reach to be attributed at all.
         keys: Block positions per source column and a label per feature position, from
-            :meth:`~databricks.labs.dqx.anomaly.feature_naming.AttributionKeys.from_metadata`.
+            *from_metadata*.
             Attribution is keyed by source column when given, and the basis split is only attempted
             then, because an unlabelled split would publish raw engineered names.
 
     Returns:
-        :class:`RowContributions`. *by_column* is unchanged from what this function has always produced.
+        *RowContributions*. *by_column* is unchanged from what this function has always produced.
     """
     num_rows = len(feature_matrix)
     if not quantile_points or threshold is None:
@@ -644,7 +644,7 @@ def _contributions_for_frame(
     from them, and where it is not the existing blocked call is made unchanged.
 
     The blocked column map is **arithmetically identical** either way. Summing within blocks here is the
-    same operation :func:`_sum_within_blocks` performs inside the blocked call, applied to the same
+    same operation *_sum_within_blocks* performs inside the blocked call, applied to the same
     oriented values, so turning the basis split on cannot move a single published column share.
     """
     num_rows = len(feature_matrix)
@@ -722,7 +722,7 @@ def compute_contributions_for_matrix(
     """Compute normalised contributions for a raw feature matrix, one row at a time.
 
     Shares the semantics of the scoring path rather than reimplementing them: values are oriented via
-    :func:`_oriented_towards_anomaly`, the side arguing the row is normal earns no share, and a row with
+    *_oriented_towards_anomaly*, the side arguing the row is normal earns no share, and a row with
     no anomaly-driving evidence gets all-``None`` instead of an invented uniform split. Keeping the two in
     step matters more than the small duplication -- one module giving two different answers to "what does a
     negative SHAP value mean" is how the original defect survived as long as it did.

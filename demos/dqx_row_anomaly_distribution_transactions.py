@@ -298,7 +298,7 @@ print("   Widening the rules cannot help; tightening them would reject legitimat
 # MAGIC metric, its deviation from that category's own median — so one model can hold "£900 is normal for
 # MAGIC electronics and extreme for coffee".
 # MAGIC
-# MAGIC `profile="tabular"` is the default and is right for independent records like these. Use
+# MAGIC `profile="distribution"` is the default and is right for independent records like these. Use
 # MAGIC `profile="correlation"` for repeated multivariate measurements such as machine telemetry — see the
 # MAGIC companion notebook.
 # MAGIC
@@ -328,7 +328,7 @@ trained = anomaly_engine.train(
     # transaction_time is deliberately excluded — see the note above.
     columns=["amount", "item_count"],
     baseline_by=["merchant_category"],
-    profile="tabular",
+    profile="distribution",
     # By default DQX trains on a sample, which is what makes training a table of a billion rows
     # affordable. On 6,000 it only adds variance: the sample is seeded, but it is drawn per partition, so
     # a different partition count draws different rows and the numbers printed below move between runs.
@@ -751,7 +751,7 @@ display(
 # MAGIC
 # MAGIC - [Row Anomaly Detection guide](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection)
 # MAGIC - [`has_no_row_anomalies` reference](https://databrickslabs.github.io/dqx/docs/reference/quality_checks#row-anomaly-detection)
-# MAGIC - [Choosing a profile](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection#choosing-a-profile)
+# MAGIC - [Choosing a profile](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection/tuning#choosing-a-profile)
 # MAGIC
 # MAGIC ### 🎉 You're Ready!
 # MAGIC

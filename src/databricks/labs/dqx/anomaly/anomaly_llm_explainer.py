@@ -404,7 +404,7 @@ def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadat
     """Columns to redact, plus every engineered feature derived from them.
 
     Redaction matches contribution keys exactly, and both detectors now key by source column, which
-    :func:`compute_row_attributions` enforces rather than leaves to chance. The set still covers the
+    *compute_row_attributions* enforces rather than leaves to chance. The set still covers the
     engineered names as well, deliberately: a redaction that silently under-covers is a privacy failure, so
     it costs nothing to keep both vocabularies while attribution shape is a runtime property. So
     redacting ``amount`` must also stop ``amount_rel_baseline`` -- a signed log-ratio of the same
@@ -584,7 +584,7 @@ def _disclosure_clause_expr(state: Column) -> Column:
 def _temporal_baseline_str(metadata: SparkFeatureMetadata | None) -> str:
     """The time column each metric is judged along, e.g. 'event_ts', or 'none'.
 
-    The sibling of :func:`_baseline_grouping_str`, and it exists for the same reason: how a row was judged
+    The sibling of *_baseline_grouping_str*, and it exists for the same reason: how a row was judged
     is a per-run fact the model cannot infer from the contributions. Grouping has always been told to the
     model; temporal conditioning never was. It used to leak through by accident, because contributions were
     keyed by engineered feature and one of those keys rendered as "X vs its expected level at that time".
@@ -741,7 +741,7 @@ def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) 
 def _format_basis_contributions_sql(max_entries: int) -> Column:
     """Spark expression rendering ``mean_basis_contributions`` as 'label (71%), label (21%)'.
 
-    Prints the stored values **as they are**, unlike :func:`_format_contributions_sql`. Those shares are
+    Prints the stored values **as they are**, unlike *_format_contributions_sql*. Those shares are
     normalised within each column and several columns share this one map, so renormalising across the map
     would turn "71% of what made units depart" into a share of something with no meaning.
 

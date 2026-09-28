@@ -65,7 +65,7 @@ def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
     - null_rate < 50%
     - Exclude: timestamps, IDs (detected by name patterns)
 
-    Baseline grouping criteria (see :func:`select_baseline_columns`):
+    Baseline grouping criteria (see *select_baseline_columns*):
     - Categorical types (string, int) with 2-50 distinct values
     - null_rate < 10%
     - At least MIN_ROWS_PER_BASELINE_GROUP rows per resulting group
@@ -222,7 +222,7 @@ def _count_group_combinations(recommended_segments: list[str], distinct_counts: 
     """Total groups the chosen grouping produces, as the product of its columns' cardinalities.
 
     No warnings here any more. This used to caution about too many segments or too few rows each,
-    which mattered when every group became its own model. :func:`select_baseline_columns` now enforces
+    which mattered when every group became its own model. *select_baseline_columns* now enforces
     both bounds while choosing, so neither condition can survive to be warned about.
     """
     if not recommended_segments:
@@ -336,7 +336,7 @@ class BaselineSuggestion:
 def suggest_baseline_columns(df: DataFrame, exclude: list[str]) -> BaselineSuggestion | None:
     """Find a grouping the data would support, without selecting feature columns.
 
-    Deliberately narrower than :func:`auto_discover_columns`: the grouping decision needs null rates
+    Deliberately narrower than *auto_discover_columns*: the grouping decision needs null rates
     and distinct counts on the categorical columns only, so this skips the numeric mean/stddev
     aggregation a full profile computes and would then throw away.
 
@@ -405,7 +405,7 @@ def _select_segment_columns(
 ) -> tuple[list[str], int]:
     """Identify baseline grouping columns and count the groups they produce.
 
-    See :func:`select_baseline_columns` for the policy.
+    See *select_baseline_columns* for the policy.
     """
     candidate_segments = []
     categorical_types = (StringType, IntegerType)

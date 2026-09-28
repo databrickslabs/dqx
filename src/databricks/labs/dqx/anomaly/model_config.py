@@ -117,7 +117,7 @@ def compute_config_hash(
         **Breaking change.** *baseline_by* joined the hash inputs in 0.17.0, and the legacy
         *segment_by* left it. Both change the hash of every configuration, so a model registered by
         an earlier version fails the configuration check in
-        :func:`~databricks.labs.dqx.anomaly.scoring_run.score_global_model` and must be retrained.
+        *score_global_model* and must be retrained.
         That is deliberate: without *baseline_by* in the hash, retraining under the same name with a
         different grouping produced an identical hash, so the one thing this hash exists to catch --
         same name, different configuration -- was invisible for the grouping. Row anomaly detection

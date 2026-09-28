@@ -701,7 +701,7 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC - `baseline_by` (list[str]): columns naming the group each metric is judged against
 # MAGIC - `sample_fraction`, `max_rows`: training sample controls
 # MAGIC - `ensemble_size`: number of models in the ensemble
-# MAGIC - `profile` (str): which detector decides a row is unusual, `"tabular"` (default) or `"correlation"`
+# MAGIC - `profile` (str): which detector decides a row is unusual, `"distribution"` (default) or `"correlation"`
 # MAGIC
 # MAGIC These are optional — the demo uses defaults for simplicity.
 # MAGIC

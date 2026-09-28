@@ -134,7 +134,7 @@ class TemporalState:
     Written when training and read when scoring, which is why it is mutable: the transform fills it in
     place exactly as the baseline median dicts are filled. Empty means the feature is unused.
 
-    Not the persisted shape. :class:`SparkFeatureMetadata` keeps these flat, so the JSON payload a model
+    Not the persisted shape. *SparkFeatureMetadata* keeps these flat, so the JSON payload a model
     carries stays stable regardless of how they are grouped for passing around.
     """
 
@@ -670,7 +670,7 @@ def _apply_onehot_encoding(
         # are axis-parallel, so no tree can test a sum across columns, and an all-zeros row sits inside
         # every individual indicator's observed range. Measured on the same data: the unseen category
         # scores 0.458 while the two known encodings score 0.442 and 0.467 -- ordinary, not anomalous.
-        # An unrecognised category is therefore not reliably caught under profile="tabular"; the guide
+        # An unrecognised category is therefore not reliably caught under profile="distribution"; the guide
         # says so, and catching it needs a vocabulary check outside the learned ranking rather than a
         # different encoding. All three measurements are pinned in
         # tests/unit/test_anomaly_mahalanobis_detector.py.
@@ -858,7 +858,7 @@ def _process_numeric_columns(
 ) -> DataFrame:
     """Register each numeric column as a feature, cast to double, nulls still null.
 
-    Casting here and imputing in :func:`_impute_numeric_features` at the very end is deliberate, and
+    Casting here and imputing in *_impute_numeric_features* at the very end is deliberate, and
     the two used to be one ``coalesce(col.cast(...), 0.0)`` on this line. That imputed before the
     group and time baselines were fitted, so a missing observation contributed a fabricated zero to its
     group's median and then received a fabricated deviation from it -- ``0 - expected(t)`` -- on top of
@@ -948,7 +948,7 @@ def _temporal_expected_column(basis: "TemporalBasis", coefficients: list[float],
     timestamp, so it evaluates per row with no ordering, no neighbours and no state. That is what keeps
     scoring valid on a streaming DataFrame, where a lag or a rolling window would not be.
 
-    Column order here must match :func:`databricks.labs.dqx.anomaly.temporal.design_matrix` term for term.
+    Column order here must match *design_matrix* term for term.
     """
     scaled = seconds / lit(basis.span) if basis.span > 0 else lit(0.0)
     terms: list[Column] = [lit(1.0)]
@@ -1115,17 +1115,17 @@ def _fit_temporal_from_buckets(
     """Fit the temporal basis from a bucketed aggregate of the training frame.
 
     The fit needs the data on the driver, and a table can be arbitrarily large, so the frame is first
-    reduced to at most :data:`TEMPORAL_FIT_BUCKETS` time buckets carrying each metric's median. That
+    reduced to at most *TEMPORAL_FIT_BUCKETS* time buckets carrying each metric's median. That
     bounds driver memory the same way ``_compute_baseline_medians`` does.
 
     Bucketing is for driver memory, **not** for robustness: training sees about 24% of the table, so
     buckets hold too few rows for their median to attenuate much, and the Huber loss is what actually
-    carries robustness. The measurements are on :data:`TEMPORAL_FIT_BUCKETS`; this docstring used to claim
+    carries robustness. The measurements are on *TEMPORAL_FIT_BUCKETS*; this docstring used to claim
     the opposite here while the constant said otherwise, which is worth knowing about only because two
     places in one file disagreeing is how a later reader ends up optimising away the part that mattered.
 
     The basis is then selected against the *bucket centres* rather than the raw timestamps, which matters:
-    the resolution guard in :func:`~databricks.labs.dqx.anomaly.temporal.candidate_periods` then measures
+    the resolution guard in *candidate_periods* then measures
     the axis actually being fitted. A period the buckets are too coarse to resolve is rejected for that
     reason rather than admitted and quietly fitted to noise.
 
@@ -1212,7 +1212,7 @@ def _process_temporal_baseline_features(
     slopes diverged. Fitted on the group-relative residual, which is already on a common scale across
     groups, one pooled fit reached 101% of per-group fits while still training a single model.
 
-    Runs after :func:`_process_baseline_relative_features` for two reasons that happen to agree:
+    Runs after *_process_baseline_relative_features* for two reasons that happen to agree:
     ``engineered_feature_names`` is positional so features may only be appended, and this transform reads
     the group-relative columns that one produces.
 
@@ -1521,7 +1521,7 @@ def apply_feature_engineering_from_metadata(
 ) -> tuple[DataFrame, SparkFeatureMetadata]:
     """Re-apply the transformations recorded in *feature_metadata* to a new DataFrame.
 
-    This is the derived ("scoring") mode of :func:`apply_feature_engineering`: rather than
+    This is the derived ("scoring") mode of *apply_feature_engineering*: rather than
     computing encodings from the data, it replays the ones a model was trained with. Every
     caller that scores, or that recomputes engineered features for an already-trained model,
     should go through here so that a newly persisted metadata field has to be threaded in one

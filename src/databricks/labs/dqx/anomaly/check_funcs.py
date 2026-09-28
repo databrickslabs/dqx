@@ -73,7 +73,7 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> Non
 def _validate_explanation_flags(enable_contributions: bool) -> None:
     if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
-            "enable_contributions=True requires the 'shap' dependency for the default tabular "
+            "enable_contributions=True requires the 'shap' dependency for the default distribution "
             "detector. Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
         )
 
@@ -185,7 +185,7 @@ def has_no_row_anomalies(
             Per-feature contributions are added to _dq_info for anomalous rows only (severity at or
             above the threshold; other rows get a null map), so the attribution cost scales with the
             number of anomalies rather than the table size. How they are computed depends on the
-            detector: SHAP for the default tabular one (installed with the anomaly extra), an exact
+            detector: SHAP for the default distribution one (installed with the anomaly extra), an exact
             leave-one-out decomposition for the correlation one, which needs no SHAP at all. The emitted
             map is identical either way. Set False to skip the cost entirely (this also disables AI
             explanations, since they use contributions as input).

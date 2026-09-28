@@ -31,7 +31,7 @@ BASELINE_KEY_SEPARATOR = "\x1f"
 # have made it a second forced retrain later.
 BASELINE_KEY_NULL = "\x00"
 
-# The single column every stage reads the group key from. See :func:`with_baseline_key`.
+# The single column every stage reads the group key from. See *with_baseline_key*.
 BASELINE_KEY_COLUMN = "__dqx_baseline_key"
 
 
@@ -45,7 +45,7 @@ def _as_spark_string(value: Any) -> str:
       contract exists to catch — a capitalised key persisted at training would miss every lookup at
       scoring and fall back to the global baseline without raising.
     * Integrals, strings and dates already agree, which is why
-      :func:`~databricks.labs.dqx.anomaly.validation.validate_baseline_columns` permits those types and
+      *validate_baseline_columns* permits those types and
       rejects floating-point and decimal ones, where the two renderings diverge in ways no small
       shim can reconcile.
     """
@@ -59,12 +59,12 @@ def _as_spark_string(value: Any) -> str:
 def build_baseline_key(group_values: Mapping[str, Any] | None) -> str:
     """Build the group key for a row, in Python.
 
-    Must agree exactly with :func:`baseline_key_column`, which computes the same key in Spark.
+    Must agree exactly with *baseline_key_column*, which computes the same key in Spark.
     Training persists baselines under keys produced by one and scoring looks them up with the
     other, so a disagreement does not fail — it silently misses every lookup and falls back to
     the global baseline, producing a model that appears to work and conditions on nothing.
     Their agreement is pinned by an integration test, which is how the boolean rendering
-    difference handled in :func:`_as_spark_string` was found.
+    difference handled in *_as_spark_string* was found.
 
     Values are ordered by column name so the key does not depend on the order the caller
     happened to list the group columns in.
@@ -78,8 +78,8 @@ def build_baseline_key(group_values: Mapping[str, Any] | None) -> str:
 def baseline_key_column(baseline_by: list[str]) -> Column:
     """Build the group key for every row, in Spark.
 
-    The Spark half of the contract described on :func:`build_baseline_key`. This side is the source of
-    truth — it is what runs at scoring time — so :func:`_as_spark_string` is written to match
+    The Spark half of the contract described on *build_baseline_key*. This side is the source of
+    truth — it is what runs at scoring time — so *_as_spark_string* is written to match
     ``cast("string")`` rather than the other way round.
     """
     parts = [F.coalesce(F.col(name).cast("string"), F.lit(BASELINE_KEY_NULL)) for name in sorted(baseline_by, key=str)]
@@ -87,10 +87,10 @@ def baseline_key_column(baseline_by: list[str]) -> Column:
 
 
 def with_baseline_key(df: DataFrame, baseline_by: list[str]) -> DataFrame:
-    """Ensure *df* carries :data:`BASELINE_KEY_COLUMN`, computing it only when absent.
+    """Ensure *df* carries *BASELINE_KEY_COLUMN*, computing it only when absent.
 
     Idempotent on purpose, and the point is *availability*, not agreement: every stage calls
-    :func:`baseline_key_column`, so two Spark-side computations cannot disagree with each other.
+    *baseline_key_column*, so two Spark-side computations cannot disagree with each other.
     What they can do is run on a frame that no longer has the columns to compute from.
 
     Feature engineering drops the raw group columns so they cannot reach the sklearn pipeline or

@@ -86,7 +86,7 @@ def test_the_published_basis_split_names_the_time_comparison(
     assert published["basis"] == "map<string,double>", published
 
     basis = result_df.select(_published_basis().alias("basis")).collect()[0]["basis"]
-    assert basis is not None, "the basis split must be published for the tabular detector"
+    assert basis is not None, "the basis split must be published for the distribution detector"
     assert "units vs its expected level at that time" in basis, f"the time comparison must be named: {basis}"
     total = sum(value for value in basis.values() if value is not None)
     assert 99.0 <= total <= 101.0, f"one column's entries should total 100, got {total} in {basis}"

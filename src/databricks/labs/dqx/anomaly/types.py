@@ -87,7 +87,7 @@ class AnomalyTrainingContext:
     exclude_columns: list[str] | None
     auto_discovery_used: bool
     baseline_by: list[str] | None = None
-    # Which kind of data the user says this is, which selects the detector. None means "tabular",
+    # Which kind of data the user says this is, which selects the detector. None means "distribution",
     # i.e. exactly the behaviour that predates this option. Appended last:
     # a defaulted field cannot precede a non-defaulted one, and appending also keeps positional
     # construction stable for anything building this directly.

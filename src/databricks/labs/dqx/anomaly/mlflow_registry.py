@@ -167,7 +167,7 @@ def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
 #: Serialization format for logged sklearn models, stated rather than defaulted.
 #:
 #: MLflow validates a saved sklearn model against skops' set of trusted types and refuses anything it
-#: does not recognise. ``IsolationForest`` is recognised; :class:`MahalanobisDetector` is DQX's own class,
+#: does not recognise. ``IsolationForest`` is recognised; *MahalanobisDetector* is DQX's own class,
 #: so ``profile="correlation"`` failed outright at registration with "The saved sklearn model references
 #: untrusted types". Naming cloudpickle here skips that check and keeps the on-disk format every DQX model
 #: has always been written with. The alternative, ``skops_trusted_types``, would mean maintaining an

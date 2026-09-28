@@ -47,11 +47,11 @@ MAHALANOBIS_ALGORITHM = "Mahalanobis"
 # confounded by any ordering correlated with the values, which sorted warehouse storage produces
 # routinely -- three of ten classical tabular benchmarks scored above the weakest genuine time-series
 # entity. A value named "auto" would therefore have promised a selection that never happens.
-PROFILE_TABULAR = "tabular"
+PROFILE_DISTRIBUTION = "distribution"
 PROFILE_CORRELATION = "correlation"
-SUPPORTED_PROFILES = (PROFILE_TABULAR, PROFILE_CORRELATION)
-# Unset means the tabular detector: exactly the behaviour that predates this option.
-DEFAULT_PROFILE = PROFILE_TABULAR
+SUPPORTED_PROFILES = (PROFILE_DISTRIBUTION, PROFILE_CORRELATION)
+# Unset means the distribution detector: exactly the behaviour that predates this option.
+DEFAULT_PROFILE = PROFILE_DISTRIBUTION
 
 
 class AnomalyTrainingStrategy(ABC):
@@ -236,12 +236,12 @@ def resolve_training_profile(
     whichever object ends up doing the training. The precedence rule lives here, in a pure function,
     rather than inside the training service, so it can be asserted without a Spark session.
 
-    Pure: it returns parameters rather than mutating the caller's. For the tabular profiles it returns
+    Pure: it returns parameters rather than mutating the caller's. For the distribution profiles it returns
     the **same object**, so choosing a profile explicitly cannot perturb an existing configuration.
 
     Each profile names how a row is judged unusual, not the kind of data the caller has:
 
-    * ``tabular`` (the default, and what an unset profile means) — IsolationForest, exactly the
+    * ``distribution`` (the default, and what an unset profile means) — IsolationForest, exactly the
       behaviour that predates this option.
     * ``correlation`` — the correlation-aware detector, with the ensemble collapsed to a single model.
       Needs no time column: it models cross-metric correlation, not time.
@@ -253,7 +253,7 @@ def resolve_training_profile(
     """
     requested = (profile or DEFAULT_PROFILE).strip().lower()
 
-    if requested == PROFILE_TABULAR:
+    if requested == PROFILE_DISTRIBUTION:
         strategy: AnomalyTrainingStrategy = IsolationForestTrainingStrategy()
         resolved_params = params
     elif requested == PROFILE_CORRELATION:

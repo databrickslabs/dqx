@@ -1,6 +1,6 @@
 """The IsolationForest path must not change when a second algorithm is added.
 
-Written before any wiring, so "the tabular path is untouched" is an executable claim rather than a
+Written before any wiring, so "the distribution path is untouched" is an executable claim rather than a
 review argument. Everything here describes behaviour that existed before the Mahalanobis detector and
 must survive it: the pipeline's shape, the exact hyperparameters persisted into every registry row, the
 positional field order of ``AnomalyParams``, the algorithm strings that resolve to the existing scoring
@@ -71,7 +71,7 @@ def test_scores_match_the_committed_reference():
 
     This is the assertion that catches an accidentally inserted preprocessing step, a changed default,
     or a different seed — none of which would necessarily break any other test, and all of which would
-    silently move every severity percentile for every deployed tabular model.
+    silently move every severity percentile for every deployed distribution model.
     """
     pipeline, _ = fit_sklearn_model(_reference_training_frame(), _reference_params())
 
@@ -141,8 +141,8 @@ def test_existing_algorithm_strings_still_resolve(algorithm: str):
     assert strategy.supports(algorithm)
 
 
-@pytest.mark.parametrize("profile", [None, "tabular", "TABULAR", "  Tabular  "])
-def test_tabular_profiles_select_isolation_forest_and_leave_params_untouched(profile: str | None):
+@pytest.mark.parametrize("profile", [None, "distribution", "DISTRIBUTION", "  Distribution  "])
+def test_distribution_profiles_select_isolation_forest_and_leave_params_untouched(profile: str | None):
     """An unset profile must resolve to today's behaviour, and must not perturb the caller's params.
 
     Identity, not equality: returning a copy would be harmless here but would mean the resolver is
@@ -192,7 +192,7 @@ def test_the_pre_release_timeseries_spelling_is_rejected_and_names_what_to_use()
     assert "correlation" in str(raised.value), "the error must point at the value that replaced it"
 
 
-@pytest.mark.parametrize("profile", [None, "tabular", "correlation"])
+@pytest.mark.parametrize("profile", [None, "distribution", "correlation"])
 def test_an_injected_strategy_wins_over_every_profile(profile: str | None):
     """``AnomalyTrainingService(spark, strategy=...)`` is how a caller substitutes a strategy, and how
     existing tests substitute a double. If profile resolution overrode it, those tests would keep
