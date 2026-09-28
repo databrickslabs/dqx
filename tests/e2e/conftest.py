@@ -204,8 +204,7 @@ def run_job_and_validate(
                 raise
             last_error = exc
             logger.warning(
-                f"'{task_key}' hit serverless INTERNAL_ERROR on attempt {attempt}/{max_attempts}; "
-                f"retrying: {exc}"
+                f"'{task_key}' hit serverless INTERNAL_ERROR on attempt {attempt}/{max_attempts}; " f"retrying: {exc}"
             )
             time.sleep(min(2**attempt, 30))
     assert last_error is not None  # loop ran at least once

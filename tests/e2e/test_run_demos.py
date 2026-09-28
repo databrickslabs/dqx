@@ -469,9 +469,7 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
     # This demo trains two IsolationForest models and scores with contributions + AI explanations
     # (on by default), so it is the slowest e2e demo and can exceed 30 minutes on a cold serverless
     # start. Use a 45-minute wait (still well within the e2e CI job's 2h wrapper).
-    run_job_and_validate(
-        ws, job.job_id, "dqx_row_anomaly_detection_demo", timeout=timedelta(minutes=45)
-    )
+    run_job_and_validate(ws, job.job_id, "dqx_row_anomaly_detection_demo", timeout=timedelta(minutes=45))
 
 
 def test_dbt_demo(make_schema, library_ref, debug_env, ws):
