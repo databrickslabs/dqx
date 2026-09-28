@@ -453,8 +453,10 @@ lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt
 	uv lock --exclude-newer "7 days"
+	# NO_COLOR is not cosmetic here: uv colours the "# via <pkg>" annotations, and those escape
+	# sequences land in the committed file, which has already needed cleaning up once on this branch.
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' pyproject.toml | \
-	  uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
+	  NO_COLOR=1 uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
 	mv build-constraints-new.txt .build-constraints.txt
 	# Normalize the lock so contributors inside Databricks (private proxy) and outside (public PyPI)
 	# produce an identical file. A proxy mirrors PyPI with identical paths, so rewrite the registry
