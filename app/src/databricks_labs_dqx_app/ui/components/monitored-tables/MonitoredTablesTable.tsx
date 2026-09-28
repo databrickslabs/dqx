@@ -224,7 +224,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     renderCell: () => <span className="text-muted-foreground">—</span>,
   },
   checksCount: {
-    // Count of materialized checks (`dq_quality_rules` rows sourced from the
+    // Count of materialized checks (`dq_resolved_rules` rows sourced from the
     // Rules Registry) for the table — distinct from `rulesCount` (applied
     // registry rules), matching dqlake's `BindingOutBrief.check_count`.
     labelKey: "monitoredTables.colChecksCount",

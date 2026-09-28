@@ -182,7 +182,7 @@ def get_rule_history(
     """Return a per-table rule's recorded change history (newest first).
 
     Backs the Drafts & Review change-diff popout: reads the
-    ``dq_quality_rules_history`` audit trail so the UI can diff the two most
+    ``dq_resolved_rules_history`` audit trail so the UI can diff the two most
     recent recorded ``check`` payloads (previous vs proposed). Declared BEFORE
     the ``/{table_fqn:path}`` catch-all so the more-specific pattern wins.
 

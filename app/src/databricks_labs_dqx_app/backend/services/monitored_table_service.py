@@ -7,7 +7,7 @@ Manages the LIVE ``dq_monitored_tables`` bindings and their
 This is Layer 2 of the Rules Registry: a thin binding recording that a
 table is under active governance, plus the live link between a published
 registry rule (``dq_rules``) and that table's column mapping. Applying new
-rules, mapping columns, and materializing into ``dq_quality_rules`` (Phase
+rules, mapping columns, and materializing into ``dq_resolved_rules`` (Phase
 3C) are explicitly out of scope here — this module only covers register/
 list/get/delete of the binding + applied rules, and a READ-ONLY path over
 the existing ``dq_profiling_results`` Delta table (never written here; the
@@ -203,7 +203,7 @@ class MonitoredTableService:
         self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._applied_table = sql.fqn("dq_applied_rules")
         self._rules_table = sql.fqn("dq_rules")
-        self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._quality_rules_table = sql.fqn("dq_resolved_rules")
         self._score_cache_table = sql.fqn("dq_score_cache")
         self._profiling_table = profiling_sql.fqn("dq_profiling_results")
         # ``dq_validation_runs`` is always Delta (written by the runner job),
@@ -560,12 +560,12 @@ class MonitoredTableService:
         return out
 
     def _materialized_check_counts(self, table_fqns: list[str]) -> dict[str, int]:
-        """Count active ``dq_quality_rules`` rows per *table_fqns* entry, regardless of authoring source.
+        """Count active ``dq_resolved_rules`` rows per *table_fqns* entry, regardless of authoring source.
 
         One grouped query for all listed tables (no per-table round-trip); a
         table with zero active rows is simply absent from the result.
 
-        ``dq_quality_rules`` holds every check for a table — authored
+        ``dq_resolved_rules`` holds every check for a table — authored
         directly (``source`` in ``ui``/``sql``/``profiler``/``import``/``ai``)
         as well as materialized from a Rules Registry application
         (``source = 'registry'``). This must count all of them, not just
@@ -887,7 +887,7 @@ class MonitoredTableService:
         """Set a monitored table binding's own review-lifecycle status flag.
 
         Only flips the binding row's ``status`` column — it never touches
-        ``dq_applied_rules`` or the materialized ``dq_quality_rules`` rows.
+        ``dq_applied_rules`` or the materialized ``dq_resolved_rules`` rows.
         The route layer (``routes/v1/monitored_tables.py``) orchestrates the
         binding status alongside the materializer and the per-rule
         submit/approve/reject transitions so the binding's status stays a
@@ -1034,10 +1034,10 @@ class MonitoredTableService:
         return table
 
     def list_materialized_rule_statuses(self, binding_id: str) -> list[tuple[str, str]]:
-        """Return ``(rule_id, status)`` for every ``dq_quality_rules`` row this binding materialized.
+        """Return ``(rule_id, status)`` for every ``dq_resolved_rules`` row this binding materialized.
 
         Resolves the binding's materialized rows through the SAME
-        ``dq_quality_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
+        ``dq_resolved_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
         ``dq_applied_rules.binding_id`` linkage the materializer maintains
         (:meth:`Materializer.materialize_binding` /
         :meth:`Materializer._cleanup_orphans`), rather than matching on
@@ -1111,7 +1111,7 @@ class MonitoredTableService:
         """Delete a monitored table binding and its applied rules.
 
         TODO(Phase 3C): once the materializer exists, de-materialize (or at
-        minimum orphan-flag) any ``dq_quality_rules`` rows whose
+        minimum orphan-flag) any ``dq_resolved_rules`` rows whose
         ``applied_rule_id`` references an application under this binding
         before deleting the rows here — otherwise materialized runner rows
         are left pointing at applications that no longer exist. Not

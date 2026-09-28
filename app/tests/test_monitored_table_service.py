@@ -923,7 +923,7 @@ def _rollup_dispatch(sql, *, table_status: str, materialized: list[list[str]]) -
             return [_table_row(binding_id="b1", status=table_status)]
         if "FROM dqx_test.dqx_app_test.dq_applied_rules" in query:
             return [["ar1"], ["ar2"]]
-        if "FROM dqx_test.dqx_app_test.dq_quality_rules" in query:
+        if "FROM dqx_test.dqx_app_test.dq_resolved_rules" in query:
             return materialized
         return []
 

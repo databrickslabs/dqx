@@ -44,9 +44,14 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import Binding
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
+from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
+    ResourceTaggingService,
+    startup_tag_targets,
+)
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
@@ -217,12 +222,15 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
         )
         return None
 
+    resource_tagger = ResourceTaggingService(sp_ws)
     context = StartupContext(
         resources=resources,
         runtime=application_runtime,
         oltp_executor=pg_executor,
         register_oltp=set_oltp_executor,
-        activation_hooks=(lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources),),
+        activation_hooks=(
+            lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources, resource_tagger),
+        ),
         background_hooks=(
             lambda: _start_scheduler(sp_ws, sp_sql, pg_executor, resources),
             lambda: _maybe_start_ai_bootstrap(app, sp_ws, sp_sql, pg_executor),
@@ -419,11 +427,17 @@ async def _run_post_migration_startup(
     delta_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
     resources: ActiveResources,
+    resource_tagger: ResourceTaggingService,
 ) -> None:
     _ensure_score_views(delta_sql, resources)
-    _ensure_metadata_dims(delta_sql, oltp, resources)
+    await _ensure_metadata_dims(delta_sql, oltp, resources)
     _ensure_entitlement_objects(delta_sql, resources)
     _grant_user_view_access(delta_sql, resources)
+    targets = startup_tag_targets(
+        resources,
+        include_bundle_resources=conf.tag_bundle_owned_resources,
+    )
+    await asyncio.to_thread(resource_tagger.reconcile, targets)
     await asyncio.to_thread(_ensure_genie_space, workspace, resources, oltp)
 
     settings = AppSettingsService(sql=oltp)
@@ -450,18 +464,20 @@ def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> N
         logger.warning("Could not create the DQ score views")
 
 
-def _ensure_metadata_dims(
+async def _ensure_metadata_dims(
     delta_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
     resources: ActiveResources,
 ) -> None:
     try:
-        MetadataDimService(
-            sp_sql=delta_sql,
-            registry=RegistryService(sql=oltp),
-            monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
-            genie_schema=resources.genie_schema,
-        ).refresh()
+        await refresh_metadata_dims(
+            MetadataDimService(
+                sp_sql=delta_sql,
+                registry=RegistryService(sql=oltp),
+                monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
+                genie_schema=resources.genie_schema,
+            )
+        )
     except Exception:
         logger.warning("Could not refresh the DQ metadata dimensions")
 
@@ -592,12 +608,6 @@ async def _start_scheduler(
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=delta_sql)
         registry = RegistryService(sql=oltp)
         settings = AppSettingsService(sql=oltp)
-        metadata_dims = MetadataDimService(
-            sp_sql=delta_sql,
-            registry=registry,
-            monitored_tables=monitored_tables,
-            genie_schema=resources.genie_schema,
-        )
         tag_reconcile = TagReconcileService(
             registry=registry,
             monitored_tables=monitored_tables,
@@ -615,7 +625,6 @@ async def _start_scheduler(
             oltp_sql=oltp,
             data_product_service=data_products,
             binding_run_service=binding_runs,
-            metadata_dim_service=metadata_dims,
             score_cache_service=ScoreCacheService(
                 oltp=oltp,
                 warehouse_sql=delta_sql,

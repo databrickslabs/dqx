@@ -9,12 +9,12 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Permissions & Entitlements
 
-Two different ideas control what you can do in DQX Studio, and it helps to keep
+Two different securables control what you can do in DQX Studio, and it helps to keep
 them apart:
 
-- **Entitlements** are your **role across the whole app** — whether you can view
+- **Entitlements** are your **roles across the whole app** — whether you can view
   rules, write them, approve them, or change settings.
-- **Permissions** are your **access to one specific object** — a single rule,
+- **Permissions** are your **access permissions to one specific object** — a single rule,
   monitored table, or collection.
 
 Your entitlement follows you everywhere; permissions apply object by object.
@@ -39,7 +39,8 @@ the two are deliberately kept apart so that
 You don't get a role by name. An admin maps your **Databricks workspace groups**
 to DQX Studio roles in **Admin Settings → Entitlements**; if your groups map you
 to more than one role, the **highest wins**. Your **Profile** page (top-right
-menu) shows your role and which groups granted it.
+menu) lists the Databricks workspace groups you belong to — the groups this
+mapping draws on.
 
 <ThemedImage
   alt="Admin Settings Entitlements tab, mapping workspace groups to DQX Studio roles"
@@ -60,12 +61,12 @@ workspace group — one or more privileges on **that object only**:
 - **Modify** — edit the object's configuration and logic, and delete it.
 - **Apply** — attach the object to others (apply a rule to a table, add a table
   to a collection).
-- **Execute** — run profiling and validation on this **table or collection**.
-  (Execute doesn't apply to rules.)
+- **Execute** — run profiling and validation on this **table or collection**
+  (Execute doesn't apply to rules).
 - **ALL PRIVILEGES** — the full set, including managing the object's permissions.
 
 Anything you can act on you can also see, so Modify, Apply, or Execute include
-View automatically.
+View privilege automatically.
 
 <Admonition type="note" title="Running needs both a role and Execute">
 Triggering a run takes the **Rule Author** or **Admin** role *and* the
@@ -76,10 +77,12 @@ locked out.
 
 ### Defaults and cascade
 
-When you create an object, nothing is blocked out of the box: **you become the
-owner** with ALL PRIVILEGES, and **all workspace users** get View, Apply, and
-Execute (Modify is held back). These are real grant rows, so you can narrow them
-to specific groups or remove them whenever you like.
+When you create an object — a rule, monitored table, or collection — nothing is
+blocked out of the box: **you become the owner** with ALL PRIVILEGES, and **all
+workspace users** get View, Apply, and Execute (Modify is held back). These
+defaults are real entries on the object's **Permissions tab**, not hard-coded
+behavior — so you can narrow them to specific groups, or remove them, whenever
+you like.
 
 By default permissions **cascade** through the hierarchy — granting access on a
 collection also grants it on the collection's tables and their applied rules.
@@ -87,6 +90,6 @@ Admins control whether cascade is on by default in **Admin Settings →
 Entitlements**.
 
 <Admonition type="note" title="Changes are audited">
-Every change to who has which role, and to the permissions on an object, is
-recorded — who changed it, when, and the before-and-after values.
+Role changes and object-permission changes are all recorded — who made the
+change, when, and the before-and-after values.
 </Admonition>
