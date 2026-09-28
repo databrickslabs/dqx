@@ -518,7 +518,7 @@ def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
         try:
             oltp.execute(statement)
         except Exception:
-            logger.warning("Could not grant the task-runner SP access to dq_run_configs")
+            logger.warning("Could not grant the task-runner SP access to dq_run_configs", exc_info=True)
 
 
 def _grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
@@ -532,7 +532,7 @@ def _grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) 
         try:
             delta_sql.execute_no_schema(statement)
         except Exception:
-            logger.warning("Could not grant account users access to a Studio view")
+            logger.warning("Could not grant account users access to a Studio view", exc_info=True)
 
 
 def _ensure_genie_space(

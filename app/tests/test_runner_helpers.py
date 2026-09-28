@@ -631,7 +631,7 @@ class _FakeConn:
 
 def _conn(runner_module, schema="sch"):
     """Build a ``_LakebaseConn`` with the resolved coordinates the app threads."""
-    return runner_module._LakebaseConn(endpoint="ep", host="h", username="u", database="db", schema=schema)
+    return runner_module._LakebaseConn(endpoint="ep", host="h", port=5432, username="u", database="db", schema=schema)
 
 
 def _patch_connect(runner_module, monkeypatch, conns):

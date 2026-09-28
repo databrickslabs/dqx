@@ -62,13 +62,16 @@ class _LakebaseConn:
     """Resolved Lakebase connection coordinates threaded from the app as job parameters.
 
     The app resolves the *endpoint* (even in platform-bound mode, where it is
-    derived from the bound host), *host*, and *username* once and passes them
-    here, so the runner does not repeat that resolution — it only mints a fresh
-    OAuth token. *schema* qualifies ``dq_run_configs`` in the query.
+    derived from the bound host), *host*, *port*, and *username* once and passes
+    them here, so the runner does not repeat that resolution — it only mints a
+    fresh OAuth token. *username* is the task-runner SP's Postgres role (the
+    identity the job runs as), which must match the OAuth token subject.
+    *schema* qualifies ``dq_run_configs`` in the query.
     """
 
     endpoint: str
     host: str
+    port: int
     username: str
     database: str
     schema: str
@@ -324,7 +327,7 @@ def _lakebase_connect(ws: WorkspaceClient, conn: _LakebaseConn):
         raise RuntimeError(f"Lakebase credential response had no token (endpoint={conn.endpoint})")
     return psycopg.connect(
         host=conn.host,
-        port=5432,
+        port=conn.port,
         dbname=conn.database,
         user=conn.username,
         password=credential.token,
@@ -457,6 +460,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lakebase_database", default="", help="Lakebase database name")
     parser.add_argument("--lakebase_schema", default="", help="Lakebase schema holding dq_run_configs")
     parser.add_argument("--lakebase_host", default="", help="Resolved Lakebase read/write host")
+    parser.add_argument("--lakebase_port", type=int, default=5432, help="Resolved Lakebase port")
     parser.add_argument("--lakebase_username", default="", help="Resolved Lakebase role (SP client id)")
     return parser.parse_args()
 
@@ -1493,6 +1497,7 @@ def main() -> None:
     lakebase = _LakebaseConn(
         endpoint=args.lakebase_endpoint,
         host=args.lakebase_host,
+        port=args.lakebase_port,
         username=args.lakebase_username,
         database=args.lakebase_database,
         schema=args.lakebase_schema,

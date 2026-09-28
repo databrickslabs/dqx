@@ -477,6 +477,8 @@ resources:
               - "{{job.parameters.lakebase_schema}}"
               - "--lakebase_host"
               - "{{job.parameters.lakebase_host}}"
+              - "--lakebase_port"
+              - "{{job.parameters.lakebase_port}}"
               - "--lakebase_username"
               - "{{job.parameters.lakebase_username}}"
           environment_key: "default"
@@ -518,6 +520,8 @@ resources:
           default: "${var.lakebase_schema_name}"
         - name: "lakebase_host"
           default: ""
+        - name: "lakebase_port"
+          default: "5432"
         - name: "lakebase_username"
           default: "${var.dqx_service_principal_application_id}"
 

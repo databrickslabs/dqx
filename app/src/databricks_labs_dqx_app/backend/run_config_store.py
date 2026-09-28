@@ -95,6 +95,23 @@ def stage_config_to_table(sql: OltpExecutorProtocol, run_id: str, config: dict[s
     logger.info("Staged run config for %s in %s (%d chars)", run_id, table, len(compacted_run_config))
 
 
+def delete_staged_config(sql: OltpExecutorProtocol, run_id: str) -> None:
+    """Best-effort delete of a staged ``dq_run_configs`` row.
+
+    Called when job submission fails after the config was staged, so an
+    oversized payload is not orphaned in the table until the retention sweep.
+    Failures are intentionally logged, not raised because he caller is already
+    handling a submit error.
+    """
+    try:
+        validate_object_id(run_id)
+        table = sql.fqn(RUN_CONFIGS_TABLE)
+        sql.delete(table, where={"run_id": run_id})
+        logger.info("Deleted orphaned staged run config for %s from %s", run_id, table)
+    except Exception as exc:
+        logger.warning("Could not delete orphaned staged run config for %s: %s", run_id, exc)
+
+
 def prepare_config_json(
     sql: OltpExecutorProtocol,
     *,

@@ -11,6 +11,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     RunConfigError,
     RunConfigStagingError,
     RunConfigTooLargeError,
+    delete_staged_config,
     job_parameters_size,
     prepare_config_json,
     stage_config_to_table,
@@ -136,6 +137,30 @@ class TestStageConfigToTable:
         with pytest.raises(ValueError):
             stage_config_to_table(sql, "run\\", {"checks": []})
         sql.upsert.assert_not_called()
+
+
+class TestDeleteStagedConfig:
+    def test_deletes_row_by_run_id(self) -> None:
+        # Called when submission fails after staging, so an orphaned row is
+        # removed rather than left for the retention sweep.
+        sql = _oltp_mock()
+        delete_staged_config(sql, "run123")
+        sql.delete.assert_called_once()
+        args, kwargs = sql.delete.call_args
+        assert args[0] == "dqx_studio.dq_run_configs"
+        assert kwargs["where"] == {"run_id": "run123"}
+
+    def test_rejects_malformed_run_id(self) -> None:
+        sql = _oltp_mock()
+        delete_staged_config(sql, "run\\")
+        sql.delete.assert_not_called()
+
+    def test_swallows_delete_failure(self) -> None:
+        # The caller is already handling a submit error, so a failed cleanup
+        # must not mask it with a second exception.
+        sql = _oltp_mock()
+        sql.delete.side_effect = RuntimeError("connection reset")
+        delete_staged_config(sql, "run123")  # does not raise
 
 
 class TestRunConfigTooLargeError:

@@ -400,6 +400,11 @@ class PgExecutor:
         """Resolved read/write Postgres host."""
         return self._host
 
+    @property
+    def port(self) -> int:
+        """Resolved Postgres port (honours ``PGPORT`` in platform-bound mode)."""
+        return self._port
+
     # ------------------------------------------------------------------
     # Token-refresh observability
     # ------------------------------------------------------------------

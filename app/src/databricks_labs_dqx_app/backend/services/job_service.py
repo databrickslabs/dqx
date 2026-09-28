@@ -10,7 +10,11 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from pydantic import BaseModel
 
-from databricks_labs_dqx_app.backend.run_config_store import prepare_config_json
+from databricks_labs_dqx_app.backend.run_config_store import (
+    build_manifest_config_payload,
+    delete_staged_config,
+    prepare_config_json,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,7 @@ class JobService:
         lakebase_database: str = "",
         lakebase_schema: str = "",
         lakebase_host: str = "",
+        lakebase_port: int = 5432,
         lakebase_username: str = "",
     ) -> None:
         self._ws = ws
@@ -52,6 +57,7 @@ class JobService:
         self._lakebase_database = lakebase_database
         self._lakebase_schema = lakebase_schema
         self._lakebase_host = lakebase_host
+        self._lakebase_port = lakebase_port
         self._lakebase_username = lakebase_username
         # SQL warehouse the task runner uses for its temp-view cleanup path.
         # The admin-configured warehouse (``dq_app_settings`` → resolved by the
@@ -86,6 +92,7 @@ class JobService:
             "lakebase_database": self._lakebase_database,
             "lakebase_schema": self._lakebase_schema,
             "lakebase_host": self._lakebase_host,
+            "lakebase_port": str(self._lakebase_port),
             "lakebase_username": self._lakebase_username,
         }
         config_json = prepare_config_json(
@@ -94,11 +101,17 @@ class JobService:
             config=config,
             job_parameters_without_config=base_params,
         )
+        staged = config_json == build_manifest_config_payload()
 
-        run = self._ws.jobs.run_now(
-            job_id=self._job_id,
-            job_parameters={**base_params, "config_json": config_json},
-        )
+        try:
+            run = self._ws.jobs.run_now(
+                job_id=self._job_id,
+                job_parameters={**base_params, "config_json": config_json},
+            )
+        except Exception:
+            if staged:
+                delete_staged_config(self._oltp_sql, run_id)
+            raise
         logger.info(
             "Submitted job run %s (job_id=%s, task_type=%s, app_run_id=%s)",
             run.run_id,
