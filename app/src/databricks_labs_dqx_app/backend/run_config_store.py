@@ -55,6 +55,28 @@ class RunConfigStagingError(RunConfigError):
         )
 
 
+class RunConfigStagingUnavailableError(RunConfigError):
+    """Raised when an oversized run config needs Lakebase staging but Lakebase is disabled.
+
+    Oversized configs are staged to the *dq_run_configs* Lakebase table and read back
+    by the task runner over Postgres. With the Delta OLTP fallback (Lakebase disabled)
+    the runner has no Postgres connection to read from, so submission fails fast with
+    actionable guidance rather than staging to a table the runner can never reach.
+    """
+
+    def __init__(self, size: int, dialect: str, *, limit: int = JOB_PARAMETERS_CHAR_LIMIT) -> None:
+        self.size = size
+        self.dialect = dialect
+        self.limit = limit
+        super().__init__(
+            f"The run configuration is too large to inline in job parameters "
+            f"({size} characters; limit is {limit}) and must be staged to the Lakebase "
+            f"'{RUN_CONFIGS_TABLE}' table, but Lakebase is not enabled (OLTP backend is "
+            f"'{dialect}', not 'postgres'). Enable Lakebase to submit large rule sets, or "
+            f"reduce the number of checks applied to this table."
+        )
+
+
 def _compact_json(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"))
 
@@ -128,6 +150,13 @@ def prepare_config_json(
     # Validate the run_id to ensure a malformed id surfaces as ValueError
     # instead of being caught below and mislabeled as a Lakebase staging failure.
     validate_object_id(run_id)
+    # Staging targets the Lakebase table and is read back by the runner over
+    # Postgres. With the Delta OLTP fallback (Lakebase disabled) there is no
+    # Postgres connection for the runner, so fail fast with actionable guidance
+    # rather than staging to a table the runner can never read.
+    dialect = getattr(sql, "dialect", "")
+    if dialect != "postgres":
+        raise RunConfigStagingUnavailableError(job_parameters_size(params), dialect)
     try:
         stage_config_to_table(sql, run_id, config)
     except RunConfigError:

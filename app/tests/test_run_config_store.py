@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     MANIFEST_CONFIG_KEY,
     RunConfigError,
     RunConfigStagingError,
+    RunConfigStagingUnavailableError,
     RunConfigTooLargeError,
     delete_staged_config,
     job_parameters_size,
@@ -32,9 +33,14 @@ def _base_params() -> dict[str, str]:
 
 
 def _oltp_mock():
-    """OLTP executor mock — run_config_store only calls ``fqn`` and ``upsert``."""
+    """OLTP executor mock — run_config_store only calls ``fqn`` and ``upsert``.
+
+    Defaults to the Postgres dialect: staging only happens when Lakebase is
+    enabled, so that is the case the staging tests exercise.
+    """
     sql = create_autospec(SqlExecutor, instance=True)
     sql.fqn.side_effect = lambda t: f"dqx_studio.{t}"
+    sql.dialect = "postgres"
     return sql
 
 
@@ -114,6 +120,27 @@ class TestPrepareConfigJson:
         msg = str(excinfo.value)
         assert "run123" in msg
         assert "migrations" in msg  # tells the operator what to check
+        assert isinstance(excinfo.value, RunConfigError)
+
+    def test_fails_fast_when_lakebase_disabled(self) -> None:
+        # With the Delta OLTP fallback (Lakebase disabled) the runner has no
+        # Postgres connection to read a staged config, so an oversized config
+        # must fail fast with actionable guidance instead of staging to a table
+        # the runner can never read.
+        sql = _oltp_mock()
+        sql.dialect = "delta"
+        with pytest.raises(RunConfigStagingUnavailableError) as excinfo:
+            prepare_config_json(
+                sql,
+                run_id="run123",
+                config=_big_config(),
+                job_parameters_without_config=_base_params(),
+            )
+        # Nothing is staged when Lakebase is unavailable.
+        sql.upsert.assert_not_called()
+        msg = str(excinfo.value)
+        assert "Lakebase" in msg  # points the operator at the real cause
+        assert "delta" in msg  # reports the active OLTP backend
         assert isinstance(excinfo.value, RunConfigError)
 
 
