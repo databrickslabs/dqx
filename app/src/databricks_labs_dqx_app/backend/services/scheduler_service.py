@@ -237,6 +237,7 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
+    ("dq_run_configs", "created_at"),
 )
 
 

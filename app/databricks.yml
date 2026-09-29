@@ -135,6 +135,8 @@ variables:
           value_from: "dqx-task-runner-job"
         - name: "DQX_REQUIRE_TASK_RUNNER"
           value: "1"
+        - name: "DQX_TAG_BUNDLE_OWNED_RESOURCES"
+          value: "1"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
         - name: "DQX_ADMIN_GROUP"
@@ -147,6 +149,10 @@ variables:
           value: "${var.lakebase_database_name}"
         - name: "DQX_LAKEBASE_SCHEMA"
           value: "${var.lakebase_schema_name}"
+        # Task-runner SP's Postgres role — granted read/delete on dq_run_configs
+        # at startup so the runner can read staged (oversized) run configs.
+        - name: "DQX_TASK_RUNNER_POSTGRES_ROLE"
+          value: "${var.dqx_service_principal_application_id}"
         # Starter Insights dashboard; admins can override at runtime via Configuration.
         - name: "DQX_DEFAULT_DASHBOARD_ID"
           value: "${resources.dashboards.dqx_quality_overview.id}"
@@ -235,6 +241,10 @@ resources:
   sql_warehouses:
     dqx_sql_warehouse:
       name: ${var.sql_warehouse_name}
+      tags:
+        custom_tags:
+          - key: app
+            value: dqx-studio
       cluster_size: ${var.sql_warehouse_size}
       max_num_clusters: 1
       auto_stop_mins: 10
@@ -372,6 +382,9 @@ resources:
     dqx_studio:
       project_id: ${var.lakebase_project_id}
       display_name: "dqx-studio"
+      custom_tags:
+        - key: app
+          value: dqx-studio
       pg_version: 16
       default_branch: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}"
       default_endpoint_settings:
@@ -403,6 +416,16 @@ resources:
         bypassrls: true
       membership_roles:
         - DATABRICKS_SUPERUSER
+    # Login role for the task-runner SP (a different SP than the app). It reads
+    # and deletes staged run configs in ``dq_run_configs``; the app grants it
+    # USAGE + SELECT/DELETE at startup (see _grant_task_runner_run_config_access).
+    # Least privilege: no createdb/createrole/superuser — only the explicit grant.
+    task_runner_sp:
+      parent: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}"
+      role_id: "sp-${var.dqx_service_principal_application_id}"
+      postgres_role: ${var.dqx_service_principal_application_id}
+      identity_type: SERVICE_PRINCIPAL
+      auth_method: LAKEBASE_OAUTH_V1
 
   dashboards:
     dqx_quality_overview:
@@ -423,7 +446,7 @@ resources:
       name: "dqx-studio-task-runner"
       max_concurrent_runs: 10
       tags:
-        app: "dqx"
+        app: "dqx-studio"
       run_as:
         service_principal_name: ${var.dqx_service_principal_application_id}
       tasks:
@@ -446,6 +469,18 @@ resources:
               - "{{job.parameters.run_id}}"
               - "--requesting_user"
               - "{{job.parameters.requesting_user}}"
+              - "--lakebase_endpoint"
+              - "{{job.parameters.lakebase_endpoint}}"
+              - "--lakebase_database"
+              - "{{job.parameters.lakebase_database}}"
+              - "--lakebase_schema"
+              - "{{job.parameters.lakebase_schema}}"
+              - "--lakebase_host"
+              - "{{job.parameters.lakebase_host}}"
+              - "--lakebase_port"
+              - "{{job.parameters.lakebase_port}}"
+              - "--lakebase_username"
+              - "{{job.parameters.lakebase_username}}"
           environment_key: "default"
       environments:
         - environment_key: "default"
@@ -473,6 +508,22 @@ resources:
           default: ""
         - name: "requesting_user"
           default: "unknown"
+        # Lakebase settings for reading staged run configs. ``submit_run`` always
+        # passes the app-resolved values; these defaults only apply to a manual
+        # job run. ``host`` is resolved at runtime so it has no static default;
+        # ``username`` is the task-runner SP's Postgres role (its client id).
+        - name: "lakebase_endpoint"
+          default: "${var.lakebase_endpoint}"
+        - name: "lakebase_database"
+          default: "${var.lakebase_database_name}"
+        - name: "lakebase_schema"
+          default: "${var.lakebase_schema_name}"
+        - name: "lakebase_host"
+          default: ""
+        - name: "lakebase_port"
+          default: "5432"
+        - name: "lakebase_username"
+          default: "${var.dqx_service_principal_application_id}"
 
 # Deploy targets are defined in the untracked ``target.dev.yml`` (see the
 # ``include`` above and ``target.dev.yml.example``).
