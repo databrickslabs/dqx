@@ -741,6 +741,12 @@ wrote, and a following `DQAlert` embeds that table name into its message. This i
 - The evaluator **copies** the payload before inserting it into the next `ActionContext`, so
   mutations made by the producer after *execute* returned are invisible downstream.
 
+<Admonition type="caution" title="Order matters — extras only flow forward">
+Extras flow to *later* actions only. A consumer listed **before** its producer sees empty extras
+(`get_extras` returns `{}`) — there is no error or warning. Always order a consumer after the
+action that produces the extras it reads.
+</Admonition>
+
 <Admonition type="caution" title="Extras are keyed by producing action name">
 Two `DQAction` entries with the same `name` share one *extras* slot. The second action's payload
 overwrites the first (last-write-wins). Give producers distinct names when consumers must
