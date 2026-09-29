@@ -36,7 +36,7 @@ tables differ. Every test is deterministic and runs enabled-by-default without a
 
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -44,6 +44,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, IntegerType, StringType, StructField, StructType
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.retries import retried
 from databricks.labs.pytester.fixtures.baseline import factory
 
 from databricks.labs.dqx import check_funcs
@@ -68,6 +69,8 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
+
+from tests.constants import TEST_CATALOG
 
 
 @dataclass(frozen=True)
@@ -404,11 +407,13 @@ def test_upstream_multi_level(
         spark=spark,
     )
     upstream = persisted.where((persisted["edge_type"] == "upstream") & (persisted["source_table"] == gold))
-    edges = {(row["depth"], row["target_table"]) for row in upstream.collect()}
+    edges = {(row["depth"], row["predecessor"], row["target_table"]) for row in upstream.collect()}
 
-    assert (1, silver) in edges, edges
-    assert (2, bronze1) in edges, edges
-    assert (2, bronze2) in edges, edges
+    # depth 1 predecessor is the anchor itself; depth 2 predecessor is the intermediate hop
+    # (silver) — this is what makes each row a walkable per-hop edge.
+    assert (1, gold, silver) in edges, edges
+    assert (2, silver, bronze1) in edges, edges
+    assert (2, silver, bronze2) in edges, edges
 
     versions = {
         row["target_table"]: row["target_delta_version"]
@@ -446,9 +451,10 @@ def test_downstream_multi_level(
         spark=spark,
     )
     downstream = persisted.where((persisted["edge_type"] == "downstream") & (persisted["source_table"] == bronze1))
-    edges = {(row["depth"], row["target_table"]) for row in downstream.collect()}
-    assert (1, silver) in edges
-    assert (2, gold) in edges
+    edges = {(row["depth"], row["predecessor"], row["target_table"]) for row in downstream.collect()}
+    # depth 1 predecessor is the anchor bronze1; depth 2 predecessor is silver — walkable edges.
+    assert (1, bronze1, silver) in edges, edges
+    assert (2, silver, gold) in edges, edges
 
 
 def test_recursive_job_self_write(
@@ -506,21 +512,21 @@ def test_recursive_job_self_write(
         spark=spark,
     )
     edges_from_a = {
-        (row["depth"], row["target_table"])
+        (row["depth"], row["predecessor"], row["target_table"])
         for row in persisted_ac.where(
             (persisted_ac["edge_type"] == "downstream") & (persisted_ac["source_table"] == node_a)
         ).collect()
     }
-    # Depth-1 neighbours: node_b (a→b) and node_c (a→c). node_a itself must never appear as its
-    # own descendant.
-    assert (1, node_b) in edges_from_a
-    assert (1, node_c) in edges_from_a
+    # Depth-1 neighbours: node_b (a→b) and node_c (a→c). Predecessor of each depth-1 hop is the
+    # anchor itself. node_a must never appear as its own descendant.
+    assert (1, node_a, node_b) in edges_from_a, edges_from_a
+    assert (1, node_a, node_c) in edges_from_a, edges_from_a
     assert not any(
-        target == node_a for _, target in edges_from_a
+        target == node_a for _, _, target in edges_from_a
     ), "node_a must not appear as its own descendant via the cycle b→a"
     # node_c must not be re-reached via the cyclic a→b→a→c path at deeper depth — the array-path
     # guard rejects the b→a hop, so no descendant path reintroduces node_c.
-    reached_c_depths = {depth for depth, target in edges_from_a if target == node_c}
+    reached_c_depths = {depth for depth, _, target in edges_from_a if target == node_c}
     assert reached_c_depths == {1}, f"node_c must only appear at depth 1; observed depths: {reached_c_depths}"
 
 
@@ -614,6 +620,10 @@ def test_column_lineage_ignores_prior_run_failures(
             "value" not in source_columns
         ), f"prior-run failure leaked into current-run column lineage: {source_columns}"
         assert "other" in source_columns, f"current-run failure missing from column lineage: {source_columns}"
+        # Predecessor at depth 1 must be the anchor itself — proves the CTE seed carries the
+        # walk's origin rather than leaving the column NULL.
+        other_predecessors = {row["predecessor"] for row in column_rows if row["source_column"] == "other"}
+        assert other_predecessors == {source}, other_predecessors
     finally:
         spark.sql(f"DROP TABLE IF EXISTS {output_location}")
 
@@ -747,11 +757,14 @@ def test_column_lineage_recurses_across_two_hops(
         spark=spark,
     )
     upstream_edges = {
-        (row["depth"], row["source_column"], row["target_column"])
+        (row["depth"], row["predecessor"], row["target_table"], row["source_column"], row["target_column"])
         for row in persisted_up.where(persisted_up["edge_type"] == "column_upstream").collect()
     }
-    assert (1, "col_b", "col_c") in upstream_edges, upstream_edges
-    assert (2, "col_a", "col_b") in upstream_edges, upstream_edges
+    # At every depth the row's (predecessor → target_table) tables must line up with the actual
+    # per-hop (source_column → target_column) column edge — the reason predecessor exists on the
+    # schema is to make column lineage walkable, not just reachable from the anchor.
+    assert (1, gold, silver, "col_b", "col_c") in upstream_edges, upstream_edges
+    assert (2, silver, bronze, "col_a", "col_b") in upstream_edges, upstream_edges
 
     # Downstream direction: anchor bronze, failure on col_a → walks forward to col_b then col_c.
     downstream_output = make_output_table(failed_column="col_a", name_prefix="col_down_out")
@@ -773,11 +786,11 @@ def test_column_lineage_recurses_across_two_hops(
         spark=spark,
     )
     downstream_edges = {
-        (row["depth"], row["source_column"], row["target_column"])
+        (row["depth"], row["predecessor"], row["target_table"], row["source_column"], row["target_column"])
         for row in persisted_down.where(persisted_down["edge_type"] == "column_downstream").collect()
     }
-    assert (1, "col_a", "col_b") in downstream_edges, downstream_edges
-    assert (2, "col_b", "col_c") in downstream_edges, downstream_edges
+    assert (1, bronze, silver, "col_a", "col_b") in downstream_edges, downstream_edges
+    assert (2, silver, gold, "col_b", "col_c") in downstream_edges, downstream_edges
 
 
 def test_max_nodes_caps_dense_table_lineage(
@@ -870,6 +883,12 @@ def test_column_lineage_reads_failures_from_quarantine(
     column_rows = persisted.where(persisted["edge_type"] == "column_downstream").collect()
     source_columns = {row["source_column"] for row in column_rows}
     assert "value" in source_columns, f"quarantine-only failure did not seed column lineage: {source_columns}"
+    # Depth-1 predecessor is the anchor (source), and the row's (predecessor → target_table)
+    # matches the seeded per-hop column edge (source.value → downstream_table.value_dst).
+    walkable_edges = {
+        (row["predecessor"], row["target_table"], row["source_column"], row["target_column"]) for row in column_rows
+    }
+    assert (source, downstream_table, "value", "value_dst") in walkable_edges, walkable_edges
 
 
 def test_end_to_end_via_dqengine(
@@ -967,21 +986,22 @@ def test_end_to_end_via_dqengine(
     assert spark.catalog.tableExists(lineage_location), f"lineage sink not created at {lineage_location}"
     persisted = spark.read.table(lineage_location)
     downstream_edges = {
-        (row["depth"], row["target_table"])
+        (row["depth"], row["predecessor"], row["target_table"])
         for row in persisted.where(
             (persisted["edge_type"] == "downstream") & (persisted["source_table"] == input_table)
         ).collect()
     }
-    assert (1, downstream_table) in downstream_edges, downstream_edges
+    assert (1, input_table, downstream_table) in downstream_edges, downstream_edges
 
     # (4) Result-column-name coupling: id populated in _errors by the engine surfaces via
-    # the seeded column_lineage row.
-    column_source_columns = {
-        row["source_column"] for row in persisted.where(persisted["edge_type"] == "column_downstream").collect()
-    }
+    # the seeded column_lineage row. Predecessor of the depth-1 hop is the anchor input_table.
+    column_downstream = persisted.where(persisted["edge_type"] == "column_downstream").collect()
+    column_source_columns = {row["source_column"] for row in column_downstream}
     assert (
         "id" in column_source_columns
     ), f"failed 'id' column not seeded from engine-written _errors; got {column_source_columns}"
+    id_predecessors = {row["predecessor"] for row in column_downstream if row["source_column"] == "id"}
+    assert id_predecessors == {input_table}, id_predecessors
 
     # (2) + (3) Condition gating fired and extras produced by CollectLineageAction reached
     # the downstream DQAlert consumer.
@@ -989,3 +1009,92 @@ def test_end_to_end_via_dqengine(
     assert captured_alerts[0].extras.get("collect_lineage") == {"lineage_location": lineage_location}, captured_alerts[
         0
     ].extras
+
+
+def test_end_to_end_streaming_via_dqengine(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+    make_schema,
+    make_volume,
+    make_random,
+) -> None:
+    """Streaming e2e smoke: *CollectLineageAction* fires per micro-batch and writes to the sink.
+
+    Batch coverage above (*test_end_to_end_via_dqengine*) proves the engine → evaluator →
+    action wiring on the batch path. Streaming has real differences — actions are evaluated
+    per micro-batch via *StreamingQueryListener*, dispatched asynchronously after the query
+    terminates — so this test drives the same action through a *readStream* /
+    ``availableNow=True`` run and asserts the sink is populated with the expected downstream
+    edge.
+
+    Scope is deliberately narrow: we don't re-cover walk scenarios, cycle guards, or
+    column-lineage (those live on the direct-execute suite above). Proving the action
+    executes and writes correctly on the streaming path closes the e2e story.
+    """
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema.name).name
+
+    input_table = f"{schema.full_name}.streaming_input_{make_random(6).lower()}"
+    output_table = f"{schema.full_name}.streaming_output_{make_random(6).lower()}"
+    downstream_table = f"{schema.full_name}.streaming_downstream_{make_random(6).lower()}"
+    checkpoint_location = f"/Volumes/{TEST_CATALOG}/{schema.name}/{volume_name}/{make_random(8).lower()}"
+
+    # One null id row so is_not_null produces a failure — same shape as the batch e2e above,
+    # consumed here as a stream via *is_streaming=True* + *availableNow=True*.
+    spark.createDataFrame([[1, "alice"], [None, "bob"]], "id: int, name: string").write.format("delta").mode(
+        "overwrite"
+    ).saveAsTable(input_table)
+
+    _seed_table_lineage(spark, patched_lineage_constants.table_lineage, [(input_table, downstream_table)])
+
+    lineage_location = make_lineage_sink()
+    lineage_action = DQAction(
+        action=CollectLineageAction(output_config=OutputConfig(location=lineage_location, mode="append")),
+        condition="error_row_count > 0",
+        name="collect_lineage",
+    )
+
+    checks = [
+        DQRowRule(
+            name="id_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="id",
+        )
+    ]
+
+    engine = DQEngine(
+        ws,
+        spark=spark,
+        observer=DQMetricsObserver(),
+        actions=[lineage_action],
+    )
+    engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table, is_streaming=True),
+        output_config=OutputConfig(
+            location=output_table,
+            options={"checkPointLocation": checkpoint_location},
+            trigger={"availableNow": True},
+        ),
+    )
+
+    # The listener bus flushes onQueryProgress callbacks asynchronously after the availableNow
+    # query terminates, so poll for the sink instead of asserting synchronously (deterministic:
+    # returns as soon as the write lands, fails fast if it never does).
+    @retried(on=[AssertionError], timeout=timedelta(minutes=2))
+    def _wait_for_sink() -> None:
+        assert spark.catalog.tableExists(lineage_location), f"lineage sink not created at {lineage_location}"
+        persisted = spark.read.table(lineage_location)
+        downstream_edges = {
+            (row["depth"], row["predecessor"], row["target_table"])
+            for row in persisted.where(
+                (persisted["edge_type"] == "downstream") & (persisted["source_table"] == input_table)
+            ).collect()
+        }
+        # Predecessor of the depth-1 hop is the anchor input_table, same as the batch e2e.
+        assert (1, input_table, downstream_table) in downstream_edges, downstream_edges
+
+    _wait_for_sink()
