@@ -345,6 +345,10 @@ def batch_run_from_catalog(
                 config: dict[str, Any] = {
                     "checks": approved_checks,
                     "sample_size": body.sample_size,
+                    "sample_interval_minutes": body.sample_interval_minutes,
+                    "sample_interval_timezone": body.sample_interval_timezone,
+                    "sample_interval_columns": body.sample_interval_columns,
+                    "sample_interval_selected_column": body.sample_interval_selected_column,
                     "source_table_fqn": table_fqn,
                     # Only cross-table SQL queries take the SQL fast-path in
                     # the runner; everything else (including has_valid_schema)

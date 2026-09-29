@@ -16,6 +16,7 @@ import logging
 import sys
 import time
 import re
+from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -339,6 +340,149 @@ def _read_view_with_retry(
     raise RuntimeError(f"View {view_fqn} not accessible after {max_retries} attempts")
 
 
+# Preferred column names for "when this row happened", checked in this order
+# against every column on the table (typed or STRING) before any type-based
+# guessing happens. A STRING column only becomes a cast candidate if its name
+# appears here, never just because it's the only string column around. Kept
+# in lockstep with the tag list rendered next to Row Scope in the schedule
+# editor (ScheduleEditor.tsx's TIME_COLUMN_NAME_PRIORITY) — update both together.
+_TIME_COLUMN_NAME_PRIORITY = (
+    "updated_at", "update_ts", "last_updated", "last_modified", "modified_at", "ingestdate",
+    "event_time", "event_timestamp", "ingestion_time", "ingested_at", "ingest_ts",
+    "load_time", "loaded_at", "record_timestamp", "timestamp",
+    "created_at", "create_ts", "insert_time", "inserted_at", "ts", "date",
+)
+
+
+def _detect_time_column(
+    schema: Any,
+    name_priority: Sequence[str] = _TIME_COLUMN_NAME_PRIORITY,
+    pinned: str | None = None,
+) -> tuple[str, bool] | None:
+    """Best-effort pick of a column to order a table by "latest" for a Row Scope lookback.
+
+    When *pinned* is set (a schedule's explicit column selection) and it
+    exists on the table, it wins outright — no name-priority walk needed. A
+    pinned column that is absent returns ``None`` rather than guessing. A
+    typed match is returned as ``(name, False)``, a STRING match (e.g. an
+    ``ingestdate`` column typed STRING) as ``(name, True)`` so the caller
+    knows to cast it. Otherwise this primarily matches column *name* against
+    *name_priority*, in order, against every column on the table. Only when
+    neither *pinned* nor any priority name is present does this fall back to
+    picking a structurally timestamp/date-typed column automatically
+    (arbitrary name, first one found). Returns ``None`` when nothing matches.
+    """
+    from pyspark.sql.types import DateType, StringType, TimestampNTZType, TimestampType
+
+    typed_cols = {
+        f.name.lower(): f.name for f in schema.fields if isinstance(f.dataType, (TimestampType, TimestampNTZType, DateType))
+    }
+    string_cols = {f.name.lower(): f.name for f in schema.fields if isinstance(f.dataType, StringType)}
+
+    if pinned:
+        pinned_lower = pinned.lower()
+        if pinned_lower in typed_cols:
+            return typed_cols[pinned_lower], False
+        if pinned_lower in string_cols:
+            return string_cols[pinned_lower], True
+        # An explicit pin is a statement of intent — never silently window on
+        # a different column. The caller falls back to an unordered sample.
+        logger.warning("Pinned time column %r not found on table — skipping the time window", pinned)
+        return None
+
+    for name in name_priority:
+        name_lower = name.lower()
+        if name_lower in typed_cols:
+            return typed_cols[name_lower], False
+        if name_lower in string_cols:
+            return string_cols[name_lower], True
+
+    if typed_cols:
+        return next(iter(typed_cols.values())), False
+
+    return None
+
+
+def _apply_sample_scope(
+    df: Any,
+    sample_size: int,
+    sample_interval_minutes: int | None,
+    view_fqn: str,
+    sample_interval_timezone: str | None = None,
+    sample_interval_columns: Sequence[str] | None = None,
+    sample_interval_selected_column: str | None = None,
+) -> Any:
+    """Apply the configured Row Scope: plain LIMIT, or a time-windowed "latest N" sample.
+
+    ``sample_interval_minutes`` is only honored when set — with no interval, the
+    sample stays in table order (unordered), matching the pre-existing behavior,
+    since detecting and sorting by a time column isn't free and shouldn't be
+    paid for unless the user explicitly asked for "latest" rows.
+
+    ``sample_interval_columns`` overrides the default candidate name list
+    (:data:`_TIME_COLUMN_NAME_PRIORITY`) when the schedule author customized
+    it (``None`` = default names; ``[]`` = skip name matching and use any
+    date/timestamp-typed column); ``sample_interval_selected_column`` is an explicit per-schedule pin
+    that wins over the candidate list on tables where it exists.
+    """
+    if not sample_interval_minutes:
+        return df.limit(sample_size) if sample_size else df
+
+    detected = _detect_time_column(
+        df.schema,
+        name_priority=_TIME_COLUMN_NAME_PRIORITY if sample_interval_columns is None else sample_interval_columns,
+        pinned=sample_interval_selected_column,
+    )
+    if detected is None:
+        logger.warning(
+            "sample_interval_minutes set for %s but no timestamp/date column (typed or "
+            "name-matched string) was found — falling back to an unordered sample",
+            view_fqn,
+        )
+        return df.limit(sample_size) if sample_size else df
+    time_col, needs_cast = detected
+
+    from pyspark.sql import functions as F
+
+    time_expr = F.col(time_col).cast("timestamp") if needs_cast else F.col(time_col)
+    if needs_cast:
+        logger.info(
+            "sample_interval_minutes set for %s — no timestamp/date-typed column found; "
+            "using string column '%s' cast to timestamp based on its name. Rows where the "
+            "cast fails (not a parseable timestamp) are excluded from the window.",
+            view_fqn,
+            time_col,
+        )
+    else:
+        logger.info(
+            "sample_interval_minutes set for %s — using timestamp/date-typed column '%s' for the window",
+            view_fqn,
+            time_col,
+        )
+
+    # current_timestamp() is always a true UTC instant, but the column's
+    # stored value may be a naive wall-clock reading in some other zone
+    # (e.g. a table that writes EST timestamps with no offset info) —
+    # comparing that raw value against a UTC cutoff would be off by the
+    # zone's UTC offset and could silently match zero rows even though
+    # "the last hour" of data genuinely exists. When the caller tells us
+    # the assumed timezone of the data, reinterpret the column as
+    # wall-clock time in that zone and convert it to the equivalent UTC
+    # instant before comparing. Skipped entirely (zero overhead) when
+    # unset or explicitly UTC, since UTC needs no reinterpretation.
+    if sample_interval_timezone and sample_interval_timezone.upper() != "UTC":
+        time_expr = F.to_utc_timestamp(time_expr, sample_interval_timezone)
+
+    cutoff = F.current_timestamp() - F.expr(f"INTERVAL {int(sample_interval_minutes)} MINUTES")
+    df = df.where(time_expr >= cutoff)
+    # Ordering only matters when we're about to cut it down to sample_size
+    # ("latest N"); with no limit ("All rows" + a time window) every
+    # matching row is returned anyway, so skip the full sort.
+    if sample_size:
+        df = df.orderBy(time_expr.desc()).limit(sample_size)
+    return df
+
+
 def _run_profile(
     spark: SparkSession,
     ws: WorkspaceClient,
@@ -453,6 +597,10 @@ def _run_dryrun(
     """
     checks = config.get("checks", [])
     sample_size = config.get("sample_size", 1000)
+    sample_interval_minutes = config.get("sample_interval_minutes")
+    sample_interval_timezone = config.get("sample_interval_timezone")
+    sample_interval_columns = config.get("sample_interval_columns")
+    sample_interval_selected_column = config.get("sample_interval_selected_column")
     source_table_fqn = config.get("source_table_fqn", "")
     custom_metrics = _validate_custom_metrics(config.get("custom_metrics") or [])
     # ``run_type`` distinguishes Manual (``dryrun``) from Scheduled
@@ -495,11 +643,16 @@ def _run_dryrun(
     )
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
-    # ``sample_size = 0`` is the UI convention for "All rows" — skip
-    # ``.limit`` for it (passing 0 would short-circuit to an empty DataFrame).
     df = _read_view_with_retry(spark, view_fqn)
-    if sample_size:
-        df = df.limit(sample_size)
+    df = _apply_sample_scope(
+        df,
+        sample_size,
+        sample_interval_minutes,
+        view_fqn,
+        sample_interval_timezone,
+        sample_interval_columns,
+        sample_interval_selected_column,
+    )
     # ``apply_checks_by_metadata_and_split`` returns ``(valid, invalid)``
     # when no observer is attached and ``(valid, invalid, observation)``
     # when one is. We always construct the engine with ``observer=...``
@@ -1076,6 +1229,15 @@ def _run_scheduled(
     a Spark-local temp view is created here.
     """
     checks = config.get("checks", [])
+    sample_interval_minutes = config.get("sample_interval_minutes")
+    # Scheduled runs validate the whole table unless the schedule opted into
+    # a time-windowed Row Scope. A stored ``sample_size`` alone was ignored
+    # here historically, so honoring it would silently cut coverage on
+    # existing schedules.
+    sample_size = int(config.get("sample_size") or 0) if sample_interval_minutes else 0
+    sample_interval_timezone = config.get("sample_interval_timezone")
+    sample_interval_columns = config.get("sample_interval_columns")
+    sample_interval_selected_column = config.get("sample_interval_selected_column")
     source_table_fqn = config.get("source_table_fqn", "")
     custom_metrics = _validate_custom_metrics(config.get("custom_metrics") or [])
 
@@ -1125,6 +1287,15 @@ def _run_scheduled(
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     df = _read_view_with_retry(spark, view_fqn)
+    df = _apply_sample_scope(
+        df,
+        sample_size,
+        sample_interval_minutes,
+        view_fqn,
+        sample_interval_timezone,
+        sample_interval_columns,
+        sample_interval_selected_column,
+    )
     # See narrowing rationale on the dryrun call site — DQX returns the
     # 3-tuple shape iff the engine was constructed with an observer,
     # which we always do here.
