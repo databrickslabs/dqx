@@ -458,9 +458,7 @@ Prerequisites fall into two groups: **workspace-level** requirements that apply 
 
 #### Required for Marketplace and DAB methods (workspace-level)
 
-- **Databricks Apps** feature enabled on the workspace.
 - **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
-- **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.
 - An **existing Unity Catalog catalog** where the studio's schemas and volumes are provisioned. Neither route creates the catalog itself; the schemas and wheels volume are provisioned *inside* it (by the setup wizard for Marketplace, by the bundle for DAB installation).
 - **Lakebase Postgres** enabled on the workspace. DQX Studio stores its OLTP state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping) in Lakebase; analytical run data stays in Delta Lake.
 - A **SQL warehouse** — for Marketplace you **bind** an existing (serverless recommended) warehouse during install; the bundle **creates and manages** a dedicated serverless warehouse for you.
@@ -470,7 +468,7 @@ Prerequisites fall into two groups: **workspace-level** requirements that apply 
 
 - **Databricks CLI** v1.4.0 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v1.4.0 is required for the `postgres_projects` / `postgres_roles` resources; `lifecycle.prevent_destroy` on the studio's stateful schemas / volume / Lakebase project needs only v0.268+.
 - **Git** to check out a Studio release tag. The tagged release includes the built app and task-runner wheel, so the DAB install does not need local `make`, uv, Node.js, yarn, or bun. These tools are used when [building Studio from source](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md).
-- Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
+- Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed under [Required permissions in the DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
 
 ### Install DQX Studio from the Databricks Marketplace {#install-dqx-studio-from-the-databricks-marketplace}
 
