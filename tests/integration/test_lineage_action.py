@@ -911,9 +911,9 @@ def test_end_to_end_via_dqengine(
     # One null id row so is_not_null produces a failure — drives both the condition
     # (error_row_count > 0) and populates _errors with the failed column name that the
     # lineage action seeds column-lineage from.
-    spark.createDataFrame(
-        [[1, "alice"], [None, "bob"]], "id: int, name: string"
-    ).write.format("delta").mode("overwrite").saveAsTable(input_table)
+    spark.createDataFrame([[1, "alice"], [None, "bob"]], "id: int, name: string").write.format("delta").mode(
+        "overwrite"
+    ).saveAsTable(input_table)
 
     _seed_table_lineage(spark, patched_lineage_constants.table_lineage, [(input_table, downstream_table)])
     _seed_column_lineage(
@@ -977,16 +977,15 @@ def test_end_to_end_via_dqengine(
     # (4) Result-column-name coupling: id populated in _errors by the engine surfaces via
     # the seeded column_lineage row.
     column_source_columns = {
-        row["source_column"]
-        for row in persisted.where(persisted["edge_type"] == "column_downstream").collect()
+        row["source_column"] for row in persisted.where(persisted["edge_type"] == "column_downstream").collect()
     }
-    assert "id" in column_source_columns, (
-        f"failed 'id' column not seeded from engine-written _errors; got {column_source_columns}"
-    )
+    assert (
+        "id" in column_source_columns
+    ), f"failed 'id' column not seeded from engine-written _errors; got {column_source_columns}"
 
     # (2) + (3) Condition gating fired and extras produced by CollectLineageAction reached
     # the downstream DQAlert consumer.
     assert len(captured_alerts) == 1, f"alert should fire exactly once, got {len(captured_alerts)}"
-    assert captured_alerts[0].extras.get("collect_lineage") == {"lineage_location": lineage_location}, (
-        captured_alerts[0].extras
-    )
+    assert captured_alerts[0].extras.get("collect_lineage") == {"lineage_location": lineage_location}, captured_alerts[
+        0
+    ].extras

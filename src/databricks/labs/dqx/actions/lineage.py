@@ -106,6 +106,20 @@ LINEAGE_TABLE_SCHEMA = StructType(
             metadata={"comment": "Distance from *source_table* in hops (1 = direct neighbour)."},
         ),
         StructField(
+            "predecessor",
+            StringType(),
+            nullable=True,
+            metadata={
+                "comment": (
+                    "Immediate predecessor table in the walk direction indicated by *edge_type* — "
+                    "i.e. the previous hop from which *target_table* was discovered. Together with "
+                    "*target_table* this forms a walkable per-hop edge, whereas *source_table* "
+                    "remains the anchor for which lineage was collected (equal to *predecessor* at "
+                    "depth 1, and the ancestor at depth > 1)."
+                )
+            },
+        ),
+        StructField(
             "target_table",
             StringType(),
             nullable=True,
@@ -769,6 +783,10 @@ def _walk_lineage(
     return _project_edge_rows(
         walk_df,
         edge_type=direction,
+        # The CTE's *anchor* column already carries the immediate predecessor at each hop:
+        # depth 1 → *table_full_name* (the source anchor); depth N → the previous hop's
+        # neighbour (see ``SELECT e.neighbour AS anchor`` in the recursive member).
+        predecessor_col=F.col("anchor"),
         target_table_col=F.col("neighbour"),
         depth_col=F.col("depth").cast("long"),
         source_column_col=F.lit(None).cast("string"),
@@ -833,10 +851,12 @@ def _column_direction_df(
     # Pydantic ints (>= 1).
     query = (
         "WITH RECURSIVE edges("
-        "frontier_table, frontier_column, neighbour, source_column, target_column, "
-        "depth, path, event_time) AS ("
+        "frontier_table, frontier_column, predecessor, neighbour, "
+        "source_column, target_column, depth, path, event_time) AS ("
         " ("
-        f"  SELECT {frontier_key} AS frontier_table, {frontier_col_key} AS frontier_column, "
+        f"  SELECT {frontier_key} AS frontier_table, "
+        f"         {frontier_col_key} AS frontier_column, "
+        f"         {table_literal} AS predecessor, "
         f"         {frontier_key} AS neighbour, source_column, target_column, "
         f"         1 AS depth, "
         f"         array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path, "
@@ -852,6 +872,7 @@ def _column_direction_df(
         "  UNION ALL "
         " ("
         f"  SELECT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
+        f"         e.frontier_table AS predecessor, "
         f"         t.{frontier_key} AS neighbour, t.source_column, t.target_column, "
         f"         e.depth + 1 AS depth, "
         f"         array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path, "
@@ -868,7 +889,7 @@ def _column_direction_df(
         f"  LIMIT {max_nodes} "
         " )"
         ") "
-        "SELECT DISTINCT neighbour, source_column, target_column, depth "
+        "SELECT DISTINCT predecessor, neighbour, source_column, target_column, depth "
         "FROM edges "
         f"LIMIT {max_nodes}"
     )
@@ -882,6 +903,7 @@ def _column_direction_df(
     return _project_edge_rows(
         walk_df,
         edge_type=edge_type,
+        predecessor_col=F.col("predecessor"),
         target_table_col=F.col("neighbour"),
         depth_col=F.col("depth").cast("long"),
         source_column_col=F.col("source_column"),
@@ -894,6 +916,7 @@ def _project_edge_rows(
     df: DataFrame,
     *,
     edge_type: str,
+    predecessor_col: Any,
     target_table_col: Any,
     depth_col: Any,
     source_column_col: Any,
@@ -905,6 +928,9 @@ def _project_edge_rows(
     Args:
         df: Source DataFrame with the raw walk / column-lineage columns.
         edge_type: Constant edge-type discriminator written to every emitted row.
+        predecessor_col: Column expression producing the *predecessor* value — the immediate
+            predecessor table in the walk direction (i.e. the previous hop from which
+            *target_table* was discovered). Equal to *source_table* at depth 1.
         target_table_col: Column expression producing the *target_table* value.
         depth_col: Column expression producing the *depth* value (long).
         source_column_col: Column expression producing *source_column* (string or NULL).
@@ -917,6 +943,7 @@ def _project_edge_rows(
         F.lit(common["source_table"]).cast("string").alias("source_table"),
         F.lit(edge_type).cast("string").alias("edge_type"),
         depth_col.alias("depth"),
+        predecessor_col.cast("string").alias("predecessor"),
         target_table_col.cast("string").alias("target_table"),
         F.lit(None).cast("long").alias("target_delta_version"),
         source_column_col.alias("source_column"),

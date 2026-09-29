@@ -373,6 +373,60 @@ display(
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Reconstruct full anchor → destination paths
+# MAGIC
+# MAGIC Each persisted row is a single walkable edge (`predecessor → target_table`) rather than a
+# MAGIC full chain, so the sink stays compact. A recursive CTE stitches those edges back into the
+# MAGIC anchor → … → destination path for every reachable node — useful for dashboards, impact
+# MAGIC analysis, or filtering to "what feeds this specific downstream table". The join stays
+# MAGIC scoped to one `(source_table, edge_type)` walk at a time, so upstream and downstream chains
+# MAGIC never cross-contaminate.
+
+# COMMAND ----------
+
+paths_df = spark.sql(
+    f"""
+    WITH RECURSIVE paths(source_table, edge_type, depth, tip, path) AS (
+        SELECT source_table, edge_type, depth, target_table AS tip,
+               array(predecessor, target_table) AS path
+        FROM {lineage_sink_table}
+        WHERE depth = 1
+          AND edge_type IN ('upstream', 'downstream')
+          AND target_table IS NOT NULL
+
+        UNION ALL
+
+        SELECT p.source_table, p.edge_type, e.depth, e.target_table AS tip,
+               array_append(p.path, e.target_table) AS path
+        FROM paths p
+        JOIN {lineage_sink_table} e
+          ON e.source_table = p.source_table
+         AND e.edge_type   = p.edge_type
+         AND e.depth       = p.depth + 1
+         AND e.predecessor = p.tip
+    )
+    SELECT source_table, edge_type, depth, tip AS destination, path
+    FROM paths
+    """
+)
+
+print("Downstream paths from bronze (bronze → … → destination):")
+display(
+    paths_df.where(
+        (F.col("edge_type") == "downstream") & (F.col("source_table") == bronze_table)
+    ).orderBy("depth", "destination")
+)
+
+print("Upstream paths from fact_invoice (fact_invoice → … → destination):")
+display(
+    paths_df.where(
+        (F.col("edge_type") == "upstream") & (F.col("source_table") == fact_invoice_table)
+    ).orderBy("depth", "destination")
+)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Cleanup (optional)
 # MAGIC
 # MAGIC Uncomment to drop every table created by this demo. Re-run the notebook to recreate them —
