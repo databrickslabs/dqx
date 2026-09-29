@@ -994,14 +994,19 @@ def _compute_geospatial_stats(
     try:
         row = df.agg(*aggregations).first()
     except AnalysisException as exc:
-        if exc.getCondition() != _UNRESOLVED_ROUTINE_CONDITION:
-            raise
-        safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
-        logger.warning(
-            f"Skipping geospatial profiling for column '{safe_column_name}': the spatial SQL functions "
-            f"are unavailable on this runtime (requires Databricks serverless or DBR 17.1+). Details: {exc}"
-        )
-        return None
+        match exc:
+            # NOTE: Using getCondition would be preferred, but Python 3.10 and 3.11 do not support getCondition
+            # on exception classes; We must use pattern matching instead to determine the error class and decide
+            # to raise or skip the exception
+            case AnalysisException(_errorClass=condition) if condition == _UNRESOLVED_ROUTINE_CONDITION:
+                safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
+                logger.warning(
+                    f"Skipping geospatial profiling for column '{safe_column_name}': the spatial SQL functions "
+                    f"are unavailable on this runtime (requires Databricks serverless or DBR 17.1+). Details: {exc}"
+                )
+                return None
+            case _:
+                raise
 
     return row.asDict() if row else None
 
