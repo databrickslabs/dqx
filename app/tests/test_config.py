@@ -4,6 +4,22 @@ import pytest
 from pydantic import ValidationError
 
 
+def test_lakebase_pool_min_size_defaults_to_zero(monkeypatch):
+    # Scale-to-zero: the pool must be allowed to drain to zero idle
+    # connections so a suspended Lakebase endpoint isn't kept warm.
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_LAKEBASE_POOL_MIN_SIZE", raising=False)
+    assert AppConfig(_env_file=None).lakebase_pool_min_size == 0
+
+
+def test_lakebase_pool_min_size_env_override(monkeypatch):
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_LAKEBASE_POOL_MIN_SIZE", "2")
+    assert AppConfig(_env_file=None).lakebase_pool_min_size == 2
+
+
 def test_admin_group_defaults_to_workspace_admins(monkeypatch):
     from databricks_labs_dqx_app.backend.config import AppConfig
 
@@ -17,6 +33,20 @@ def test_admin_group_rejects_whitespace_only_value() -> None:
 
     with pytest.raises(ValidationError, match="admin_group"):
         AppConfig(_env_file=None, admin_group="   ")
+
+
+def test_bundle_resource_tagging_defaults_off(monkeypatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_TAG_BUNDLE_OWNED_RESOURCES", raising=False)
+    assert AppConfig(_env_file=None).tag_bundle_owned_resources is False
+
+
+def test_bundle_resource_tagging_accepts_dab_opt_in(monkeypatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_TAG_BUNDLE_OWNED_RESOURCES", "1")
+    assert AppConfig(_env_file=None).tag_bundle_owned_resources is True
 
 
 def test_genie_schema_name_default_and_env(monkeypatch):

@@ -7,7 +7,7 @@ routes themselves are thin adapters over ``MonitoredTableService``, whose
 behaviour is already covered by ``test_monitored_table_service.py``.
 """
 
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
@@ -166,7 +166,7 @@ class TestListAndGet:
 
     def test_list_check_count_from_snapshot_for_approved_binding(self):
         # An approved binding (version > 0) reports its frozen snapshot's
-        # check count, NOT the transient live dq_quality_rules count (B2-25).
+        # check count, NOT the transient live dq_resolved_rules count (B2-25).
         svc = MagicMock()
         approved = MonitoredTableSummary(
             table=MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="approved", version=4),
@@ -590,6 +590,44 @@ class TestUpdateSchedule:
         svc.update_schedule.assert_called_once_with(
             "b1", None, None, "alice@x", schedule_kind="dq_only", schedule_sample_size=None
         )
+
+    def test_setting_schedule_notifies_scheduler(self):
+        # A cron on an approved table activates it immediately (orthogonal to the
+        # review lifecycle), so the scheduler must be woken rather than waiting
+        # out the idle poll interval for first pickup.
+        svc = MagicMock()
+        svc.update_schedule.return_value = _table(status="approved")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 6 * * *", schedule_tz="UTC")
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            update_monitored_table_schedule(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                grant_svc=MagicMock(),
+            )
+        notify.assert_called_once()
+
+    def test_clearing_schedule_does_not_notify_scheduler(self):
+        # Clearing a cron activates nothing — the scheduler need not be woken.
+        svc = MagicMock()
+        svc.update_schedule.return_value = _table(status="approved")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron=None, schedule_tz=None)
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            update_monitored_table_schedule(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                grant_svc=MagicMock(),
+            )
+        notify.assert_not_called()
 
     def test_missing_raises_404(self):
         svc = MagicMock()
@@ -1503,6 +1541,48 @@ class TestRunMonitoredTable:
             rule_ids=None,
             sample_size=None,
         )
+
+    def test_staging_infra_failure_maps_to_503(self):
+        """A RunConfigStagingError (Lakebase unreachable / dq_run_configs missing)
+        is a server-side fault, not a bad request — it must surface as 503."""
+        from databricks_labs_dqx_app.backend.run_config_store import RunConfigStagingError
+
+        svc = MagicMock()
+        svc.run_binding.side_effect = RunConfigStagingError("run-1", "dqx_studio.dq_run_configs", RuntimeError("down"))
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="approved", version=None),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
+        assert excinfo.value.status_code == 503
+
+    def test_oversized_and_unavailable_configs_map_to_400(self):
+        """Caller/config-level run-config errors (too large, or Lakebase disabled
+        for an oversized config) stay 400-class, unlike infra staging failures."""
+        from databricks_labs_dqx_app.backend.run_config_store import (
+            RunConfigStagingUnavailableError,
+            RunConfigTooLargeError,
+        )
+
+        for err in (RunConfigTooLargeError(12000), RunConfigStagingUnavailableError(12000, "delta")):
+            svc = MagicMock()
+            svc.run_binding.side_effect = err
+            with pytest.raises(HTTPException) as excinfo:
+                run_monitored_table(
+                    "b1",
+                    body=RunMonitoredTableIn(source="approved", version=None),
+                    obo_ws=_mock_obo_ws(),
+                    run_svc=svc,
+                    role=UserRole.ADMIN,
+                    principal_ids=frozenset(),
+                    perms=MagicMock(),
+                )
+            assert excinfo.value.status_code == 400, f"{type(err).__name__} should map to 400"
 
     def test_execute_check_called_before_run(self):
         """require_object(EXECUTE) is invoked on the monitored table before delegating to run_binding."""

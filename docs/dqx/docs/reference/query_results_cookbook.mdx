@@ -13,6 +13,10 @@ This cookbook is a practical guide for querying DQX result tables - summary metr
 
 Before you start, take a minute with the [Table Relationships diagram](/docs/reference/table_schemas#table-relationships) in the schema reference. It is important because every query here touches on one of the relationships shown there.
 
+<Admonition type="tip" title="Using DQX Studio?">
+DQX Studio stores its quarantined rows in its own `dq_quarantine_records` table, which has a different schema from the tables here. See [DQX Studio quarantine records](#dqx-studio-quarantine-records) below for recipes against it.
+</Admonition>
+
 <Admonition type="info" title="Table name placeholders">
 The examples below use these placeholder table names. Please replace them with your actual catalog, schema, and table names:
 
@@ -904,3 +908,61 @@ Then drill into a single check to get the failing rows. Replace `<your_check_nam
     ```
   </TabItem>
 </Tabs>
+
+## DQX Studio quarantine records {#dqx-studio-quarantine-records}
+
+DQX Studio stores its quarantined rows in its own `dq_quarantine_records` table in the
+Studio catalog (`<catalog>.dqx_studio.dq_quarantine_records`) — a different shape from
+the tables above. `row_data` holds the full source row, and `errors` / `warnings` the
+checks each row failed, all as
+[`VARIANT`](https://docs.databricks.com/aws/en/semi-structured/variant). For an overview
+and the basic "recent rows" query, see
+[Analyse in Lakehouse](/docs/studio/running/#analyse-in-lakehouse); the recipes below go
+further. Replace `<catalog>` with your Studio catalog.
+
+**Read individual fields out of the source row:**
+
+```sql
+SELECT quarantine_id,
+       row_data:order_id::string   AS order_id,
+       row_data:amount::double     AS amount
+FROM <catalog>.dqx_studio.dq_quarantine_records
+WHERE source_table_fqn = 'main.sales.orders';
+```
+
+**Get one row per failed check** — explode the `errors` array so each failed check
+becomes its own row:
+
+```sql
+SELECT q.quarantine_id,
+       q.source_table_fqn,
+       e.value:name::string     AS check_name,
+       e.value:message::string  AS message,
+       e.value:columns          AS columns
+FROM <catalog>.dqx_studio.dq_quarantine_records AS q,
+     LATERAL variant_explode(q.errors) AS e
+WHERE q.run_id = '<run_id>';
+```
+
+**Count failures by check** (a quick "what's failing most?"):
+
+```sql
+SELECT e.value:name::string AS check_name, count(*) AS failing_rows
+FROM <catalog>.dqx_studio.dq_quarantine_records AS q,
+     LATERAL variant_explode(q.errors) AS e
+WHERE q.source_table_fqn = 'main.sales.orders'
+GROUP BY e.value:name::string
+ORDER BY failing_rows DESC;
+```
+
+**Add each run's details** — join to `dq_validation_runs` to see when a run happened,
+what triggered it, and whether it succeeded:
+
+```sql
+SELECT q.quarantine_id, q.source_table_fqn, q.created_at, r.*
+FROM <catalog>.dqx_studio.dq_quarantine_records AS q
+JOIN <catalog>.dqx_studio.dq_validation_runs   AS r
+  ON q.run_id = r.run_id
+WHERE q.source_table_fqn = 'main.sales.orders'
+ORDER BY q.created_at DESC;
+```

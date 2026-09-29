@@ -171,11 +171,12 @@ def test_format_segment_redacts_listed_keys():
 
 
 def test_sql_string_literal_escapes_quote_and_backslash():
-    """Both single quote and backslash must be escaped — Spark SQL treats backslash as an
-    escape char inside string literals, so quote-doubling alone is insufficient."""
-    assert llm_explainer._sql_string_literal("o'brien") == "o''brien"
+    """Single quote -> \\' and backslash -> \\\\. Spark runs with escapedStringLiterals=false,
+    where a doubled '' pair is dropped rather than unescaped, so ANSI doubling silently corrupts
+    the name (o'brien -> obrien) and breaks redaction; the backslash form is required."""
+    assert llm_explainer._sql_string_literal("o'brien") == "o\\'brien"
     assert llm_explainer._sql_string_literal("a\\b") == "a\\\\b"
-    assert llm_explainer._sql_string_literal("x'\\y") == "x''\\\\y"
+    assert llm_explainer._sql_string_literal("x'\\y") == "x\\'\\\\y"
 
 
 def test_explanation_context_pattern_col_defaults_to_fixed_name():

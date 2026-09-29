@@ -38,10 +38,12 @@ from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.permissions_service import PermissionsService
 from .services.registry_service import RegistryService
+from .services.resource_tagging_service import ResourceTaggingService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
+from .services.metadata_dim_service import MetadataDimService
 from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
@@ -113,6 +115,13 @@ _SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interva
 async def get_sp_ws() -> WorkspaceClient:
     """Return the app's service-principal WorkspaceClient, cached for 45 min."""
     return WorkspaceClient()
+
+
+async def get_resource_tagging_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ResourceTaggingService:
+    """Create the ownership-tag reconciler backed by the app service principal."""
+    return ResourceTaggingService(sp_ws)
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +296,9 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     """Build the zero-arg Genie re-provision callable, or None when unavailable.
 
     Mirrors ``backend.app._ensure_genie_space``: requires a bound SQL warehouse
-    to attach a freshly-created space to, and resolves the SP's parent folder
-    (falling back to ``/Shared``). ``ensure_dq_genie_space`` is itself idempotent
-    and never raises out of its own body; the callable is invoked best-effort by
-    the reset service, which records (never re-raises) any failure.
+    to attach a freshly-created space to. ``ensure_dq_genie_space`` is itself
+    idempotent and never raises out of its own body; the callable is invoked
+    best-effort by the reset service, which records (never re-raises) any failure.
     """
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
@@ -300,17 +308,10 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     from .services.genie_space_service import ensure_dq_genie_space
 
     def _reprovision() -> object:
-        try:
-            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
-        except Exception:
-            # Best-effort: the parent folder is cosmetic — fall back to a
-            # location every workspace has rather than skip provisioning.
-            parent_path = "/Shared"
         return ensure_dq_genie_space(
             settings=app_settings,
             ws=sp_ws,
             warehouse_id=warehouse_id,
-            parent_path=parent_path,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
         )
@@ -780,6 +781,7 @@ def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    oltp: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> JobService:
     """Create a JobService using app (SP) credentials.
@@ -788,13 +790,36 @@ async def get_job_service(
     admin-configured SQL warehouse (``dq_app_settings``) is resolved here and
     threaded into the submitted run so the task runner's temp-view cleanup path
     honours it (env fallback when unset).
+
+    Oversized run configs are staged in the ``dq_run_configs`` Lakebase table via
+    the OLTP executor; the Lakebase connection settings are passed to the runner
+    as job parameters so tasks can read the staged configs.
     """
+    lakebase = rt.require_resources().lakebase
+    # Prefer the coordinates the live OLTP executor already resolved, falling
+    # back to the configured connection values. Resolve all of them (including
+    # schema/database) from the same source so the app writes the staged row to
+    # exactly the schema the runner is told to read from.
+    resolved_endpoint = getattr(oltp, "endpoint", None) or lakebase.endpoint or ""
+    resolved_host = getattr(oltp, "host", None) or lakebase.host or ""
+    resolved_port = getattr(oltp, "port", None) or lakebase.port or 5432
+    resolved_database = getattr(oltp, "database", None) or lakebase.database or ""
+    resolved_schema = getattr(oltp, "schema", None) or lakebase.schema or ""
+    resolved_username = (
+        conf.task_runner_postgres_role.strip() or getattr(oltp, "username", None) or lakebase.username or ""
+    )
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
         sql=sql,
+        oltp_sql=oltp,
         warehouse_id=resolve_warehouse_id(app_settings),
-        wheels_volume=rt.require_resources().volume.path,
+        lakebase_endpoint=resolved_endpoint,
+        lakebase_database=resolved_database,
+        lakebase_schema=resolved_schema,
+        lakebase_host=resolved_host,
+        lakebase_port=resolved_port,
+        lakebase_username=resolved_username,
     )
 
 
@@ -879,6 +904,20 @@ async def get_score_cache_service(
     return ScoreCacheService(
         oltp=oltp,
         warehouse_sql=warehouse_sql,
+        genie_schema=rt.require_resources().genie_schema,
+    )
+
+
+async def get_metadata_dim_service(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+) -> MetadataDimService:
+    """Create the materializer for the Genie metadata dimensions."""
+    return MetadataDimService(
+        sp_sql=sp_sql,
+        registry=registry,
+        monitored_tables=monitored_tables,
         genie_schema=rt.require_resources().genie_schema,
     )
 
@@ -1041,6 +1080,7 @@ async def get_demo_seed_service(
         app_sql=sp_sql,
         oltp=oltp,
         sp_ws=sp_ws,
+        resource_tagger=ResourceTaggingService(sp_ws),
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,

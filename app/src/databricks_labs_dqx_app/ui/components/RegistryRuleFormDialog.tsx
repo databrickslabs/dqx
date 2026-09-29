@@ -112,6 +112,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  collectAstColumnRefs,
   EMPTY_LOWCODE_AST,
   isV2Ast,
   renameColumnInAst,
@@ -2290,7 +2291,7 @@ export function RegistryRuleFormDialog({
   // Why granularity isn't the author's to pick here, or undefined while it IS
   // (raw SQL holding a full query). Doubles as the tag's tooltip, so a derived
   // level explains itself. Native splits by level rather than interpolating one
-  // sentence: a dataset-level CHECK means "needs the whole table to evaluate",
+  // sentence: a dataset-level CHECK means "evaluates a group of rows",
   // which is not the same as the single-verdict meaning dataset-level has for a
   // raw SQL query — is_unique, foreign_key and the is_aggr_* family all still
   // attribute their failures to individual rows.
@@ -2421,24 +2422,10 @@ export function RegistryRuleFormDialog({
       });
     }
     if (mode === "lowcode") {
-      // Collect all plain (non-qualified) column_ref values used in the AST
-      const astRefs = new Set<string>();
-      for (const row of lowcodeAst.rows) {
-        if (row.column_ref && !row.column_ref.includes(".")) astRefs.add(row.column_ref);
-        // aggregated rows may also reference a nested column_ref in value
-        if (row.kind === "aggregated") {
-          const v = row.value;
-          if (v && typeof v === "object" && !Array.isArray(v)) {
-            const nested = (v as Record<string, unknown>).column_ref;
-            if (typeof nested === "string" && !nested.includes(".")) astRefs.add(nested);
-          }
-        }
-      }
-      for (const j of lowcodeAst.joins) {
-        for (const k of j.keys ?? []) {
-          if (k.column_ref && !k.column_ref.includes(".")) astRefs.add(k.column_ref);
-        }
-      }
+      // Every plain (non-qualified) column the AST references — LHS column_ref,
+      // RHS value (a `{ $col }` reference at any depth: scalar, `between` bound,
+      // `in` entry, or an aggregated row's comparison spec), and join keys.
+      const astRefs = collectAstColumnRefs(lowcodeAst);
       return sqlSlots.filter((s) => {
         if (astRefs.has(s.name)) return false;
         if (groupBy.includes(`{{${s.name}}}`)) return false;
@@ -4223,7 +4210,7 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
-            {/* Table-level SQL query warning: the query must collapse to one row.
+            {/* Dataset-level SQL query warning: the query must collapse to one row.
                 Merge-columns picker is in the Advanced section below. */}
             {sqlGranularityIsChoice && sqlGranularity === "dataset" && (
               <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-start gap-1">

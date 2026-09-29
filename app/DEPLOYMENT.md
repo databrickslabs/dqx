@@ -4,13 +4,46 @@ Production deployment uses [Declarative Automation Bundles](https://docs.databri
 
 ## Choose an installation path
 
-**DAB deployment** remains the one-command route: `make app-deploy PROFILE=<profile> TARGET=<target>` builds the app, deploys the bundle, and starts it. On first start, DQX Studio runs the same readiness workflow used by Marketplace before it serves the normal API.
+**DAB deployment** of a tagged Studio release uses the prebuilt `app/marketplace/` artifact with the `release` target; local build tools are not required. Use `make app-deploy PROFILE=<profile> TARGET=release` on macOS/Linux or the experimental `make.ps1 -Release` helper on Windows. Developers building from source use the same helpers with a source target. On first start, DQX Studio runs the same readiness workflow used by Marketplace before it serves the normal API.
 
-**Marketplace installation** binds three existing resources: a SQL warehouse, a Lakebase Postgres endpoint, and a Unity Catalog volume. The bound volume determines the main catalog and schema. Before opening the app, ensure an administrator is a member of the workspace group named by `DQX_ADMIN_GROUP`. The setup wizard verifies all three resources, creates the sibling schemas, runs migrations, publishes wheels, and gives precise grant instructions when a capability is missing. It also links to the Jobs UI so an administrator can set the task-runner job's external `run_as` service principal.
+**Marketplace installation** requires three existing resource bindings and a workspace service principal for the task-runner job. Bind a SQL warehouse, a Lakebase Postgres endpoint, and a Unity Catalog volume; the bound volume determines the main catalog and schema. Create the workspace service principal before installation and grant the installing identity the Service Principal: User role on it. The principal is assigned as the job's `run_as` identity in the Jobs UI, not in the Marketplace resource picker. Before opening the app, ensure an administrator is a member of the workspace group named by `DQX_ADMIN_GROUP`. The setup wizard verifies the three bindings, creates the sibling schemas, runs migrations, publishes wheels, gives precise grant instructions when a capability is missing, and links to the Jobs UI for the service principal assignment.
 
 Lakebase is mandatory. Delta-backed application (OLTP) state was removed and cannot be migrated. Marketplace currently supports replacing the SQL warehouse; swapping the Lakebase endpoint or volume, and smoke-validating the task runner, are planned follow-up capabilities.
 
-Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the canonical application source and Marketplace templates but excludes the generated `app/marketplace/` artifact. `app/scripts/release_marketplace.sh studio-vX.Y.Z` validates the requested version against the application at `HEAD`, creates `dqx-studio/marketplace/vX.Y.Z`, builds and force-stages the complete self-contained source, signs and verifies its local commit, then creates and verifies the annotated signed Studio version tag on that generated commit. This ordering is required because Marketplace checks out the tag and deploys the configured `app/marketplace/` source path. The build **copies** the committed, self-contained lock at `app/marketplace_templates/uv.lock` (a tracked template) rather than re-resolving: it runs no `uv lock` and downloads no wheels, so the artifact can't drift with the package index or a `uv` version, and needs no network. A test (`test_marketplace_template_lock_matches_app_runtime_closure`) keeps that template in step with the app's runtime dependencies. To refresh it after a dependency or DQX-version change, regenerate it deliberately in an environment with public-PyPI (or proxy) access — resolve the release dependencies with `uv lock` and normalize the URLs to public PyPI — then commit the result. Because `databricks-labs-dqx` currently pins `litellm<=1.82.6` (which has no Python 3.13/3.14 wheels), that regeneration must temporarily cap the app's `requires-python` to `<3.13` to avoid an unsolvable resolver fork; revert the cap after regenerating. The script never pushes; inspect the branch, then explicitly push both refs with `git push origin dqx-studio/marketplace/vX.Y.Z` and `git push origin studio-vX.Y.Z`. DAB deployment continues to consume `.build/`, not `app/marketplace/`.
+Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the canonical application source and Marketplace templates but excludes the generated `app/marketplace/` artifact. `app/scripts/release_marketplace.sh studio-vX.Y.Z` validates the requested version against the application at `HEAD`, creates `dqx-studio/marketplace/vX.Y.Z`, builds and force-stages the complete self-contained source, signs and verifies its local commit, then creates and verifies the annotated signed Studio version tag on that generated commit. This ordering is required because Marketplace checks out the tag and deploys the configured `app/marketplace/` source path. The build **copies** the committed, self-contained lock at `app/marketplace_templates/uv.lock` (a tracked template) rather than re-resolving: it runs no `uv lock` and downloads no wheels, so the artifact can't drift with the package index or a `uv` version, and needs no network. A test (`test_marketplace_template_lock_matches_app_runtime_closure`) keeps that template in step with the app's runtime dependencies. To refresh it after a dependency or DQX-version change, regenerate it deliberately in an environment with public-PyPI (or proxy) access — resolve the release dependencies with `uv lock` and normalize the URLs to public PyPI — then commit the result. Because `databricks-labs-dqx` currently pins `litellm<=1.82.6` (which has no Python 3.13/3.14 wheels), that regeneration must temporarily cap the app's `requires-python` to `<3.13` to avoid an unsolvable resolver fork; revert the cap after regenerating. The script never pushes; inspect the branch, then explicitly push both refs with `git push origin dqx-studio/marketplace/vX.Y.Z` and `git push origin studio-vX.Y.Z`. The DAB `release` target consumes this same prebuilt artifact; source-build targets continue to use `.build/`.
+
+## Resource ownership tags
+
+DQX Studio marks resources it owns with the ungoverned ownership tag
+`app=dqx-studio`. The deployment path determines whether a resource is
+Studio-owned: Marketplace-bound resources may be shared with other workloads
+and are deliberately untouched.
+
+| Resource | DAB | Marketplace | Tag behavior |
+|---|---|---|---|
+| Task-runner job | Created | Created/reconciled | `app=dqx-studio` |
+| SQL warehouse | Created and dedicated | Existing binding | Tagged only for DAB |
+| Lakebase project | Created and dedicated | Existing binding | Tagged only for DAB |
+| Main UC schema and wheels volume | Created | Existing binding | Tagged only for DAB |
+| Temporary and Genie schemas | Created | Created by setup | Tagged in both paths |
+| Persistent Studio UC tables/views | Created by startup/migrations | Created by startup/migrations | Tagged in both paths |
+| Demo schema/tables | Created by bundle/demo workflow | Created only when demo is deployed | Tagged when Studio-owned |
+| App, dashboard, Genie Agent | Created | App/Genie created | Not implemented: no native DAB tag support in CLI 1.17.0 |
+| Service principals, roles, grants, ACLs, bindings | Mixed | Mixed | Not tagged |
+
+Temporary and Genie schemas, persistent Studio Unity Catalog tables and views,
+and Studio-created demo resources are reconciled by the applicable deployment,
+startup, setup, and demo paths. The task-runner job is tagged in both DAB and
+Marketplace paths.
+
+App, dashboard, and Genie Agent tagging is not implemented: Databricks CLI
+1.17.0 provides no native DAB tag field for those resource types. The separate
+Beta workspace entity-tag API may support them, but DQX Studio intentionally
+does not call it. Service principals, roles, grants, ACLs, and bindings are
+also not tagged.
+
+The Lakebase-internal Postgres schema and its tables do not receive Unity
+Catalog tags.
 
 ## Prerequisites
 
@@ -19,12 +52,13 @@ Before you start, confirm you have **all** of the items below. The single most c
 ### Tooling
 
 - **Databricks CLI** v1.4.0+ installed and authenticated against your workspace (`databricks auth login -p <profile>`). `make app-deploy` enforces this via a preflight `app-check-cli` step (`databricks --version`) and aborts before building if the CLI is older. v1.4.0 is required because the `postgres_projects` / `postgres_roles` resources (used to provision Lakebase and the app SP's Postgres role) are only accepted by CLI ≥ 1.4.0; `lifecycle.prevent_destroy` itself needs only v0.268+.
-- **`make`** (drives the one-command deploy target)
-- **App build toolchain** — `make app-deploy` first runs `make app-build` to produce the wheel, which needs **uv**, **Node.js 18+** (provides `npm`; `brew install node` / nvm / [nodejs.org](https://nodejs.org/en/download)), **yarn** (`npm install -g yarn`), and **bun** (`curl -fsSL https://bun.sh/install | bash`). See [DEVELOPMENT.md → Prerequisites](DEVELOPMENT.md#prerequisites).
+- **Git** to check out a Studio release tag. The prebuilt DAB release target needs no local `make`, uv, Node.js, yarn, or bun.
+
+Building from source requires **`make`** on macOS/Linux or the experimental PowerShell helper on Windows, plus **uv**, **Node.js 18+**, **yarn**, and **bun**. See [DEVELOPMENT.md → Prerequisites](DEVELOPMENT.md#prerequisites).
 
 ### Required permissions
 
-The deploying user (you) needs the permissions below. They are **all** consumed by `make app-deploy`; deployment will halt the first time it hits a missing one. We've listed which step in the flow each permission unblocks so you can debug surgically if a grant gets missed.
+The deploying user (you) needs the permissions below. Both `databricks bundle deploy -t release` and `make app-deploy` use them; deployment will halt the first time it hits a missing one. We've listed which step in the flow each permission unblocks so you can debug surgically if a grant gets missed.
 
 | # | Permission | Granted on | Used by | What fails without it |
 |---|---|---|---|---|
@@ -34,7 +68,7 @@ The deploying user (you) needs the permissions below. They are **all** consumed 
 | 4 | **Databricks Apps: Can Manage** workspace permission | You, in the workspace | `bundle deploy` of the App resource | App creation rejected |
 | 5 | **Databricks Database (Lakebase): Manager** entitlement | You, in the workspace | `bundle deploy` of the `postgres_projects` / `postgres_roles` resources | `Error: User does not have permission to create database instances` |
 | 6 | **USE CATALOG** + **CREATE SCHEMA** on `<catalog_name>` | Your user or an admin group you're in | `bundle deploy` of the `schemas` and `volumes` resources | `Error: User does not have CREATE_SCHEMA on catalog '<catalog>'` |
-| 7 | **MANAGE** on `<catalog_name>` (or be the catalog owner) | Your user or an admin group you're in | The one-time `GRANT USE CATALOG` to the **task-runner SP** and **`account users`** (the bundle auto-grants it for the app SP via the wheels-volume `uc_securable` binding, but can't grant catalog-level access to arbitrary principals on a catalog it doesn't manage — see [The USE CATALOG prerequisite](#the-use-catalog-prerequisite)) | `Error: User does not have privilege MANAGE on catalog '<catalog>'` |
+| 7 | **MANAGE** on `<catalog_name>` (or be the catalog owner) | Your user or an admin group you're in | The one-time `GRANT USE CATALOG` to **`account users`**, the **app SP**, and the **task-runner SP** (see [The USE CATALOG prerequisite](#the-use-catalog-prerequisite)) | `Error: User does not have privilege MANAGE on catalog '<catalog>'` |
 | 8 | **Service Principal: User** role on the task-runner SP | Your user, on the SP you'll use as `dqx_service_principal_application_id` | `bundle deploy` of the `jobs.dqx_task_runner` resource (sets `run_as.service_principal_name`) | `Error: User is not authorized to use this service principal` |
 | 9 | **Service Principal: Manager** role on the task-runner SP, *or* a pre-shared OAuth client secret | Your user, on the same SP | Only needed if you want to **mint a fresh OAuth secret yourself** for the task-runner (e.g. via `databricks service-principal-secrets-proxy create <sp-id>`) | `Error: User is not authorized to perform this operation` when minting a new secret |
 | 10 | **Account admin** (one-time, post-deploy) | Account level | Updating the app's OAuth custom-app integration to include the `all-apis` scope (see [Expand OAuth Scopes](#optional-expand-oauth-scopes)) | Some app features (job submission, advanced SCIM lookups) return 403 |
@@ -101,17 +135,15 @@ What this means in practice:
 
 ### The USE CATALOG prerequisite
 
-`bundle deploy` applies every schema- and volume-level grant natively (via `grants:` on the resources). The one privilege the bundle cannot declare directly is `USE CATALOG` on your chosen catalog — the bundle does not manage the (pre-existing, user-selected) catalog, so it has no handle to grant catalog-level access on it. Two things reduce this to a single manual step:
-
-- **App SP is automatic** — the app resource binds the wheels volume as a `uc_securable` under `resources.apps.dqx-studio.resources`. Databricks Apps auto-grants `USE CATALOG` on the parent catalog and `USE SCHEMA` on the parent schema to the app service principal when that binding is applied. No SQL required for the app SP.
-- **Task-runner SP + OBO end users are still manual** — the auto-grant only reaches the app SP. The task-runner job's `run_as` SP and the `account users` group (used by the OBO dry-run / preview path) still need `USE CATALOG` granted once per catalog:
+`bundle deploy` applies every schema- and volume-level grant natively (via `grants:` on the resources). The bundle does not manage the pre-existing, user-selected catalog, so grant `USE CATALOG` once per catalog to all three principals. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment:
 
 ```sql
 GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
+GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
 ```
 
-That's the only manual grant left in the deployment. Everything else (ALL PRIVILEGES on the schemas + volume for both SPs, USE SCHEMA + CREATE TABLE on the tmp schema for `account users`, the deployer's dashboard SELECT, and warehouse `CAN_USE`) is declared in `databricks.yml` and applied by `bundle deploy`.
+The app SP also receives `USE CATALOG` through its wheels-volume binding; the explicit grant above preserves the original installation sequence. Everything else (ALL PRIVILEGES on the schemas + volume for both SPs, USE SCHEMA + CREATE TABLE on the tmp schema for `account users`, the deployer's dashboard SELECT, and warehouse `CAN_USE`) is declared in `databricks.yml` and applied by `bundle deploy`.
 
 ## Step 4: Configure `databricks.yml`
 
@@ -170,7 +202,39 @@ All target-level variables, their defaults, and what they control:
 
 > **Note on duplicate names in Databricks:** SQL warehouses, jobs, and apps within the same workspace are tracked by ID, not by name, so technically duplicates are allowed. Operators browse the Jobs / Apps / Warehouses / Databases UI by name, so distinct names per target are strongly recommended when you deploy more than one target to the same workspace.
 
-## Step 5: One-Command Deploy (recommended)
+## Deploy a tagged Studio release without building locally
+
+Use a Studio release tag that contains both `app/marketplace/` and the `release` bundle target. Tags published before this target was added require a source build. For direct CLI deployment:
+
+```bash
+git clone --branch studio-vX.Y.Z https://github.com/databrickslabs/dqx.git
+cd dqx/app
+databricks bundle deploy -p <your-profile> -t release --var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>
+```
+
+The release target uses the compiled app source and task-runner wheel in `marketplace/`. The bundle still provisions and grants its own workspace resources. Grant `USE CATALOG` on the pre-existing catalog to `account users`, the app service principal, and the task-runner service principal after deploy, then start the app:
+
+```bash
+databricks bundle run dqx-studio -p <your-profile> -t release --var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>
+```
+
+See [The `USE CATALOG` prerequisite](#the-use-catalog-prerequisite) for the grant statements.
+
+For upgrades after the catalog grants are in place, the helper commands deploy and start the tagged release without running `app-build`. Run one from the repository root (`cd ..` if you followed the CLI example above). On macOS or Linux:
+
+```bash
+make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
+```
+
+On Windows, use the experimental PowerShell helper:
+
+```powershell
+.\make.ps1 app-deploy -Profile <your-profile> -Release -BundleVars @('catalog_name=<your-catalog>', 'dqx_service_principal_application_id=<your-sp-application-id>')
+```
+
+Apply the catalog grants above before using Studio. The PowerShell helper also accepts `-Target release` instead of `-Release`.
+
+## Step 5: One-Command Source Deploy
 
 Build, deploy, and start the app in a single command:
 
@@ -178,14 +242,22 @@ Build, deploy, and start the app in a single command:
 make app-deploy PROFILE=<your-profile> TARGET=<your-target>
 ```
 
+On Windows, run the experimental PowerShell helper from the repository root:
+
+```powershell
+.\make.ps1 app-deploy -Profile <your-profile> -Target <your-target>
+```
+
+The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.0+ on `PATH`. It builds the app, deploys the bundle, and starts it. Pass `-Force` to overwrite remote bundle edits, `-AppName` to set the bundle's `app_name` variable (the deployed app name), or `-BundleVars 'catalog_name=foo','other_name=value'` to forward bundle variables. The `bundle run` resource key remains `dqx-studio`.
+
 `make app-deploy` runs the following steps automatically:
 1. `make app-build` — builds the frontend and wheels.
 2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
 3. `databricks bundle run` — starts the app.
 
-Remember the one manual prerequisite: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) on your catalog to the **task-runner SP** and **`account users`**. The app SP itself is handled automatically now, via the wheels-volume `uc_securable` binding on the app resource.
+Remember the one manual prerequisite: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) on your catalog to **`account users`**, the **app SP**, and the **task-runner SP**.
 
-> **First start**: The app runs Delta analytical and Lakebase application migrations on startup, and uploads DQX wheels to the UC volume. If the task-runner job runs before the app has started at least once, it will fail to find its wheels. Wait for `"Uploaded databricks_labs_dqx-<version>..."` in the logs before triggering runs. Also wait for `"Lakebase OLTP routing enabled"` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Apps platform restarts the container. It never falls back to Delta-backed application state.
+> **First start**: The app runs Delta analytical and Lakebase application migrations on startup, and publishes the task-runner wheel to the UC volume. Wait for the setup checks to report that wheel publishing is ready before triggering runs. Also wait for `"Lakebase OLTP routing enabled"` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Apps platform restarts the container. It never falls back to Delta-backed application state.
 
 ### Step-by-step alternative
 
@@ -227,11 +299,10 @@ GRANT USE SCHEMA, CREATE TABLE ON SCHEMA <catalog>.dqx_studio_tmp TO `account us
 -- (bundle uses ${workspace.current_user.userName}).
 GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.dqx_studio TO `<deployer>`;
 
--- USE CATALOG on the app SP is auto-granted by Databricks Apps at deploy time,
--- because the bundle binds the wheels volume as a uc_securable under the app
--- resource (see "The USE CATALOG prerequisite"). USE CATALOG for the task-runner
--- SP and `account users` (OBO dry-run / preview) is the only manual grant left.
+-- USE CATALOG on the app SP is also auto-granted by its wheels-volume binding;
+-- keep the explicit grant alongside the other principals as in the install steps.
 GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
+GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<job-sp-id>`;
 ```
 
@@ -373,7 +444,7 @@ The app deliberately refuses to start when Lakebase initialization fails — it 
 1. Confirm the Lakebase project + endpoint exist and are running (Compute → Database Instances in the workspace UI). If missing, re-run `databricks bundle deploy`; if the endpoint is still `STARTING`, wait and the next restart will succeed. (A suspended endpoint is fine — the app's pre-ping pool wakes it on connect.)
 2. Confirm the app SP's Postgres role exists on the project branch — it's created by the `postgres_roles.app_sp` resource. Redeploy if the role is missing.
 3. If the failure is specifically a Postgres `permission denied for database databricks_postgres` (or `permission denied to create schema`), the app SP can connect but lacks `CREATE` on the system `databricks_postgres` database — that privilege comes from the `DATABRICKS_SUPERUSER` membership in `postgres_roles.app_sp`. Confirm that block deployed (CLI ≥ 1.4.0), or run a one-time `GRANT CREATE ON DATABASE databricks_postgres TO "<app-sp-client-id>"` against the project endpoint.
-4. If the failure is `must be owner of table <name>` during startup migrations, the Lakebase `dqx_studio` schema objects are owned by a Postgres role other than the app's service principal — most often the human deployer after local dev (`make app-start-dev`) or `seed_demo.py` against the same Lakebase project. Postgres requires table ownership for `ALTER TABLE`; the app SP's `DATABRICKS_SUPERUSER` membership grants broad DML but does not let a non-owner add columns. **`make app-deploy` runs `scripts/post_deploy_lakebase_migrations.sh` after `bundle deploy`**, applying pending migrations as the deployer (who owns the objects) before the app starts. Re-run `make app-deploy` if you hit this after pulling new migrations. Avoid pointing local dev at production Lakebase endpoints.
+4. If the failure is `must be owner of table <name>` during startup migrations, the Lakebase `dqx_studio` schema objects are owned by a Postgres role other than the app's service principal — most often the human deployer after local dev (`make app-start-dev`) or `seed_demo.py` against the same Lakebase project. Postgres requires table ownership for `ALTER TABLE`; the app SP's `DATABRICKS_SUPERUSER` membership grants broad DML but does not let a non-owner add columns. Avoid pointing local dev at production Lakebase endpoints, and resolve ownership before retrying the deployment.
 5. Confirm OAuth token issuance is healthy — Lakebase tokens currently expire after one hour; a misconfigured OAuth integration or revoked SP credential will surface here.
 6. Recheck that the Lakebase endpoint and the caller's Postgres role are valid. DQX Studio requires Lakebase; there is no Delta-only mode or migration from the removed Delta-backed application state.
 

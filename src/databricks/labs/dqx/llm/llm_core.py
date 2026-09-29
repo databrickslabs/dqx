@@ -170,7 +170,8 @@ class DspyRuleSignature(dspy.Signature):
         desc=(
             "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
             "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes around the text (e.g. \"'test'\" as the JSON value), not bare test — otherwise Spark treats it as a column name. "
-            "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
+            "In SQL filter expressions and sql_expression checks, use single quotes for string literals and capitalize SQL keywords. "
+            "Quote every string value inside IN lists and comparisons, e.g. \"status IN ('confirmed', 'shipped')\" or \"status = 'confirmed'\", never \"status IN (confirmed, shipped)\" — an unquoted value is read as a column name and fails to resolve. "
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
@@ -300,7 +301,8 @@ class DspyRuleUsingDataStatsSignature(dspy.Signature):
         desc=(
             "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
             "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes around the text (e.g. \"'test'\" as the JSON value), not bare test — otherwise Spark treats it as a column name. "
-            "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
+            "In SQL filter expressions and sql_expression checks, use single quotes for string literals and capitalize SQL keywords. "
+            "Quote every string value inside IN lists and comparisons, e.g. \"status IN ('confirmed', 'shipped')\" or \"status = 'confirmed'\", never \"status IN (confirmed, shipped)\" — an unquoted value is read as a column name and fails to resolve. "
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "

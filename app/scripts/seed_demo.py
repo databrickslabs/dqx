@@ -182,6 +182,7 @@ def main() -> int:
         from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
         from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
         from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+        from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService
         from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
         from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
         from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
@@ -271,11 +272,22 @@ def main() -> int:
     # slots (same as get_demo_seed_service) — no OBO token available.
     sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
 
+    # Thread the Lakebase connection coordinates the runner needs to read back an
+    # oversized staged config, mirroring get_job_service. Resolved from the live
+    # OLTP executor (populated only when it is a PgExecutor); with the Delta
+    # fallback these stay empty and oversized configs fail fast in prepare_config_json.
     job_service = JobService(
         ws=ws,
         job_id=conf.job_id,
         sql=sp_sql,
+        oltp_sql=oltp,
         warehouse_id=warehouse_id,
+        lakebase_endpoint=getattr(oltp, "endpoint", None) or "",
+        lakebase_database=getattr(oltp, "database", "") or "",
+        lakebase_schema=getattr(oltp, "schema", "") or "",
+        lakebase_host=getattr(oltp, "host", None) or "",
+        lakebase_port=getattr(oltp, "port", None) or 5432,
+        lakebase_username=conf.task_runner_postgres_role.strip() or getattr(oltp, "username", None) or "",
     )
     binding_run = BindingRunService(
         monitored_tables=monitored_tables,
@@ -306,6 +318,7 @@ def main() -> int:
         app_sql=sp_sql,
         oltp=oltp,
         sp_ws=ws,
+        resource_tagger=ResourceTaggingService(ws),
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,

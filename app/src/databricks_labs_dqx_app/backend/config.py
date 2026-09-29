@@ -32,6 +32,11 @@ class AppConfig(BaseSettings):
     genie_schema_name: str = Field(default="genie", validation_alias="DQX_GENIE_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
+    tag_bundle_owned_resources: bool = Field(
+        default=False,
+        validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",
+        description="Tag DAB-created main schema, demo schema, and wheels volume as Studio-owned.",
+    )
     # Production deploys bind ``job_id`` and ``wheels_volume`` from
     # bundle resources, so missing values there indicate a misconfigured
     # deploy that would otherwise silently break profiler / dry-run /
@@ -121,7 +126,21 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_LAKEBASE_SCHEMA",
         description="Postgres schema for app tables. Created at startup if missing.",
     )
-    lakebase_pool_min_size: int = Field(default=1, validation_alias="DQX_LAKEBASE_POOL_MIN_SIZE")
+    # The task-runner job runs as a separate service principal and reads staged
+    # run configs from ``dq_run_configs`` over Postgres. Its Postgres role (the
+    # SP client id) is granted USAGE + SELECT/DELETE at startup by the app (the
+    # table owner). Empty when there is no separate runner SP.
+    task_runner_postgres_role: str = Field(
+        default="",
+        validation_alias="DQX_TASK_RUNNER_POSTGRES_ROLE",
+        description="Postgres role (service principal client id for the task runner). Granted read/delete on dq_run_configs.",
+    )
+    # Default 0 so the pool can drain to zero idle connections and let a
+    # scale-to-zero Lakebase endpoint suspend. A held-open connection (min_size
+    # >= 1) is periodically re-established after suspension kills it, nudging
+    # the endpoint awake. The pool's pre-ping (see PgExecutor) reconnects on the
+    # next real request, so min_size=0 costs only a cold-connect after idle.
+    lakebase_pool_min_size: int = Field(default=0, validation_alias="DQX_LAKEBASE_POOL_MIN_SIZE")
     lakebase_pool_max_size: int = Field(default=10, validation_alias="DQX_LAKEBASE_POOL_MAX_SIZE")
     # Lakebase OAuth tokens currently expire after one hour; refresh
     # well before that so in-flight queries never see a 401.

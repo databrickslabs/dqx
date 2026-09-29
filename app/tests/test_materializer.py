@@ -3,7 +3,7 @@ between the Rules Registry and the unchanged runner.
 
 Two layers are exercised:
 
-* ``render_check`` (pure function) — the exact ``dq_quality_rules.check``
+* ``render_check`` (pure function) — the exact ``dq_resolved_rules.check``
   shape produced for one applied-rule mapping group. The **critical test**
   (``TestRenderCheckMatchesHandAuthoredShape``) asserts this is
   function/arguments/criticality-identical to what
@@ -117,7 +117,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
         stored_hand_authored = json.loads(inserted_sql[start:end])
 
         # The runner only ever reads these three things off a
-        # dq_quality_rules row: function, arguments, and top-level
+        # dq_resolved_rules row: function, arguments, and top-level
         # criticality. They must match exactly between the registry-
         # materialized row and the equivalent hand-authored one.
         assert materialized_check["check"]["function"] == stored_hand_authored["check"]["function"] == "is_not_null"
@@ -497,8 +497,8 @@ class TestRenderCheckDefinitionFilter:
                 mode="dqx_native",
                 version=version,
                 # Injected value: after substitution the filter becomes
-                # "amount); DROP TABLE dq_quality_rules; -- > 0" (contains DROP).
-                group={"col_a": "amount); DROP TABLE dq_quality_rules; --"},
+                # "amount); DROP TABLE dq_resolved_rules; -- > 0" (contains DROP).
+                group={"col_a": "amount); DROP TABLE dq_resolved_rules; --"},
                 effective_severity="Medium",
                 per_application_tags={},
                 registry_rule_id="r1",
@@ -1198,7 +1198,7 @@ class TestMaterializeBindingBasics:
         written = materializer.materialize_binding("b1")
         assert written == ["ar1-0"]
         insert_sql = sql.execute.call_args_list[0].args[0]
-        assert "INSERT INTO dqx_test.dqx_app_test.dq_quality_rules" in insert_sql
+        assert "INSERT INTO dqx_test.dqx_app_test.dq_resolved_rules" in insert_sql
         assert "'draft'" in insert_sql
         assert "'ar1-0'" in insert_sql
         assert "'registry'" in insert_sql
@@ -1441,7 +1441,7 @@ class TestCleanup:
     def test_removed_application_orphan_is_deleted(self, materializer, sql, registry, monitored_tables):
         # binding now has NO applied rules at all (the application was
         # removed directly from dq_applied_rules), but a stale
-        # dq_quality_rules row from it still exists.
+        # dq_resolved_rules row from it still exists.
         table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="draft")
         monitored_tables.get.return_value = MonitoredTableDetail(table=table, applied_rules=[])
 
@@ -1455,7 +1455,7 @@ class TestAllGroupsFailRenderIsNonDestructive:
     follower against a new version whose slots no longer match the follower's
     stored ``column_mapping``, EVERY group fails to render and
     ``_iter_rendered_checks`` returns a non-None EMPTY list. That must NOT be
-    treated as delete-all — the existing approved ``dq_quality_rules`` rows
+    treated as delete-all — the existing approved ``dq_resolved_rules`` rows
     must survive intact (they keep serving; the mismatch surfaces for
     re-review) rather than being wiped.
     """
@@ -1805,7 +1805,7 @@ class TestRenderBindingChecks:
 
     Renders the binding's CURRENT persisted applied-rules state through the
     SAME path materialization uses, but writes NOTHING to
-    ``dq_quality_rules``. For an approved binding with no pending edits the
+    ``dq_resolved_rules``. For an approved binding with no pending edits the
     render equals the materialized output.
     """
 
@@ -1832,7 +1832,7 @@ class TestRenderBindingChecks:
             app_settings=_app_settings_stub(),
         )
         assert checks == [expected]
-        # Read-only: no INSERT/UPDATE/DELETE against dq_quality_rules.
+        # Read-only: no INSERT/UPDATE/DELETE against dq_resolved_rules.
         sql.execute.assert_not_called()
 
     def test_renders_every_mapping_group_across_applied_rules(self, materializer, sql, registry, monitored_tables):
@@ -1957,7 +1957,7 @@ class TestRenderAppliedChecks:
         registry.get_rule.assert_not_called()
         registry.get_version.assert_not_called()
         registry.get_versions_many.assert_called_once_with({("r1", 1)})
-        # Read-only: renders without writing to dq_quality_rules.
+        # Read-only: renders without writing to dq_resolved_rules.
         sql.execute.assert_not_called()
 
     def test_empty_and_idless_refs_render_nothing(self, materializer, registry):
