@@ -4,7 +4,7 @@ Production deployment uses [Declarative Automation Bundles](https://docs.databri
 
 ## Choose an installation path
 
-**DAB deployment** of a tagged Studio release uses the prebuilt `app/marketplace/` artifact with `databricks bundle deploy -t release`; local build tools are not required. Developers building from source use `make app-deploy PROFILE=<profile> TARGET=<target>` on macOS/Linux or the experimental `make.ps1` helper on Windows. On first start, DQX Studio runs the same readiness workflow used by Marketplace before it serves the normal API.
+**DAB deployment** of a tagged Studio release uses the prebuilt `app/marketplace/` artifact with the `release` target; local build tools are not required. Use `make app-deploy PROFILE=<profile> TARGET=release` on macOS/Linux or the experimental `make.ps1 -Release` helper on Windows. Developers building from source use the same helpers with a source target. On first start, DQX Studio runs the same readiness workflow used by Marketplace before it serves the normal API.
 
 **Marketplace installation** requires three existing resource bindings and a workspace service principal for the task-runner job. Bind a SQL warehouse, a Lakebase Postgres endpoint, and a Unity Catalog volume; the bound volume determines the main catalog and schema. Create the workspace service principal before installation and grant the installing identity the Service Principal: User role on it. The principal is assigned as the job's `run_as` identity in the Jobs UI, not in the Marketplace resource picker. Before opening the app, ensure an administrator is a member of the workspace group named by `DQX_ADMIN_GROUP`. The setup wizard verifies the three bindings, creates the sibling schemas, runs migrations, publishes wheels, gives precise grant instructions when a capability is missing, and links to the Jobs UI for the service principal assignment.
 
@@ -220,13 +220,19 @@ databricks bundle run dqx-studio -p <your-profile> -t release --var catalog_name
 
 See [The `USE CATALOG` prerequisite](#the-use-catalog-prerequisite) for the grant statements.
 
-On macOS or Linux, `make app-deploy` can deploy and start the tagged release in one command without running `app-build`. Run it from the repository root (`cd ..` if you followed the CLI example above):
+The helper commands deploy and start the tagged release without running `app-build`. Run one from the repository root (`cd ..` if you followed the CLI example above). On macOS or Linux:
 
 ```bash
 make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
 ```
 
-Apply the catalog grants above before using Studio. On Windows, use the direct Databricks CLI commands for tagged releases.
+On Windows, use the experimental PowerShell helper:
+
+```powershell
+.\make.ps1 app-deploy -Profile <your-profile> -Release -BundleVars @('catalog_name=<your-catalog>', 'dqx_service_principal_application_id=<your-sp-application-id>')
+```
+
+Apply the catalog grants above before using Studio. The PowerShell helper also accepts `-Target release` instead of `-Release`.
 
 ## Step 5: One-Command Source Deploy
 
