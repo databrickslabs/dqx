@@ -1243,12 +1243,12 @@ class TestJobService:
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> JobService:
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        return JobService(ws=ws, job_id="42", sql=sql)
+        return JobService(ws=ws, job_id="42", sql=sql, oltp_sql=sql)
 
     def test_submit_run_raises_when_no_job_id(self, ws: WorkspaceClient) -> None:
         """Should raise RuntimeError when the task-runner job is unresolved."""
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        svc = JobService(ws=ws, job_id="", sql=sql)
+        svc = JobService(ws=ws, job_id="", sql=sql, oltp_sql=sql)
         with pytest.raises(RuntimeError, match="Task-runner job is not resolved — cannot submit job runs"):
             svc.submit_run(
                 task_type="dryrun",
@@ -1888,7 +1888,7 @@ class TestProfilerRoutes:
             )
         )
         sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
-        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql, oltp_sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         monitored_tables = create_autospec(MonitoredTableService, instance=True)
@@ -1915,7 +1915,7 @@ class TestProfilerRoutes:
         )
         mock_ws.jobs.get_run.side_effect = RuntimeError("jobs api error")
         sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
-        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql, oltp_sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         monitored_tables = create_autospec(MonitoredTableService, instance=True)
@@ -2113,7 +2113,7 @@ class TestDryRunRoutes:
             )
         )
         sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
-        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql, oltp_sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         result = get_dry_run_status(
@@ -2139,7 +2139,7 @@ class TestDryRunRoutes:
         )
         mock_ws.jobs.get_run.side_effect = RuntimeError("api error")
         sql = SqlExecutor(ws=mock_ws, warehouse_id="wh", catalog="cat", schema="sch")
-        job_svc = JobService(ws=mock_ws, job_id="", sql=sql)
+        job_svc = JobService(ws=mock_ws, job_id="", sql=sql, oltp_sql=sql)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
