@@ -465,12 +465,41 @@ class TestGrantTaskRunnerRunConfigAccess:
         startup._grant_task_runner_run_config_access(oltp)
         oltp.execute.assert_not_called()
 
-    def test_rejects_malformed_role(self, monkeypatch) -> None:
+    def test_skips_grant_when_role_malformed(self, monkeypatch) -> None:
         from databricks_labs_dqx_app.backend import startup
 
-        # A role that fails validate_object_id must not be interpolated into DDL.
+        # A role that fails validate_object_id must never be interpolated into DDL,
+        # but this optional best-effort grant must not abort startup — it logs and
+        # skips rather than letting the ValueError propagate out of the lifespan.
         monkeypatch.setattr(startup.conf, "task_runner_postgres_role", 'evil"; DROP')
         oltp = self._oltp()
-        with pytest.raises(ValueError):
-            startup._grant_task_runner_run_config_access(oltp)
+        startup._grant_task_runner_run_config_access(oltp)  # does not raise
         oltp.execute.assert_not_called()
+
+    def test_names_failing_statement_and_continues(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        # A failed first grant must not stop the second, and the warning must name
+        # the specific failing statement so a later opaque runner permission error
+        # can be traced back to the grant that did not apply.
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
+        oltp = self._oltp()
+        oltp.execute.side_effect = [RuntimeError("permission denied"), None]
+
+        # Capture directly off the module logger: the app reroutes logging, so
+        # pytest's caplog (which relies on root propagation) does not see these.
+        messages: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                messages.append(record.getMessage())
+
+        handler = _Capture()
+        startup.logger.addHandler(handler)
+        try:
+            startup._grant_task_runner_run_config_access(oltp)
+        finally:
+            startup.logger.removeHandler(handler)
+
+        assert oltp.execute.call_count == 2  # did not stop after the first failure
+        assert any('GRANT USAGE ON SCHEMA "studio" TO "sp-runner"' in m for m in messages)

@@ -41,14 +41,17 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
             genie_schema="genie",
         )
     )
-    # get_job_service reads the resolved Lakebase coordinates off the executor;
+    # get_job_service reads all resolved Lakebase coordinates off the executor;
     # give them concrete string values (a bare MagicMock would leak un-serializable
-    # attributes into the job parameters).
+    # attributes into the job parameters). Use schema/database distinct from the
+    # ActiveResources values above to prove the executor is the source of truth.
     oltp_mock = MagicMock(name="oltp_sql")
     oltp_mock.endpoint = "projects/project/branches/branch/endpoints/primary"
     oltp_mock.host = "pg.example.databricks.com"
     oltp_mock.port = 5432
     oltp_mock.username = "sp-runner"
+    oltp_mock.database = "pg_db_from_oltp"
+    oltp_mock.schema = "pg_schema_from_oltp"
     try:
         service = asyncio.run(get_job_service(workspace, sql_executor_mock, oltp_mock, settings))
         result = service.submit_run("profile", "catalog.schema.view", {}, "run-1", "user@example.com")
@@ -58,6 +61,10 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
 
     assert result == 17
     assert workspace.jobs.run_now.call_args.kwargs["job_id"] == 42
+    # schema/database are threaded from the executor, not the static resources.
+    params = workspace.jobs.run_now.call_args.kwargs["job_parameters"]
+    assert params["lakebase_schema"] == "pg_schema_from_oltp"
+    assert params["lakebase_database"] == "pg_db_from_oltp"
 
 
 def _job_service_with_failing_submit() -> tuple[JobService, MagicMock, MagicMock]:

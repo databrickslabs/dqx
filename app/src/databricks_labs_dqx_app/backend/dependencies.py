@@ -796,11 +796,15 @@ async def get_job_service(
     as job parameters so tasks can read the staged configs.
     """
     lakebase = rt.require_resources().lakebase
-    # Prefer the endpoint, host, and port the live OLTP executor already
-    # resolved, falling back to the configured connection values.
+    # Prefer the coordinates the live OLTP executor already resolved, falling
+    # back to the configured connection values. Resolve all of them (including
+    # schema/database) from the same source so the app writes the staged row to
+    # exactly the schema the runner is told to read from.
     resolved_endpoint = getattr(oltp, "endpoint", None) or lakebase.endpoint or ""
     resolved_host = getattr(oltp, "host", None) or lakebase.host or ""
     resolved_port = getattr(oltp, "port", None) or lakebase.port or 5432
+    resolved_database = getattr(oltp, "database", None) or lakebase.database or ""
+    resolved_schema = getattr(oltp, "schema", None) or lakebase.schema or ""
     resolved_username = (
         conf.task_runner_postgres_role.strip() or getattr(oltp, "username", None) or lakebase.username or ""
     )
@@ -811,8 +815,8 @@ async def get_job_service(
         oltp_sql=oltp,
         warehouse_id=resolve_warehouse_id(app_settings),
         lakebase_endpoint=resolved_endpoint,
-        lakebase_database=lakebase.database or "",
-        lakebase_schema=lakebase.schema or "",
+        lakebase_database=resolved_database,
+        lakebase_schema=resolved_schema,
         lakebase_host=resolved_host,
         lakebase_port=resolved_port,
         lakebase_username=resolved_username,

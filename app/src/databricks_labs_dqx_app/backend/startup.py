@@ -506,7 +506,17 @@ def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
     role = conf.task_runner_postgres_role.strip()
     if not role or getattr(oltp, "dialect", "") != "postgres":
         return
-    validate_object_id(role)
+    # A malformed role must never be interpolated into DDL, but a cosmetic
+    # misconfig of this optional grant must not abort startup — this is a
+    # best-effort step, like the adjacent grants. Log and skip instead of
+    # letting validate_object_id's ValueError propagate out of the lifespan.
+    try:
+        validate_object_id(role)
+    except ValueError:
+        logger.warning(
+            "Task-runner Postgres role is not a valid identifier; skipping the dq_run_configs grant", exc_info=True
+        )
+        return
     schema = oltp.q(oltp.schema)
     table = oltp.fqn(RUN_CONFIGS_TABLE)
     quoted_role = oltp.q(role)
@@ -518,7 +528,9 @@ def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
         try:
             oltp.execute(statement)
         except Exception:
-            logger.warning("Could not grant the task-runner SP access to dq_run_configs", exc_info=True)
+            # Name the failing statement so a later opaque runner permission
+            # error can be traced back to the specific grant that did not apply.
+            logger.warning("Task-runner grant failed: %s", statement, exc_info=True)
 
 
 def _grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
