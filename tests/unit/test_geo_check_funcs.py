@@ -2,11 +2,16 @@ import pytest
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.geo.check_funcs import (
+    has_x_coordinate_between,
+    is_area_not_greater_than,
     is_geo_contains,
     is_geo_covers,
     is_geo_intersects,
     is_geo_touches,
     is_geo_within,
+    is_non_empty_geometry,
+    is_num_points_not_greater_than,
+    is_point,
 )
 
 _REFERENCE_GEOMETRY_WKT = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
@@ -178,3 +183,34 @@ def test_is_geo_within_has_proper_alias():
 
 def _column_expression_clean(column) -> str:
     return str(column).removeprefix("Column<'").removesuffix("'>")
+
+
+# convert_column controls whether a single-column geo check parses the value with try_to_geometry
+# (for WKT/WKB string columns) or references it directly (for native GEOMETRY/GEOGRAPHY columns, which
+# the profiler generates checks for). These cover the check families the profiler emits.
+@pytest.mark.parametrize(
+    "column",
+    [
+        is_point("geom", convert_column=False),
+        has_x_coordinate_between("geom", -1.0, 1.0, convert_column=False),
+        is_area_not_greater_than("geom", 100, convert_column=False),
+        is_num_points_not_greater_than("geom", 5, convert_column=False),
+        is_non_empty_geometry("geom", convert_column=False),
+    ],
+)
+def test_geo_check_without_conversion_references_column_directly(column):
+    assert "try_to_geometry" not in _column_expression_clean(column)
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        is_point("geom", convert_column=True),
+        has_x_coordinate_between("geom", -1.0, 1.0, convert_column=True),
+        is_area_not_greater_than("geom", 100, convert_column=True),
+        is_num_points_not_greater_than("geom", 5, convert_column=True),
+        is_non_empty_geometry("geom", convert_column=True),
+    ],
+)
+def test_geo_check_with_conversion_parses_column(column):
+    assert "try_to_geometry" in _column_expression_clean(column)

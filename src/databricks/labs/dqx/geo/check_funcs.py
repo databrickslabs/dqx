@@ -527,7 +527,9 @@ def has_dimension(column: str | Column, dimension: int, convert_column: bool = T
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def has_x_coordinate_between(column: str | Column, min_value: float, max_value: float, convert_column: bool = True) -> Column:
+def has_x_coordinate_between(
+    column: str | Column, min_value: float, max_value: float, convert_column: bool = True
+) -> Column:
     """Checks whether the x coordinates of the geometries in the input column are between a given range.
 
     Args:
@@ -562,7 +564,9 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def has_y_coordinate_between(column: str | Column, min_value: float, max_value: float, convert_column: bool = True) -> Column:
+def has_y_coordinate_between(
+    column: str | Column, min_value: float, max_value: float, convert_column: bool = True
+) -> Column:
     """Checks whether the y coordinates of the geometries in the input column are between a given range.
 
     Args:
@@ -598,7 +602,11 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry or geography column are equal to a specified value. By default, the 2D
@@ -612,6 +620,9 @@ def is_area_equal_to(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column are equal to the provided value
@@ -630,13 +641,18 @@ def is_area_equal_to(
         compare_op_name="not_equal_to",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D
@@ -650,6 +666,9 @@ def is_area_not_equal_to(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column are not equal to the provided value
@@ -668,13 +687,18 @@ def is_area_not_equal_to(
         compare_op_name="equal_to",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_greater_than(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
@@ -688,6 +712,9 @@ def is_area_not_greater_than(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is greater than the provided value
@@ -706,13 +733,18 @@ def is_area_not_greater_than(
         compare_op_name="greater_than",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_less_than(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D
@@ -726,6 +758,9 @@ def is_area_not_less_than(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is less than the provided value
@@ -744,18 +779,24 @@ def is_area_not_less_than(
         compare_op_name="less_than",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_equal_to(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is equal to a specified value.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -773,18 +814,24 @@ def is_num_points_equal_to(column: str | Column, value: int | float | str | Colu
         compare_op=py_operator.ne,
         compare_op_label="not equal to",
         compare_op_name="not_equal_to",
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_not_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_not_equal_to(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is not equal to a specified value.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is not
@@ -802,18 +849,24 @@ def is_num_points_not_equal_to(column: str | Column, value: int | float | str | 
         compare_op=py_operator.eq,
         compare_op_label="equal to",
         compare_op_name="equal_to",
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_not_greater_than(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_not_greater_than(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in the values of a geometry column is not greater than a specified limit.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -831,18 +884,24 @@ def is_num_points_not_greater_than(column: str | Column, value: int | float | st
         compare_op=py_operator.gt,
         compare_op_label="greater than",
         compare_op_name="greater_than",
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_not_less_than(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_not_less_than(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is not less than a specified limit.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -860,6 +919,7 @@ def is_num_points_not_less_than(column: str | Column, value: int | float | str |
         compare_op=py_operator.lt,
         compare_op_label="less than",
         compare_op_name="less_than",
+        convert_column=convert_column,
     )
 
 
@@ -874,6 +934,7 @@ def _compare_spatial_sql_function_result(
     compare_op_name: str,
     srid: int | None = None,
     geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Compares the results from applying a spatial SQL function (e.g. `st_area`) on a geometry column against a limit
@@ -890,6 +951,9 @@ def _compare_spatial_sql_function_result(
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
         srid: Optional integer SRID for computing measurements on the converted geometry or geography value (default `None`).
         geodesic: Whether to convert the input column to a geography type for computing geodesic distances.
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* /
+            *try_to_geography* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as
+            already holding a native GEOMETRY/GEOGRAPHY value and is referenced directly.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is less than the provided limit
@@ -902,13 +966,14 @@ def _compare_spatial_sql_function_result(
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
     if geodesic:
-        spatial_conversion_expr = f"try_to_geography({col_str_norm})"
+        spatial_conversion_expr = f"try_to_geography({col_str_norm})" if convert_column else col_str_norm
         spatial_data_type = "geography"
     elif srid:
-        spatial_conversion_expr = f"st_transform(st_setsrid(try_to_geometry({col_str_norm}), {DEFAULT_SRID}), {srid})"
+        geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+        spatial_conversion_expr = f"st_transform(st_setsrid({geom}, {DEFAULT_SRID}), {srid})"
         spatial_data_type = "geometry"
     else:
-        spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
+        spatial_conversion_expr = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
         spatial_data_type = "geometry"
 
     is_valid_cond = F.expr(f"{spatial_conversion_expr} IS NULL")

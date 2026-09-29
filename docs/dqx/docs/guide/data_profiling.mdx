@@ -522,6 +522,11 @@ The profiler can generate geospatial rule candidates from native `GEOMETRY` and 
 Profiling for geospatial rules is disabled by default and requires explicit opt-in. Enable it by setting the 
 `profile_geospatial` option.
 
+Rule candidates generated depend on the geometry types found in the column. Bounding-box, geometry type, 
+and validity checks are generated for any geometry type. Area range checks are only generated for polygonal 
+columns (`POLYGON`, `MULTIPOLYGON`), and coordinate-count range checks are skipped for point-only columns 
+(a point always has a single coordinate), since those checks carry no signal there.
+
 <Admonition type="info" title="Geospatial profiling limitations">
 Profiling geospatial data has the following limitations:
 - Columns must be `GEOMETRY` or `GEOGRAPHY`. Values stored as strings or binary (e.g. WKB, WKT, or GeJSON) are not supported.

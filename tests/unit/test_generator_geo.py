@@ -24,7 +24,7 @@ from databricks.labs.dqx.profiler.profile_builder import GEOSPATIAL_PROFILE_NAME
 def test_geometry_type_maps_to_matching_check(geometry_type, expected_function):
     result = DQGenerator.dq_generate_geometry_type("geom", "error", type=geometry_type)
     assert result["check"]["function"] == expected_function
-    assert result["check"]["arguments"] == {"column": "geom"}
+    assert result["check"]["arguments"] == {"column": "geom", "convert_column": False}
     assert result["criticality"] == "error"
 
 
@@ -35,38 +35,48 @@ def test_geometry_type_returns_none_for_unknown_type():
 def test_has_x_coordinate_between():
     result = DQGenerator.dq_generate_has_x_coordinate_between("geom", "warn", min_value=-123.0, max_value=-122.0)
     assert result["check"]["function"] == "has_x_coordinate_between"
-    assert result["check"]["arguments"] == {"column": "geom", "min_value": -123.0, "max_value": -122.0}
+    assert result["check"]["arguments"] == {
+        "column": "geom",
+        "min_value": -123.0,
+        "max_value": -122.0,
+        "convert_column": False,
+    }
     assert result["criticality"] == "warn"
 
 
 def test_has_y_coordinate_between():
     result = DQGenerator.dq_generate_has_y_coordinate_between("geom", "error", min_value=37.0, max_value=38.0)
     assert result["check"]["function"] == "has_y_coordinate_between"
-    assert result["check"]["arguments"] == {"column": "geom", "min_value": 37.0, "max_value": 38.0}
+    assert result["check"]["arguments"] == {
+        "column": "geom",
+        "min_value": 37.0,
+        "max_value": 38.0,
+        "convert_column": False,
+    }
 
 
 def test_area_not_less_than_includes_srid_when_set():
     result = DQGenerator.dq_generate_is_area_not_less_than("geom", "error", value=10, srid=3857)
     assert result["check"]["function"] == "is_area_not_less_than"
-    assert result["check"]["arguments"] == {"column": "geom", "value": 10, "srid": 3857}
+    assert result["check"]["arguments"] == {"column": "geom", "value": 10, "srid": 3857, "convert_column": False}
 
 
 def test_area_not_greater_than_omits_srid_when_none():
     result = DQGenerator.dq_generate_is_area_not_greater_than("geom", "error", value=500, srid=None)
     assert result["check"]["function"] == "is_area_not_greater_than"
-    assert result["check"]["arguments"] == {"column": "geom", "value": 500}
+    assert result["check"]["arguments"] == {"column": "geom", "value": 500, "convert_column": False}
 
 
 def test_num_points_not_less_than():
     result = DQGenerator.dq_generate_is_num_points_not_less_than("geom", "error", value=1)
     assert result["check"]["function"] == "is_num_points_not_less_than"
-    assert result["check"]["arguments"] == {"column": "geom", "value": 1}
+    assert result["check"]["arguments"] == {"column": "geom", "value": 1, "convert_column": False}
 
 
 def test_num_points_not_greater_than():
     result = DQGenerator.dq_generate_is_num_points_not_greater_than("geom", "error", value=12)
     assert result["check"]["function"] == "is_num_points_not_greater_than"
-    assert result["check"]["arguments"] == {"column": "geom", "value": 12}
+    assert result["check"]["arguments"] == {"column": "geom", "value": 12, "convert_column": False}
 
 
 @pytest.mark.parametrize(
@@ -79,7 +89,10 @@ def test_num_points_not_greater_than():
 )
 def test_no_arg_geo_checks(generator, expected_function):
     result = generator("geom", "error")
-    assert result["check"] == {"function": expected_function, "arguments": {"column": "geom"}}
+    assert result["check"] == {
+        "function": expected_function,
+        "arguments": {"column": "geom", "convert_column": False},
+    }
     assert result["name"] == f"geom_{expected_function}"
     assert result["criticality"] == "error"
 

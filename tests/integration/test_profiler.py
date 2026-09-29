@@ -2618,7 +2618,6 @@ def test_profiler_no_has_no_outliers_when_outliers_exceed_threshold(spark, ws):
     assert len(has_no_outliers_profiles) == 0
 
 
-
 def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_geo_compatible, spark, ws):
     geom_df = _geometry_dataframe(spark)
     assert is_geospatial(geom_df.schema["geom"].dataType)
@@ -2637,6 +2636,10 @@ def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_g
 
     geometry_type_profile = next(p for p in profiles if p.name == "geometry_type")
     assert geometry_type_profile.parameters == {"type": "ST_Polygon"}
+
+    # Area profiles carry a concrete SRID so the profiled bound and the generated check use the same units.
+    area_profiles = [p for p in profiles if p.name in ("is_area_not_less_than", "is_area_not_greater_than")]
+    assert area_profiles and all(p.parameters["srid"] == 3857 for p in area_profiles)
 
     geom_stats = stats["geom"]
     for key in ("min_x_coordinate", "max_x_coordinate", "min_area", "max_area", "min_num_points", "max_num_points"):
@@ -2681,6 +2684,44 @@ def test_profiler_geospatial_skips_all_null_column(skip_if_runtime_not_geo_compa
     assert not any(p.name in GEOSPATIAL_PROFILE_NAMES for p in profiles)
     assert stats["geom"]["count_non_null"] == 0
     assert "min_x_coordinate" not in stats["geom"]
+
+
+def test_profiler_geospatial_point_column_skips_area_and_num_points(skip_if_runtime_not_geo_compatible, spark, ws):
+    point_df = spark.createDataFrame(
+        [["POINT(1 2)"], ["POINT(3 4)"]], schema=T.StructType([T.StructField("wkt", T.StringType())])
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(point_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Points have zero area and always exactly one coordinate, so neither range profile is emitted.
+    assert not geo_profile_names & {
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+    }
+    assert {"geometry_type", "has_x_coordinate_between", "has_y_coordinate_between"} <= geo_profile_names
+
+
+def test_profiler_geospatial_linestring_column_keeps_num_points_skips_area(
+    skip_if_runtime_not_geo_compatible, spark, ws
+):
+    line_df = spark.createDataFrame(
+        [["LINESTRING(0 0, 1 1)"], ["LINESTRING(0 0, 1 1, 2 2)"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(line_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Linestrings have a meaningful coordinate count but no area.
+    assert {"is_num_points_not_less_than", "is_num_points_not_greater_than"} <= geo_profile_names
+    assert not geo_profile_names & {"is_area_not_less_than", "is_area_not_greater_than"}
 
 
 def _round_stats(
