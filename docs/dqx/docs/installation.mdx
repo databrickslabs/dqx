@@ -446,9 +446,11 @@ Databricks CLI will confirm a few options:
 There are two ways to install it:
 
 1. **[From the Databricks Marketplace (recommended)](#install-dqx-studio-from-the-databricks-marketplace)** — a one-click install into your workspace, with no local toolchain or repository checkout. Best for most users.
-2. **[With a Declarative Automation Bundle (DAB)](#install-dqx-studio-using-a-declarative-automation-bundle)** — deploy from the source repository with the Databricks CLI. Use this if you can't install from the Marketplace, or you want to customize the bundle.
+2. **[With a Declarative Automation Bundle (DAB)](#install-dqx-studio-using-a-declarative-automation-bundle)** — deploy a tagged Studio release with the Databricks CLI. Use this if you can't install from the Marketplace, or you want to customize the bundle.
 
 Both methods deploy the same app and finish in the same in-app **setup wizard**, and both require the workspace-level prerequisites listed under [Prerequisites](#prerequisites-for-installing-dqx-studio) below.
+
+Each DQX Studio release is paired with a specific DQX Core version. Studio and Core have separate version numbers; the Core version for a Studio release is recorded in that release's `app/databricks.yml` as `dqx_version`.
 
 ### Prerequisites for installing DQX Studio {#prerequisites-for-installing-dqx-studio}
 
@@ -459,16 +461,16 @@ Prerequisites fall into two groups: **workspace-level** requirements that apply 
 - **Databricks Apps** feature enabled on the workspace.
 - **User token passthrough** enabled for Databricks Apps — DQX Studio uses On-Behalf-Of (OBO) tokens to access Unity Catalog with the end user's identity.
 - **Serverless compute** enabled on the workspace — the `dqx-studio-task-runner` job is serverless-only.
-- An **existing Unity Catalog catalog** where the studio's schemas and volumes are provisioned. Neither route creates the catalog itself; the schemas and wheels volume are provisioned *inside* it (by the setup wizard for Marketplace, by `make app-deploy` for the bundle).
-- **Lakebase Postgres** enabled on the workspace if you keep the default backend layout. DQX Studio stores its OLTP state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping) in a Lakebase Postgres *project* for sub-millisecond reads. If your workspace doesn't have Lakebase, you can opt out and run everything on Delta — see the **Hybrid storage backend** admonition under the install steps below.
+- An **existing Unity Catalog catalog** where the studio's schemas and volumes are provisioned. Neither route creates the catalog itself; the schemas and wheels volume are provisioned *inside* it (by the setup wizard for Marketplace, by the bundle for DAB installation).
+- **Lakebase Postgres** enabled on the workspace. DQX Studio stores its OLTP state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping) in Lakebase; analytical run data stays in Delta Lake.
 - A **SQL warehouse** — for Marketplace you **bind** an existing (serverless recommended) warehouse during install; the bundle **creates and manages** a dedicated serverless warehouse for you.
+- A **workspace service principal** for the task-runner job's `run_as` identity. Create it before installation and grant the installing or deploying identity the **Service Principal: User** role on it. This is separate from the app service principal that Databricks Apps creates automatically.
 
 #### Required for the bundle (DAB) method only (local machine)
 
 - **Databricks CLI** v1.4.0 or later, authenticated against your workspace (see [Authenticate Databricks CLI](#authenticate-databricks-cli)). v1.4.0 is required for the `postgres_projects` / `postgres_roles` resources; `lifecycle.prevent_destroy` on the studio's stateful schemas / volume / Lakebase project needs only v0.268+.
-- `make` available locally.
-- **App build toolchain** — `make app-deploy` first builds the wheel via `make app-build`, which needs **uv**, **Node.js 18+** (provides `npm`; install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download)), and **yarn** (`npm install -g yarn`). (`bun` is only required for the optional `make app-check` type-check — install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.)
-- Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
+- **Git** to check out a Studio release tag. The tagged release includes the built app and task-runner wheel, so the DAB install does not need local `make`, uv, Node.js, yarn, or bun. These tools are used when [building Studio from source](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md).
+- Sufficient workspace permissions to deploy the bundle. **Workspace admin** is the easiest shortcut, but not strictly required — granular per-permission needs (Databricks Apps Can Manage, Lakebase Manager, UC catalog `MANAGE`, service principal `User` role, etc.) are listed in the [DQX Studio deployment guide § Required permissions](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md#required-permissions). If you don't hold them yourself, ask an admin to grant them.
 
 ### Install DQX Studio from the Databricks Marketplace {#install-dqx-studio-from-the-databricks-marketplace}
 
@@ -482,9 +484,11 @@ The Marketplace listing installs DQX Studio into your workspace as a Databricks 
    - a **Lakebase Postgres endpoint** — required for Studio's application state (rules catalog, app settings, RBAC, comments, schedule configs, scheduler bookkeeping), and
    - a **Unity Catalog volume** — the bound volume selects Studio's **main catalog and schema**.
 
+   Also have the **workspace service principal** ready for the task-runner job. It is a required deployment identity alongside these resources, but is assigned as the job's `run_as` identity in the Jobs UI rather than bound in the Marketplace resource picker.
+
 3. Make sure a workspace administrator belongs to the workspace group configured as **`DQX_ADMIN_GROUP`** before opening the app — the first admin bootstraps roles for everyone else.
 
-4. **Open the app.** The built-in **setup wizard** checks the resource bindings, creates the required sibling schemas, runs migrations, publishes the task-runner wheels, and explains any Unity Catalog grants that are still needed. It links straight to the Jobs UI for assigning the task-runner's external `run_as` service principal.
+4. **Open the app.** The built-in **setup wizard** checks the resource bindings, creates the required sibling schemas, runs migrations, publishes the task-runner wheels, and explains any Unity Catalog grants that are still needed. Follow its link to the Jobs UI and assign the workspace service principal as the task-runner job's `run_as` identity.
 
 Once the wizard reports green, DQX Studio is ready — continue with the [Quickstart](/docs/studio/quickstart).
 
@@ -494,80 +498,76 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
 
 ### Install DQX Studio using a Declarative Automation Bundle (DAB) {#install-dqx-studio-using-a-declarative-automation-bundle}
 
-1. Clone the DQX repository (all `make app-*` commands run from the repo root):
+1. Check out a Studio release tag that includes the prebuilt DAB release target:
    ```commandline
-   git clone https://github.com/databrickslabs/dqx.git
+   git clone --branch studio-vX.Y.Z https://github.com/databrickslabs/dqx.git
    cd dqx
    ```
 
+   Replace `X.Y.Z` with the Studio version you are installing. Older Studio tags without a `release` bundle target require a source build; see the [Studio development guide](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md).
+
 2. Create a workspace service principal to run the task-runner job (separate from the app's auto-created SP, which cannot be used outside the Apps framework). In the Databricks workspace UI go to **Settings → Identity and Access → Service Principals**, create a new SP (for example `dqx-task-runner-sp`), and on its **Permissions** tab grant your deploying identity the **`User`** role. Note the SP's **Application ID** — you'll reference it as `dqx_service_principal_application_id` in the bundle.
 
-3. Update the deploy target in `app/databricks.yml`. Only two variables are **required**:
+3. Choose the two required bundle variables:
 
    - `catalog_name` — Unity Catalog catalog where the studio's schemas and volume live (must already exist).
    - `dqx_service_principal_application_id` — the task-runner SP you created in step 2.
 
-   The bundle manages its own SQL warehouse and Lakebase project, so there's nothing else to supply:
-   ```yaml
-   targets:
-     dev:
-       workspace:
-         profile: <your-profile>
-       variables:
-         # Required
-         catalog_name: <your-catalog>
-         dqx_service_principal_application_id: <your-sp-application-id>
+   The bundle manages its own SQL warehouse and Lakebase project. Pass the two values with `--var` in step 4; other settings can also be overridden with `--var name=value`.
 
-         # Optional — uncomment and override defaults per target as needed
-         # admin_group: <your-admin-group>              # default: admins
-         # app_name: <your-app-name>                    # default: dqx-studio
-         # sql_warehouse_size: <size>                   # default: Small
-         # schema_name: <your-schema-name>              # default: dqx_studio
+   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
 
-         # Lakebase backend (default: enabled). To disable Lakebase and run all
-         # OLTP tables on Delta, remove the postgres_projects / postgres_roles
-         # blocks from databricks.yml and set lakebase_endpoint: "-".
-         # lakebase_branch: dqx                         # default branch name
-         # lakebase_suspend_timeout: "300s"             # scale-to-zero idle window
-       presets:
-         trigger_pause_status: PAUSED
+4. Deploy the tagged artifact. For direct CLI deployment, change to the `app/` directory:
+   ```commandline
+   cd app
+   databricks bundle deploy -p <your-profile> -t release --var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>
    ```
 
-   See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
+   The release target uses `app/marketplace/` from the tag. It does not compile the UI, build wheels, or run a local package manager. The bundle provisions the schemas, wheels volume, Lakebase Postgres project, SQL warehouse, task-runner job, and Databricks App, and applies the schema and volume grants.
 
-4. Grant `USE CATALOG` on your chosen catalog. This is the **only** manual grant: the bundle applies all schema/volume permissions natively, but it does not manage the (pre-existing) catalog, so it cannot grant catalog-level access. Run this once per catalog (the app SP's client id is shown by `databricks apps get dqx-studio` after the first deploy):
+   On macOS or Linux, you can use the single Make command **from the repository root** instead. It deploys and starts the prebuilt release without running `app-build`:
+   ```commandline
+   make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
+   ```
+
+   If you use Make, skip step 6 and apply the catalog grants in step 5 before using Studio.
+
+5. Grant `USE CATALOG` on your chosen catalog as in the original installation steps. The bundle cannot manage grants on a pre-existing catalog. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment, then run these once per catalog:
    ```sql
    GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
    GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
    GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
    ```
 
-5. Build, deploy, and start the studio in a single command:
+   The app SP also receives `USE CATALOG` automatically through its wheels-volume binding; its explicit grant above preserves the original installation sequence.
+
+6. Start Studio:
    ```commandline
-   make app-deploy PROFILE=<your-profile> TARGET=<your-target>
+   databricks bundle run dqx-studio -p <your-profile> -t release --var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>
    ```
 
-   On Windows, use PowerShell from the repository root:
-   ```powershell
-   .\make.ps1 app-deploy -Profile <your-profile> -Target <your-target>
-   ```
+7. Open the deployed app from the **Apps** page in your Databricks workspace.
 
-   This runs `make app-build`, `databricks bundle deploy`, and `databricks bundle run` in sequence. `bundle deploy` provisions the schemas, wheels volume, Lakebase Postgres project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** — there is no post-deploy grant script and no bind step. The stateful resources (schemas, volume, Postgres project) carry `lifecycle.prevent_destroy: true`. The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start.
+To build and deploy Studio from source instead, use `make app-deploy PROFILE=<profile> TARGET=<target>` on macOS or Linux. On Windows, run the experimental PowerShell helper from the repository root:
 
-6. Open the deployed app from the **Apps** page in your Databricks workspace.
+```powershell
+.\make.ps1 app-deploy -Profile <profile> -Target <target>
+```
+
+The PowerShell helper builds Studio, deploys the bundle, and starts the app. Source builds require the [Studio development toolchain](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md#prerequisites). The bundle provisions the schemas, wheels volume, Lakebase project, SQL warehouse, task-runner job, and Databricks App, and applies their grants. Stateful resources carry `lifecycle.prevent_destroy: true`.
 
 <Admonition type="note" title="Stateful storage is destroy-protected">
 The studio's schemas (`dqx_studio`, `dqx_studio_tmp`), wheels volume, and Lakebase Postgres project are declared as bundle resources with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+). `databricks bundle destroy` is blocked from dropping them, so production data survives accidental destroy/replace operations. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase project) is created at startup and is not itself a bundle resource, but it is protected transitively by the project-level guard — as long as the project survives, the schema and its tables survive. To intentionally tear something down, remove the flag, `databricks bundle deployment unbind <key>`, then destroy manually.
 </Admonition>
 
-For the full walkthrough — including step-by-step commands, the `USE CATALOG` prerequisite, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md).
+For the full walkthrough — including step-by-step commands, the `USE CATALOG` prerequisite, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md).
 
 <Admonition type="note" title="Hybrid storage backend">
 DQX Studio splits its data across two physical backends: high-volume append-mostly tables (`dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`) live in **Delta Lake** because they're written by Spark; transactional tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for fast row-level reads/writes from the FastAPI request handlers.
 </Admonition>
 
 <Admonition type="note" title="First-run wheel upload">
-On its first start, DQX Studio runs database migrations (Delta and, if enabled, Lakebase) and uploads its DQX wheel files to the Unity Catalog volume. If the task-runner job is triggered before the app has fully started at least once, it will fail to find its wheels. Wait for `Uploaded databricks_labs_dqx-<version>...` in the app logs before triggering any profiler or dry-run jobs. If Lakebase is enabled, also wait for `Lakebase OLTP routing enabled` before opening the UI — when Lakebase is configured (`DQX_LAKEBASE_ENDPOINT` non-empty) and init fails, the app refuses to start and the Databricks Apps platform will restart it; silent fallback to Delta would split-brain OLTP writes across two physical stores and is not safe. To run on Delta only, unset `DQX_LAKEBASE_ENDPOINT`.
+On its first start, DQX Studio runs Delta analytical and Lakebase application migrations and publishes the task-runner wheel to the Unity Catalog volume. Wait for the setup checks to report that wheel publishing is ready before triggering profiler or dry-run jobs, and for `Lakebase OLTP routing enabled` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Databricks Apps platform restarts it.
 </Admonition>
 
 ### Upgrade DQX Studio
@@ -580,12 +580,15 @@ When a new version is published to the listing, update the app from your workspa
 
 #### Using a Declarative Automation Bundle (DAB)
 
-Pull the latest changes from the DQX repository (or check out a specific tag), then redeploy with the same command:
+From the repository root, fetch the new Studio release tag, check it out, and redeploy with the same catalog and task-runner service principal:
 
 ```commandline
-git pull
-make app-deploy PROFILE=<your-profile> TARGET=<your-target>
+git fetch --tags origin
+git switch --detach studio-vX.Y.Z
+make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
 ```
+
+On Windows, change to `app/` after checking out the tag and run the direct `databricks bundle deploy` and `databricks bundle run` commands shown in the installation steps.
 
 All stateful resources are declared with `lifecycle.prevent_destroy: true`, so even an accidental `databricks bundle destroy` won't drop them.
 
