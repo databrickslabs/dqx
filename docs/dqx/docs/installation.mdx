@@ -523,18 +523,6 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
 
    The release target uses `app/marketplace/` from the tag. It does not compile the UI, build wheels, or run a local package manager. The bundle provisions the schemas, wheels volume, Lakebase Postgres project, SQL warehouse, task-runner job, and Databricks App, and applies the schema and volume grants.
 
-   You can use one helper command **from the repository root** to deploy and start the prebuilt release without running `app-build`. On macOS or Linux:
-   ```commandline
-   make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
-   ```
-
-   On Windows, use the experimental PowerShell helper:
-   ```powershell
-   .\make.ps1 app-deploy -Profile <your-profile> -Release -BundleVars @('catalog_name=<your-catalog>', 'dqx_service_principal_application_id=<your-sp-application-id>')
-   ```
-
-   If you use either helper, skip step 6 and apply the catalog grants in step 5 before using Studio.
-
 5. Grant `USE CATALOG` on your chosen catalog as in the original installation steps. The bundle cannot manage grants on a pre-existing catalog. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment, then run these once per catalog:
    ```sql
    GRANT USE CATALOG ON CATALOG <catalog> TO `account users`;
@@ -550,6 +538,18 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
    ```
 
 7. Open the deployed app from the **Apps** page in your Databricks workspace.
+
+For upgrades after the catalog grants in step 5 are in place, one helper command **from the repository root** can deploy and start the prebuilt release without running `app-build`. On macOS or Linux:
+
+```commandline
+make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
+```
+
+On Windows, use the experimental PowerShell helper:
+
+```powershell
+.\make.ps1 app-deploy -Profile <your-profile> -Release -BundleVars @('catalog_name=<your-catalog>', 'dqx_service_principal_application_id=<your-sp-application-id>')
+```
 
 To build and deploy Studio from source instead, use `make app-deploy PROFILE=<profile> TARGET=<target>` on macOS or Linux. On Windows, run the experimental PowerShell helper from the repository root:
 

@@ -220,7 +220,7 @@ databricks bundle run dqx-studio -p <your-profile> -t release --var catalog_name
 
 See [The `USE CATALOG` prerequisite](#the-use-catalog-prerequisite) for the grant statements.
 
-The helper commands deploy and start the tagged release without running `app-build`. Run one from the repository root (`cd ..` if you followed the CLI example above). On macOS or Linux:
+For upgrades after the catalog grants are in place, the helper commands deploy and start the tagged release without running `app-build`. Run one from the repository root (`cd ..` if you followed the CLI example above). On macOS or Linux:
 
 ```bash
 make app-deploy PROFILE=<your-profile> TARGET=release BUNDLE_VARS='--var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>'
@@ -248,7 +248,7 @@ On Windows, run the experimental PowerShell helper from the repository root:
 .\make.ps1 app-deploy -Profile <your-profile> -Target <your-target>
 ```
 
-The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.0+ on `PATH`. It builds the app, deploys the bundle, and starts it. Pass `-Force` to overwrite remote bundle edits, `-AppName` to override the app name, or `-BundleVars 'catalog_name=foo','other_name=value'` to forward bundle variables.
+The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.0+ on `PATH`. It builds the app, deploys the bundle, and starts it. Pass `-Force` to overwrite remote bundle edits, `-AppName` to set the bundle's `app_name` variable (the deployed app name), or `-BundleVars 'catalog_name=foo','other_name=value'` to forward bundle variables. The `bundle run` resource key remains `dqx-studio`.
 
 `make app-deploy` runs the following steps automatically:
 1. `make app-build` — builds the frontend and wheels.

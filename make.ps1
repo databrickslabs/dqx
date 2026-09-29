@@ -44,6 +44,9 @@ $variableArgs = @()
 foreach ($variable in $BundleVars) {
     $variableArgs += @('--var', $variable)
 }
+if ($PSBoundParameters.ContainsKey('AppName')) {
+    $variableArgs += @('--var', "app_name=$AppName")
+}
 
 $previousFrozen = $env:UV_FROZEN
 $previousBuildConstraint = $env:UV_BUILD_CONSTRAINT
@@ -65,7 +68,7 @@ try {
     & databricks @deployArgs
     if ($LASTEXITCODE -ne 0) { throw 'DQX Studio bundle deploy failed.' }
 
-    & databricks bundle run $AppName @bundleArgs @variableArgs
+    & databricks bundle run dqx-studio @bundleArgs @variableArgs
     if ($LASTEXITCODE -ne 0) { throw 'DQX Studio bundle run failed.' }
 }
 finally {

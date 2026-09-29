@@ -492,6 +492,8 @@ resources:
 # Workspace-specific source-build targets remain in untracked target.*.yml files.
 targets:
   release:
+    # sync.include adds marketplace to the default sync set; keep a local .build
+    # out even if its .gitignore rule changes.
     sync:
       exclude:
         - .build/**

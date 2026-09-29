@@ -83,6 +83,11 @@ Assert-True ($global:Calls[1].Arguments -join '|' -eq 'bundle|deploy|-p|test-pro
 Assert-True ($global:Calls[2].Arguments -join '|' -eq 'bundle|run|dqx-studio|-p|test-profile|-t|release|--var|catalog_name=sample') 'Release must run the release target'
 $global:HideUv = $false
 
+$global:Calls = @()
+& $scriptPath app-deploy -Profile test-profile -Release -AppName custom-studio -BundleVars @('catalog_name=sample')
+Assert-True ($global:Calls[1].Arguments -join '|' -eq 'bundle|deploy|-p|test-profile|-t|release|--var|catalog_name=sample|--var|app_name=custom-studio') 'Custom app name must be a bundle variable on deploy'
+Assert-True ($global:Calls[2].Arguments -join '|' -eq 'bundle|run|dqx-studio|-p|test-profile|-t|release|--var|catalog_name=sample|--var|app_name=custom-studio') 'Custom app name must not replace the bundle resource key'
+
 Assert-Throws { & $scriptPath app-deploy -Profile test-profile -Target dev -Release } 'Conflicting target and release flag must fail' '-Release cannot be combined'
 
 $global:Calls = @()
