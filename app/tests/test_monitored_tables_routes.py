@@ -932,9 +932,9 @@ class TestSaveAppliedRules:
                 perms=MagicMock(),
             )
             (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
-            assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
-                f"Expected key absent for thresholds={thresholds!r}"
-            )
+            assert (
+                RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags
+            ), f"Expected key absent for thresholds={thresholds!r}"
 
     def test_clearing_column_pass_thresholds_drops_stale_key_from_prior_metadata(self):
         """Regression: clearing every per-column override ("Use rule default") must remove
@@ -970,9 +970,9 @@ class TestSaveAppliedRules:
             perms=MagicMock(),
         )
         (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
-        assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
-            "Stale column_pass_thresholds must be dropped when the override is cleared"
-        )
+        assert (
+            RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags
+        ), "Stale column_pass_thresholds must be dropped when the override is cleared"
         # A real free-text tag alongside it must survive.
         assert called_desired[0].tags["team"] == "growth"
 
