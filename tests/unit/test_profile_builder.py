@@ -4,6 +4,7 @@ from unittest.mock import create_autospec
 import pytest
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
+from pyspark.errors import AnalysisException
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile
@@ -773,3 +774,39 @@ def test_make_geospatial_profile_returns_none_for_non_geospatial_column(mock_df)
         mock_df, "value", T.StringType(), {"count_non_null": 5}, {"profile_geospatial": True}
     )
     assert profile is None
+
+
+class _FakeGeometryType(T.DataType):
+    """Stand-in for a native GEOMETRY type; pyspark exposes no public geometry DataType to construct."""
+
+    @classmethod
+    def typeName(cls) -> str:
+        return "geometry"
+
+
+def test_make_geospatial_profile_skips_when_spatial_functions_unavailable():
+    df = create_autospec(DataFrame, instance=True)
+    df.columns = ["geom"]
+    df.agg.return_value.first.side_effect = AnalysisException(
+        "unresolved routine", errorClass="UNRESOLVED_ROUTINE", messageParameters={}
+    )
+    result = make_geospatial_profile(
+        df, "geom", _FakeGeometryType(), {"count_non_null": 5}, {"profile_geospatial": True, "geospatial_srid": 3857}
+    )
+    assert result is None
+
+
+def test_make_geospatial_profile_reraises_unexpected_analysis_error():
+    df = create_autospec(DataFrame, instance=True)
+    df.columns = ["geom"]
+    df.agg.return_value.first.side_effect = AnalysisException(
+        "permission denied", errorClass="INSUFFICIENT_PERMISSIONS", messageParameters={}
+    )
+    with pytest.raises(AnalysisException):
+        make_geospatial_profile(
+            df,
+            "geom",
+            _FakeGeometryType(),
+            {"count_non_null": 5},
+            {"profile_geospatial": True, "geospatial_srid": 3857},
+        )

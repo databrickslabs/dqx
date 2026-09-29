@@ -10,6 +10,15 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig, TABLE_PATTERN, UC_TABLE_PATTERN
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.geo.check_funcs import (
+    GEOMETRYCOLLECTION_TYPE,
+    LINESTRING_TYPE,
+    MULTILINESTRING_TYPE,
+    MULTIPOINT_TYPE,
+    MULTIPOLYGON_TYPE,
+    POINT_TYPE,
+    POLYGON_TYPE,
+)
 from databricks.labs.dqx.io import STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -42,28 +51,14 @@ logger = logging.getLogger(__name__)
 # Maps the ST_GeometryType value profiled for a homogeneous geometry column to the geospatial check
 # that validates it. Unknown types produce no rule.
 _GEOMETRY_TYPE_CHECK_FUNCTIONS = {
-    "ST_Point": "is_point",
-    "ST_LineString": "is_linestring",
-    "ST_Polygon": "is_polygon",
-    "ST_MultiPoint": "is_multipoint",
-    "ST_MultiLineString": "is_multilinestring",
-    "ST_MultiPolygon": "is_multipolygon",
-    "ST_GeometryCollection": "is_geometrycollection",
+    POINT_TYPE: "is_point",
+    LINESTRING_TYPE: "is_linestring",
+    POLYGON_TYPE: "is_polygon",
+    MULTIPOINT_TYPE: "is_multipoint",
+    MULTILINESTRING_TYPE: "is_multilinestring",
+    MULTIPOLYGON_TYPE: "is_multipolygon",
+    GEOMETRYCOLLECTION_TYPE: "is_geometrycollection",
 }
-
-
-def _geo_no_arg_check(function_name: str, column: str, criticality: str) -> dict:
-    """Builds a check dict for a geospatial check that takes only a column argument.
-
-    The profiler only generates geospatial checks for native GEOMETRY/GEOGRAPHY columns, so
-    *convert_column* is set to False to reference the column directly instead of parsing it with
-    *try_to_geometry* (which accepts only STRING/BINARY and would fail on a native column).
-    """
-    return {
-        "check": {"function": function_name, "arguments": {"column": column, "convert_column": False}},
-        "name": f"{column}_{function_name}",
-        "criticality": criticality,
-    }
 
 
 class DQGenerator(DQEngineBase):
@@ -569,7 +564,7 @@ class DQGenerator(DQEngineBase):
         function_name = _GEOMETRY_TYPE_CHECK_FUNCTIONS.get(str(params.get("type")))
         if not function_name:
             return None
-        return _geo_no_arg_check(function_name, column, criticality)
+        return DQGenerator._get_geo_no_arg_chck(function_name, column, criticality)
 
     @staticmethod
     def dq_generate_has_x_coordinate_between(column: str, criticality: str = "error", **params: object) -> dict:
@@ -636,16 +631,17 @@ class DQGenerator(DQEngineBase):
         Args:
             column: The name of the column to check.
             criticality: The criticality of the rule as "warn" or "error" (default is "error").
-            params: Additional parameters, including the *value* limit and optional *srid*.
+            params: Additional parameters, including the *value* limit, optional *srid* (geometry
+                columns), and optional *geodesic* flag (geography columns).
 
         Returns:
             A dictionary representing the data quality rule.
         """
-        arguments = {"column": column, "value": params["value"], "convert_column": False}
-        if params.get("srid") is not None:
-            arguments["srid"] = params["srid"]
         return {
-            "check": {"function": "is_area_not_less_than", "arguments": arguments},
+            "check": {
+                "function": "is_area_not_less_than",
+                "arguments": DQGenerator._get_geo_area_arguments(column, params),
+            },
             "name": f"{column}_area_less_than_limit",
             "criticality": criticality,
         }
@@ -659,16 +655,17 @@ class DQGenerator(DQEngineBase):
         Args:
             column: The name of the column to check.
             criticality: The criticality of the rule as "warn" or "error" (default is "error").
-            params: Additional parameters, including the *value* limit and optional *srid*.
+            params: Additional parameters, including the *value* limit, optional *srid* (geometry
+                columns), and optional *geodesic* flag (geography columns).
 
         Returns:
             A dictionary representing the data quality rule.
         """
-        arguments = {"column": column, "value": params["value"], "convert_column": False}
-        if params.get("srid") is not None:
-            arguments["srid"] = params["srid"]
         return {
-            "check": {"function": "is_area_not_greater_than", "arguments": arguments},
+            "check": {
+                "function": "is_area_not_greater_than",
+                "arguments": DQGenerator._get_geo_area_arguments(column, params),
+            },
             "name": f"{column}_area_greater_than_limit",
             "criticality": criticality,
         }
@@ -733,7 +730,7 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         params = params or {}
-        return _geo_no_arg_check("is_non_empty_geometry", column, criticality)
+        return DQGenerator._get_geo_no_arg_chck("is_non_empty_geometry", column, criticality)
 
     @staticmethod
     def dq_generate_is_ogc_valid(column: str, criticality: str = "error", **params: object) -> dict:
@@ -749,7 +746,7 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         params = params or {}
-        return _geo_no_arg_check("is_ogc_valid", column, criticality)
+        return DQGenerator._get_geo_no_arg_chck("is_ogc_valid", column, criticality)
 
     @staticmethod
     def dq_generate_is_not_null_island(column: str, criticality: str = "error", **params: object) -> dict:
@@ -765,7 +762,49 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         params = params or {}
-        return _geo_no_arg_check("is_not_null_island", column, criticality)
+        return DQGenerator._get_geo_no_arg_chck("is_not_null_island", column, criticality)
+
+    @staticmethod
+    def _get_geo_no_arg_chck(function_name: str, column: str, criticality: str) -> dict:
+        """
+        Builds a check dict for a geospatial check that takes only a column argument.
+
+        The profiler only generates geospatial checks for native GEOMETRY/GEOGRAPHY columns, so
+        *convert_column* is set to *False* to reference the column directly instead of parsing it with
+        *try_to_geometry* (which accepts only STRING/BINARY and would fail on a native column).
+
+        Args:
+            function_name: The name of the geospatil check function.
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {"function": function_name, "arguments": {"column": column, "convert_column": False}},
+            "name": f"{column}_{function_name}",
+            "criticality": criticality,
+        }
+
+    @staticmethod
+    def _get_geo_area_arguments(column: str, params: dict) -> dict:
+        """
+        Builds the check function arguments for a profiled geometry/geography area rule.
+
+        Args:
+            column: Input column name
+            params: Check function parameters
+
+        Returns:
+            A set of check function arguments for a profiled geometry/geography area rule.
+        """
+        arguments: dict = {"column": column, "value": params["value"], "convert_column": False}
+        if params.get("srid") is not None:
+            arguments["srid"] = params["srid"]
+        if params.get("geodesic") is not None:
+            arguments["geodesic"] = params["geodesic"]
+        return arguments
 
     _checks_mapping = {
         "is_not_null": dq_generate_is_not_null,

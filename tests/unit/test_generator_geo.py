@@ -67,6 +67,16 @@ def test_area_not_greater_than_omits_srid_when_none():
     assert result["check"]["arguments"] == {"column": "geom", "value": 500, "convert_column": False}
 
 
+def test_area_forwards_geodesic_for_geography():
+    result = DQGenerator.dq_generate_is_area_not_greater_than("geog", "error", value=500, geodesic=True)
+    assert result["check"]["arguments"] == {"column": "geog", "value": 500, "convert_column": False, "geodesic": True}
+
+
+def test_area_not_less_than_forwards_geodesic_for_geography():
+    result = DQGenerator.dq_generate_is_area_not_less_than("geog", "error", value=10, geodesic=True)
+    assert result["check"]["arguments"] == {"column": "geog", "value": 10, "convert_column": False, "geodesic": True}
+
+
 def test_num_points_not_less_than():
     result = DQGenerator.dq_generate_is_num_points_not_less_than("geom", "error", value=1)
     assert result["check"]["function"] == "is_num_points_not_less_than"

@@ -2638,7 +2638,7 @@ def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_g
     assert geometry_type_profile.parameters == {"type": "ST_Polygon"}
 
     # Area profiles carry a concrete SRID so the profiled bound and the generated check use the same units.
-    area_profiles = [p for p in profiles if p.name in ("is_area_not_less_than", "is_area_not_greater_than")]
+    area_profiles = [p for p in profiles if p.name in {"is_area_not_less_than", "is_area_not_greater_than"}]
     assert area_profiles and all(p.parameters["srid"] == 3857 for p in area_profiles)
 
     geom_stats = stats["geom"]
@@ -2649,6 +2649,27 @@ def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_g
 
     checks = DQGenerator(ws).generate_dq_rules(profiles)
     checked_df = DQEngine(ws).apply_checks_by_metadata(geom_df, checks)
+    assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
+    assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
+
+
+def test_profiler_geospatial_geography_uses_geodesic_area(skip_if_runtime_not_geo_compatible, spark, ws):
+    geog_df = spark.createDataFrame(
+        [["POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))"], ["POLYGON((0 0, 0 2, 2 2, 2 0, 0 0))"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geography(wkt) AS geog")
+    assert is_geospatial(geog_df.schema["geog"].dataType)
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(geog_df, options=options)
+
+    area_profiles = [p for p in profiles if p.name in {"is_area_not_less_than", "is_area_not_greater_than"}]
+    assert area_profiles
+    assert all(p.parameters.get("geodesic") is True and "srid" not in p.parameters for p in area_profiles)
+
+    checks = DQGenerator(ws).generate_dq_rules(profiles)
+    checked_df = DQEngine(ws).apply_checks_by_metadata(geog_df, checks)
     assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
     assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
 
