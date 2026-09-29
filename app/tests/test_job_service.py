@@ -67,6 +67,9 @@ def _job_service_with_failing_submit() -> tuple[JobService, MagicMock, MagicMock
     sql.warehouse_id = "wh"
     oltp = create_autospec(SqlExecutor, instance=True)
     oltp.fqn.side_effect = lambda t: f"dqx_studio.{t}"
+    # Staging (and thus the delete-on-failure path) only runs when Lakebase is
+    # enabled — i.e. the OLTP executor's dialect is Postgres.
+    oltp.dialect = "postgres"
     ws = MagicMock(name="WorkspaceClient")
     ws.jobs.run_now.side_effect = RuntimeError("job is disabled")
     return JobService(ws=ws, job_id="42", sql=sql, oltp_sql=oltp), ws, oltp
