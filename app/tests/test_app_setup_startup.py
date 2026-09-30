@@ -210,7 +210,7 @@ async def test_post_migration_startup_does_not_grant_catalog_privileges(
     monkeypatch.setattr(startup, "_start_scheduler", start_scheduler)
     monkeypatch.setattr(startup, "_maybe_start_ai_bootstrap", lambda *_args: None)
 
-    await startup._run_post_migration_startup(app, workspace, delta_sql, oltp, resources)
+    await startup._run_post_migration_startup(app, workspace, delta_sql, oltp, resources, resource_tagger=MagicMock())
 
     statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
     assert not any("GRANT USE CATALOG" in statement for statement in statements)
@@ -267,6 +267,58 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
 
     startup_metadata_dims.refresh.assert_called_once_with()
     request_metadata_dims.refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_bundle_resources", [False, True])
+async def test_startup_reconciles_studio_resource_tags(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, include_bundle_resources: bool
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+    from databricks_labs_dqx_app.backend.services.resource_tagging_service import startup_tag_targets
+
+    app = FastAPI()
+    workspace = MagicMock()
+    delta_sql = MagicMock()
+    pg_executor = MagicMock()
+    app_settings = MagicMock()
+    compute = MagicMock()
+    compute.sp_application_id.return_value = "app-sp"
+    orchestrator = MagicMock()
+    orchestrator.reconcile = AsyncMock()
+    tagger = MagicMock()
+
+    async def get_workspace() -> MagicMock:
+        return workspace
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: resources)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: delta_sql)
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: pg_executor)
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: app_settings)
+    monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
+    monkeypatch.setattr(startup, "ResourceTaggingService", lambda _workspace: tagger)
+    monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
+    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
+    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+    monkeypatch.setattr(startup.conf, "tag_bundle_owned_resources", include_bundle_resources)
+
+    context = await startup.start_studio(app)
+    assert context is not None
+    try:
+        await activate_studio(context)
+        tagger.reconcile.assert_called_once_with(startup_tag_targets(resources, include_bundle_resources))
+    finally:
+        await deactivate_studio(context)
 
 
 @pytest.mark.asyncio
@@ -371,3 +423,83 @@ async def test_startup_cleans_open_context_when_reconciliation_is_cancelled(
         await startup.start_studio(app)
 
     pg_executor.close.assert_called_once_with()
+
+
+class TestGrantTaskRunnerRunConfigAccess:
+    """The app grants the task-runner SP read/delete on ``dq_run_configs`` at startup."""
+
+    def _oltp(self, dialect: str = "postgres") -> MagicMock:
+        oltp = MagicMock(name="oltp")
+        oltp.dialect = dialect
+        oltp.schema = "studio"
+        oltp.q.side_effect = lambda value: f'"{value}"'
+        oltp.fqn.side_effect = lambda name: f'"studio"."{name}"'
+        return oltp
+
+    def test_grants_usage_and_select_delete_when_configured(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
+        oltp = self._oltp()
+        startup._grant_task_runner_run_config_access(oltp)
+
+        issued = [call.args[0] for call in oltp.execute.call_args_list]
+        assert issued == [
+            'GRANT USAGE ON SCHEMA "studio" TO "sp-runner"',
+            'GRANT SELECT, DELETE ON "studio"."dq_run_configs" TO "sp-runner"',
+        ]
+
+    def test_noop_when_no_role_configured(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "")
+        oltp = self._oltp()
+        startup._grant_task_runner_run_config_access(oltp)
+        oltp.execute.assert_not_called()
+
+    def test_noop_when_oltp_is_not_postgres(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
+        oltp = self._oltp(dialect="delta")
+        startup._grant_task_runner_run_config_access(oltp)
+        oltp.execute.assert_not_called()
+
+    def test_skips_grant_when_role_malformed(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        # A role that fails validate_object_id must never be interpolated into DDL,
+        # but this optional best-effort grant must not abort startup — it logs and
+        # skips rather than letting the ValueError propagate out of the lifespan.
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", 'evil"; DROP')
+        oltp = self._oltp()
+        startup._grant_task_runner_run_config_access(oltp)  # does not raise
+        oltp.execute.assert_not_called()
+
+    def test_names_failing_statement_and_continues(self, monkeypatch) -> None:
+        from databricks_labs_dqx_app.backend import startup
+
+        # A failed first grant must not stop the second, and the warning must name
+        # the specific failing statement so a later opaque runner permission error
+        # can be traced back to the grant that did not apply.
+        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
+        oltp = self._oltp()
+        oltp.execute.side_effect = [RuntimeError("permission denied"), None]
+
+        # Capture directly off the module logger: the app reroutes logging, so
+        # pytest's caplog (which relies on root propagation) does not see these.
+        messages: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                messages.append(record.getMessage())
+
+        handler = _Capture()
+        startup.logger.addHandler(handler)
+        try:
+            startup._grant_task_runner_run_config_access(oltp)
+        finally:
+            startup.logger.removeHandler(handler)
+
+        assert oltp.execute.call_count == 2  # did not stop after the first failure
+        assert any('GRANT USAGE ON SCHEMA "studio" TO "sp-runner"' in m for m in messages)

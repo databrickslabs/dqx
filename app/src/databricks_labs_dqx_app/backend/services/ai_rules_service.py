@@ -17,6 +17,7 @@ from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_defin
 from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
+from databricks_labs_dqx_app.backend.models import CheckFunctionDef
 from databricks_labs_dqx_app.backend.lowcode_compile import (
     CompiledLowcodeBody,
     brace_bare_slot_refs,
@@ -193,6 +194,31 @@ _DQX_NATIVE_COVERAGE_GUIDANCE = (
     "that can express all of it. Prefer a built-in check whenever one genuinely covers the "
     "whole requirement."
 )
+# Built-in checks target ONE column of the table under test: the authoring UI
+# binds a native rule's column slots to exactly one column unless the check takes
+# a LIST-typed columns parameter (a composite-key check like ``is_unique``) — see
+# `filteredNativeFns` in RegistryRuleFormDialog.tsx. A requirement that relates
+# two different columns ("shipped date not before delivery date") therefore has no
+# authorable built-in form, even though DQX itself would accept a second column
+# passed to a value argument such as ``is_not_less_than(limit=...)``. Without this
+# the native pass answered such descriptions with a check the editor cannot bind,
+# instead of declining to the Condition Builder, which expresses col-vs-col
+# comparisons natively. `_native_needs_extra_columns` enforces the same rule on
+# the response, because a prompt is guidance and not a guarantee.
+_DQX_NATIVE_MULTI_COLUMN_GUIDANCE = (
+    "\n- A built-in check may target only ONE column of the table under test. The sole exception "
+    "is a check whose column argument takes a LIST of columns (a composite-key check such as "
+    "is_unique). If the requirement RELATES TWO OR MORE DIFFERENT columns to each other — e.g. "
+    '"shipped date is not before delivery date", "end date after start date", "discount under '
+    'list price" — no built-in check can express it: return exactly {"decline": true} and nothing '
+    "else, and it will be built on a surface that compares columns. NEVER pass a column name to a "
+    "non-column argument (a limit/value/threshold argument) to work around this."
+)
+
+# The full guidance block the dqx_native pass gets: a built-in check must cover
+# the requirement IN FULL (above) and must need only one column (here).
+_DQX_NATIVE_GUIDANCE = _DQX_NATIVE_COVERAGE_GUIDANCE + _DQX_NATIVE_MULTI_COLUMN_GUIDANCE
+
 # Sentinel key the native pass returns to decline (see above).
 _DECLINE_KEY = "decline"
 
@@ -875,7 +901,7 @@ class AiRulesService:
             definition_shape=definition_shape,
             columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else _SQL_COLUMNS_FIELD,
             columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else _SQL_COLUMNS_GUIDANCE,
-            coverage_guidance=_DQX_NATIVE_COVERAGE_GUIDANCE if is_native else "",
+            coverage_guidance=_DQX_NATIVE_GUIDANCE if is_native else "",
             dimensions=", ".join(dimensions),
             severities=", ".join(severities),
             available_functions=self._get_available_functions(),
@@ -961,6 +987,17 @@ class AiRulesService:
             # (item B2-32): names come from the model's chosen column references,
             # families are locked to the check function's own semantics.
             slots = self._derive_native_slots(function, arguments, proposal.get("columns"))
+            if self._native_needs_extra_columns(function, arguments, slots, proposal.get("columns")):
+                # Needs more than the one column a native rule can be bound to —
+                # fall through so the requirement lands on the Condition Builder,
+                # which compares two columns natively (see
+                # _DQX_NATIVE_MULTI_COLUMN_GUIDANCE).
+                logger.info(
+                    "AI-generated dqx_native rule dropped: check '%s' is not authorable as a "
+                    "single-column native rule (needs multiple columns or an unbindable value argument)",
+                    function,
+                )
+                return None
         elif mode == "sql":
             sql_query = definition.get("sql_query")
             if not isinstance(sql_query, str) or not sql_query.strip():
@@ -1176,9 +1213,7 @@ class AiRulesService:
             ``cardinality``, ``arg_key``), or ``[]`` when the function is
             unknown or has no column parameters.
         """
-        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
-
-        fn_def = next((f for f in _introspect_check_functions() if f.name == function), None)
+        fn_def = AiRulesService._check_function_def(function)
         if fn_def is None:
             return []
 
@@ -1217,6 +1252,88 @@ class AiRulesService:
                 )
                 position += 1
         return slots
+
+    @staticmethod
+    def _native_needs_extra_columns(
+        function: str,
+        arguments: dict[str, Any],
+        slots: list[dict[str, Any]],
+        ai_columns: object,
+    ) -> bool:
+        """Whether a validated native proposal needs more columns than it can be bound to.
+
+        A native registry rule binds its column slots to ONE column of the monitored
+        table, unless the check's column argument is LIST-typed (a composite-key check
+        such as *is_unique*), which accepts any number. The two ways a proposal outgrows
+        that — both produced by descriptions relating two columns, e.g. "shipped date is
+        not before delivery date" — are:
+
+        * the check has several single-column parameters (*is_older_than_col2_for_n_days*),
+          so more than one slot was derived; or
+        * a second column name was smuggled into a NON-column argument (*limit*,
+          *value*, …), which the editor renders as a literal input, leaving the column
+          unbindable at apply time.
+
+        Both are rejected so :meth:`generate_rule` falls through to the Condition
+        Builder, which expresses column-vs-column comparisons directly.
+
+        Args:
+            function: The validated check-function name.
+            arguments: The proposal's ``definition.arguments``.
+            slots: The slots derived by :meth:`_derive_native_slots`.
+            ai_columns: The model's top-level ``columns`` array — the columns it
+                says the rule references, which is how a column smuggled into a
+                value argument is recognised. Non-list ignored.
+
+        Returns:
+            True when the proposal cannot be authored as a native rule.
+        """
+        fn_def = AiRulesService._check_function_def(function)
+        if fn_def is None:
+            return False
+        column_params = [p for p in fn_def.params if p.kind in ("column", "columns")]
+        # A list-typed column argument is the one check shape that legitimately
+        # binds several columns (a composite key), so the slot COUNT says nothing
+        # about bindability there — but the value arguments are still checked
+        # below, rather than exempting the whole function.
+        if not any(p.kind == "columns" for p in column_params) and len(slots) > 1:
+            return True
+        # A second column smuggled into a value argument: the value names one of
+        # the columns the model itself declared, or is a {{placeholder}} — either
+        # way the editor renders that argument as a literal, not a column binding.
+        #
+        # KNOWN GAP: a BARE column name the model did not also declare in
+        # ``columns`` is not recognised here, and cannot be without a column
+        # universe to check against — this endpoint has none, because a registry
+        # rule is table-agnostic (the authoring form sends only the description).
+        # A purely textual test would misread legitimate string literals, which
+        # are shaped identically to a column name in exactly these arguments
+        # (``is_equal_to(value="emea")``, ``is_valid_national_id(country="GB")``).
+        # `_DQX_NATIVE_MULTI_COLUMN_GUIDANCE` is the primary defence; this is the
+        # backstop for the forms that ARE recognisable.
+        declared = {
+            AiRulesService._sanitize_slot_name(name) for name in AiRulesService._declared_column_names(ai_columns)
+        }
+        column_param_names = {p.name for p in column_params}
+        for key, value in arguments.items():
+            if key in column_param_names or not isinstance(value, str):
+                continue
+            if _SLOT_TOKEN_RE.match(value.strip()):
+                return True
+            if AiRulesService._sanitize_slot_name(value) in declared:
+                return True
+        return False
+
+    @staticmethod
+    def _check_function_def(function: str) -> CheckFunctionDef | None:
+        """The introspected definition of one check function, or None when unknown.
+
+        Shared by the slot derivation and the bindability guard so both read the
+        same (lru_cached) catalog through one lookup.
+        """
+        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
+
+        return next((f for f in _introspect_check_functions() if f.name == function), None)
 
     @staticmethod
     def _slot_names_from_arg(value: object) -> list[str]:

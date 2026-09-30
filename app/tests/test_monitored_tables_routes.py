@@ -1542,6 +1542,48 @@ class TestRunMonitoredTable:
             sample_size=None,
         )
 
+    def test_staging_infra_failure_maps_to_503(self):
+        """A RunConfigStagingError (Lakebase unreachable / dq_run_configs missing)
+        is a server-side fault, not a bad request — it must surface as 503."""
+        from databricks_labs_dqx_app.backend.run_config_store import RunConfigStagingError
+
+        svc = MagicMock()
+        svc.run_binding.side_effect = RunConfigStagingError("run-1", "dqx_studio.dq_run_configs", RuntimeError("down"))
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="approved", version=None),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
+        assert excinfo.value.status_code == 503
+
+    def test_oversized_and_unavailable_configs_map_to_400(self):
+        """Caller/config-level run-config errors (too large, or Lakebase disabled
+        for an oversized config) stay 400-class, unlike infra staging failures."""
+        from databricks_labs_dqx_app.backend.run_config_store import (
+            RunConfigStagingUnavailableError,
+            RunConfigTooLargeError,
+        )
+
+        for err in (RunConfigTooLargeError(12000), RunConfigStagingUnavailableError(12000, "delta")):
+            svc = MagicMock()
+            svc.run_binding.side_effect = err
+            with pytest.raises(HTTPException) as excinfo:
+                run_monitored_table(
+                    "b1",
+                    body=RunMonitoredTableIn(source="approved", version=None),
+                    obo_ws=_mock_obo_ws(),
+                    run_svc=svc,
+                    role=UserRole.ADMIN,
+                    principal_ids=frozenset(),
+                    perms=MagicMock(),
+                )
+            assert excinfo.value.status_code == 400, f"{type(err).__name__} should map to 400"
+
     def test_execute_check_called_before_run(self):
         """require_object(EXECUTE) is invoked on the monitored table before delegating to run_binding."""
         from unittest.mock import create_autospec

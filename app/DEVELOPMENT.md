@@ -9,6 +9,8 @@
 - **Databricks CLI** v1.4.0+ — install per the [official guide](https://docs.databricks.com/aws/en/dev-tools/cli/install) (the legacy `databricks-cli` PyPI package is unrelated and not supported). Verify with `databricks --version`. v1.4.0 is the minimum for `make app-deploy` because the bundle's `postgres_projects` / `postgres_roles` resources are only accepted by CLI ≥ 1.4.0.
 - Access to a Databricks workspace
 
+The `make app-*` commands use a Unix shell on macOS or Linux. On Windows, the experimental `make.ps1` helper supports source deployment with `.\make.ps1 app-deploy -Profile <profile> -Target <target>` from the repository root. Tagged release deployment uses only Git and the Databricks CLI; see [DEPLOYMENT.md](DEPLOYMENT.md#deploy-a-tagged-studio-release-without-building-locally).
+
 ## Command Reference
 
 Every workflow runs through `make` targets at the project root. The
