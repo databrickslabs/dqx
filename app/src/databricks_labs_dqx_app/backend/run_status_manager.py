@@ -13,7 +13,6 @@ from typing import Protocol
 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor, bind_list
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +31,21 @@ def update_run_status(
     Works for any run table (dq_validation_runs, dq_profiling_results).
     """
     table = sql.fqn(table_name)
-    er = escape_sql_string(run_id)
-    es = escape_sql_string(status)
-    em = escape_sql_string(error_message or "")
+    parameters = {"run_id": run_id, "status": status, "error_message": error_message or ""}
 
     # updated_at is TIMESTAMP in the baseline; pass current_timestamp()
     # directly rather than casting to STRING.
-    set_clause = f"status = '{es}', error_message = '{em}', updated_at = current_timestamp()"
+    set_clause = (
+        f"status = {sql.param('status')}, error_message = {sql.param('error_message')}, "
+        "updated_at = current_timestamp()"
+    )
     if canceled_by:
-        ec = escape_sql_string(canceled_by)
-        set_clause += f", canceled_by = '{ec}'"
+        set_clause += f", canceled_by = {sql.param('canceled_by')}"
+        parameters["canceled_by"] = canceled_by
 
-    stmt = f"UPDATE {table} SET {set_clause} WHERE run_id = '{er}' AND status = 'RUNNING'"
+    stmt = f"UPDATE {table} SET {set_clause} WHERE run_id = {sql.param('run_id')} AND status = 'RUNNING'"
     try:
-        sql.execute(stmt)
+        sql.execute(stmt, parameters=parameters)
         logger.info("Updated %s run %s status to %s", table_name, run_id, status)
     except Exception as exc:
         logger.warning("Failed to update %s status for %s: %s", table_name, run_id, exc)

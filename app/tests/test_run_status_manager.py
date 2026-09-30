@@ -1,8 +1,7 @@
 """Tests for ``run_status_manager`` — pure SQL-driven helpers.
 
 We mock the ``SqlExecutor.query`` / ``execute`` calls and verify both the
-return-shape behaviour and the literal SQL that gets executed (so any
-future regression in escaping or column ordering is caught early).
+return-shape behaviour and bound SQL parameters.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -35,6 +34,26 @@ def _status(state: str, result_state: str | None = None, message: str | None = N
 
 
 class TestUpdateRunStatus:
+    def test_runtime_status_fields_are_bound(self, sql_executor_mock, app_config):
+        payload = "quote' backslash\\ OR 1=1 --"
+        update_run_status(
+            sql=sql_executor_mock,
+            app_conf=app_config,
+            table_name="dq_validation_runs",
+            run_id=payload,
+            status="FAILED",
+            error_message=payload,
+            canceled_by=payload,
+        )
+        call = sql_executor_mock.execute.call_args
+        assert payload not in call.args[0]
+        assert call.kwargs["parameters"] == {
+            "run_id": payload,
+            "status": "FAILED",
+            "error_message": payload,
+            "canceled_by": payload,
+        }
+
     def test_minimal_update_emits_expected_sql(self, sql_executor_mock, app_config):
         update_run_status(
             sql=sql_executor_mock,
@@ -47,10 +66,15 @@ class TestUpdateRunStatus:
         sql_executor_mock.execute.assert_called_once()
         sql = sql_executor_mock.execute.call_args.args[0]
         assert "UPDATE " in sql
-        assert "WHERE run_id = 'abc-123'" in sql
-        assert "status = 'SUCCESS'" in sql
+        assert "WHERE run_id = :run_id" in sql
+        assert "status = :status" in sql
         assert "AND status = 'RUNNING'" in sql
         assert "canceled_by" not in sql
+        assert sql_executor_mock.execute.call_args.kwargs["parameters"] == {
+            "run_id": "abc-123",
+            "status": "SUCCESS",
+            "error_message": "",
+        }
 
     def test_with_canceled_by_appends_canceled_clause(self, sql_executor_mock, app_config):
         update_run_status(
@@ -63,10 +87,11 @@ class TestUpdateRunStatus:
             canceled_by="alice@x",
         )
         sql = sql_executor_mock.execute.call_args.args[0]
-        assert "canceled_by = 'alice@x'" in sql
-        assert "error_message = 'user requested'" in sql
+        assert "canceled_by = :canceled_by" in sql
+        assert "error_message = :error_message" in sql
+        assert sql_executor_mock.execute.call_args.kwargs["parameters"]["canceled_by"] == "alice@x"
 
-    def test_quotes_in_run_id_are_escaped(self, sql_executor_mock, app_config):
+    def test_quotes_in_run_id_are_bound(self, sql_executor_mock, app_config):
         update_run_status(
             sql=sql_executor_mock,
             app_conf=app_config,
@@ -76,7 +101,9 @@ class TestUpdateRunStatus:
             error_message=None,
         )
         sql = sql_executor_mock.execute.call_args.args[0]
-        assert "run_id = 'a''b'" in sql  # doubled single-quote
+        assert "run_id = :run_id" in sql
+        assert "a'b" not in sql
+        assert sql_executor_mock.execute.call_args.kwargs["parameters"]["run_id"] == "a'b"
 
     def test_swallows_executor_errors(self, sql_executor_mock, app_config):
         sql_executor_mock.execute.side_effect = RuntimeError("boom")
@@ -242,8 +269,9 @@ class TestReconcileRunningRows:
         # The correction is persisted to the Delta row via an UPDATE.
         sql_executor_mock.execute.assert_called_once()
         upd = sql_executor_mock.execute.call_args.args[0]
-        assert "status = 'FAILED'" in upd
-        assert "WHERE run_id = 'r1'" in upd
+        assert "status = :status" in upd
+        assert "WHERE run_id = :run_id" in upd
+        assert sql_executor_mock.execute.call_args.kwargs["parameters"]["status"] == "FAILED"
 
     def test_canceled_result_maps_to_canceled(self, sql_executor_mock, app_config):
         sql_executor_mock.query.return_value = [["r1", "111"]]
@@ -372,7 +400,8 @@ class TestReconcileStaleAgeFallback:
         # Must persist via UPDATE.
         sql_executor_mock.execute.assert_called_once()
         upd = sql_executor_mock.execute.call_args.args[0]
-        assert "status = 'FAILED'" in upd
+        assert "status = :status" in upd
+        assert sql_executor_mock.execute.call_args.kwargs["parameters"]["status"] == "FAILED"
         # status_fn never called — no job_run_id to look up.
         status_fn.assert_not_called()
 

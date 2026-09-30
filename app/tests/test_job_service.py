@@ -44,6 +44,34 @@ def test_list_run_rows_binds_source_table_and_limit(sql_executor_mock: MagicMock
     }
 
 
+def test_record_run_started_binds_runtime_values(sql_executor_mock: MagicMock) -> None:
+    service = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock())
+    payload = "quote' backslash\\ OR 1=1 --"
+
+    service.record_run_started(
+        "`catalog`.`schema`.`dq_profiling_results`",
+        payload,
+        payload,
+        payload,
+        payload,
+        sample_limit=25,
+        job_run_id=42,
+        sample_kind=payload,
+    )
+
+    call = sql_executor_mock.execute.call_args
+    assert payload not in call.args[0]
+    assert call.kwargs["parameters"] == {
+        "run_id": payload,
+        "requesting_user": payload,
+        "source_table_fqn": payload,
+        "view_fqn": payload,
+        "sample_limit": 25,
+        "job_run_id": 42,
+        "sample_kind": payload,
+    }
+
+
 def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMock) -> None:
     """Submissions use the reconciled job ID, not the obsolete config binding."""
     workspace = MagicMock(name="WorkspaceClient")

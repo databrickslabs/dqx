@@ -182,29 +182,35 @@ class JobService:
         warehouse stamps the value with its own clock and zone-mapping
         works correctly on the cluster key.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        er = escape_sql_string(run_id)
-        eu = escape_sql_string(requesting_user)
-        ef = escape_sql_string(source_table_fqn)
-        ev = escape_sql_string(view_fqn)
-
+        parameters: dict[str, str | int] = {
+            "run_id": run_id,
+            "requesting_user": requesting_user,
+            "source_table_fqn": source_table_fqn,
+            "view_fqn": view_fqn,
+            size_column: int(size_value),
+        }
         cols = f"run_id, requesting_user, source_table_fqn, view_fqn, {size_column}, status, created_at"
-        vals = f"'{er}', '{eu}', '{ef}', '{ev}', {int(size_value)}, 'RUNNING', current_timestamp()"
+        vals = (
+            f"{self._sql.param('run_id')}, {self._sql.param('requesting_user')}, "
+            f"{self._sql.param('source_table_fqn')}, {self._sql.param('view_fqn')}, "
+            f"{self._sql.param(size_column)}, 'RUNNING', current_timestamp()"
+        )
         if run_type:
-            ert = escape_sql_string(run_type)
             cols += ", run_type"
-            vals += f", '{ert}'"
+            vals += f", {self._sql.param('run_type')}"
+            parameters["run_type"] = run_type
         if job_run_id is not None:
             cols += ", job_run_id"
-            vals += f", {int(job_run_id)}"
+            vals += f", {self._sql.param('job_run_id')}"
+            parameters["job_run_id"] = int(job_run_id)
         if sample_kind is not None:
             cols += ", sample_kind"
-            vals += f", '{escape_sql_string(sample_kind)}'"
+            vals += f", {self._sql.param('sample_kind')}"
+            parameters["sample_kind"] = sample_kind
 
         sql = f"INSERT INTO {table} ({cols}) VALUES ({vals})"
         try:
-            self._sql.execute(sql)
+            self._sql.execute(sql, parameters=parameters)
         except Exception as exc:
             logger.warning("Failed to record run started for %s: %s", run_id, exc)
 
