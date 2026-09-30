@@ -18,7 +18,7 @@ from typing import Any, cast, get_args
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import RunSetSource, RunSetTrigger
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -160,15 +160,15 @@ class RunSetService:
 
     def list_for_product(self, product_id: str, limit: int = 50) -> list[RunSetSummary]:
         """Return the run sets triggered for *product_id*, newest first."""
-        e = escape_sql_string(product_id)
         created_at = self._sql.ts_text("created_at")
         trigger_col = self._sql.q("trigger")
         sql = (
             f"SELECT run_set_id, product_id, product_version, source, {trigger_col} AS trigger_value, "  # noqa: S608
             f"created_by, {created_at} AS created_at "
-            f"FROM {self._run_sets_table} WHERE product_id = '{e}' ORDER BY created_at DESC LIMIT {int(limit)}"
+            f"FROM {self._run_sets_table} WHERE product_id = {self._sql.param('product_id')} "
+            f"ORDER BY created_at DESC LIMIT {self._sql.param('limit')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"product_id": product_id, "limit": int(limit)})
         run_set_ids = [row[0] for row in rows]
         members_by_set = self._fetch_members(run_set_ids)
         all_run_ids = [m.run_id for members in members_by_set.values() for m in members]
@@ -215,12 +215,12 @@ class RunSetService:
         """
         if not run_ids:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_ids)
+        in_list, parameters = bind_list(self._sql.param, "run_id", run_ids)
         sql = (
             f"SELECT run_id, run_set_id FROM {self._members_table} "  # noqa: S608
             f"WHERE run_id IN ({in_list})"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return {row[0]: row[1] for row in rows if row[0] and row[1]}
 
     def get(self, run_set_id: str) -> RunSetDetail:
@@ -229,15 +229,14 @@ class RunSetService:
         Raises:
             LookupError: no ``dq_run_sets`` row exists for *run_set_id*.
         """
-        e = escape_sql_string(run_set_id)
         created_at = self._sql.ts_text("created_at")
         trigger_col = self._sql.q("trigger")
         sql = (
             f"SELECT run_set_id, product_id, product_version, source, {trigger_col} AS trigger_value, "  # noqa: S608
             f"created_by, {created_at} AS created_at "
-            f"FROM {self._run_sets_table} WHERE run_set_id = '{e}'"
+            f"FROM {self._run_sets_table} WHERE run_set_id = {self._sql.param('run_set_id')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"run_set_id": run_set_id})
         if not rows:
             raise LookupError(f"Run set not found: {run_set_id}")
         row = rows[0]
@@ -282,12 +281,12 @@ class RunSetService:
     def _fetch_members(self, run_set_ids: list[str]) -> dict[str, list[_MemberRow]]:
         if not run_set_ids:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_set_ids)
+        in_list, parameters = bind_list(self._sql.param, "run_set_id", run_set_ids)
         sql = (
             f"SELECT run_set_id, run_id, binding_id, binding_version FROM {self._members_table} "  # noqa: S608
             f"WHERE run_set_id IN ({in_list})"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         result: dict[str, list[_MemberRow]] = {}
         for row in rows:
             result.setdefault(row[0], []).append(
@@ -305,7 +304,7 @@ class RunSetService:
         """
         if not run_ids:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_ids)
+        in_list, parameters = bind_list(self._validation_sql.param, "run_id", run_ids)
         sql = (
             "SELECT run_id, source_table_fqn, status, total_rows, valid_rows, "  # noqa: S608
             "invalid_rows, error_rows, warning_rows FROM ("
@@ -316,7 +315,7 @@ class RunSetService:
             f"  FROM {self._validation_runs_table} WHERE run_id IN ({in_list})"
             ") WHERE rn = 1"
         )
-        rows = self._validation_sql.query_dicts(sql)
+        rows = self._validation_sql.query_dicts(sql, parameters=parameters)
         result: dict[str, dict[str, Any]] = {}
         for row in rows:
             run_id = row.get("run_id")

@@ -1126,6 +1126,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return sql_executor_mock
 
@@ -1277,7 +1278,7 @@ class TestMaterializeBindingIdempotency:
         )
         existing_check_json = json.dumps(check, sort_keys=True)
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 return [["approved", 1, existing_check_json]]
             return []
@@ -1299,7 +1300,7 @@ class TestMaterializeBindingIdempotency:
         registry.get_rule.return_value = _published_rule()
         registry.get_version.return_value = _version_snapshot()
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 return [["draft", 1, "{}"]]
             return []
@@ -1322,7 +1323,7 @@ class TestAutoUpgradeBehaviour:
         registry.get_rule.return_value = _published_rule(version=2)  # republished
         registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")  # content differs
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 # Was materialized against v1; resolved version now moves to v2.
                 return [["approved", 1, json.dumps({"different": "content"})]]
@@ -1344,7 +1345,7 @@ class TestAutoUpgradeBehaviour:
         registry.get_rule.return_value = _published_rule(version=2)
         registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 # Was materialized against v1; an unpinned follower now resolves
                 # to the freshly published v2 — a genuine VERSION move, so the
@@ -1378,7 +1379,7 @@ class TestAutoUpgradeBehaviour:
         registry.get_rule.return_value = _published_rule(version=1)
         registry.get_version.return_value = _version_snapshot(version=1, severity="High")
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 # Already materialized against the SAME resolved version (v1).
                 return [["approved", 1, json.dumps({"different": "content"})]]
@@ -1406,7 +1407,7 @@ class TestAutoUpgradeBehaviour:
         registry.get_rule.return_value = _published_rule(version=1)
         registry.get_version.return_value = _version_snapshot(version=1, severity="High")
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 return [["approved", 1, json.dumps({"different": "content"})]]
             return []
@@ -1426,7 +1427,7 @@ class TestCleanup:
         registry.get_rule.return_value = _published_rule()
         registry.get_version.return_value = _version_snapshot()
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT status" in sql_text:
                 return []  # ar1-0 is new
             if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
@@ -1483,7 +1484,7 @@ class TestAllGroupsFailRenderIsNonDestructive:
         registry.get_rule.return_value = _published_rule(version=2)
         registry.get_version.return_value = self._mismatched_version(version=2)
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             # The application still has one materialized approved row.
             if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
                 return [["ar1-0"]]
@@ -1506,7 +1507,7 @@ class TestAllGroupsFailRenderIsNonDestructive:
         registry.get_rule.return_value = _published_rule()
         registry.get_version.return_value = _version_snapshot()
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
                 return [["ar1-0"]]  # stale row from a previously-wider mapping
             return []
@@ -1533,7 +1534,7 @@ class TestRematerializeForRule:
         registry.get_rule.return_value = _published_rule(version=2)
         registry.get_version.return_value = _version_snapshot(version=2)
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "dq_applied_rules" in sql_text:
                 return [["b1"]]
             return []
@@ -1544,7 +1545,7 @@ class TestRematerializeForRule:
         assert result == ["b1"]
         applied_rules_query = next(c.args[0] for c in sql.query.call_args_list if "dq_applied_rules" in c.args[0])
         assert "pinned_version IS NULL" in applied_rules_query
-        assert "'r1'" in applied_rules_query
+        assert "rule_id = :rule_id" in applied_rules_query
         monitored_tables.get.assert_called_once_with("b1")
 
     def test_rematerializes_every_distinct_binding(self, materializer, sql, monitored_tables, registry):
@@ -1563,7 +1564,7 @@ class TestRematerializeForRule:
 
         monitored_tables.get.side_effect = get_detail
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "dq_applied_rules" in sql_text:
                 return [["b1"], ["b2"]]
             return []
@@ -1577,7 +1578,7 @@ class TestRematerializeForRule:
     def test_skips_binding_that_no_longer_exists(self, materializer, sql, monitored_tables):
         monitored_tables.get.return_value = None  # binding was deleted after publish
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "dq_applied_rules" in sql_text:
                 return [["gone"]]
             return []
@@ -1594,6 +1595,16 @@ class TestRematerializeForRule:
         assert result == []
         monitored_tables.get.assert_not_called()
 
+    def test_rematerialize_binds_rule_id(self, materializer, sql):
+        rule_id = "r\\' OR 1=1 --"
+        sql.query.return_value = []
+
+        assert materializer.rematerialize_for_rule(rule_id) == []
+        statement = sql.query.call_args.args[0]
+        assert "rule_id = :rule_id" in statement
+        assert rule_id not in statement
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id": rule_id}
+
     def test_respects_auto_upgrade_behaviour_b_via_materialize_binding(
         self, materializer, sql, registry, monitored_tables, app_settings
     ):
@@ -1609,7 +1620,7 @@ class TestRematerializeForRule:
         registry.get_rule.return_value = _published_rule(version=2)
         registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")
 
-        def fake_query(sql_text: str):
+        def fake_query(sql_text: str, **_kwargs: object):
             if "dq_applied_rules" in sql_text:
                 return [["b1"]]
             if "SELECT status" in sql_text:

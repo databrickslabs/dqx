@@ -22,6 +22,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return sql_executor_mock
 
@@ -223,7 +224,7 @@ class TestCreateRule:
         existing_definition = _native_definition()
         published = None
 
-        def fake_query(query_sql):
+        def fake_query(query_sql, **_kwargs: object):
             nonlocal published
             if "fingerprint" in query_sql and "approved" in query_sql:
                 assert published is not None
@@ -251,6 +252,10 @@ class TestCreateRule:
             svc.create_rule(mode="dqx_native", definition=existing_definition, user_email="bob@x")
         assert "existing1" in str(exc_info.value)
         assert exc_info.value.existing_rule_id == "existing1"
+        duplicate_query = next(c for c in sql.query.call_args_list if "rule_id !=" in c.args[0])
+        assert "fingerprint = :fingerprint" in duplicate_query.args[0]
+        assert "rule_id != :rule_id" in duplicate_query.args[0]
+        assert duplicate_query.kwargs["parameters"]["fingerprint"] == published.fingerprint
         # Nothing inserted when blocked.
         assert sql.execute.call_count == 0
 
@@ -258,7 +263,7 @@ class TestCreateRule:
         existing_definition = _native_definition()
         published = None
 
-        def fake_query(query_sql):
+        def fake_query(query_sql, **_kwargs: object):
             nonlocal published
             if "fingerprint" in query_sql and "approved" in query_sql:
                 assert published is not None
@@ -804,11 +809,47 @@ class TestDeleteBuiltinRules:
 
 
 class TestListAndGet:
+    def test_get_rule_binds_untrusted_id(self, svc, sql):
+        sql.query.return_value = []
+        rule_id = "r\\' OR 1=1 --"
+
+        assert svc.get_rule(rule_id) is None
+        assert "rule_id = :rule_id" in sql.query.call_args.args[0]
+        assert rule_id not in sql.query.call_args.args[0]
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id": rule_id}
+
+    @pytest.mark.parametrize("lookup", ["get_rule_by_fingerprint", "get_active_rule_by_fingerprint"])
+    def test_fingerprint_lookups_bind_runtime_value(self, svc, sql, lookup):
+        sql.query.return_value = []
+        fingerprint = "f\\' OR 1=1 --"
+
+        assert getattr(svc, lookup)(fingerprint) is None
+        assert "fingerprint = :fingerprint" in sql.query.call_args.args[0]
+        assert sql.query.call_args.kwargs["parameters"] == {"fingerprint": fingerprint}
+
+    def test_approved_fingerprint_lookup_binds_runtime_value(self, svc, sql):
+        fingerprint = "f\\' OR 1=1 --"
+        assert svc.get_approved_rule_by_fingerprint(fingerprint) is None
+        statement = sql.query.call_args.args[0]
+        assert "fingerprint = :fingerprint" in statement
+        assert fingerprint not in statement
+        assert sql.query.call_args.kwargs["parameters"] == {"fingerprint": fingerprint}
+
     def test_list_filters_by_status_in_sql(self, svc, sql):
         sql.query.return_value = []
         svc.list_rules(status="approved")
         called_sql = sql.query.call_args[0][0]
-        assert "status = 'approved'" in called_sql
+        assert "status = :status" in called_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"status": "approved"}
+
+    def test_list_binds_owner_without_inlining_it(self, svc, sql):
+        sql.query.return_value = []
+        owner = "x\\' OR 1=1 --"
+        svc.list_rules(owner=owner)
+        called_sql = sql.query.call_args[0][0]
+        assert "owner = :owner" in called_sql
+        assert owner not in called_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"owner": owner}
 
     def test_list_filters_by_dimension_in_python(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
@@ -846,6 +887,15 @@ class TestListAndGet:
         sql.query.side_effect = [[_row_for(a), _row_for(b), _row_for(c)], []]
         result = svc.list_rules(rule_ids=["a", "c"])
         assert {r.rule_id for r in result} == {"a", "c"}
+        snapshot_query = sql.query.call_args_list[1]
+        assert "rule_id = :rule_id_0" in snapshot_query.args[0]
+        assert "version = :version_0" in snapshot_query.args[0]
+        assert snapshot_query.kwargs["parameters"] == {
+            "rule_id_0": "a",
+            "version_0": 1,
+            "rule_id_1": "c",
+            "version_1": 1,
+        }
 
     def test_get_rule_returns_none_when_missing(self, svc, sql):
         sql.query.return_value = []
@@ -937,6 +987,16 @@ class TestGetRulesMany:
         assert svc.get_rules_many([]) == {}
         sql.query.assert_not_called()
 
+    def test_batch_lookup_binds_each_id(self, svc, sql):
+        sql.query.return_value = []
+        rule_id = "r\\' OR 1=1 --"
+
+        assert svc.get_rules_many([rule_id, "safe"]) == {}
+        statement = sql.query.call_args.args[0]
+        assert rule_id not in statement
+        assert ":rule_id_0" in statement and ":rule_id_1" in statement
+        assert set(sql.query.call_args.kwargs["parameters"].values()) == {rule_id, "safe"}
+
     def test_missing_ids_absent_from_result(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
@@ -974,6 +1034,16 @@ class TestGetVersionsMany:
         assert sql.query.call_count == 1
         called_sql = sql.query.call_args[0][0]
         assert " OR " in called_sql or "rule_id = " in called_sql
+
+    def test_batch_versions_bind_ids_and_versions(self, svc, sql):
+        sql.query.return_value = []
+        rule_id = "r\\' OR 1=1 --"
+
+        assert svc.get_versions_many([(rule_id, 3)]) == {}
+        statement = sql.query.call_args.args[0]
+        assert "rule_id = :rule_id_0 AND version = :version_0" in statement
+        assert rule_id not in statement
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id_0": rule_id, "version_0": 3}
 
     def test_empty_input_issues_no_query(self, svc, sql):
         assert svc.get_versions_many([]) == {}
@@ -1161,6 +1231,14 @@ class TestModifiedSincePublish:
 
 
 class TestListVersions:
+    def test_list_versions_binds_rule_id(self, svc, sql):
+        rule_id = "r\\' OR 1=1 --"
+        assert svc.list_versions(rule_id) == []
+        statement = sql.query.call_args.args[0]
+        assert "rule_id = :rule_id" in statement
+        assert rule_id not in statement
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id": rule_id}
+
     def test_lists_versions_newest_first(self, svc, sql):
         definition = _native_definition()
         sql.query.return_value = [

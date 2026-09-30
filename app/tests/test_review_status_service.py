@@ -20,6 +20,7 @@ def review_status_service(sql_executor_mock):
     # inspectable, matching the convention in test_role_service.py.
     sql_executor_mock.fqn.side_effect = lambda t: t
     sql_executor_mock.ts_text.side_effect = lambda c: c
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     # No explicit row exists by default, so ``get_effective`` falls back
     # to the catalogue default and ``set_status`` performs an upsert.
     sql_executor_mock.query.return_value = []
@@ -33,6 +34,15 @@ def review_status_service(sql_executor_mock):
 
     svc = ReviewStatusService(sql=sql_executor_mock, settings=settings)
     return svc, sql_executor_mock
+
+
+def test_get_explicit_binds_run_id(review_status_service) -> None:
+    service, sql = review_status_service
+    run_id = "r\\' OR 1=1 --"
+
+    assert service.get_explicit(run_id) is None
+    assert "run_id = :run_id" in sql.query.call_args.args[0]
+    assert sql.query.call_args.kwargs["parameters"] == {"run_id": run_id}
 
 
 def _history_inserts(sql_executor_mock) -> list[str]:

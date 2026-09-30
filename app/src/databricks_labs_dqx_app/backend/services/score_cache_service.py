@@ -46,7 +46,13 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     RUN_MODE_PUBLISHED,
     metric_view_fqn,
 )
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import (
+    OltpExecutorProtocol,
+    RawSql,
+    SqlExecutor,
+    SqlParameterValue,
+    bind_list,
+)
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
 logger = logging.getLogger(__name__)
@@ -190,7 +196,7 @@ class ScoreCacheService:
     def _query_latest_published_scores(self, table_fqns: list[str]) -> list[dict[str, str | None]]:
         """The batched metric-view query: latest published run per table."""
         mv = metric_view_fqn(self._warehouse_sql.catalog, self._genie_schema)
-        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
+        in_list, parameters = bind_list(self._warehouse_sql.param, "table_fqn", table_fqns)
         stmt = (
             f"SELECT input_location, run_id, run_time, score, failed_tests, total_tests FROM ("
             f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_time, "
@@ -201,7 +207,7 @@ class ScoreCacheService:
             f"GROUP BY input_location, run_id, run_time"
             f") QUALIFY ROW_NUMBER() OVER (PARTITION BY input_location ORDER BY run_time DESC) = 1"
         )
-        return self._warehouse_sql.query_dicts(stmt)
+        return self._warehouse_sql.query_dicts(stmt, parameters=parameters)
 
     # ------------------------------------------------------------------
     # Refresh — derived scopes (OLTP-only, no warehouse hit)
@@ -220,7 +226,6 @@ class ScoreCacheService:
         mirroring :meth:`refresh_global`: full validation runs against
         approved tables are the only scores that feed derived aggregates.
         """
-        e = escape_sql_string(product_id)
         stmt = (
             f"SELECT AVG(sc.score) AS score, SUM(sc.failed_tests) AS failed_tests, "
             f"SUM(sc.total_tests) AS total_tests "
@@ -228,10 +233,14 @@ class ScoreCacheService:
             f"JOIN {self._monitored_table} mt ON mt.binding_id = m.binding_id "
             f"JOIN {self._cache_table} sc "
             f"ON sc.scope_type = '{SCOPE_TABLE}' AND sc.scope_key = mt.table_fqn "
-            f"WHERE m.product_id = '{e}' AND sc.score IS NOT NULL "
+            f"WHERE m.product_id = {self._oltp.param('product_id')} AND sc.score IS NOT NULL "
             f"AND mt.status = '{MONITORED_STATUS_APPROVED}'"
         )
-        self._upsert_aggregate(SCOPE_PRODUCT, product_id, self._oltp.query_dicts(stmt))
+        self._upsert_aggregate(
+            SCOPE_PRODUCT,
+            product_id,
+            self._oltp.query_dicts(stmt, parameters={"product_id": product_id}),
+        )
 
     def refresh_global(self) -> None:
         """Recompute + upsert the single 'global' row from APPROVED tables' cached rows.
@@ -296,9 +305,9 @@ class ScoreCacheService:
         """
         stmt = (
             f"SELECT table_fqn FROM {self._monitored_table} "  # noqa: S608
-            f"ORDER BY table_fqn LIMIT {int(limit)}"
+            f"ORDER BY table_fqn LIMIT {self._oltp.param('limit')}"
         )
-        rows = self._oltp.query(stmt)
+        rows = self._oltp.query(stmt, parameters={"limit": int(limit)})
         return [row[0] for row in rows if row and row[0]]
 
     def product_ids_containing_tables(self, table_fqns: list[str]) -> list[str]:
@@ -312,14 +321,14 @@ class ScoreCacheService:
             candidates.append(fqn)
         if not candidates:
             return []
-        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
+        in_list, parameters = bind_list(self._oltp.param, "table_fqn", candidates)
         stmt = (
             f"SELECT DISTINCT m.product_id "
             f"FROM {self._members_table} m "  # noqa: S608
             f"JOIN {self._monitored_table} mt ON mt.binding_id = m.binding_id "
             f"WHERE mt.table_fqn IN ({in_list})"
         )
-        rows = self._oltp.query(stmt)
+        rows = self._oltp.query(stmt, parameters=parameters)
         return [row[0] for row in rows if row and row[0]]
 
     # ------------------------------------------------------------------
@@ -333,18 +342,19 @@ class ScoreCacheService:
         """
         if not scope_keys:
             return {}
-        e_scope = escape_sql_string(scope_type)
-        in_list = ", ".join(f"'{escape_sql_string(k)}'" for k in dict.fromkeys(scope_keys))
+        parameters: dict[str, SqlParameterValue] = {"scope_type": scope_type}
+        in_list, key_parameters = bind_list(self._oltp.param, "scope_key", list(dict.fromkeys(scope_keys)))
+        parameters.update(key_parameters)
         run_time = self._oltp.ts_text("run_time")
         computed_at = self._oltp.ts_text("computed_at")
         stmt = (
             f"SELECT scope_key, score, failed_tests, total_tests, latest_run_id, "
             f"{run_time} AS run_time, {computed_at} AS computed_at "
             f"FROM {self._cache_table} "  # noqa: S608
-            f"WHERE scope_type = '{e_scope}' AND scope_key IN ({in_list})"
+            f"WHERE scope_type = {self._oltp.param('scope_type')} AND scope_key IN ({in_list})"
         )
         out: dict[str, CachedScore] = {}
-        for row in self._oltp.query_dicts(stmt):
+        for row in self._oltp.query_dicts(stmt, parameters=parameters):
             key = row.get("scope_key")
             if not key:
                 continue
@@ -367,16 +377,15 @@ class ScoreCacheService:
         never append — see :meth:`_append_history`). ``latest_run_id``
         is not recorded in history, so it is always None here.
         """
-        e_type = escape_sql_string(scope_type)
-        e_key = escape_sql_string(scope_key)
         run_time = self._oltp.ts_text("run_time")
         computed_at = self._oltp.ts_text("computed_at")
         stmt = (
             f"SELECT score, failed_tests, total_tests, "
             f"{run_time} AS run_time, {computed_at} AS computed_at "
             f"FROM {self._history_table} "  # noqa: S608
-            f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' "
-            f"ORDER BY computed_at DESC LIMIT {int(limit)}"
+            f"WHERE scope_type = {self._oltp.param('scope_type')} "
+            f"AND scope_key = {self._oltp.param('scope_key')} "
+            f"ORDER BY computed_at DESC LIMIT {self._oltp.param('limit')}"
         )
         points = [
             parse_cached_score(
@@ -386,7 +395,10 @@ class ScoreCacheService:
                 row.get("computed_at"),
                 run_time=row.get("run_time"),
             )
-            for row in self._oltp.query_dicts(stmt)
+            for row in self._oltp.query_dicts(
+                stmt,
+                parameters={"scope_type": scope_type, "scope_key": scope_key, "limit": int(limit)},
+            )
         ]
         points.reverse()
         return points

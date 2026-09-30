@@ -224,15 +224,14 @@ class TestListRunRowsSourceTableFilter:
     def test_filter_scopes_by_source_table_fqn(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
         job_service.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="cat.sch.orders")
         emitted = sql_executor_mock.query_dicts.call_args.args[0]
-        assert "WHERE source_table_fqn = 'cat.sch.orders'" in emitted
+        assert "WHERE source_table_fqn = :source_table_fqn" in emitted
+        assert sql_executor_mock.query_dicts.call_args.kwargs["parameters"]["source_table_fqn"] == "cat.sch.orders"
 
-    def test_filter_escapes_single_quotes(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
-        """A source FQN can't legitimately contain a quote, but the literal
-        must still be escaped (doubled) so it can never break out of the
-        string — matching every other literal on the Delta SQL path."""
+    def test_filter_binds_single_quotes(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
         job_service.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="a.b.o'x")
         emitted = sql_executor_mock.query_dicts.call_args.args[0]
-        assert "'a.b.o''x'" in emitted
+        assert "a.b.o'x" not in emitted
+        assert sql_executor_mock.query_dicts.call_args.kwargs["parameters"]["source_table_fqn"] == "a.b.o'x"
 
 
 # ---------------------------------------------------------------------------

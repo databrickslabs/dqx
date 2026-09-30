@@ -92,14 +92,13 @@ class ScheduleConfigService:
 
     def get(self, name: str) -> ScheduleConfigEntry | None:
         validate_schedule_name(name)
-        escaped = escape_sql_string(name)
         ts = self._sql.ts_text
         sql = (
             f"SELECT schedule_name, config_json, version, created_by, "
             f"{ts('created_at')}, updated_by, {ts('updated_at')} "
-            f"FROM {self._table} WHERE schedule_name = '{escaped}'"
+            f"FROM {self._table} WHERE schedule_name = {self._sql.param('schedule_name')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"schedule_name": name})
         if not rows:
             return None
         return self._row_to_entry(rows[0])
@@ -181,15 +180,14 @@ class ScheduleConfigService:
 
     def get_history(self, name: str) -> list[dict[str, Any]]:
         validate_schedule_name(name)
-        escaped = escape_sql_string(name)
         sql = (
             f"SELECT schedule_name, config_json, version, action, changed_by, "
             f"{self._sql.ts_text('changed_at')} "
             f"FROM {self._history_table} "
-            f"WHERE schedule_name = '{escaped}' "
+            f"WHERE schedule_name = {self._sql.param('schedule_name')} "
             "ORDER BY changed_at DESC"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"schedule_name": name})
         result = []
         for row in rows:
             try:

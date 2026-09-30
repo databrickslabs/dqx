@@ -15,7 +15,19 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import AppSet
 @pytest.fixture
 def settings_service(sql_executor_mock):
     sql_executor_mock.fqn.side_effect = lambda t: t
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     return AppSettingsService(sql=sql_executor_mock), sql_executor_mock
+
+
+def test_get_setting_binds_runtime_key(settings_service) -> None:
+    service, sql = settings_service
+    sql.query.return_value = [["stored"]]
+    key = "x\\' OR 1=1 --"
+
+    assert service.get_setting(key) == "stored"
+    assert "setting_key = :setting_key" in sql.query.call_args.args[0]
+    assert key not in sql.query.call_args.args[0]
+    assert sql.query.call_args.kwargs["parameters"] == {"setting_key": key}
 
 
 class TestRunReviewStatusReadIsSideEffectFree:

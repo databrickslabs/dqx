@@ -16,11 +16,13 @@ default value-encoding contract that both dialects inherit.
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.service.sql import StatementParameterListItem, StatementState
 
 from databricks_labs_dqx_app.backend.sql_executor import (
     RawSql,
     SqlExecutor,
     WhereIn,
+    bind_list,
     _build_count,
     _build_delete,
     _build_insert,
@@ -54,6 +56,55 @@ def _make_sql_executor() -> SqlExecutor:
     executor._catalog = "dqx"  # noqa: SLF001
     executor._schema = "public"  # noqa: SLF001
     return executor
+
+
+def test_query_binds_runtime_value_without_inlining_it() -> None:
+    workspace = MagicMock()
+    executor = SqlExecutor(workspace, "test-wh", "dqx", "public")
+    response = workspace.statement_execution.execute_statement.return_value
+    response.status.state = StatementState.SUCCEEDED
+    response.result.data_array = [["b1"]]
+    value = "x\\' OR 1=1 --"
+
+    rows = executor.query("SELECT id FROM bindings WHERE owner = :owner", parameters={"owner": value})
+
+    assert rows == [["b1"]]
+    request = workspace.statement_execution.execute_statement.call_args.kwargs
+    assert request["statement"] == "SELECT id FROM bindings WHERE owner = :owner"
+    assert request["parameters"] == [StatementParameterListItem(name="owner", type="STRING", value=value)]
+
+
+def test_query_dicts_binds_typed_runtime_values() -> None:
+    workspace = MagicMock()
+    executor = SqlExecutor(workspace, "test-wh", "dqx", "public")
+    response = workspace.statement_execution.execute_statement.return_value
+    response.status.state = StatementState.SUCCEEDED
+    response.result.data_array = [["b1"]]
+    response.manifest.schema.columns = [MagicMock(name="id")]
+    response.manifest.schema.columns[0].name = "id"
+
+    rows = executor.query_dicts(
+        "SELECT id FROM bindings WHERE version = :version AND enabled = :enabled",
+        parameters={"version": 3, "enabled": True},
+    )
+
+    assert rows == [{"id": "b1"}]
+    request = workspace.statement_execution.execute_statement.call_args.kwargs
+    assert request["parameters"] == [
+        StatementParameterListItem(name="version", type="BIGINT", value="3"),
+        StatementParameterListItem(name="enabled", type="BOOLEAN", value="true"),
+    ]
+
+
+def test_bind_list_keeps_values_out_of_sql_markers() -> None:
+    executor = SqlExecutor(MagicMock(), "test-wh", "dqx", "public")
+    value = "x\\' OR 1=1 --"
+
+    markers, parameters = bind_list(executor.param, "rule_id", [value, "safe"])
+
+    assert markers == ":rule_id_0, :rule_id_1"
+    assert value not in markers
+    assert parameters == {"rule_id_0": value, "rule_id_1": "safe"}
 
 
 # ===========================================================================
@@ -416,7 +467,8 @@ class TestSqlExecutorCrudDelegation:
         # ships (list-of-list of stringified cells).
         executor.query = MagicMock(return_value=[["42"]])  # type: ignore[method-assign]
         assert executor.count("dq.t", where={"status": "active"}) == 42
-        assert executor.query.call_args.args[0] == "SELECT COUNT(*) FROM dq.t WHERE `status` = 'active'"
+        assert executor.query.call_args.args[0] == "SELECT COUNT(*) FROM dq.t WHERE `status` = :where_0"
+        assert executor.query.call_args.kwargs["parameters"] == {"where_0": "active"}
 
     def test_count_returns_zero_on_empty_result(self) -> None:
         """Defensive: COUNT should always return a row, but shield the caller if it doesn't."""
@@ -429,7 +481,16 @@ class TestSqlExecutorCrudDelegation:
         executor.query = MagicMock(return_value=[["r1", "one"], ["r2", "two"]])  # type: ignore[method-assign]
         rows = executor.select_rows("dq.t", ["id", "name"], where={"status": "active"})
         assert rows == [["r1", "one"], ["r2", "two"]]
-        assert executor.query.call_args.args[0] == "SELECT `id`, `name` FROM dq.t WHERE `status` = 'active'"
+        assert executor.query.call_args.args[0] == "SELECT `id`, `name` FROM dq.t WHERE `status` = :where_0"
+        assert executor.query.call_args.kwargs["parameters"] == {"where_0": "active"}
+
+    def test_select_rows_binds_untrusted_where_value(self) -> None:
+        executor = _make_sql_executor()
+        executor.query = MagicMock(return_value=[])  # type: ignore[method-assign]
+        value = "x\\' OR 1=1 --"
+        executor.select_rows("dq.t", ["id"], where={"name": value})
+        assert value not in executor.query.call_args.args[0]
+        assert executor.query.call_args.kwargs["parameters"] == {"where_0": value}
 
     def test_select_dicts_delegates_to_query_dicts(self) -> None:
         executor = _make_sql_executor()

@@ -25,7 +25,7 @@ _APPROVERS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 _CHECK_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
-def _check_name_predicate(check_name: str) -> str:
+def _check_name_predicate(check_name_marker: str) -> str:
     """Build a Spark SQL predicate that matches quarantine rows whose
     ``errors`` or ``warnings`` VARIANT array contains a struct with the
     given ``name``.
@@ -37,9 +37,9 @@ def _check_name_predicate(check_name: str) -> str:
     """
     return (
         "(EXISTS(from_json(to_json(errors), 'array<struct<name:string>>'), "
-        f"e -> e.name = '{check_name}') "
+        f"e -> e.name = {check_name_marker}) "
         "OR EXISTS(from_json(to_json(warnings), 'array<struct<name:string>>'), "
-        f"w -> w.name = '{check_name}'))"
+        f"w -> w.name = {check_name_marker}))"
     )
 
 
@@ -58,23 +58,21 @@ def _query_quarantine(
     returned.  Both the COUNT and the data query apply the filter so
     pagination stays consistent.
     """
-    from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
     # Catalog/schema are backtick-quoted (quote_object_fqn) so hyphenated
     # app catalogs stay parseable — same convention as the dq_results reads.
     table = quote_object_fqn(sql.catalog, sql.schema, "dq_quarantine_records")
-    er = escape_sql_string(run_id)
-
-    where = f"run_id = '{er}'"
+    parameters: dict[str, str | int] = {"run_id": run_id}
+    where = f"run_id = {sql.param('run_id')}"
     if check_name:
         if not _CHECK_NAME_RE.match(check_name):
             # Caller-controlled input; refuse anything that doesn't look
             # like a normal DQX identifier rather than risk injection.
             raise ValueError(f"Invalid check_name: '{check_name}'")
-        where = f"{where} AND {_check_name_predicate(check_name)}"
+        parameters["check_name"] = check_name
+        where = f"{where} AND {_check_name_predicate(sql.param('check_name'))}"
 
     count_sql = f"SELECT COUNT(*) AS cnt FROM {table} WHERE {where}"  # noqa: S608
-    count_rows = sql.query(count_sql)
+    count_rows = sql.query(count_sql, parameters=parameters)
     total_count = int(count_rows[0][0] or 0) if count_rows and count_rows[0] else 0
 
     # row_data / errors / warnings are VARIANT — render as JSON strings for
@@ -86,9 +84,9 @@ def _query_quarantine(
         f"to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM {table} WHERE {where} "  # noqa: S608
-        f"ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
+        f"ORDER BY created_at DESC LIMIT {sql.param('limit')} OFFSET {sql.param('offset')}"
     )
-    rows = sql.query_dicts(data_sql)
+    rows = sql.query_dicts(data_sql, parameters={**parameters, "limit": limit, "offset": offset})
     return rows, total_count
 
 
@@ -218,16 +216,14 @@ def export_quarantine_records(
     ),
 ) -> StreamingResponse:
     """Export quarantine records for a run as CSV or JSON download (capped)."""
-    from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
     table = quote_object_fqn(sql.catalog, sql.schema, "dq_quarantine_records")
-    er = escape_sql_string(run_id)
-
-    where = f"run_id = '{er}'"
+    parameters: dict[str, str | int] = {"run_id": run_id, "limit": max_rows}
+    where = f"run_id = {sql.param('run_id')}"
     if check_name:
         if not _CHECK_NAME_RE.match(check_name):
             raise HTTPException(status_code=400, detail=f"Invalid check_name: '{check_name}'")
-        where = f"{where} AND {_check_name_predicate(check_name)}"
+        parameters["check_name"] = check_name
+        where = f"{where} AND {_check_name_predicate(sql.param('check_name'))}"
 
     stmt = (
         f"SELECT quarantine_id, run_id, source_table_fqn, requesting_user, "
@@ -235,9 +231,9 @@ def export_quarantine_records(
         f"to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM {table} WHERE {where} ORDER BY created_at DESC "  # noqa: S608
-        f"LIMIT {int(max_rows)}"
+        f"LIMIT {sql.param('limit')}"
     )
-    rows = sql.query_dicts(stmt)
+    rows = sql.query_dicts(stmt, parameters=parameters)
 
     # Reflect the filter in the downloaded filename so an exported file
     # is self-describing once it's left the UI.

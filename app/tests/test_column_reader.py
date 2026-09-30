@@ -34,6 +34,7 @@ def _fake_ws(columns: list[MagicMock]) -> MagicMock:
 def test_merges_tags_and_types_per_column() -> None:
     ws = _fake_ws([_column("cut", "STRING"), _column("carat", "DOUBLE")])
     sql = create_autospec(SqlExecutor, instance=True)
+    sql.param.side_effect = lambda name: f":{name}"
     sql.query.return_value = [["cut", "class.age", ""], ["carat", "class.pii", "x"]]
 
     reader = _build_column_reader(ws, sql)
@@ -47,8 +48,9 @@ def test_merges_tags_and_types_per_column() -> None:
     # information_schema query targets the table's schema + name.
     query = sql.query.call_args.args[0]
     assert "information_schema.column_tags" in query
-    assert "'sch'" in query
-    assert "'diamonds'" in query
+    assert ":schema_name" in query
+    assert ":table_name" in query
+    assert sql.query.call_args.kwargs["parameters"] == {"schema_name": "sch", "table_name": "diamonds"}
 
 
 def test_column_without_tag_row_has_empty_tags() -> None:

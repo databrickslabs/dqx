@@ -190,6 +190,7 @@ def sql_executor_mock() -> MagicMock:
     mock.schema = "dqx_app_test"
     mock.warehouse_id = "test-warehouse"
     mock.dialect = "delta"
+    mock.param.side_effect = lambda name: f":{name}"
     wire_crud_builder_methods(mock)
     return mock
 
@@ -308,6 +309,8 @@ def make_scheduler():
         # ``_settings_table`` for tests that later inspect it.
         oltp.fqn.side_effect = lambda t: f"{catalog}.{schema}.{t}"
         oltp.query.return_value = [] if oltp_query_return is None else oltp_query_return
+        if oltp_spec is None or "param" in oltp_spec:
+            oltp.param.side_effect = lambda name: f":{name}"
 
         # ``OltpExecutorProtocol`` methods that services depend on for
         # dialect-agnostic SQL — wire concrete side_effects matching
@@ -351,12 +354,14 @@ def make_scheduler():
         # fails in one place rather than scattered across the suite.
         if distinct_sql:
             delta = MagicMock(name="delta_sql")
+            delta.param.side_effect = lambda name: f":{name}"
             svc._sql = delta  # noqa: SLF001 - see helper docstring
             mocks.sql = delta
         else:
             mocks.sql = svc._sql  # noqa: SLF001 - alias for legacy single-backend tests
         if distinct_tmp_sql:
             tmp = MagicMock(name="tmp_sql")
+            tmp.param.side_effect = lambda name: f":{name}"
             svc._tmp_sql = tmp  # noqa: SLF001 - see helper docstring
             mocks.tmp = tmp
         else:

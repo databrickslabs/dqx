@@ -108,8 +108,8 @@ from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddi
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor, bind_list
+from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -526,8 +526,9 @@ class DemoSeedService:
         deadline = time.monotonic() + _PROFILE_TIMEOUT_SECONDS
         while True:
             rows = self._app_sql.query_dicts(
-                f"SELECT status FROM {results_fqn} "  # noqa: S608
-                f"WHERE run_id = '{escape_sql_string(run_id)}' AND status <> 'RUNNING' LIMIT 1"
+                f"SELECT status FROM {results_fqn} "
+                f"WHERE run_id = {self._app_sql.param('run_id')} AND status <> 'RUNNING' LIMIT 1",
+                parameters={"run_id": run_id},
             )
             status = rows[0].get("status") if rows else None
             if status:
@@ -873,7 +874,8 @@ class DemoSeedService:
             self._app_sql.execute(redate.build_delete_metrics_sql(metrics_fqn, run_id))
             self._app_sql.execute(redate.build_delete_runs_sql(runs_fqn, run_id))
             remaining = self._app_sql.query_dicts(
-                f"SELECT 1 FROM {metrics_fqn} WHERE run_id = '{escape_sql_string(run_id)}' LIMIT 1"  # noqa: S608
+                f"SELECT 1 FROM {metrics_fqn} WHERE run_id = {self._app_sql.param('run_id')} LIMIT 1",
+                parameters={"run_id": run_id},
             )
             if not remaining:
                 return
@@ -968,8 +970,8 @@ class DemoSeedService:
         """Return ``(input_rows, {check_name: failed_rows})`` for a run from ``dq_metrics``."""
         metrics_fqn = self._app_sql.fqn("dq_metrics")
         rows = self._app_sql.query_dicts(
-            f"SELECT metric_name, metric_value FROM {metrics_fqn} "  # noqa: S608
-            f"WHERE run_id = '{escape_sql_string(run_id)}'"
+            f"SELECT metric_name, metric_value FROM {metrics_fqn} " f"WHERE run_id = {self._app_sql.param('run_id')}",
+            parameters={"run_id": run_id},
         )
         input_rows = 0
         failures: dict[str, int] = {}
@@ -1330,9 +1332,10 @@ class DemoSeedService:
         """
         metrics_fqn = self._app_sql.fqn("dq_metrics")
         rows = self._app_sql.query_dicts(
-            f"SELECT 1 FROM {metrics_fqn} "  # noqa: S608
-            f"WHERE run_id = '{escape_sql_string(run_id)}' "
-            f"AND CAST(run_time AS STRING) <> '{escape_sql_string(target_iso)}' LIMIT 1"
+            f"SELECT 1 FROM {metrics_fqn} "
+            f"WHERE run_id = {self._app_sql.param('run_id')} "
+            f"AND CAST(run_time AS STRING) <> {self._app_sql.param('target_iso')} LIMIT 1",
+            parameters={"run_id": run_id, "target_iso": target_iso},
         )
         return bool(rows)
 
@@ -1349,8 +1352,8 @@ class DemoSeedService:
         deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
         while True:
             rows = self._app_sql.query_dicts(
-                f"SELECT run_id FROM {metrics_fqn} "  # noqa: S608
-                f"WHERE run_id = '{escape_sql_string(run_id)}' LIMIT 1"
+                f"SELECT run_id FROM {metrics_fqn} " f"WHERE run_id = {self._app_sql.param('run_id')} LIMIT 1",
+                parameters={"run_id": run_id},
             )
             if rows:
                 return True
@@ -1417,12 +1420,13 @@ class DemoSeedService:
         keeps polling until the deadline.
         """
         runs_fqn = self._app_sql.fqn("dq_validation_runs")
-        in_list = ", ".join(f"'{escape_sql_string(state)}'" for state in _TERMINAL_RUN_STATES)
+        in_list, state_parameters = bind_list(self._app_sql.param, "state", sorted(_TERMINAL_RUN_STATES))
         deadline = time.monotonic() + _RUN_TIMEOUT_SECONDS
         while True:
             rows = self._app_sql.query_dicts(
-                f"SELECT status FROM {runs_fqn} "  # noqa: S608
-                f"WHERE run_id = '{escape_sql_string(run_id)}' AND status IN ({in_list}) LIMIT 1"
+                f"SELECT status FROM {runs_fqn} "
+                f"WHERE run_id = {self._app_sql.param('run_id')} AND status IN ({in_list}) LIMIT 1",
+                parameters={"run_id": run_id, **state_parameters},
             )
             status = rows[0].get("status") if rows else None
             if status in _TERMINAL_RUN_STATES:

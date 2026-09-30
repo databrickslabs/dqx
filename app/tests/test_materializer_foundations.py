@@ -126,8 +126,9 @@ class TestRegistryServiceGetVersion:
         assert version.version == 2
         assert version.user_metadata == {"name": "Not Null Check", "severity": "High"}
         query_sql = sql.query.call_args[0][0]
-        assert "version = 2" in query_sql
-        assert "r1" in query_sql
+        assert "version = :version" in query_sql
+        assert "rule_id = :rule_id" in query_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id": "r1", "version": 2}
 
 
 class TestAutoUpgradeWithoutApprovalSetting:

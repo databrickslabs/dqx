@@ -52,6 +52,7 @@ def _svc(**over):
         status=create_autospec(DemoStatusStore, instance=True),
     )
     deps.update(over)
+    deps["app_sql"].param.side_effect = lambda name: f":{name}"
     return DemoSeedService(**deps), deps
 
 
@@ -997,10 +998,11 @@ def _runs_table_query_dicts(table_rows: list[dict[str, str]]):
     production query is correct rather than hand-feeding a pre-filtered result.
     """
 
-    def _query(sql: str, *_a, **_k):
+    def _query(sql: str, *_a, **kwargs):
         rows = list(table_rows)
         if "status IN (" in sql:
-            rows = [row for row in rows if f"'{row['status']}'" in sql.split("status IN (", 1)[1]]
+            terminal_states = set((kwargs.get("parameters") or {}).values())
+            rows = [row for row in rows if row["status"] in terminal_states]
             return rows[:1] if "LIMIT 1" in sql else rows
         return rows
 

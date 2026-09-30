@@ -97,6 +97,16 @@ class TestUpdateRunStatus:
 
 
 class TestGetRunMetadata:
+    def test_lookup_binds_run_id(self, sql_executor_mock, app_config):
+        sql_executor_mock.param.side_effect = lambda name: f":{name}"
+        sql_executor_mock.query.return_value = []
+        run_id = "r\\' OR 1=1 --"
+        get_run_metadata(sql_executor_mock, app_config, "dq_validation_runs", run_id)
+        statement = sql_executor_mock.query.call_args.args[0]
+        assert "run_id = :run_id" in statement
+        assert run_id not in statement
+        assert sql_executor_mock.query.call_args.kwargs["parameters"] == {"run_id": run_id}
+
     def test_full_row_returned(self, sql_executor_mock, app_config):
         sql_executor_mock.query.return_value = [["main.tmp.v1", "alice@x", "12345", "cat.s.tbl"]]
         md = get_run_metadata(
@@ -322,7 +332,8 @@ class TestReconcileRunningRows:
 
         in_clause = sql_executor_mock.query.call_args.args[0]
         # Exactly the cap number of run_ids appear in the IN (...) lookup.
-        assert in_clause.count("'r") == cap
+        assert in_clause.count(":run_id_") == cap
+        assert len(sql_executor_mock.query.call_args.kwargs["parameters"]) == cap
 
 
 # ---------------------------------------------------------------------------

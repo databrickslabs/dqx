@@ -48,8 +48,7 @@ Delta executor regardless of whether the OLTP tables live in Lakebase.
 import logging
 from datetime import datetime, timezone
 
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor, bind_list
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +102,13 @@ class DraftRunGateService:
         concrete = self._concrete_fqns(table_fqns)
         if not concrete:
             return False
-        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in concrete)
+        in_list, parameters = bind_list(self._sql.param, "table_fqn", concrete)
         since_clause = ""
         if since is not None:
-            since_clause = f"AND created_at >= {self._ts_literal(since)} "
+            if since.tzinfo is not None:
+                since = since.astimezone(timezone.utc).replace(tzinfo=None)
+            parameters["since"] = since.isoformat(sep=" ")
+            since_clause = f"AND created_at >= CAST({self._sql.param('since')} AS TIMESTAMP) "
         sql = (
             f"SELECT 1 FROM {self._validation_runs_table} "  # noqa: S608
             f"WHERE source_table_fqn IN ({in_list}) "
@@ -114,7 +116,7 @@ class DraftRunGateService:
             f"{since_clause}"
             f"LIMIT 1"
         )
-        return bool(self._sql.query(sql))
+        return bool(self._sql.query(sql, parameters=parameters))
 
     def enforce(self, *, enabled: bool, table_fqns: list[str], last_change_time: datetime | None = None) -> None:
         """Raise :class:`DraftRunRequiredError` when the gate should block the submit.
@@ -150,19 +152,6 @@ class DraftRunGateService:
         if last_change_time is not None and self.has_any_run(concrete):
             raise DraftRunRequiredError(DRAFT_RUN_STALE_MESSAGE)
         raise DraftRunRequiredError(DRAFT_RUN_REQUIRED_MESSAGE)
-
-    @staticmethod
-    def _ts_literal(value: datetime) -> str:
-        """SQL literal for comparing against ``dq_validation_runs.created_at``.
-
-        Normalised to a naive-UTC ``'YYYY-MM-DD HH:MM:SS.ffffff'`` string wrapped
-        in ``CAST(... AS TIMESTAMP)`` — parses identically on Delta and Postgres
-        and matches how ``created_at`` (written server-side in UTC) is stored,
-        so the comparison never skews by the caller's timezone offset.
-        """
-        if value.tzinfo is not None:
-            value = value.astimezone(timezone.utc).replace(tzinfo=None)
-        return f"CAST('{escape_sql_string(value.isoformat(sep=' '))}' AS TIMESTAMP)"
 
     @staticmethod
     def _concrete_fqns(table_fqns: list[str]) -> list[str]:

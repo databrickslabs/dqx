@@ -517,14 +517,24 @@ class TestPgCrudBuilders:
         executor = _make_pg_executor()
         executor.query = MagicMock(return_value=[["3"]])  # type: ignore[method-assign]
         assert executor.count('"dq"."t"', where={"status": "active"}) == 3
-        assert executor.query.call_args.args[0] == 'SELECT COUNT(*) FROM "dq"."t" WHERE "status" = \'active\''
+        assert executor.query.call_args.args[0] == 'SELECT COUNT(*) FROM "dq"."t" WHERE "status" = %(where_0)s'
+        assert executor.query.call_args.kwargs["parameters"] == {"where_0": "active"}
 
     def test_select_rows_uses_ansi_quotes(self) -> None:
         executor = _make_pg_executor()
         executor.query = MagicMock(return_value=[["r1"]])  # type: ignore[method-assign]
         rows = executor.select_rows('"dq"."t"', ["rule_id"], where={"is_builtin": True})
         assert rows == [["r1"]]
-        assert executor.query.call_args.args[0] == 'SELECT "rule_id" FROM "dq"."t" WHERE "is_builtin" = TRUE'
+        assert executor.query.call_args.args[0] == 'SELECT "rule_id" FROM "dq"."t" WHERE "is_builtin" = %(where_0)s'
+        assert executor.query.call_args.kwargs["parameters"] == {"where_0": True}
+
+    def test_select_rows_binds_untrusted_where_value(self) -> None:
+        executor = _make_pg_executor()
+        executor.query = MagicMock(return_value=[])  # type: ignore[method-assign]
+        value = "x\\' OR 1=1 --"
+        executor.select_rows('"dq"."t"', ["rule_id"], where={"name": value})
+        assert value not in executor.query.call_args.args[0]
+        assert executor.query.call_args.kwargs["parameters"] == {"where_0": value}
 
     def test_select_dicts_delegates_to_query_dicts(self) -> None:
         executor = _make_pg_executor()
@@ -1667,6 +1677,23 @@ class TestDataPathMethods:
             ["2", "false", "2026-05-29", "literal"],
         ]
 
+    def test_query_binds_runtime_value_without_inlining_it(self) -> None:
+        executor = _make_pg_executor()
+        cursor = _cursor_of(executor)
+        cursor.fetchall.return_value = [("b1",)]
+        value = "x\\' OR 1=1 --"
+
+        rows = executor.query(
+            "SELECT id FROM bindings WHERE owner = %(owner)s",
+            parameters={"owner": value},
+        )
+
+        assert rows == [["b1"]]
+        assert cursor.execute.call_args_list[-1].args == (
+            "SELECT id FROM bindings WHERE owner = %(owner)s",
+            {"owner": value},
+        )
+
     def test_query_dicts_zips_column_names(self) -> None:
         executor = _make_pg_executor()
         cur = _cursor_of(executor)
@@ -1680,6 +1707,25 @@ class TestDataPathMethods:
         cur.fetchall.return_value = [(1, True), (2, None)]
         rows = executor.query_dicts("SELECT a, b FROM t")
         assert rows == [{"a": "1", "b": "true"}, {"a": "2", "b": None}]
+
+    def test_query_dicts_binds_runtime_values(self) -> None:
+        executor = _make_pg_executor()
+        cursor = _cursor_of(executor)
+        column = MagicMock()
+        column.name = "id"
+        cursor.description = [column]
+        cursor.fetchall.return_value = [("b1",)]
+
+        rows = executor.query_dicts(
+            "SELECT id FROM bindings WHERE version = %(version)s",
+            parameters={"version": 3},
+        )
+
+        assert rows == [{"id": "b1"}]
+        assert cursor.execute.call_args_list[-1].args == (
+            "SELECT id FROM bindings WHERE version = %(version)s",
+            {"version": 3},
+        )
 
     def test_query_dicts_handles_empty_description(self) -> None:
         """``cur.description`` can be ``None`` for DDL — must not raise."""

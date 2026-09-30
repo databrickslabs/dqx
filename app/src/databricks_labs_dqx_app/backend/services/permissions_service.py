@@ -133,16 +133,18 @@ class PermissionsService:
     def list_grants(self, object_type: str, object_id: str) -> list[ObjectGrant]:
         """Return the direct grants stored on one object (no inheritance)."""
         self._validate_object_id(object_id)
-        ot = escape_sql_string(object_type)
-        oid = escape_sql_string(object_id)
         sql = (
             "SELECT object_type, object_id, principal_id, principal_type, principal_name, "
             f"privileges, inherit, grantor, {self._sql.ts_text('updated_at')} "
             f"FROM {self._table} "
-            f"WHERE object_type = '{ot}' AND object_id = '{oid}' "
+            f"WHERE object_type = {self._sql.param('object_type')} "
+            f"AND object_id = {self._sql.param('object_id')} "
             "ORDER BY principal_name, principal_id"
         )
-        return [self._row_to_grant(row) for row in self._sql.query(sql)]
+        return [
+            self._row_to_grant(row)
+            for row in self._sql.query(sql, parameters={"object_type": object_type, "object_id": object_id})
+        ]
 
     def list_effective_grants(self, object_type: str, object_id: str) -> list[ObjectGrant]:
         """Return direct grants plus inherited grants (flagged) for display.
@@ -242,10 +244,9 @@ class PermissionsService:
         if child not in CHILD_TO_PARENT_TYPE:
             return []
         parent_type = CHILD_TO_PARENT_TYPE[child]
-        oid = escape_sql_string(object_id)
-        sql = f"SELECT product_id FROM {self._members_table} WHERE binding_id = '{oid}'"  # noqa: S608
+        sql = f"SELECT product_id FROM {self._members_table} WHERE binding_id = {self._sql.param('binding_id')}"
         try:
-            rows = self._sql.query(sql)
+            rows = self._sql.query(sql, parameters={"binding_id": object_id})
         except Exception:
             logger.warning("Failed to resolve permission parents for %s/%s", object_type, object_id, exc_info=True)
             return []
@@ -268,9 +269,9 @@ class PermissionsService:
             return None
         table, id_col = source
         fq = self._sql.fqn(table)
-        sql = f"SELECT created_by FROM {fq} WHERE {id_col} = '{escape_sql_string(object_id)}'"  # noqa: S608
+        sql = f"SELECT created_by FROM {fq} WHERE {id_col} = {self._sql.param('object_id')}"
         try:
-            rows = self._sql.query(sql)
+            rows = self._sql.query(sql, parameters={"object_id": object_id})
         except Exception:
             logger.warning("Owner lookup failed for %s/%s", object_type, object_id, exc_info=True)
             return None

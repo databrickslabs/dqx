@@ -232,16 +232,15 @@ class MonitoredTableVersionService:
         model's ``checks_json`` is left empty. Callers that need the runner
         payload resolve a single version's references via :meth:`get_checks`.
         """
-        e = escape_sql_string(binding_id)
         state_text = self._sql.select_json_text("state_json")
         created_at = self._sql.ts_text("created_at")
         refrozen_at = self._sql.ts_text("refrozen_at")
         sql = (
             f"SELECT id, binding_id, version, {state_text} AS state_json, created_by, "  # noqa: S608
             f"{created_at} AS created_at, {refrozen_at} AS refrozen_at "
-            f"FROM {self._versions_table} WHERE binding_id = '{e}' ORDER BY version DESC"
+            f"FROM {self._versions_table} WHERE binding_id = {self._sql.param('binding_id')} ORDER BY version DESC"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id})
         return [self._row_to_version(row) for row in rows]
 
     def get_checks(self, binding_id: str, version: int) -> list[dict[str, Any]]:
@@ -264,13 +263,12 @@ class MonitoredTableVersionService:
         Raises:
             LookupError: no snapshot exists for *(binding_id, version)*.
         """
-        e = escape_sql_string(binding_id)
         state_text = self._sql.select_json_text("state_json")
         sql = (
             f"SELECT {state_text} FROM {self._versions_table} "  # noqa: S608
-            f"WHERE binding_id = '{e}' AND version = {int(version)}"
+            f"WHERE binding_id = {self._sql.param('binding_id')} AND version = {self._sql.param('version')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id, "version": version})
         if not rows:
             raise LookupError(f"No frozen snapshot for binding {binding_id} version {version}")
         state = self._parse_state(rows[0][0])
@@ -301,15 +299,22 @@ class MonitoredTableVersionService:
         if not pins:
             return {}
         state_text = self._sql.select_json_text("state_json")
-        predicates = " OR ".join(
-            f"(binding_id = '{escape_sql_string(binding_id)}' AND version = {int(version)})"
-            for binding_id, version in sorted(set(pins))
-        )
+        parameters: dict[str, str | int] = {}
+        predicates_list: list[str] = []
+        for index, (binding_id, version) in enumerate(sorted(set(pins))):
+            binding_name = f"binding_id_{index}"
+            version_name = f"version_{index}"
+            predicates_list.append(
+                f"(binding_id = {self._sql.param(binding_name)} AND version = {self._sql.param(version_name)})"
+            )
+            parameters[binding_name] = binding_id
+            parameters[version_name] = version
+        predicates = " OR ".join(predicates_list)
         sql = (
             f"SELECT binding_id, version, {state_text} AS state_json "  # noqa: S608
             f"FROM {self._versions_table} WHERE {predicates}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         result: dict[tuple[str, int], tuple[int, int]] = {}
         for row in rows:
             state = self._parse_state(row[2])
@@ -342,7 +347,8 @@ class MonitoredTableVersionService:
         # the CRUD-safe render (via :func:`_build_where` idioms).
         rows = self._sql.query(
             f"SELECT {state_text} FROM {self._versions_table} "  # noqa: S608
-            f"WHERE binding_id = '{escape_sql_string(binding_id)}' AND version = {int(version)}"
+            f"WHERE binding_id = {self._sql.param('binding_id')} AND version = {self._sql.param('version')}",
+            parameters={"binding_id": binding_id, "version": version},
         )
         if not rows:
             return False

@@ -42,7 +42,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, WhereIn
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlParameterValue, WhereIn, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
@@ -167,15 +167,18 @@ class RegistryService:
         e.g. exporting the rows a user ticked in the overview table).
         """
         clauses: list[str] = []
+        parameters: dict[str, str] = {}
         if status:
-            clauses.append(f"status = '{escape_sql_string(status)}'")
+            clauses.append(f"status = {self._sql.param('status')}")
+            parameters["status"] = status
         if owner:
-            clauses.append(f"owner = '{escape_sql_string(owner)}'")
+            clauses.append(f"owner = {self._sql.param('owner')}")
+            parameters["owner"] = owner
         sql = f"SELECT {self._select_cols} FROM {self._table}"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY updated_at DESC LIMIT 2000"
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters) if parameters else self._sql.query(sql)
         rules = [self._row_to_rule(row) for row in rows]
         if dimension:
             rules = [r for r in rules if get_rule_dimension(r.user_metadata) == dimension]
@@ -203,12 +206,19 @@ class RegistryService:
             return
         definition = self._sql.select_json_text("definition")
         user_metadata = self._sql.select_json_text("user_metadata")
-        pairs = " OR ".join(f"(rule_id = '{escape_sql_string(rid)}' AND version = {int(ver)})" for rid, ver in targets)
+        parameters: dict[str, str | int] = {}
+        pairs: list[str] = []
+        for index, (rule_id, version) in enumerate(targets):
+            rule_param = f"rule_id_{index}"
+            version_param = f"version_{index}"
+            pairs.append(f"(rule_id = {self._sql.param(rule_param)} AND version = {self._sql.param(version_param)})")
+            parameters[rule_param] = rule_id
+            parameters[version_param] = version
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
-            f"{user_metadata} AS user_metadata_json, mode FROM {self._versions_table} WHERE {pairs}"  # noqa: S608
+            f"{user_metadata} AS user_metadata_json, mode FROM {self._versions_table} WHERE {' OR '.join(pairs)}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         snapshots: dict[str, RuleVersion] = {}
         for row in rows:
             # Pad the created_by/created_at columns the modified check ignores
@@ -236,9 +246,8 @@ class RegistryService:
         *published* rules and merely warns), this is an exact-identity
         lookup used to skip re-seeding.
         """
-        e_fp = escape_sql_string(fingerprint)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE fingerprint = '{e_fp}' LIMIT 1"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE fingerprint = {self._sql.param('fingerprint')} LIMIT 1"
+        rows = self._sql.query(sql, parameters={"fingerprint": fingerprint})
         if not rows:
             return None
         return self._row_to_rule(rows[0])
@@ -254,13 +263,13 @@ class RegistryService:
         share the fingerprint, an ``approved`` one is preferred (it can be
         applied immediately), then ``pending_approval``, then ``draft``.
         """
-        e_fp = escape_sql_string(fingerprint)
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE fingerprint = '{e_fp}' AND status IN ('draft', 'pending_approval', 'approved') "
+            f"WHERE fingerprint = {self._sql.param('fingerprint')} "
+            "AND status IN ('draft', 'pending_approval', 'approved') "
             "ORDER BY CASE status WHEN 'approved' THEN 0 WHEN 'pending_approval' THEN 1 ELSE 2 END LIMIT 1"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"fingerprint": fingerprint})
         if not rows:
             return None
         return self._row_to_rule(rows[0])
@@ -295,12 +304,11 @@ class RegistryService:
         (approved) rule rather than a draft/rejected one that a suggestion
         couldn't apply anyway.
         """
-        e_fp = escape_sql_string(fingerprint)
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE fingerprint = '{e_fp}' AND status = 'approved' LIMIT 1"
+            f"WHERE fingerprint = {self._sql.param('fingerprint')} AND status = 'approved' LIMIT 1"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"fingerprint": fingerprint})
         if not rows:
             return None
         return self._row_to_rule(rows[0])
@@ -415,9 +423,9 @@ class RegistryService:
         distinct = {rid for rid in rule_ids if rid}
         if not distinct:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in sorted(distinct))
+        in_list, parameters = bind_list(self._sql.param, "rule_id", sorted(distinct))
         sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id IN ({in_list})"  # noqa: S608
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         result: dict[str, RegistryRule] = {}
         for row in rows:
             rule = self._row_to_rule(row)
@@ -440,15 +448,20 @@ class RegistryService:
         definition = self._sql.select_json_text("definition")
         user_metadata = self._sql.select_json_text("user_metadata")
         created_at = self._sql.ts_text("created_at")
-        predicates = " OR ".join(
-            f"(rule_id = '{escape_sql_string(rid)}' AND version = {int(ver)})" for rid, ver in sorted(distinct)
-        )
+        parameters: dict[str, SqlParameterValue] = {}
+        predicates: list[str] = []
+        for index, (rule_id, version) in enumerate(sorted(distinct)):
+            id_name = f"rule_id_{index}"
+            version_name = f"version_{index}"
+            predicates.append(f"(rule_id = {self._sql.param(id_name)} AND version = {self._sql.param(version_name)})")
+            parameters[id_name] = rule_id
+            parameters[version_name] = version
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "  # noqa: S608
             f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
-            f"FROM {self._versions_table} WHERE {predicates}"
+            f"FROM {self._versions_table} WHERE {' OR '.join(predicates)}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         result: dict[tuple[str, int], RuleVersion] = {}
         for row in rows:
             version = self._row_to_version(row)
@@ -481,13 +494,12 @@ class RegistryService:
         definition = self._sql.select_json_text("definition")
         user_metadata = self._sql.select_json_text("user_metadata")
         created_at = self._sql.ts_text("created_at")
-        e_rule_id = escape_sql_string(rule_id)
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
             f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
-            f"FROM {self._versions_table} WHERE rule_id = '{e_rule_id}' ORDER BY version DESC"  # noqa: S608
+            f"FROM {self._versions_table} WHERE rule_id = {self._sql.param('rule_id')} ORDER BY version DESC"  # noqa: S608
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         return [self._row_to_version(row) for row in rows]
 
     @staticmethod
@@ -515,9 +527,8 @@ class RegistryService:
         return rule.user_metadata != snapshot.user_metadata
 
     def _get(self, rule_id: str) -> RegistryRule | None:
-        e_rule_id = escape_sql_string(rule_id)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id = '{e_rule_id}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id = {self._sql.param('rule_id')}"
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         if not rows:
             return None
         return self._row_to_rule(rows[0])
@@ -526,13 +537,13 @@ class RegistryService:
         definition = self._sql.select_json_text("definition")
         user_metadata = self._sql.select_json_text("user_metadata")
         created_at = self._sql.ts_text("created_at")
-        e_rule_id = escape_sql_string(rule_id)
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
             f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
-            f"FROM {self._versions_table} WHERE rule_id = '{e_rule_id}' AND version = {int(version)}"  # noqa: S608
+            f"FROM {self._versions_table} WHERE rule_id = {self._sql.param('rule_id')} "
+            f"AND version = {self._sql.param('version')}"  # noqa: S608
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id, "version": version})
         if not rows:
             return None
         return self._row_to_version(rows[0])
@@ -809,12 +820,12 @@ class RegistryService:
         """Return a published rule that shares this fingerprint, if any."""
         if not rule.fingerprint:
             return None
-        e_fp = escape_sql_string(rule.fingerprint)
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "
-            f"WHERE fingerprint = '{e_fp}' AND status = 'approved' AND rule_id != '{escape_sql_string(rule.rule_id)}'"  # noqa: S608
+            f"WHERE fingerprint = {self._sql.param('fingerprint')} AND status = 'approved' "
+            f"AND rule_id != {self._sql.param('rule_id')}"  # noqa: S608
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"fingerprint": rule.fingerprint, "rule_id": rule.rule_id})
         if not rows:
             return None
         return self._row_to_rule(rows[0])

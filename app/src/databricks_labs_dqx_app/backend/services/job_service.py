@@ -297,11 +297,11 @@ class JobService:
         returned (server-side filter), so callers scoped to a single table
         don't have to pull the full history and filter client-side.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         where = ""
+        parameters: dict[str, str | int] = {"limit": limit}
         if source_table_fqn:
-            where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
+            where = f"  WHERE source_table_fqn = {self._sql.param('source_table_fqn')} "
+            parameters["source_table_fqn"] = source_table_fqn
         sql = (
             f"SELECT {select_cols} "  # noqa: S608
             f"FROM ("
@@ -312,9 +312,9 @@ class JobService:
             f"  FROM {table}"
             f"{where}"
             f") WHERE rn = 1 "
-            f"ORDER BY created_at DESC LIMIT {int(limit)}"
+            f"ORDER BY created_at DESC LIMIT {self._sql.param('limit')}"
         )
-        return self._sql.query_dicts(sql)
+        return self._sql.query_dicts(sql, parameters=parameters)
 
     def list_run_rows(
         self,
@@ -403,9 +403,8 @@ class JobService:
         Uses the SP WorkspaceClient and SQL Statement Execution API.
         Returns a dict keyed by column name, or None if no row found.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        er = escape_sql_string(run_id)
-        sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
-        rows = self._sql.query_dicts(sql)
+        sql = (
+            f"SELECT * FROM {table} WHERE run_id = {self._sql.param('run_id')} " "AND status != 'RUNNING' LIMIT 1"
+        )  # noqa: S608
+        rows = self._sql.query_dicts(sql, parameters={"run_id": run_id})
         return rows[0] if rows else None

@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import (
 def schedule_config_service(sql_executor_mock):
     sql_executor_mock.fqn.side_effect = lambda t: t
     sql_executor_mock.ts_text.side_effect = lambda c: c
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     # ``save`` re-reads the row it just wrote via ``get`` — stub a matching
     # row shape (schedule_name, config_json, version, created_by,
     # created_at, updated_by, updated_at) so that re-read doesn't choke on
@@ -55,6 +56,22 @@ class TestSaveRejectsReservedProductPrefix:
     def test_allows_name_containing_product_not_as_prefix(self, schedule_config_service, sql_executor_mock):
         schedule_config_service.save("my-product:x", {"k": "v"}, "alice@example.com")
         sql_executor_mock.upsert_with_audit.assert_called_once()
+
+
+def test_get_binds_schedule_name(schedule_config_service, sql_executor_mock):
+    entry = schedule_config_service.get("team:nightly")
+    assert entry is not None
+    statement = sql_executor_mock.query.call_args.args[0]
+    assert "schedule_name = :schedule_name" in statement
+    assert sql_executor_mock.query.call_args.kwargs["parameters"] == {"schedule_name": "team:nightly"}
+
+
+def test_history_binds_schedule_name(schedule_config_service, sql_executor_mock):
+    sql_executor_mock.query.return_value = []
+    assert schedule_config_service.get_history("team:nightly") == []
+    statement = sql_executor_mock.query.call_args.args[0]
+    assert "schedule_name = :schedule_name" in statement
+    assert sql_executor_mock.query.call_args.kwargs["parameters"] == {"schedule_name": "team:nightly"}
 
 
 class TestSaveRejectsReservedTablePrefix:

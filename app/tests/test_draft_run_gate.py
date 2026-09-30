@@ -44,8 +44,9 @@ def _fresh_gate(*, has_run: bool, has_fresh_run: bool) -> DraftRunGateService:
     """
     sql = MagicMock()
     sql.fqn.side_effect = lambda t: t
+    sql.param.side_effect = lambda name: f":{name}"
 
-    def _query(text: str):
+    def _query(text: str, **_kwargs: object):
         if "created_at >=" in text:
             return [(1,)] if has_fresh_run else []
         return [(1,)] if has_run else []
@@ -63,6 +64,7 @@ def _gate(*, has_run: bool) -> DraftRunGateService:
     """A DraftRunGateService whose validation-runs query reports a run or not."""
     sql = MagicMock()
     sql.fqn.side_effect = lambda t: t
+    sql.param.side_effect = lambda name: f":{name}"
     sql.query.return_value = [(1,)] if has_run else []
     return DraftRunGateService(validation_sql=sql)
 
@@ -88,6 +90,23 @@ def _app_settings(*, require_draft_run: bool, mode: str = ApprovalMode.ENABLED) 
 
 
 class TestDraftRunGateService:
+    def test_has_any_run_binds_table_names_and_since(self, sql_executor_mock):
+        sql_executor_mock.fqn.side_effect = lambda table: table
+        sql_executor_mock.param.side_effect = lambda name: f":{name}"
+        sql_executor_mock.query.return_value = []
+        gate = DraftRunGateService(validation_sql=sql_executor_mock)
+        table_fqn = "cat.schema.t\\' OR 1=1 --"
+
+        assert gate.has_any_run([table_fqn], since=datetime(2026, 7, 13, tzinfo=timezone.utc)) is False
+        statement = sql_executor_mock.query.call_args.args[0]
+        assert "source_table_fqn IN (:table_fqn_0)" in statement
+        assert "created_at >= CAST(:since AS TIMESTAMP)" in statement
+        assert table_fqn not in statement
+        assert sql_executor_mock.query.call_args.kwargs["parameters"] == {
+            "table_fqn_0": table_fqn,
+            "since": "2026-07-13 00:00:00",
+        }
+
     def test_has_any_run_true_when_query_returns_rows(self):
         assert _gate(has_run=True).has_any_run(["c.s.t"]) is True
 
@@ -160,11 +179,19 @@ class TestDraftRunGateService:
             )
         assert str(exc.value) == DRAFT_RUN_REQUIRED_MESSAGE
 
-    def test_ts_literal_normalises_tz_aware_to_naive_utc(self):
-        # A +02:00 instant becomes its UTC wall-clock inside the CAST literal.
+    def test_has_any_run_binds_naive_utc_instant(self):
+        sql = MagicMock()
+        sql.fqn.side_effect = lambda table: table
+        sql.param.side_effect = lambda name: f":{name}"
+        sql.query.return_value = [["1"]]
         aware = datetime(2026, 7, 13, 12, 0, 0, tzinfo=timezone(timedelta(hours=2)))
-        literal = DraftRunGateService._ts_literal(aware)
-        assert literal == "CAST('2026-07-13 10:00:00' AS TIMESTAMP)"
+        assert DraftRunGateService(validation_sql=sql).has_any_run(["c.s.t"], since=aware)
+        statement = sql.query.call_args.args[0]
+        assert "created_at >= CAST(:since AS TIMESTAMP)" in statement
+        assert sql.query.call_args.kwargs["parameters"] == {
+            "table_fqn_0": "c.s.t",
+            "since": "2026-07-13 10:00:00",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -178,11 +205,9 @@ def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
     def _upsert(_table, *, key_cols, value_cols, **_kwargs):
         store[key_cols["setting_key"]] = value_cols["setting_value"]
 
-    def _query(sql):
-        for key, value in store.items():
-            if f"'{key}'" in sql:
-                return [(value,)]
-        return []
+    def _query(_sql: str, *, parameters: dict[str, str] | None = None):
+        key = (parameters or {}).get("setting_key")
+        return [(store[key],)] if key in store else []
 
     sql_executor_mock.upsert.side_effect = _upsert
     sql_executor_mock.query.side_effect = _query
@@ -192,6 +217,7 @@ def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
 @pytest.fixture
 def settings_svc(sql_executor_mock):
     sql_executor_mock.fqn.side_effect = lambda t: t
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return AppSettingsService(sql=sql_executor_mock)
 

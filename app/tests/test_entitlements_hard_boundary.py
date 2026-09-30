@@ -27,7 +27,6 @@ The proofs are structural + behavioural, no workspace required:
    ``VIEWER`` do not.
 """
 
-import re
 from typing import NamedTuple
 from unittest.mock import create_autospec
 
@@ -64,12 +63,16 @@ class _FakeOltp(OltpExecutorProtocol):
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         return None
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+    def param(self, name: str) -> str:
+        return f":{name}"
+
+    def query(
+        self, sql: str, *, parameters: dict[str, str] | None = None, timeout_seconds: int = 120
+    ) -> list[list[str]]:
         if "dq_data_product_members" in sql:
             return []
-        ot = re.search(r"object_type = '([^']*)'", sql)
-        oid = re.search(r"object_id = '([^']*)'", sql)
-        key = (ot.group(1) if ot else "", oid.group(1) if oid else "")
+        parameters = parameters or {}
+        key = (parameters.get("object_type", ""), parameters.get("object_id", ""))
         return list(self.grants.get(key, []))
 
     def add_grant(self, object_type: str, object_id: str, principal_id: str, privileges: str) -> None:

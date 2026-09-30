@@ -18,7 +18,31 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
 
 @pytest.fixture
 def svc(sql_executor_mock):
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     return RulesCatalogService(sql=sql_executor_mock)
+
+
+def test_list_rules_for_table_binds_table_and_status(svc, sql_executor_mock) -> None:
+    sql_executor_mock.query.return_value = []
+    table_fqn = "cat.schema.x\\' OR 1=1 --"
+
+    assert svc.list_rules_for_table(table_fqn, status="approved") == []
+    statement = sql_executor_mock.query.call_args.args[0]
+    assert "table_fqn = :table_fqn AND status = :status" in statement
+    assert table_fqn not in statement
+    assert sql_executor_mock.query.call_args.kwargs["parameters"] == {
+        "table_fqn": table_fqn,
+        "status": "approved",
+    }
+
+
+def test_get_by_rule_id_binds_runtime_id(svc, sql_executor_mock) -> None:
+    sql_executor_mock.query.return_value = []
+    rule_id = "r\\' OR 1=1 --"
+
+    assert svc.get_by_rule_id(rule_id) is None
+    assert "rule_id = :rule_id" in sql_executor_mock.query.call_args.args[0]
+    assert sql_executor_mock.query.call_args.kwargs["parameters"] == {"rule_id": rule_id}
 
 
 # ---------------------------------------------------------------------------

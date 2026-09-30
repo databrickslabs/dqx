@@ -7,16 +7,68 @@ makes services testable via ``create_autospec(SqlExecutor)``.
 """
 
 import logging
+import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+from databricks.sdk.service.sql import Disposition, Format, StatementParameterListItem, StatementState
 
 from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+SqlParameterValue = str | int | float | bool | None
+
+
+def validate_parameter_name(name: str) -> str:
+    """Validate a named SQL parameter marker before adding it to a template."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError("Invalid SQL parameter name")
+    return name
+
+
+def bind_list(
+    marker: Callable[[str], str],
+    prefix: str,
+    values: Sequence[SqlParameterValue],
+) -> tuple[str, dict[str, SqlParameterValue]]:
+    """Build distinct named markers and values for a nonempty SQL IN list.
+
+    Args:
+        marker: Executor's dialect-specific parameter marker method.
+        prefix: Safe name prefix for generated parameter names.
+        values: Runtime values to bind.
+
+    Returns:
+        Comma-separated marker text and a mapping of names to values.
+
+    Raises:
+        ValueError: If the list is empty or the prefix is invalid.
+    """
+    validate_parameter_name(prefix)
+    if not values:
+        raise ValueError("Cannot bind an empty SQL IN list")
+    parameters = {f"{prefix}_{index}": value for index, value in enumerate(values)}
+    return ", ".join(marker(name) for name in parameters), parameters
+
+
+def _statement_parameters(parameters: Mapping[str, SqlParameterValue]) -> list[StatementParameterListItem]:
+    items: list[StatementParameterListItem] = []
+    for name, value in parameters.items():
+        validate_parameter_name(name)
+        if value is None:
+            items.append(StatementParameterListItem(name=name, type="STRING", value=None))
+        elif isinstance(value, bool):
+            items.append(StatementParameterListItem(name=name, type="BOOLEAN", value=str(value).lower()))
+        elif isinstance(value, int):
+            items.append(StatementParameterListItem(name=name, type="BIGINT", value=str(value)))
+        elif isinstance(value, float):
+            items.append(StatementParameterListItem(name=name, type="DOUBLE", value=str(value)))
+        else:
+            items.append(StatementParameterListItem(name=name, type="STRING", value=value))
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +186,17 @@ class OltpExecutorProtocol(Protocol):
         exists. On Postgres this delegates to :meth:`execute`.
         """
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+    def param(self, name: str) -> str:
+        """Return this backend's marker for a named bound value."""
+        ...
+
+    def query(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[list[str]]:
         """Run a query and return rows as lists of stringified cells.
 
         Cells are strings (or ``None`` for NULL) to mirror the
@@ -144,7 +206,13 @@ class OltpExecutorProtocol(Protocol):
         """
         ...
 
-    def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:
+    def query_dicts(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[dict[str, str | None]]:
         """Like :meth:`query` but rows are column-name-keyed dicts."""
         ...
 
@@ -397,6 +465,22 @@ def _render_value(value: Any) -> str:
     return f"'{escape_sql_string(str(value))}'"
 
 
+def _bound_read_renderer(
+    marker: Callable[[str], str],
+) -> tuple[Callable[[Any], str], dict[str, SqlParameterValue]]:
+    """Render read predicates with bound values while preserving explicit SQL expressions."""
+    parameters: dict[str, SqlParameterValue] = {}
+
+    def render(value: Any) -> str:
+        if isinstance(value, RawSql):
+            return value.expr
+        name = f"where_{len(parameters)}"
+        parameters[name] = value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
+        return marker(name)
+
+    return render, parameters
+
+
 # ---------------------------------------------------------------------------
 # CRUD-builder helpers
 # ---------------------------------------------------------------------------
@@ -633,6 +717,10 @@ class SqlExecutor:
         """
         return "`" + identifier.replace("`", "``") + "`"
 
+    def param(self, name: str) -> str:
+        """Return a Databricks SQL named parameter marker."""
+        return f":{validate_parameter_name(name)}"
+
     def json_literal_expr(self, json_str: str) -> str:
         """Return the SQL expression that turns *json_str* into a JSON value.
 
@@ -715,7 +803,13 @@ class SqlExecutor:
             raise RuntimeError(f"SQL execution failed: {msg}\nSQL: {sql}")
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+    def query(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[list[str]]:
         """Execute a SQL query and return rows as lists of strings.
 
         Polls for completion when the warehouse is cold-starting.
@@ -728,6 +822,7 @@ class SqlExecutor:
             disposition=Disposition.INLINE,
             format=Format.JSON_ARRAY,
             wait_timeout="30s",
+            parameters=_statement_parameters(parameters) if parameters is not None else None,
         )
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")
@@ -750,7 +845,13 @@ class SqlExecutor:
             return resp.result.data_array
         return []
 
-    def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:
+    def query_dicts(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[dict[str, str | None]]:
         """Execute a SQL query and return rows as column-name-keyed dicts.
 
         Column names are extracted from the response manifest.
@@ -763,6 +864,7 @@ class SqlExecutor:
             disposition=Disposition.INLINE,
             format=Format.JSON_ARRAY,
             wait_timeout="30s",
+            parameters=_statement_parameters(parameters) if parameters is not None else None,
         )
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")
@@ -854,9 +956,12 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.count` for the contract.
         """
-        rows = self.query(
-            _build_count(table, where, self.q, _render_value),
-            timeout_seconds=timeout_seconds,
+        render, parameters = _bound_read_renderer(self.param)
+        statement = _build_count(table, where, self.q, render)
+        rows = (
+            self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
+            if parameters
+            else self.query(statement, timeout_seconds=timeout_seconds)
         )
         if rows and rows[0] and rows[0][0] is not None:
             return int(rows[0][0])
@@ -871,9 +976,12 @@ class SqlExecutor:
         timeout_seconds: int = 120,
     ) -> list[list[str]]:
         """Delta simple SELECT — see :meth:`OltpExecutorProtocol.select_rows`."""
-        return self.query(
-            _build_select(table, columns, where, self.q, _render_value),
-            timeout_seconds=timeout_seconds,
+        render, parameters = _bound_read_renderer(self.param)
+        statement = _build_select(table, columns, where, self.q, render)
+        return (
+            self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
+            if parameters
+            else self.query(statement, timeout_seconds=timeout_seconds)
         )
 
     def select_dicts(
@@ -885,9 +993,12 @@ class SqlExecutor:
         timeout_seconds: int = 120,
     ) -> list[dict[str, str | None]]:
         """Delta simple SELECT — see :meth:`OltpExecutorProtocol.select_dicts`."""
-        return self.query_dicts(
-            _build_select(table, columns, where, self.q, _render_value),
-            timeout_seconds=timeout_seconds,
+        render, parameters = _bound_read_renderer(self.param)
+        statement = _build_select(table, columns, where, self.q, render)
+        return (
+            self.query_dicts(statement, parameters=parameters, timeout_seconds=timeout_seconds)
+            if parameters
+            else self.query_dicts(statement, timeout_seconds=timeout_seconds)
         )
 
     def upsert(

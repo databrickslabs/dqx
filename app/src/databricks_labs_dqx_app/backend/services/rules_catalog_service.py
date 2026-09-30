@@ -295,32 +295,30 @@ class RulesCatalogService:
 
     def get_by_rule_id(self, rule_id: str) -> RuleCatalogEntry | None:
         """Get a single rule by its rule_id."""
-        e_rule_id = escape_sql_string(rule_id)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id = '{e_rule_id}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id = {self._sql.param('rule_id')}"
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         if not rows:
             return None
         return self._row_to_entry(rows[0])
 
     def list_rules_for_table(self, table_fqn: str, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all individual rules for a given table, optionally filtered by status."""
-        e_table = escape_sql_string(table_fqn)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE table_fqn = '{e_table}'"  # noqa: S608
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE table_fqn = {self._sql.param('table_fqn')}"
+        parameters = {"table_fqn": table_fqn}
         if status:
-            e_status = escape_sql_string(status)
-            sql += f" AND status = '{e_status}'"
+            sql += f" AND status = {self._sql.param('status')}"
+            parameters["status"] = status
         sql += " ORDER BY updated_at DESC"
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return [self._row_to_entry(row) for row in rows]
 
     def list_rules(self, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all individual rules, optionally filtered by status."""
         sql = f"SELECT {self._select_cols} FROM {self._table}"
         if status:
-            e_status = escape_sql_string(status)
-            sql += f" WHERE status = '{e_status}'"
+            sql += f" WHERE status = {self._sql.param('status')}"
         sql += " ORDER BY updated_at DESC LIMIT 2000"
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"status": status}) if status else self._sql.query(sql)
         return [self._row_to_entry(row) for row in rows]
 
     _IDENTITY_ARGS = frozenset(
@@ -642,16 +640,15 @@ class RulesCatalogService:
             ``changed_at``.
         """
         try:
-            e = escape_sql_string(rule_id)
             check_text = self._sql.select_json_text(self._check_col)
             changed_at = self._sql.ts_text("changed_at")
             sql = (
                 f"SELECT rule_id, table_fqn, {check_text} AS check_json, version, source, "  # noqa: S608
                 f"action, prev_status, new_status, changed_by, {changed_at} AS changed_at "
-                f"FROM {self._history_table} WHERE rule_id = '{e}' "
-                f"ORDER BY changed_at DESC LIMIT {int(limit)}"
+                f"FROM {self._history_table} WHERE rule_id = {self._sql.param('rule_id')} "
+                f"ORDER BY changed_at DESC LIMIT {self._sql.param('limit')}"
             )
-            rows = self._sql.query(sql)
+            rows = self._sql.query(sql, parameters={"rule_id": rule_id, "limit": int(limit)})
             return [self._history_row_to_dict(row) for row in rows]
         except Exception:
             logger.warning("Failed to read history for rule %s (non-fatal)", rule_id, exc_info=True)

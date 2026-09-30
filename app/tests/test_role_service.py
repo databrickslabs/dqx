@@ -333,6 +333,17 @@ class TestDeleteMappingHistoryRecording:
 
 
 class TestListHistory:
+    def test_list_history_binds_untrusted_filter(self, role_service, sql_executor_mock):
+        hostile_role = "viewer' OR 1=1 --\\"
+        sql_executor_mock.query.return_value = []
+
+        role_service.list_history(role=hostile_role)
+
+        sent_sql = sql_executor_mock.query.call_args.args[0]
+        assert hostile_role not in sent_sql
+        assert "role = :role" in sent_sql
+        assert sql_executor_mock.query.call_args.kwargs["parameters"]["role"] == hostile_role
+
     def test_list_history_orders_newest_first_with_limit(self, role_service, sql_executor_mock):
         # Build two rows that look like what the executor's ``.query()``
         # returns: list[tuple[role, group_name, action, changed_by, changed_at]].
@@ -346,18 +357,25 @@ class TestListHistory:
 
         sent_sql = sql_executor_mock.query.call_args.args[0]
         assert "ORDER BY changed_at DESC" in sent_sql
-        assert "LIMIT 50" in sent_sql
+        assert "LIMIT :limit" in sent_sql
+        assert sql_executor_mock.query.call_args.kwargs["parameters"]["limit"] == 50
 
     def test_list_history_clamps_limit(self, role_service, sql_executor_mock):
         # Hostile callers can't OOM the app by passing a huge limit.
         sql_executor_mock.query.return_value = []
         role_service.list_history(limit=10_000_000)
         sent_sql = sql_executor_mock.query.call_args.args[0]
-        assert "LIMIT 1000" in sent_sql
+        assert "LIMIT :limit" in sent_sql
+        assert sql_executor_mock.query.call_args.kwargs["parameters"]["limit"] == 1000
 
     def test_list_history_applies_filters(self, role_service, sql_executor_mock):
         sql_executor_mock.query.return_value = []
         role_service.list_history(role=UserRole.ADMIN.value, group_name="platform-admins")
         sent_sql = sql_executor_mock.query.call_args.args[0]
-        assert f"role = '{UserRole.ADMIN.value}'" in sent_sql
-        assert "group_name = 'platform-admins'" in sent_sql
+        assert "role = :role" in sent_sql
+        assert "group_name = :group_name" in sent_sql
+        assert sql_executor_mock.query.call_args.kwargs["parameters"] == {
+            "limit": 200,
+            "role": UserRole.ADMIN.value,
+            "group_name": "platform-admins",
+        }

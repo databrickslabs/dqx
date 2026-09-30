@@ -14,7 +14,6 @@ is what makes the ``APPLY`` check bite. One ``200``-after-grant case proves a
 matching personal grant lets the same caller through.
 """
 
-import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -53,14 +52,18 @@ class _FakeOltp:
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         return None
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[object]]:
+    def param(self, name: str) -> str:
+        return f":{name}"
+
+    def query(
+        self, sql: str, *, parameters: dict[str, str] | None = None, timeout_seconds: int = 120
+    ) -> list[list[object]]:
         if "created_by" in sql:
             return [[_OWNER]]
         if "dq_data_product_members" in sql:
             return []
-        ot = re.search(r"object_type = '([^']*)'", sql)
-        oid = re.search(r"object_id = '([^']*)'", sql)
-        key = (ot.group(1) if ot else "", oid.group(1) if oid else "")
+        parameters = parameters or {}
+        key = (parameters.get("object_type", ""), parameters.get("object_id", ""))
         return list(self.grants.get(key, []))
 
     def add_grant(

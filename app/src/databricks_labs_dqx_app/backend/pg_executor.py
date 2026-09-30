@@ -29,7 +29,7 @@ import logging
 import os
 import random
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -55,12 +55,15 @@ from databricks_labs_dqx_app.backend.pg_cursor_helpers import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import (
     RawSql,
+    SqlParameterValue,
     _build_count,
     _build_delete,
     _build_insert,
     _build_select,
     _build_update,
+    _bound_read_renderer,
     _render_value,
+    validate_parameter_name,
 )
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 from databricks_labs_dqx_app.backend.setup.resources import LakebaseConnection
@@ -454,6 +457,10 @@ class PgExecutor:
         """Quote a Postgres identifier (ANSI double quotes, doubled internal ``"``)."""
         return '"' + identifier.replace('"', '""') + '"'
 
+    def param(self, name: str) -> str:
+        """Return a psycopg named parameter marker."""
+        return f"%({validate_parameter_name(name)})s"
+
     def json_literal_expr(self, json_str: str) -> str:
         """Return a Postgres expression that yields a JSONB value for *json_str*."""
         return f"'{escape_sql_string(json_str)}'::jsonb"
@@ -553,7 +560,13 @@ class PgExecutor:
         """
         self.execute(sql)
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+    def query(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[list[str]]:
         """Run a query and return rows as lists of strings (Delta-compatible).
 
         The return type is annotated as ``list[list[str]]`` to mirror
@@ -569,11 +582,20 @@ class PgExecutor:
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 self._apply_statement_timeout(cur, timeout_seconds)
-                run_trusted_sql(cur, sql)
+                if parameters is None:
+                    run_trusted_sql(cur, sql)
+                else:
+                    run_parameterized_sql(cur, sql, parameters)
                 rows = cur.fetchall()
         return [[_to_text(cell) for cell in row] for row in rows]  # pyright: ignore[reportReturnType]
 
-    def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:
+    def query_dicts(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> list[dict[str, str | None]]:
         """Run a query and return rows as ``{column: stringified value}`` dicts.
 
         ``timeout_seconds`` is enforced via
@@ -582,7 +604,10 @@ class PgExecutor:
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 self._apply_statement_timeout(cur, timeout_seconds)
-                run_trusted_sql(cur, sql)
+                if parameters is None:
+                    run_trusted_sql(cur, sql)
+                else:
+                    run_parameterized_sql(cur, sql, parameters)
                 rows = cur.fetchall()
                 cols = [d.name for d in (cur.description or [])]
         return [{col: _to_text(cell) for col, cell in zip(cols, row)} for row in rows]
@@ -654,9 +679,12 @@ class PgExecutor:
 
         See :meth:`OltpExecutorProtocol.count` for the contract.
         """
-        rows = self.query(
-            _build_count(table, where, self.q, _pg_render_value),
-            timeout_seconds=timeout_seconds,
+        render, parameters = _bound_read_renderer(self.param)
+        statement = _build_count(table, where, self.q, render)
+        rows = (
+            self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
+            if parameters
+            else self.query(statement, timeout_seconds=timeout_seconds)
         )
         if rows and rows[0] and rows[0][0] is not None:
             return int(rows[0][0])
@@ -671,9 +699,12 @@ class PgExecutor:
         timeout_seconds: int = 120,
     ) -> list[list[str]]:
         """Postgres simple SELECT — see :meth:`OltpExecutorProtocol.select_rows`."""
-        return self.query(
-            _build_select(table, columns, where, self.q, _pg_render_value),
-            timeout_seconds=timeout_seconds,
+        render, parameters = _bound_read_renderer(self.param)
+        statement = _build_select(table, columns, where, self.q, render)
+        return (
+            self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
+            if parameters
+            else self.query(statement, timeout_seconds=timeout_seconds)
         )
 
     def select_dicts(
@@ -685,9 +716,12 @@ class PgExecutor:
         timeout_seconds: int = 120,
     ) -> list[dict[str, str | None]]:
         """Postgres simple SELECT — see :meth:`OltpExecutorProtocol.select_dicts`."""
-        return self.query_dicts(
-            _build_select(table, columns, where, self.q, _pg_render_value),
-            timeout_seconds=timeout_seconds,
+        render, parameters = _bound_read_renderer(self.param)
+        statement = _build_select(table, columns, where, self.q, render)
+        return (
+            self.query_dicts(statement, parameters=parameters, timeout_seconds=timeout_seconds)
+            if parameters
+            else self.query_dicts(statement, timeout_seconds=timeout_seconds)
         )
 
     def upsert(

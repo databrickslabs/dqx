@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -112,12 +112,11 @@ class ReviewStatusService:
         Callers that want a value (even the catalogue default) for runs
         without a row should use :meth:`get_effective` instead.
         """
-        er = escape_sql_string(run_id)
         sql = (
             f"SELECT run_id, status, updated_by, {self._sql.ts_text('updated_at')} "
-            f"FROM {self._table} WHERE run_id = '{er}' LIMIT 1"
+            f"FROM {self._table} WHERE run_id = {self._sql.param('run_id')} LIMIT 1"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"run_id": run_id})
         if not rows:
             return None
         return ReviewStatusRecord(
@@ -159,12 +158,12 @@ class ReviewStatusService:
         # Deduplicate before formatting so the ``IN`` list stays
         # compact even if the caller passes the same run twice.
         unique_ids = list(dict.fromkeys(run_ids))
-        in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in unique_ids)
+        in_list, parameters = bind_list(self._sql.param, "run_id", unique_ids)
         sql = (
             f"SELECT run_id, status, updated_by, {self._sql.ts_text('updated_at')} "
             f"FROM {self._table} WHERE run_id IN ({in_list})"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
 
         explicit: dict[str, ReviewStatusRecord] = {
             (row[0] or ""): ReviewStatusRecord(
@@ -196,15 +195,14 @@ class ReviewStatusService:
 
     def get_history(self, run_id: str) -> list[ReviewStatusHistoryEntry]:
         """Return up to ``_HISTORY_LIMIT`` recent history rows, newest first."""
-        er = escape_sql_string(run_id)
         sql = (
             f"SELECT run_id, status, previous_status, changed_by, "
             f"{self._sql.ts_text('changed_at')} "
             f"FROM {self._history_table} "
-            f"WHERE run_id = '{er}' "
+            f"WHERE run_id = {self._sql.param('run_id')} "
             f"ORDER BY changed_at DESC LIMIT {self._HISTORY_LIMIT}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"run_id": run_id})
         return [
             ReviewStatusHistoryEntry(
                 run_id=row[0] or "",

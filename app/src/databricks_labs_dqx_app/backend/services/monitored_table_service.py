@@ -49,7 +49,7 @@ from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
 logger = logging.getLogger(__name__)
@@ -372,9 +372,9 @@ class MonitoredTableService:
         return BulkRegisterResult(registered=registered, skipped_existing=skipped_existing, invalid=invalid)
 
     def _get_existing_table_fqns(self, table_fqns: list[str]) -> set[str]:
-        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
+        in_list, parameters = bind_list(self._sql.param, "table_fqn", table_fqns)
         sql = f"SELECT table_fqn FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return {row[0] for row in rows if row and row[0] is not None}
 
     def _insert(self, binding: MonitoredTable) -> None:
@@ -432,10 +432,13 @@ class MonitoredTableService:
         put a SQL-warehouse hop on every list load).
         """
         clauses: list[str] = []
+        parameters: dict[str, str] = {}
         if status:
-            clauses.append(f"mt.status = '{escape_sql_string(status)}'")
+            clauses.append(f"mt.status = {self._sql.param('status')}")
+            parameters["status"] = status
         if owner:
-            clauses.append(f"mt.owner = '{escape_sql_string(owner)}'")
+            clauses.append(f"mt.owner = {self._sql.param('owner')}")
+            parameters["owner"] = owner
         score_computed_at = self._sql.ts_text("sc.computed_at")
         state_json_text = self._sql.select_json_text("v.state_json")
         sql = (
@@ -451,7 +454,7 @@ class MonitoredTableService:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters) if parameters else self._sql.query(sql)
         # Base columns end with schedule_sample_size (index 17), so the
         # score-cache LEFT-JOIN columns follow at 18..21, and the
         # version_state_json at 22.
@@ -501,12 +504,12 @@ class MonitoredTableService:
         """Applied-rule counts for all *binding_ids* in ONE grouped query (no per-binding round-trip)."""
         if not binding_ids:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        in_list, parameters = bind_list(self._sql.param, "binding_id", binding_ids)
         sql = (
             f"SELECT binding_id, COUNT(*) FROM {self._applied_table} "  # noqa: S608
             f"WHERE binding_id IN ({in_list}) GROUP BY binding_id"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
     def _applied_rule_tag_facets(
@@ -522,7 +525,7 @@ class MonitoredTableService:
         """
         if not binding_ids:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        in_list, parameters = bind_list(self._sql.param, "binding_id", binding_ids)
         user_metadata = self._sql.select_json_text("r.user_metadata")
         sql = (
             f"SELECT ar.binding_id, ar.severity_override, {user_metadata} "
@@ -530,7 +533,7 @@ class MonitoredTableService:
             f"LEFT JOIN {self._rules_table} r ON ar.rule_id = r.rule_id "
             f"WHERE ar.binding_id IN ({in_list})"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         dims: dict[str, set[str]] = {}
         sevs: dict[str, set[str]] = {}
         custom: dict[str, set[tuple[str, str]]] = {}
@@ -577,12 +580,12 @@ class MonitoredTableService:
         """
         if not table_fqns:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        in_list, parameters = bind_list(self._sql.param, "table_fqn", table_fqns)
         sql = (
             f"SELECT table_fqn, COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
             f"WHERE table_fqn IN ({in_list}) AND status != 'rejected' GROUP BY table_fqn"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
     # ------------------------------------------------------------------
@@ -666,7 +669,7 @@ class MonitoredTableService:
         """
         if not table_fqns:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        in_list, parameters = bind_list(self._profiling_sql.param, "table_fqn", table_fqns)
         last_run_at = self._profiling_sql.ts_text("MAX(created_at)")
         sql = (
             f"SELECT source_table_fqn, {last_run_at} AS last_run_at "  # noqa: S608
@@ -675,7 +678,7 @@ class MonitoredTableService:
             f"AND UPPER(status) <> 'RUNNING' AND COALESCE(run_type, 'dryrun') <> 'preview' "
             f"GROUP BY source_table_fqn"
         )
-        return self._grouped_timestamp_map(self._profiling_sql.query(sql))
+        return self._grouped_timestamp_map(self._profiling_sql.query(sql, parameters=parameters))
 
     def _latest_profiled_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
         """Newest SUCCESS profiling timestamp per table, from ``dq_profiling_results``.
@@ -688,7 +691,7 @@ class MonitoredTableService:
         """
         if not table_fqns:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        in_list, parameters = bind_list(self._profiling_sql.param, "table_fqn", table_fqns)
         last_profiled_at = self._profiling_sql.ts_text("MAX(created_at)")
         sql = (
             f"SELECT source_table_fqn, {last_profiled_at} AS last_profiled_at "  # noqa: S608
@@ -696,7 +699,7 @@ class MonitoredTableService:
             f"WHERE source_table_fqn IN ({in_list}) AND status = 'SUCCESS' "
             f"GROUP BY source_table_fqn"
         )
-        return self._grouped_timestamp_map(self._profiling_sql.query(sql))
+        return self._grouped_timestamp_map(self._profiling_sql.query(sql, parameters=parameters))
 
     def _grouped_timestamp_map(self, rows: list[list[str]]) -> dict[str, datetime]:
         """Parse ``(fqn, ts_text)`` rows into ``{fqn: datetime}``, dropping unparsable ones."""
@@ -752,23 +755,21 @@ class MonitoredTableService:
             candidates.append(fqn)
         if not candidates:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
+        in_list, parameters = bind_list(self._sql.param, "table_fqn", candidates)
         sql = f"SELECT table_fqn, binding_id FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
 
     def _get(self, binding_id: str) -> MonitoredTable | None:
-        e = escape_sql_string(binding_id)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE binding_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE binding_id = {self._sql.param('binding_id')}"
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id})
         if not rows:
             return None
         return self._row_to_table(rows[0])
 
     def _get_by_table_fqn(self, table_fqn: str) -> MonitoredTable | None:
-        e = escape_sql_string(table_fqn)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE table_fqn = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE table_fqn = {self._sql.param('table_fqn')}"
+        rows = self._sql.query(sql, parameters={"table_fqn": table_fqn})
         if not rows:
             return None
         return self._row_to_table(rows[0])
@@ -782,26 +783,24 @@ class MonitoredTableService:
         version-increment markers. Returns an empty list for a binding
         with no approved versions.
         """
-        e = escape_sql_string(binding_id)
         created_at = self._sql.ts_text("created_at")
         sql = (
             f"SELECT version, {created_at} AS created_at "  # noqa: S608
-            f"FROM {self._versions_table} WHERE binding_id = '{e}' ORDER BY version"
+            f"FROM {self._versions_table} WHERE binding_id = {self._sql.param('binding_id')} ORDER BY version"
         )
         out: list[tuple[int, datetime | None]] = []
-        for row in self._sql.query(sql):
+        for row in self._sql.query(sql, parameters={"binding_id": binding_id}):
             if row[0] in (None, ""):
                 continue
             out.append((int(row[0]), self._parse_timestamp(row[1])))
         return out
 
     def _list_applied_rules(self, binding_id: str) -> list[AppliedRuleSummary]:
-        e = escape_sql_string(binding_id)
         sql = (
             f"SELECT {self._applied_select_cols} FROM {self._applied_table} "  # noqa: S608
-            f"WHERE binding_id = '{e}' ORDER BY created_at"
+            f"WHERE binding_id = {self._sql.param('binding_id')} ORDER BY created_at"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id})
         applied_rules = [self._row_to_applied_rule(row) for row in rows]
         summaries: list[AppliedRuleSummary] = []
         for applied_rule in applied_rules:
@@ -835,12 +834,12 @@ class MonitoredTableService:
         distinct = sorted({b for b in binding_ids if b})
         if not distinct:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in distinct)
+        in_list, parameters = bind_list(self._sql.param, "binding_id", distinct)
         sql = (
             f"SELECT {self._applied_select_cols} FROM {self._applied_table} "  # noqa: S608
             f"WHERE binding_id IN ({in_list}) ORDER BY binding_id, created_at"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         grouped: dict[str, list[AppliedRule]] = {}
         for row in rows:
             applied = self._row_to_applied_rule(row)
@@ -855,10 +854,9 @@ class MonitoredTableService:
         callers display a graceful blank rather than failing the whole
         monitored-table detail view.
         """
-        e = escape_sql_string(rule_id)
         user_metadata = self._sql.select_json_text("user_metadata")
-        sql = f"SELECT source, {user_metadata} FROM {self._rules_table} WHERE rule_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT source, {user_metadata} FROM {self._rules_table} WHERE rule_id = {self._sql.param('rule_id')}"
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         if not rows or not rows[0]:
             return None, None, None, None, None
         source = rows[0][0] if rows[0][0] else None
@@ -1049,12 +1047,12 @@ class MonitoredTableService:
         applied_ids = self._applied_rule_ids(binding_id)
         if not applied_ids:
             return []
-        placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
+        placeholders, parameters = bind_list(self._sql.param, "applied_rule_id", applied_ids)
         sql = (
             f"SELECT rule_id, status FROM {self._quality_rules_table} "  # noqa: S608
             f"WHERE applied_rule_id IN ({placeholders})"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return [(row[0], row[1]) for row in rows if row and row[0]]
 
     def rollup_status(self, binding_id: str, user_email: str) -> MonitoredTable | None:
@@ -1098,9 +1096,8 @@ class MonitoredTableService:
         return self.set_status(binding_id, target, user_email)
 
     def _applied_rule_ids(self, binding_id: str) -> list[str]:
-        e = escape_sql_string(binding_id)
-        sql = f"SELECT id FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT id FROM {self._applied_table} WHERE binding_id = {self._sql.param('binding_id')}"
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id})
         return [row[0] for row in rows if row and row[0]]
 
     # ------------------------------------------------------------------
@@ -1135,7 +1132,6 @@ class MonitoredTableService:
         (owned by the profiler job — see ``routes/v1/profiler.py``). Mirrors
         the row shape read by ``get_profile_run_results``.
         """
-        e = escape_sql_string(table_fqn)
         cols = (
             "run_id, source_table_fqn, rows_profiled, columns_profiled, duration_seconds, "
             "summary_json, generated_rules_json, status, "
@@ -1143,10 +1139,10 @@ class MonitoredTableService:
         )
         sql = (
             f"SELECT {cols} FROM {self._profiling_table} "  # noqa: S608
-            f"WHERE source_table_fqn = '{e}' AND status = 'SUCCESS' "
+            f"WHERE source_table_fqn = {self._profiling_sql.param('table_fqn')} AND status = 'SUCCESS' "
             f"ORDER BY created_at DESC LIMIT 1"
         )
-        rows = self._profiling_sql.query_dicts(sql)
+        rows = self._profiling_sql.query_dicts(sql, parameters={"table_fqn": table_fqn})
         if not rows:
             return None
         row = rows[0]

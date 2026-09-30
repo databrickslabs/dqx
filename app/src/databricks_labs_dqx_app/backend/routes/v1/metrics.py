@@ -159,7 +159,7 @@ def get_metrics_trend(
     so we recover ``run_type``, ``requesting_user`` and ``created_at`` from
     the lifecycle table without duplicating them across every metric row.
     """
-    from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+    from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
     try:
         validate_fqn(table_fqn)
@@ -173,15 +173,14 @@ def get_metrics_trend(
     # app catalogs stay parseable — same convention as the dq_results reads.
     metrics_table = quote_object_fqn(sql.catalog, sql.schema, "dq_metrics")
     runs_table = quote_object_fqn(sql.catalog, sql.schema, "dq_validation_runs")
-    e_fqn = escape_sql_string(table_fqn)
 
     # Pull the latest ``limit`` runs for this table (DESC by run_time)
     # then fetch every metric row attached to those runs in one go.
     stmt = (
         f"WITH recent_runs AS ("
         f"  SELECT DISTINCT m.run_id, m.run_time "
-        f"  FROM {metrics_table} m WHERE m.input_location = '{e_fqn}' "  # noqa: S608
-        f"  ORDER BY m.run_time DESC LIMIT {limit}"
+        f"  FROM {metrics_table} m WHERE m.input_location = {sql.param('input_location')} "
+        f"  ORDER BY m.run_time DESC LIMIT {sql.param('limit')}"
         f") "
         f"SELECT m.run_id, m.input_location, m.metric_name, m.metric_value, "
         f"       m.rule_set_fingerprint, r.run_type, r.requesting_user, r.created_at "
@@ -191,7 +190,7 @@ def get_metrics_trend(
         f"ORDER BY rr.run_time DESC, m.run_id, m.metric_name"
     )
     try:
-        rows = sql.query_dicts(stmt)
+        rows = sql.query_dicts(stmt, parameters={"input_location": table_fqn, "limit": limit})
     except Exception as exc:
         logger.exception("Failed to read metrics for %s", table_fqn)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

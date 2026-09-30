@@ -83,6 +83,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     resolve_pass_threshold,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.sql_executor import bind_list
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
@@ -819,12 +820,11 @@ class Materializer:
 
     def _get_materialized_row(self, row_id: str) -> tuple[str, int | None, str] | None:
         check_text = self._sql.select_json_text(self._check_col)
-        e = escape_sql_string(row_id)
         sql = (
             f"SELECT status, registry_version, {check_text} "  # noqa: S608
-            f"FROM {self._quality_rules_table} WHERE rule_id = '{e}'"
+            f"FROM {self._quality_rules_table} WHERE rule_id = {self._sql.param('rule_id')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"rule_id": row_id})
         if not rows:
             return None
         status, registry_version_raw, check_json_raw = rows[0][0], rows[0][1], rows[0][2]
@@ -845,21 +845,21 @@ class Materializer:
         """
         if not applied_rule_id:
             return set()
-        e = escape_sql_string(applied_rule_id)
         rows = self._sql.query(
-            f"SELECT rule_id FROM {self._quality_rules_table} WHERE applied_rule_id = '{e}'"  # noqa: S608
+            f"SELECT rule_id FROM {self._quality_rules_table} "
+            f"WHERE applied_rule_id = {self._sql.param('applied_rule_id')}",  # noqa: S608
+            parameters={"applied_rule_id": applied_rule_id},
         )
         return {row[0] for row in rows if row and row[0]}
 
     def _delete_stale_groups(self, applied_rule_id: str | None, expected_ids: set[str]) -> None:
         if not applied_rule_id:
             return
-        e = escape_sql_string(applied_rule_id)
         sql = (
             f"SELECT rule_id FROM {self._quality_rules_table} "  # noqa: S608
-            f"WHERE applied_rule_id = '{e}'"
+            f"WHERE applied_rule_id = {self._sql.param('applied_rule_id')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"applied_rule_id": applied_rule_id})
         for row in rows:
             existing_id = row[0]
             if existing_id not in expected_ids:
@@ -869,12 +869,12 @@ class Materializer:
         """Delete materialized rows whose owning applied rule no longer exists under this binding."""
         if not applied_ids:
             return
-        placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
+        placeholders, parameters = bind_list(self._sql.param, "applied_id", sorted(applied_ids))
         sql = (
             f"SELECT rule_id, applied_rule_id FROM {self._quality_rules_table} "  # noqa: S608
             f"WHERE applied_rule_id IS NOT NULL AND applied_rule_id NOT IN ({placeholders})"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         for row in rows:
             existing_id = row[0]
             if existing_id not in written_ids:
@@ -1049,13 +1049,12 @@ class Materializer:
         Returns:
             The sorted list of ``binding_id``s that were re-materialized.
         """
-        e_rule = escape_sql_string(rule_id)
         applied_table = self._sql.fqn("dq_applied_rules")
         sql = (
             f"SELECT DISTINCT binding_id FROM {applied_table} "  # noqa: S608
-            f"WHERE rule_id = '{e_rule}' AND pinned_version IS NULL"
+            f"WHERE rule_id = {self._sql.param('rule_id')} AND pinned_version IS NULL"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         binding_ids = sorted({row[0] for row in rows if row and row[0]})
         for binding_id in binding_ids:
             try:

@@ -192,11 +192,8 @@ class AppSettingsService:
 
     def get_setting(self, key: str) -> str | None:
         """Read a single setting value by key."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        escaped_key = escape_sql_string(key)
-        sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{escaped_key}'"
-        rows = self._sql.query(sql)
+        sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = {self._sql.param('setting_key')}"
+        rows = self._sql.query(sql, parameters={"setting_key": key})
         return rows[0][0] if rows else None
 
     def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:

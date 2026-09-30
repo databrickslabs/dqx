@@ -23,6 +23,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return sql_executor_mock
 
@@ -95,14 +96,16 @@ def test_list_for_rule_parses_rows(svc, sql):
 
     # The read is scoped to the requested rule id.
     query_sql = sql.query.call_args_list[-1].args[0]
-    assert "WHERE rule_id = 'r1'" in query_sql
+    assert "WHERE rule_id = :rule_id" in query_sql
+    assert sql.query.call_args.kwargs["parameters"] == {"rule_id": "r1"}
 
 
 def test_list_for_binding_scopes_by_binding(svc, sql):
     sql.query.return_value = []
     svc.list_for_binding("b9")
     query_sql = sql.query.call_args_list[-1].args[0]
-    assert "WHERE binding_id = 'b9'" in query_sql
+    assert "WHERE binding_id = :binding_id" in query_sql
+    assert sql.query.call_args.kwargs["parameters"] == {"binding_id": "b9"}
 
 
 def test_delete_emits_delete_by_id(svc, sql):

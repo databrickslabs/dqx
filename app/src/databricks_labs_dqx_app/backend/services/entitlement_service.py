@@ -43,8 +43,8 @@ import logging
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import QuarantineSampleService
-from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor, bind_list
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -189,20 +189,19 @@ class EntitlementService:
         One batched SP read. Never raises: the freshness check is only a
         probe-skip optimisation — on any read failure it returns the empty
         set so every FQN falls through to the (authoritative) OBO probe.
-        All *table_fqns* must already have passed :func:`validate_fqn`
-        (escape_sql_string relies on it having rejected backslashes).
+        All *table_fqns* must already have passed :func:`validate_fqn`.
         """
         if not table_fqns:
             return set()
-        e_email = escape_sql_string(user_email)
-        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
+        in_list, parameters = bind_list(self._sql.param, "table_fqn", table_fqns)
+        parameters["user_email"] = user_email
         stmt = (
             f"SELECT table_fqn FROM {self.entitlements_table_fqn_quoted} "  # noqa: S608
-            f"WHERE user_email = '{e_email}' AND table_fqn IN ({in_list}) "
+            f"WHERE user_email = {self._sql.param('user_email')} AND table_fqn IN ({in_list}) "
             f"AND verified_at > current_timestamp() - INTERVAL {ENTITLEMENT_TTL_HOURS} HOURS"
         )
         try:
-            return {row[0] for row in self._sql.query(stmt) if row and row[0]}
+            return {row[0] for row in self._sql.query(stmt, parameters=parameters) if row and row[0]}
         except Exception:
             logger.warning("Entitlement freshness read failed; probing every table", exc_info=True)
             return set()

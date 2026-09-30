@@ -35,7 +35,7 @@ of contract for both helpers — see :func:`run_trusted_sql` for the full
 rationale.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import LiteralString
@@ -103,7 +103,7 @@ def run_trusted_sql(cur: "Cursor[Any]", sql: str) -> None:
     _ = cur.execute(cast(LiteralString, sql))
 
 
-def run_parameterized_sql(cur: "Cursor[Any]", sql: str, params: Sequence[Any]) -> None:
+def run_parameterized_sql(cur: "Cursor[Any]", sql: str, params: Sequence[Any] | Mapping[str, object]) -> None:
     """Execute a trusted SQL TEMPLATE with psycopg-bound runtime values.
 
     Sibling to :func:`run_trusted_sql` for the common pattern where

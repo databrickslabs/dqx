@@ -53,6 +53,7 @@ def _mock_sql() -> SqlExecutor:
     )
     mock.q.side_effect = lambda i: f"`{i}`"
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    mock.param.side_effect = lambda name: f":{name}"
     mock.query.return_value = []
     # The service now goes through the shared CRUD-builder shortcuts
     # (``insert``/``update``/``delete``/``count``/``select_rows``); route
@@ -303,7 +304,12 @@ class TestListAndGet:
         assert sql.query.call_count == 2
         members_query = sql.query.call_args_list[1][0][0]
         assert f"FROM {_MEMBERS}" in members_query
-        assert "IN ('p1', 'p2', 'p3')" in members_query
+        assert "IN (:product_id_0, :product_id_1, :product_id_2)" in members_query
+        assert sql.query.call_args_list[1].kwargs["parameters"] == {
+            "product_id_0": "p1",
+            "product_id_1": "p2",
+            "product_id_2": "p3",
+        }
         # Per-product last-run is now derived from the members' denormalized
         # last_run_at (B2-15) — no per-product run-set MAX query.
         version_service.snapshot_counts_many.assert_called_once_with([("b2", 1)])
@@ -459,6 +465,8 @@ class TestListAndGet:
     def test_get_missing_returns_none(self, service, sql):
         sql.query.return_value = []
         assert service.get("missing") is None
+        assert "p.product_id = :product_id" in sql.query.call_args.args[0]
+        assert sql.query.call_args.kwargs["parameters"] == {"product_id": "missing"}
 
     def test_get_not_runnable_when_status_not_approved(self, service, sql, monitored_tables, run_set_service):
         sql.query.side_effect = [
@@ -637,6 +645,17 @@ class TestListAndGet:
 
 
 class TestCreate:
+    def test_name_availability_lookup_binds_untrusted_name(self, service, sql):
+        sql.query.return_value = []
+        name = "x\\' OR 1=1 --"
+
+        service.create(name, None, None, "alice@x")
+
+        lookup = sql.query.call_args_list[0]
+        assert "name = :name" in lookup.args[0]
+        assert name not in lookup.args[0]
+        assert lookup.kwargs["parameters"] == {"name": name}
+
     def test_create_success(self, service, sql):
         sql.query.return_value = []  # name available
         product = service.create("Orders", "desc", None, "alice@x")

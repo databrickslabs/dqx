@@ -20,6 +20,7 @@ def sql():
     mock = create_autospec(SqlExecutor, instance=True)
     mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    mock.param.side_effect = lambda name: f":{name}"
     mock.query.return_value = []
     return mock
 
@@ -47,7 +48,8 @@ def test_add_comment_accepts_all_supported_types(svc, sql, entity_type):
 def test_list_comments_accepts_new_types(svc, sql, entity_type):
     svc.list_comments(entity_type, "obj-1")
     select_sql = sql.query.call_args[0][0]
-    assert f"entity_type = '{entity_type}'" in select_sql
+    assert "entity_type = :entity_type AND entity_id = :entity_id" in select_sql
+    assert sql.query.call_args.kwargs["parameters"] == {"entity_type": entity_type, "entity_id": "obj-1"}
 
 
 def test_add_comment_rejects_unknown_type(svc, sql):

@@ -41,6 +41,7 @@ PLAIN_TABLE = TableInfo(row_filter=None, columns=[ColumnInfo(name="id"), ColumnI
 @pytest.fixture
 def svc(sql_executor_mock) -> EntitlementService:
     sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return EntitlementService(sql=sql_executor_mock, genie_schema="genie")
 
@@ -190,13 +191,19 @@ class TestFreshEntitlements:
         fresh = svc.fresh_entitlements(EMAIL, [FQN, FQN2])
         assert fresh == {FQN}
         stmt = sql_executor_mock.query.call_args.args[0]
-        assert f"user_email = '{EMAIL}'" in stmt
-        assert f"'{FQN}', '{FQN2}'" in stmt
+        assert "user_email = :user_email" in stmt
+        assert "table_fqn IN (:table_fqn_0, :table_fqn_1)" in stmt
+        assert sql_executor_mock.query.call_args.kwargs["parameters"] == {
+            "user_email": EMAIL,
+            "table_fqn_0": FQN,
+            "table_fqn_1": FQN2,
+        }
         assert f"verified_at > current_timestamp() - INTERVAL {ENTITLEMENT_TTL_HOURS} HOURS" in stmt
 
-    def test_escapes_the_email_literal(self, svc, sql_executor_mock):
+    def test_binds_the_email(self, svc, sql_executor_mock):
         svc.fresh_entitlements("o'brien@example.com", [FQN])
-        assert "o''brien@example.com" in sql_executor_mock.query.call_args.args[0]
+        assert "o'brien@example.com" not in sql_executor_mock.query.call_args.args[0]
+        assert sql_executor_mock.query.call_args.kwargs["parameters"]["user_email"] == "o'brien@example.com"
 
     def test_empty_input_short_circuits(self, svc, sql_executor_mock):
         assert svc.fresh_entitlements(EMAIL, []) == set()
@@ -265,6 +272,19 @@ class TestCanonicalFqnAgreement:
 
 
 class TestVerifyAndRecord:
+    def test_fresh_entitlement_lookup_binds_email_and_tables(self, svc, sql_executor_mock):
+        email = "steward\\' OR 1=1 --"
+        assert svc.fresh_entitlements(email, [FQN, FQN2]) == set()
+        statement = sql_executor_mock.query.call_args.args[0]
+        assert "user_email = :user_email" in statement
+        assert "table_fqn IN (:table_fqn_0, :table_fqn_1)" in statement
+        assert email not in statement
+        assert sql_executor_mock.query.call_args.kwargs["parameters"] == {
+            "user_email": email,
+            "table_fqn_0": FQN,
+            "table_fqn_1": FQN2,
+        }
+
     async def test_fresh_row_skips_both_gates(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         # A fresh row means both gates passed within the TTL window —
         # neither the SELECT probe nor the FGAC metadata read runs.

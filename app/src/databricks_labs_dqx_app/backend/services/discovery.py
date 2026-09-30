@@ -54,15 +54,15 @@ def read_column_tags(sql: "SqlExecutor", table_fqn: str) -> dict[str, list[str]]
     is unreliable for column tags (it returns ``tags=None`` for columns that do
     carry a governed tag), so tag matching must not depend on it.
 
-    Best-effort: validates *table_fqn*, backtick-quotes the catalog, escapes the
-    schema/table string literals, and gates the assembled query with
+    Best-effort: validates *table_fqn*, backtick-quotes the catalog, binds the
+    schema/table values, and gates the assembled query with
     :func:`is_sql_query_safe` before execution. Any failure (validation, unsafe
     query, or a SQL error) yields an empty map so a tag-read failure never aborts
     the caller. Never raises.
     """
     from databricks.labs.dqx.utils import is_sql_query_safe
 
-    from ..sql_utils import escape_sql_string, quote_ident, validate_fqn
+    from ..sql_utils import quote_ident, validate_fqn
 
     tags: dict[str, list[str]] = {}
     try:
@@ -71,13 +71,13 @@ def read_column_tags(sql: "SqlExecutor", table_fqn: str) -> dict[str, list[str]]
         query = (
             "SELECT column_name, tag_name, tag_value "
             f"FROM {quote_ident(catalog)}.information_schema.column_tags "
-            f"WHERE schema_name = '{escape_sql_string(schema)}' "
-            f"AND table_name = '{escape_sql_string(table)}'"
+            f"WHERE schema_name = {sql.param('schema_name')} "
+            f"AND table_name = {sql.param('table_name')}"
         )
         if not is_sql_query_safe(query):
             logger.warning(f"Skipping unsafe column-tag query for {table_fqn}")
             return {}
-        rows = sql.query(query)
+        rows = sql.query(query, parameters={"schema_name": schema, "table_name": table})
     except Exception:
         logger.warning(f"Failed to read column tags for {table_fqn}")
         return {}

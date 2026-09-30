@@ -45,6 +45,7 @@ def _mock_executor() -> MagicMock:
     mock.dialect = "delta"
     mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    mock.param.side_effect = lambda name: f":{name}"
     mock.query.return_value = []
     mock.query_dicts.return_value = []
     return mock
@@ -100,7 +101,8 @@ class TestRefreshForTables:
         assert warehouse.query_dicts.call_count == 1
         stmt = warehouse.query_dicts.call_args[0][0]
         assert _MV_FQN in stmt
-        assert f"input_location IN ('{FQN_A}', '{FQN_B}')" in stmt
+        assert "input_location IN (:table_fqn_0, :table_fqn_1)" in stmt
+        assert warehouse.query_dicts.call_args.kwargs["parameters"] == {"table_fqn_0": FQN_A, "table_fqn_1": FQN_B}
         assert "run_mode = 'published'" in stmt
         assert "MEASURE(score)" in stmt
         assert "QUALIFY ROW_NUMBER() OVER (PARTITION BY input_location ORDER BY run_time DESC) = 1" in stmt
@@ -139,7 +141,7 @@ class TestRefreshForTables:
         svc.refresh_for_tables(["bad`fqn", FQN_A])
         stmt = warehouse.query_dicts.call_args[0][0]
         assert "bad`fqn" not in stmt
-        assert FQN_A in stmt
+        assert warehouse.query_dicts.call_args.kwargs["parameters"] == {"table_fqn_0": FQN_A}
         assert ("table", FQN_A) in _upsert_by_key(oltp)
         assert len(oltp.upsert.call_args_list) == 1
 
@@ -152,7 +154,8 @@ class TestRefreshForTables:
         warehouse.query_dicts.return_value = [_measure_row(FQN_A)]
         assert svc.refresh_for_tables([FQN_A, FQN_A]) == 1
         stmt = warehouse.query_dicts.call_args[0][0]
-        assert stmt.count(f"'{FQN_A}'") == 1
+        assert stmt.count(":table_fqn_0") == 1
+        assert warehouse.query_dicts.call_args.kwargs["parameters"] == {"table_fqn_0": FQN_A}
         assert len(oltp.upsert.call_args_list) == 1
 
 
@@ -166,7 +169,8 @@ class TestRefreshProduct:
         assert _MEMBERS in stmt
         assert _MONITORED in stmt
         assert _CACHE in stmt
-        assert "m.product_id = 'p1'" in stmt
+        assert "m.product_id = :product_id" in stmt
+        assert oltp.query_dicts.call_args.kwargs["parameters"] == {"product_id": "p1"}
         assert "sc.score IS NOT NULL" in stmt
         # Only APPROVED member tables feed the product aggregate.
         assert "mt.status = 'approved'" in stmt
@@ -227,7 +231,8 @@ class TestRefreshAllForTables:
         membership_stmt = oltp.query.call_args[0][0]
         assert _MEMBERS in membership_stmt
         assert _MONITORED in membership_stmt
-        assert f"mt.table_fqn IN ('{FQN_A}')" in membership_stmt
+        assert "mt.table_fqn IN (:table_fqn_0)" in membership_stmt
+        assert oltp.query.call_args.kwargs["parameters"] == {"table_fqn_0": FQN_A}
 
     def test_no_valid_tables_still_refreshes_global_only(self, svc, oltp, warehouse):
         refreshed_tables, refreshed_products = svc.refresh_all_for_tables(["bad-fqn"])
@@ -245,7 +250,8 @@ class TestListMonitoredTableFqns:
         stmt = oltp.query.call_args[0][0]
         assert _MONITORED in stmt
         assert "table_fqn" in stmt
-        assert f"LIMIT {RECONCILE_MAX_TABLES}" in stmt
+        assert "LIMIT :limit" in stmt
+        assert oltp.query.call_args.kwargs["parameters"] == {"limit": RECONCILE_MAX_TABLES}
 
     def test_blank_rows_are_dropped(self, svc, oltp):
         oltp.query.return_value = [[FQN_A], [None], [""], []]
@@ -253,7 +259,7 @@ class TestListMonitoredTableFqns:
 
     def test_custom_limit_is_applied_as_int(self, svc, oltp):
         svc.list_monitored_table_fqns(limit=25)
-        assert "LIMIT 25" in oltp.query.call_args[0][0]
+        assert oltp.query.call_args.kwargs["parameters"] == {"limit": 25}
 
 
 class TestGetMany:
@@ -281,8 +287,19 @@ class TestGetMany:
             )
         }
         stmt = oltp.query_dicts.call_args[0][0]
-        assert "scope_type = 'table'" in stmt
-        assert f"scope_key IN ('{FQN_A}', '{FQN_B}')" in stmt
+        assert "scope_type = :scope_type" in stmt
+        assert "scope_key IN (:scope_key_0, :scope_key_1)" in stmt
+        assert oltp.query_dicts.call_args.kwargs["parameters"] == {
+            "scope_type": "table",
+            "scope_key_0": FQN_A,
+            "scope_key_1": FQN_B,
+        }
+
+    def test_scope_key_never_enters_sql_text(self, svc, oltp):
+        scope_key = "x\\' OR 1=1 --"
+        svc.get_many("table", [scope_key])
+        assert scope_key not in oltp.query_dicts.call_args.args[0]
+        assert oltp.query_dicts.call_args.kwargs["parameters"]["scope_key_0"] == scope_key
 
     def test_empty_keys_short_circuit(self, svc, oltp):
         assert svc.get_many("table", []) == {}
@@ -397,9 +414,14 @@ class TestGetHistory:
         points = svc.get_history("global", GLOBAL_SCOPE_KEY, limit=30)
         stmt = oltp.query_dicts.call_args[0][0]
         assert _HISTORY in stmt
-        assert "scope_type = 'global'" in stmt
-        assert "scope_key = 'global'" in stmt
-        assert "ORDER BY computed_at DESC LIMIT 30" in stmt
+        assert "scope_type = :scope_type" in stmt
+        assert "scope_key = :scope_key" in stmt
+        assert "ORDER BY computed_at DESC LIMIT :limit" in stmt
+        assert oltp.query_dicts.call_args.kwargs["parameters"] == {
+            "scope_type": "global",
+            "scope_key": "global",
+            "limit": 30,
+        }
         # DESC read, ascending return — oldest first for charting.
         assert [p.score for p in points] == [0.8, 0.9]
         assert points[0].computed_at == "2026-07-09 09:00:00"

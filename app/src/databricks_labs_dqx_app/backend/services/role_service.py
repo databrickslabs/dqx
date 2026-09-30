@@ -113,13 +113,12 @@ class RoleService:
 
     def get_mappings_for_role(self, role: str) -> list[RoleMapping]:
         """Get all group mappings for a specific role."""
-        escaped_role = escape_sql_string(role)
         sql = (
             f"SELECT role, group_name, created_by, "
             f"{self._sql.ts_text('created_at')}, updated_by, {self._sql.ts_text('updated_at')} "
-            f"FROM {self._table} WHERE role = '{escaped_role}' ORDER BY group_name"
+            f"FROM {self._table} WHERE role = {self._sql.param('role')} ORDER BY group_name"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"role": role})
         return [
             RoleMapping(
                 role=row[0],
@@ -227,10 +226,13 @@ class RoleService:
         limit = max(1, min(int(limit), 1000))
 
         where_clauses: list[str] = []
+        parameters: dict[str, str | int] = {"limit": limit}
         if role is not None:
-            where_clauses.append(f"role = '{escape_sql_string(role)}'")
+            where_clauses.append(f"role = {self._sql.param('role')}")
+            parameters["role"] = role
         if group_name is not None:
-            where_clauses.append(f"group_name = '{escape_sql_string(group_name)}'")
+            where_clauses.append(f"group_name = {self._sql.param('group_name')}")
+            parameters["group_name"] = group_name
         where = f"WHERE {' AND '.join(where_clauses)} " if where_clauses else ""
 
         sql = (
@@ -239,9 +241,9 @@ class RoleService:
             f"FROM {self._history_table} "
             f"{where}"
             f"ORDER BY changed_at DESC "
-            f"LIMIT {limit}"
+            f"LIMIT {self._sql.param('limit')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
         return [
             RoleMappingHistoryEntry(
                 role=row[0],

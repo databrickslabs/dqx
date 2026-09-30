@@ -28,6 +28,7 @@ def _mock_sql(fqn_map: dict[str, str] | None = None) -> SqlExecutor:
     mock.fqn.side_effect = lambda t: (fqn_map or {}).get(t, f"dqx_test.dqx_app_test.{t}")
     mock.q.side_effect = lambda i: f"`{i}`"
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    mock.param.side_effect = lambda name: f":{name}"
     mock.query.return_value = []
     mock.query_dicts.return_value = []
     # Wire the CRUD-builder shortcuts so tests that assert on
@@ -50,6 +51,25 @@ def validation_sql():
 @pytest.fixture
 def service(oltp_sql, validation_sql):
     return RunSetService(oltp_sql=oltp_sql, validation_sql=validation_sql)
+
+
+def test_list_for_product_binds_product_id_and_limit(service, oltp_sql) -> None:
+    product_id = "p\\' OR 1=1 --"
+
+    assert service.list_for_product(product_id, limit=7) == []
+    statement = oltp_sql.query.call_args.args[0]
+    assert "product_id = :product_id" in statement
+    assert "LIMIT :limit" in statement
+    assert product_id not in statement
+    assert oltp_sql.query.call_args.kwargs["parameters"] == {"product_id": product_id, "limit": 7}
+
+
+def test_run_id_batch_lookup_binds_values(service, oltp_sql) -> None:
+    run_id = "r\\' OR 1=1 --"
+
+    assert service.run_set_ids_by_run_id([run_id]) == {}
+    assert "run_id IN (:run_id_0)" in oltp_sql.query.call_args.args[0]
+    assert oltp_sql.query.call_args.kwargs["parameters"] == {"run_id_0": run_id}
 
 
 class TestCreateAndAddMember:
@@ -198,7 +218,8 @@ class TestRunSetIdsByRunId:
         assert result == {"r1": "set1", "r2": "set1", "r3": "set2"}
         sql = oltp_sql.query.call_args[0][0]
         assert f"FROM {_MEMBERS}" in sql
-        assert "'r1'" in sql and "'r2'" in sql and "'r3'" in sql
+        assert "IN (:run_id_0, :run_id_1, :run_id_2)" in sql
+        assert oltp_sql.query.call_args.kwargs["parameters"] == {"run_id_0": "r1", "run_id_1": "r2", "run_id_2": "r3"}
 
     def test_empty_input_short_circuits_without_query(self, service, oltp_sql):
         assert service.run_set_ids_by_run_id([]) == {}

@@ -289,6 +289,12 @@ class TestHyphenatedAppCatalog:
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert self.QUOTED_METRICS in stmt
         assert self.QUOTED_RUNS in stmt
+        assert "m.input_location = :input_location" in stmt
+        assert "LIMIT :limit" in stmt
+        assert sql_mock.query_dicts.call_args.kwargs["parameters"] == {
+            "input_location": "main.sales.orders",
+            "limit": 50,
+        }
 
     def test_metrics_summary_reads_are_quoted(self, client, sql_mock):
         resp = client.get("/api/v1/metrics")

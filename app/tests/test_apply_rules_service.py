@@ -29,6 +29,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return sql_executor_mock
 
@@ -596,14 +597,17 @@ class TestListBindingsForRule:
         assert [a.id for a in result] == ["ar1", "ar2"]
         assert [a.binding_id for a in result] == ["b1", "b2"]
         query_sql = sql.query.call_args[0][0]
-        assert "rule_id = 'r1'" in query_sql
+        assert "rule_id = :rule_id" in query_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id": "r1"}
         assert "binding_id = " not in query_sql
 
-    def test_escapes_rule_id(self, svc, sql):
+    def test_binds_rule_id(self, svc, sql):
         sql.query.return_value = []
-        svc.list_bindings_for_rule("r'; DROP TABLE x --")
+        value = "r\\'; DROP TABLE x --"
+        svc.list_bindings_for_rule(value)
         query_sql = sql.query.call_args[0][0]
-        assert "r''; DROP TABLE x --" in query_sql
+        assert value not in query_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"rule_id": value}
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,12 @@ class _FakeExecutor:
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         self.executed.append(sql)
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+    def param(self, name: str) -> str:
+        return f":{name}"
+
+    def query(
+        self, sql: str, *, parameters: dict[str, str] | None = None, timeout_seconds: int = 120
+    ) -> list[list[str]]:
         # Settings read absent right after the clear, so the reset's default
         # re-provisioning (seed-if-absent) writes the fresh-install seeds.
         return []

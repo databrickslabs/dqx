@@ -26,6 +26,7 @@ def _sql(count: int = 0, rows: list | None = None, *, catalog: str = "main", sch
     sql = MagicMock()
     sql.catalog = catalog
     sql.schema = schema
+    sql.param.side_effect = lambda name: f":{name}"
     sql.query.return_value = [[count]]
     sql.query_dicts.return_value = rows or []
     return sql
@@ -57,13 +58,13 @@ class TestCheckNameRegex:
 
 class TestCheckNamePredicate:
     def test_filters_both_errors_and_warnings(self):
-        pred = _check_name_predicate("fare_amount_not_in_range")
+        pred = _check_name_predicate(":check_name")
         # The predicate must cover BOTH the errors column and the warnings
         # column; an OR between the two is the whole point — warning-only
         # rules write to ``warnings`` but never to ``errors``.
         assert "errors" in pred
         assert "warnings" in pred
-        assert "fare_amount_not_in_range" in pred
+        assert ":check_name" in pred
         assert " OR " in pred
 
     def test_uses_typed_from_json_projection(self):
@@ -71,7 +72,7 @@ class TestCheckNamePredicate:
         # the higher-order ``exists`` can apply ``e -> e.name = ...``.
         # Locking that projection in stops a careless refactor from
         # falling back to a substring match (which would be unsafe).
-        pred = _check_name_predicate("x")
+        pred = _check_name_predicate(":check_name")
         assert "from_json(to_json(errors), 'array<struct<name:string>>')" in pred
         assert "from_json(to_json(warnings), 'array<struct<name:string>>')" in pred
         assert "EXISTS(" in pred
@@ -85,8 +86,8 @@ class TestQueryQuarantine:
         data_call = sql.query_dicts.call_args.args[0]
         assert "exists" not in count_call.lower()
         assert "exists" not in data_call.lower()
-        assert "run_id = 'run-1'" in count_call
-        assert "ORDER BY created_at DESC LIMIT 10 OFFSET 0" in data_call
+        assert "run_id = :run_id" in count_call
+        assert "LIMIT :limit OFFSET :offset" in data_call
 
     def test_appends_check_name_predicate(self):
         sql = _sql(count=3)
@@ -97,8 +98,8 @@ class TestQueryQuarantine:
         # invariance, so check explicitly.
         assert "EXISTS(" in count_call
         assert "EXISTS(" in data_call
-        assert "fare_in_range" in count_call
-        assert "fare_in_range" in data_call
+        assert "e.name = :check_name" in count_call
+        assert "w.name = :check_name" in data_call
 
     def test_rejects_injection_attempt(self):
         sql = _sql()
@@ -108,18 +109,21 @@ class TestQueryQuarantine:
         sql.query.assert_not_called()
         sql.query_dicts.assert_not_called()
 
-    def test_run_id_is_escaped_via_escape_sql_string(self):
-        # Sanity check that the existing escaping path is still wired in.
+    def test_run_id_is_bound_even_with_backslash_and_quote(self):
         sql = _sql(count=0)
-        _query_quarantine(sql, _AppConf(), "run-with'quote", offset=0, limit=10)
+        run_id = "run\\' OR 1=1 --"
+        _query_quarantine(sql, _AppConf(), run_id, offset=0, limit=10)
         count_call = sql.query.call_args.args[0]
-        assert "run-with''quote" in count_call
+        assert run_id not in count_call
+        assert sql.query.call_args.kwargs["parameters"] == {"run_id": run_id}
+        assert sql.query_dicts.call_args.kwargs["parameters"] == {"run_id": run_id, "limit": 10, "offset": 0}
 
     def test_pagination_params_propagate_to_data_query(self):
         sql = _sql(count=100)
         _query_quarantine(sql, _AppConf(), "run-1", offset=20, limit=5, check_name="my_check")
         data_call = sql.query_dicts.call_args.args[0]
-        assert "LIMIT 5 OFFSET 20" in data_call
+        assert "LIMIT :limit OFFSET :offset" in data_call
+        assert sql.query_dicts.call_args.kwargs["parameters"]["offset"] == 20
 
 
 class TestHyphenatedAppCatalog:
@@ -158,6 +162,7 @@ class TestHyphenatedAppCatalog:
         sql = create_autospec(SqlExecutor, instance=True)
         sql.catalog = "prod-east"
         sql.schema = "dqx-studio"
+        sql.param.side_effect = lambda name: f":{name}"
         sql.query_dicts.return_value = []
         app = FastAPI()
         app.include_router(router, prefix="/api/v1/quarantine")
@@ -171,3 +176,5 @@ class TestHyphenatedAppCatalog:
         resp = client.get("/api/v1/quarantine/runs/run-1/export", params={"format": "json"})
         assert resp.status_code == 200
         assert self.QUOTED_TABLE in sql.query_dicts.call_args.args[0]
+        assert "run_id = :run_id" in sql.query_dicts.call_args.args[0]
+        assert sql.query_dicts.call_args.kwargs["parameters"] == {"run_id": "run-1", "limit": 50_000}

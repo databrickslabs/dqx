@@ -54,13 +54,18 @@ class _FakeExecutor:
     def fqn(self, table: str) -> str:
         return f"cat.sch.{table}"
 
+    def param(self, name: str) -> str:
+        return f":{name}"
+
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         self.executed.append(sql)
         m = _DELETE_RE.match(sql)
         if m and m.group(1) in self._fail_on:
             raise RuntimeError(f"boom on {m.group(1)}")
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+    def query(
+        self, sql: str, *, parameters: dict[str, str] | None = None, timeout_seconds: int = 120
+    ) -> list[list[str]]:
         # Settings are absent right after a clear — return nothing so the
         # seed-if-absent routines fire.
         return []
@@ -198,7 +203,6 @@ class _StatefulSettingsExecutor:
     ignored (they don't touch the settings store).
     """
 
-    _SELECT_RE = re.compile(r"WHERE setting_key = '([^']*)'")
     _NOT_IN_RE = re.compile(r"dq_app_settings WHERE setting_key NOT IN \(([^)]*)\)")
 
     def __init__(self) -> None:
@@ -207,17 +211,19 @@ class _StatefulSettingsExecutor:
     def fqn(self, table: str) -> str:
         return f"cat.sch.{table}"
 
+    def param(self, name: str) -> str:
+        return f":{name}"
+
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         m = self._NOT_IN_RE.search(sql)
         if m:
             keep = {v.strip().strip("'") for v in m.group(1).split(",")}
             self.settings = {k: v for k, v in self.settings.items() if k in keep}
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
-        m = self._SELECT_RE.search(sql)
-        if not m:
-            return []
-        key = m.group(1)
+    def query(
+        self, sql: str, *, parameters: dict[str, str] | None = None, timeout_seconds: int = 120
+    ) -> list[list[str]]:
+        key = (parameters or {}).get("setting_key")
         return [[self.settings[key]]] if key in self.settings else []
 
     def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:

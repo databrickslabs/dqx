@@ -45,6 +45,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return sql_executor_mock
 
@@ -307,6 +308,15 @@ class TestRefreezeForQualityRule:
 
 
 class TestGetChecks:
+    def test_missing_snapshot_binds_binding_and_version(self, service, sql):
+        binding_id = "b\\' OR 1=1 --"
+        with pytest.raises(LookupError):
+            service.get_checks(binding_id, 2)
+        statement = sql.query.call_args.args[0]
+        assert "binding_id = :binding_id AND version = :version" in statement
+        assert binding_id not in statement
+        assert sql.query.call_args.kwargs["parameters"] == {"binding_id": binding_id, "version": 2}
+
     def test_reconstructs_checks_from_refs(self, service, sql, materializer):
         state = {
             "rule_refs": [
@@ -456,8 +466,14 @@ class TestSnapshotCountsMany:
         assert sql.query.call_count == 1
         stmt = sql.query.call_args[0][0]
         assert f"FROM {_VERSIONS}" in stmt
-        assert "(binding_id = 'b1' AND version = 1)" in stmt
-        assert "(binding_id = 'b2' AND version = 3)" in stmt
+        assert "(binding_id = :binding_id_0 AND version = :version_0)" in stmt
+        assert "(binding_id = :binding_id_1 AND version = :version_1)" in stmt
+        assert sql.query.call_args.kwargs["parameters"] == {
+            "binding_id_0": "b1",
+            "version_0": 1,
+            "binding_id_1": "b2",
+            "version_1": 3,
+        }
 
     def test_missing_snapshot_is_absent_from_result(self, service, sql):
         sql.query.return_value = []
@@ -471,4 +487,4 @@ class TestSnapshotCountsMany:
         sql.query.return_value = []
         service.snapshot_counts_many([("b1", 1), ("b1", 1)])
         stmt = sql.query.call_args[0][0]
-        assert stmt.count("binding_id = 'b1'") == 1
+        assert stmt.count("binding_id = :binding_id_0") == 1

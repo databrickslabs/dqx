@@ -120,28 +120,27 @@ class PendingApplicationService:
 
     def list_for_rule(self, rule_id: str) -> list[PendingApplication]:
         """List every pending application staged against ``rule_id``."""
-        e = escape_sql_string(rule_id)
         rows = self._sql.query(
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE rule_id = '{e}' ORDER BY created_at"
+            f"WHERE rule_id = {self._sql.param('rule_id')} ORDER BY created_at",
+            parameters={"rule_id": rule_id},
         )
         return [self._row_to_pending(row) for row in rows]
 
     def list_for_binding(self, binding_id: str) -> list[PendingApplication]:
         """List every pending application staged against ``binding_id``."""
-        e = escape_sql_string(binding_id)
         rows = self._sql.query(
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE binding_id = '{e}' ORDER BY created_at"
+            f"WHERE binding_id = {self._sql.param('binding_id')} ORDER BY created_at",
+            parameters={"binding_id": binding_id},
         )
         return [self._row_to_pending(row) for row in rows]
 
     def _get_by_natural_key(self, binding_id: str, rule_id: str) -> PendingApplication | None:
-        e_binding = escape_sql_string(binding_id)
-        e_rule = escape_sql_string(rule_id)
         rows = self._sql.query(
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE binding_id = '{e_binding}' AND rule_id = '{e_rule}'"
+            f"WHERE binding_id = {self._sql.param('binding_id')} AND rule_id = {self._sql.param('rule_id')}",
+            parameters={"binding_id": binding_id, "rule_id": rule_id},
         )
         if not rows:
             return None

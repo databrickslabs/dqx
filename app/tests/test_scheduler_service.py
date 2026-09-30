@@ -690,7 +690,9 @@ class TestComputeNextCronRun:
 
 def _make_product_scheduler(make_scheduler, *, dp_service=None):
     dp_service = dp_service if dp_service is not None else create_autospec(DataProductService, instance=True)
-    svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp", data_product_service=dp_service)
+    svc, mocks = make_scheduler(
+        catalog="main", schema="dqx", tmp_schema="dqx_tmp", data_product_service=dp_service, distinct_tmp_sql=True
+    )
     return svc, mocks, dp_service
 
 
@@ -1001,7 +1003,9 @@ class TestTickProducts:
 
 def _make_table_scheduler(make_scheduler, *, br_service=None):
     br_service = br_service if br_service is not None else create_autospec(BindingRunService, instance=True)
-    svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp", binding_run_service=br_service)
+    svc, mocks = make_scheduler(
+        catalog="main", schema="dqx", tmp_schema="dqx_tmp", binding_run_service=br_service, distinct_tmp_sql=True
+    )
     return svc, mocks, br_service
 
 

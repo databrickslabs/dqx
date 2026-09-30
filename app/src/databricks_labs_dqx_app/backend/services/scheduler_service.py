@@ -42,7 +42,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor, bind_list
 
 logger = get_logger("scheduler")
 
@@ -1368,8 +1368,6 @@ class SchedulerService:
         :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
         can fold the completed runs' tables into its own recompute.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         self._completed_view_fqns_buffer = []
 
         if not self._pending_score_runs:
@@ -1382,12 +1380,12 @@ class SchedulerService:
         if not self._pending_score_runs:
             return set()
 
-        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
+        in_list, parameters = bind_list(self._sql.param, "run_id", list(self._pending_score_runs))
         sql = (
             f"SELECT DISTINCT run_id, source_table_fqn, view_fqn FROM {self._runs_table} "  # noqa: S608
             f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters=parameters)
 
         fqns: set[str] = set()
         for row in rows:
@@ -1663,17 +1661,16 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     def _get_tracker(self, name: str) -> dict[str, str] | None:
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
+        from databricks_labs_dqx_app.backend.sql_utils import validate_schedule_name
 
         validate_schedule_name(name)
-        escaped = escape_sql_string(name)
         ts = self._oltp_sql.ts_text
         sql = (
             f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "
             f"last_run_id, status "
-            f"FROM {self._table} WHERE schedule_name = '{escaped}'"
+            f"FROM {self._table} WHERE schedule_name = {self._oltp_sql.param('schedule_name')}"
         )
-        rows = self._oltp_sql.query(sql)
+        rows = self._oltp_sql.query(sql, parameters={"schedule_name": name})
         if not rows:
             return None
         row = rows[0]
@@ -2034,9 +2031,6 @@ class SchedulerService:
         downstream (the task runner expects an array) so we collect
         each row's bare object and append it.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        e_fqn = escape_sql_string(table_fqn)
         check_col = self._oltp_sql.q("check")
         # Dialect-agnostic JSON projection via the executor's
         # :meth:`select_json_text` — ``to_json(col)`` on Delta,
@@ -2045,9 +2039,9 @@ class SchedulerService:
         check_text = self._oltp_sql.select_json_text(check_col)
         sql = (
             f"SELECT table_fqn, {check_text} AS check_json FROM {self._rules_table} "
-            f"WHERE table_fqn = '{e_fqn}' AND status = 'approved'"
+            f"WHERE table_fqn = {self._oltp_sql.param('table_fqn')} AND status = 'approved'"
         )
-        rows = self._oltp_sql.query(sql)
+        rows = self._oltp_sql.query(sql, parameters={"table_fqn": table_fqn})
         if not rows:
             return None
         merged_checks: list[dict[str, Any]] = []
@@ -2078,11 +2072,11 @@ class SchedulerService:
         scheduled run.
         """
         try:
-            from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-            key = escape_sql_string("custom_metrics_v1")
-            sql = f"SELECT setting_value FROM {self._settings_table} WHERE setting_key = '{key}'"  # noqa: S608
-            rows = self._oltp_sql.query(sql)
+            sql = (
+                f"SELECT setting_value FROM {self._settings_table} "
+                f"WHERE setting_key = {self._oltp_sql.param('setting_key')}"
+            )
+            rows = self._oltp_sql.query(sql, parameters={"setting_key": "custom_metrics_v1"})
             if not rows or rows[0][0] is None:
                 return []
             parsed = json.loads(rows[0][0])
@@ -2270,12 +2264,12 @@ class SchedulerService:
         idempotent; failures on individual views are logged and
         skipped.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_fqn
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         list_sql = (
             f"SELECT table_name "
             f"FROM `{self._catalog}`.information_schema.tables "
-            f"WHERE table_schema = '{escape_sql_string(self._tmp_schema)}' "
+            f"WHERE table_schema = {self._tmp_sql.param('table_schema')} "
             f"  AND table_type = 'VIEW' "
             f"  AND table_name LIKE 'tmp\\_view\\_%' ESCAPE '\\\\' "
             f"  AND created < current_timestamp() - INTERVAL {_GC_AGE_HOURS} HOUR "
@@ -2283,7 +2277,7 @@ class SchedulerService:
             f"LIMIT {_GC_MAX_DROPS_PER_RUN}"
         )
         try:
-            rows = self._tmp_sql.query(list_sql)
+            rows = self._tmp_sql.query(list_sql, parameters={"table_schema": self._tmp_schema})
         except Exception as exc:
             logger.warning("View GC: failed to list candidates: %s", exc)
             return
@@ -2377,11 +2371,11 @@ class SchedulerService:
         so a misconfiguration can never wipe data inside the safety floor.
         """
         try:
-            from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-            escaped_key = escape_sql_string(key)
-            sql = f"SELECT setting_value FROM {self._settings_table} WHERE setting_key = '{escaped_key}'"  # noqa: S608
-            rows = self._oltp_sql.query(sql)
+            sql = (
+                f"SELECT setting_value FROM {self._settings_table} "
+                f"WHERE setting_key = {self._oltp_sql.param('setting_key')}"
+            )
+            rows = self._oltp_sql.query(sql, parameters={"setting_key": key})
             if rows and rows[0] and rows[0][0]:
                 value = int(rows[0][0])
                 return max(_RETENTION_DAYS_MIN, value)

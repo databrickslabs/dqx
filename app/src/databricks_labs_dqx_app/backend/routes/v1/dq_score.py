@@ -50,7 +50,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     metric_view_fqn,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -91,10 +91,11 @@ def _compute_score_for_table(
     maps it to an HTTP status.
     """
     mv = metric_view_fqn(sql.catalog, rt.require_resources().genie_schema)
-    e_fqn = escape_sql_string(table_fqn)
-    conds = [f"input_location = '{e_fqn}'"]
+    conds = [f"input_location = {sql.param('input_location')}"]
+    parameters = {"input_location": table_fqn}
     if not include_drafts:
-        conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
+        conds.append(f"run_mode = {sql.param('run_mode')}")
+        parameters["run_mode"] = RUN_MODE_PUBLISHED
     stmt = (
         f"SELECT run_id, MEASURE(score) AS score, "
         f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests "
@@ -103,7 +104,7 @@ def _compute_score_for_table(
         f"GROUP BY run_id, run_time "
         f"ORDER BY run_time DESC LIMIT 1"
     )
-    rows = sql.query_dicts(stmt)
+    rows = sql.query_dicts(stmt, parameters=parameters)
     if not rows:
         return TableScoreOut(source_table_fqn=table_fqn)
     return _row_to_table_score(table_fqn, rows[0])

@@ -463,7 +463,8 @@ class TestTableResults:
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
         # Catalog/genie-schema are backtick-quoted (hyphenated-catalog support).
         assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME}" in stmt
-        assert f"'{FQN}'" in stmt
+        assert "input_location IN (:table_fqn_0)" in stmt
+        assert sql_mock.query_dicts.call_args_list[0].kwargs["parameters"] == {"table_fqn_0": FQN}
         # The as-of-run attribution columns ride along on the same query
         # (criticality now included for threshold-breach evaluation).
         assert "severity, dimension, criticality, registry_rule_id" in stmt
@@ -473,7 +474,8 @@ class TestTableResults:
         sql_dispatch(sql_mock)
         client.get(f"/api/v1/dq-results/table/{FQN}", params={"run_id": "r42"})
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        assert "run_id = 'r42'" in stmt
+        assert "run_id = :run_id" in stmt
+        assert sql_mock.query_dicts.call_args_list[0].kwargs["parameters"]["run_id"] == "r42"
 
     def test_facets_restrict_breakdowns_but_not_trend_failures(self, client, sql_mock):
         # dqlake parity: the table reader's trend_failures series filters on
@@ -584,7 +586,8 @@ class TestRuns:
         # run_mode rides along per run (lossless: a run has exactly one mode).
         assert "GROUP BY run_id, run_time, run_mode" in stmt
         assert "ORDER BY run_time DESC" in stmt
-        assert f"'{FQN}'" in stmt
+        assert "input_location IN (:table_fqn_0)" in stmt
+        assert sql_mock.query_dicts.call_args.kwargs["parameters"]["table_fqn_0"] == FQN
 
     def test_frozen_per_run_threshold_is_retained_after_a_later_threshold_change(
         self, client, sql_mock, app_settings_mock
@@ -628,7 +631,8 @@ class TestRuns:
         assert resp.status_code == 200
         assert len(resp.json()["rows"]) == 1
         monitored_tables_mock.get.assert_called_once_with("b1")
-        assert f"'{FQN}'" in sql_mock.query_dicts.call_args[0][0]
+        assert "input_location IN (:table_fqn_0)" in sql_mock.query_dicts.call_args[0][0]
+        assert sql_mock.query_dicts.call_args.kwargs["parameters"]["table_fqn_0"] == FQN
 
     def test_unknown_identifier_returns_400(self, client, sql_mock, monitored_tables_mock):
         monitored_tables_mock.get.return_value = None
@@ -706,7 +710,8 @@ class TestProductResults:
         body = client.get("/api/v1/dq-results/product/p1/runs").json()
         assert body["rows"][0]["run_id"] == "r1"
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert "'main.sales.orders'" in stmt
+        assert "input_location IN (:table_fqn_0)" in stmt
+        assert sql_mock.query_dicts.call_args.kwargs["parameters"]["table_fqn_0"] == "main.sales.orders"
 
     def test_product_runs_consolidate_batch_members_to_one_picker_entry(
         self, client, sql_mock, data_products_mock, run_sets_mock
@@ -1140,6 +1145,14 @@ def _quarantine_stmt(sql_mock: MagicMock) -> str:
     )
 
 
+def _quarantine_parameters(sql_mock: MagicMock) -> dict[str, str | int]:
+    return next(
+        call.kwargs["parameters"]
+        for call in reversed(sql_mock.query_dicts.call_args_list)
+        if "dq_quarantine_records" in call.args[0]
+    )
+
+
 class TestFailedRowsSecurity:
     """The Task 7 invariants apply UNCHANGED to the filtered endpoint."""
 
@@ -1242,6 +1255,20 @@ class TestFailedRowsEntitlementPiggyback:
 
 
 class TestFailedRowsShapeAndFilters:
+    def test_failed_rows_binds_table_and_facet_values(self, client, sql_mock):
+        facet = "Completeness\\' OR 1=1 --"
+        sql_mock.query_dicts.return_value = []
+        response = client.get(FAILED_ROWS_URL, params={"dimension": facet, "limit": 7, "offset": 3})
+        assert response.status_code == 200
+        call = next(c for c in sql_mock.query_dicts.call_args_list if "dq_quarantine_records" in c.args[0])
+        statement = call.args[0]
+        assert "source_table_fqn = :table_fqn" in statement
+        assert "LIMIT :limit OFFSET :offset" in statement
+        assert facet not in statement
+        assert call.kwargs["parameters"]["dimension_0"] == facet
+        assert call.kwargs["parameters"]["limit"] == 7
+        assert call.kwargs["parameters"]["offset"] == 3
+
     def test_rows_carry_struct_enriched_failures_and_run_ts(self, client, sql_mock, monitored_tables_mock):
         # Severity/dimension/rule_id come from the failure struct's OWN
         # frozen user_metadata (stamped by the DQX engine at run time) —
@@ -1332,8 +1359,9 @@ class TestFailedRowsShapeAndFilters:
         client.get(FAILED_ROWS_URL, params={"rule": "c1"})
         stmt = _quarantine_stmt(sql_mock)
         # rule identity: registry_rule_id OR (user_metadata.name -> struct name)
-        assert "variant_get(f, '$.user_metadata.registry_rule_id', 'string') IN ('c1')" in stmt
-        assert "variant_get(f, '$.name', 'string')) IN ('c1')" in stmt
+        assert "variant_get(f, '$.user_metadata.registry_rule_id', 'string') IN (:rule_0)" in stmt
+        assert "variant_get(f, '$.name', 'string')) IN (:rule_0)" in stmt
+        assert _quarantine_parameters(sql_mock)["rule_0"] == "c1"
         # applied to BOTH errors and warnings, ORed
         assert "cast(errors as array<variant>)" in stmt
         assert "cast(warnings as array<variant>)" in stmt
@@ -1341,12 +1369,14 @@ class TestFailedRowsShapeAndFilters:
     def test_severity_filter_pushes_metadata_predicate(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"severity": "Low"})
         stmt = _quarantine_stmt(sql_mock)
-        assert "variant_get(f, '$.user_metadata.severity', 'string') IN ('Low')" in stmt
+        assert "variant_get(f, '$.user_metadata.severity', 'string') IN (:severity_0)" in stmt
+        assert _quarantine_parameters(sql_mock)["severity_0"] == "Low"
 
     def test_dimension_filter_pushes_metadata_predicate(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"dimension": "Completeness"})
         stmt = _quarantine_stmt(sql_mock)
-        assert "variant_get(f, '$.user_metadata.dimension', 'string') IN ('Completeness')" in stmt
+        assert "variant_get(f, '$.user_metadata.dimension', 'string') IN (:dimension_0)" in stmt
+        assert _quarantine_parameters(sql_mock)["dimension_0"] == "Completeness"
 
     def test_column_filter_pushes_columns_with_mapped_fallback(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"column": "amount"})
@@ -1354,19 +1384,21 @@ class TestFailedRowsShapeAndFilters:
         assert "arrays_overlap(" in stmt
         assert "cast(variant_get(f, '$.columns') as array<string>)" in stmt
         assert "user_metadata.mapped_columns" in stmt
-        assert "array('amount')" in stmt
+        assert "array(:column_0)" in stmt
+        assert _quarantine_parameters(sql_mock)["column_0"] == "amount"
 
     def test_repeatable_facets_are_ored_into_in_list(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"rule": ["c1", "c2"]})
         stmt = _quarantine_stmt(sql_mock)
-        assert "IN ('c1', 'c2')" in stmt
+        assert "IN (:rule_0, :rule_1)" in stmt
+        assert [_quarantine_parameters(sql_mock)[f"rule_{i}"] for i in range(2)] == ["c1", "c2"]
 
     def test_multiple_facets_are_anded(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"severity": "High", "dimension": "Completeness"})
         stmt = _quarantine_stmt(sql_mock)
         # Two per-facet (errors OR warnings) groups joined by AND.
-        assert "') IN ('High'" in stmt
-        assert "') IN ('Completeness'" in stmt
+        assert "') IN (:severity_0" in stmt
+        assert "') IN (:dimension_0" in stmt
         assert ") AND (" in stmt
 
     def test_filtered_query_selects_count_over_window(self, client, sql_mock):
@@ -1390,23 +1422,22 @@ class TestFailedRowsShapeAndFilters:
         assert body["rows"] == []
         assert body["total"] == 0
 
-    def test_facet_values_are_strict_escaped_against_injection(self, client, sql_mock):
-        # A malicious facet value must not break out of the string literal.
+    def test_facet_values_are_bound_against_injection(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"severity": "x') OR 1=1 --"})
         stmt = _quarantine_stmt(sql_mock)
-        # Single-quote doubled; the payload stays inside the literal.
-        assert "x'') OR 1=1 --" in stmt
-        assert "'x') OR 1=1" not in stmt
+        assert "x') OR 1=1 --" not in stmt
+        assert _quarantine_parameters(sql_mock)["severity_0"] == "x') OR 1=1 --"
 
-    def test_facet_value_trailing_backslash_is_neutralized(self, client, sql_mock):
+    def test_facet_value_trailing_backslash_is_bound(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"rule": "evil\\"})
         stmt = _quarantine_stmt(sql_mock)
-        # Backslash doubled so it cannot escape the closing quote.
-        assert "evil\\\\" in stmt
+        assert "evil\\" not in stmt
+        assert _quarantine_parameters(sql_mock)["rule_0"] == "evil\\"
 
     def test_unfiltered_scan_uses_limit(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 7})
-        assert "LIMIT 7" in _quarantine_stmt(sql_mock)
+        assert "LIMIT :limit" in _quarantine_stmt(sql_mock)
+        assert _quarantine_parameters(sql_mock)["limit"] == 7
 
     def test_query_orders_with_quarantine_id_tiebreak(self, client, sql_mock):
         # Bulk quarantine writes stamp one created_at across the whole run, so
@@ -1417,7 +1448,8 @@ class TestFailedRowsShapeAndFilters:
     def test_offset_is_pushed_for_pagination(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 50, "offset": 100})
         stmt = _quarantine_stmt(sql_mock)
-        assert "LIMIT 50 OFFSET 100" in stmt
+        assert "LIMIT :limit OFFSET :offset" in stmt
+        assert _quarantine_parameters(sql_mock)["offset"] == 100
 
     @pytest.mark.parametrize("limit", [0, 100001])
     def test_out_of_range_limit_is_rejected(self, client, sql_mock, limit):
@@ -1456,7 +1488,8 @@ class TestFailedRowsTrueTotal:
             metrics_rows=[metrics_row(FQN, "r1", input_rows=5000, valid_rows=200)],
         )
         body = client.get(FAILED_ROWS_URL, params={"limit": 1}).json()
-        assert "LIMIT 1 OFFSET 0" in _quarantine_stmt(sql_mock)  # cap enforced in SQL
+        assert "LIMIT :limit OFFSET :offset" in _quarantine_stmt(sql_mock)  # cap enforced in SQL
+        assert _quarantine_parameters(sql_mock)["limit"] == 1
         assert len(body["rows"]) == 1
         assert body["total"] == 4800  # NOT the page size
 
@@ -1585,7 +1618,7 @@ class TestIncludeDrafts:
         sql_dispatch(sql_mock)
         assert client.get("/api/v1/dq-results/product/p1").status_code == 200
         (stmt,) = self._asof_stmts(sql_mock)
-        assert f"input_location IN ('{FQN}')" in stmt
+        assert "input_location IN (:table_fqn_0)" in stmt
         assert "CAST(as_of_time AS STRING) AS run_date" in stmt
 
     @pytest.mark.parametrize("url", CHECK_ROW_ENDPOINTS)
@@ -1657,7 +1690,7 @@ class TestIncludeDrafts:
         assert (
             f"run_id = (SELECT run_id FROM "
             f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME} "
-            f"WHERE input_location = '{FQN}' AND run_mode = 'published' "
+            f"WHERE input_location = :table_fqn AND run_mode = 'published' "
             f"ORDER BY run_time DESC LIMIT 1)" in stmt
         )
 
@@ -1708,16 +1741,16 @@ class TestFailedRowsRunScoping:
             "r2": quarantine_row("q-new", created_at="2026-07-10 00:00:00"),
         }
 
-        def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
+        def dispatch(stmt: str, **kwargs: object) -> list[dict[str, str | None]]:
             # The unfiltered path also reads dq_metrics for the run's true
             # failing-row count; it has no canned rows here (the fallback
             # keeps total == len(matched)).
             if "dq_metrics" in stmt and "dq_quarantine_records" not in stmt:
                 return []
             assert "dq_quarantine_records" in stmt
-            for run, row in rows_by_run.items():
-                if f"run_id = '{run}'" in stmt:
-                    return [row]
+            parameters = kwargs.get("parameters")
+            if isinstance(parameters, dict) and "run_id" in parameters and "run_id = :run_id" in stmt:
+                return [rows_by_run[str(parameters["run_id"])]]
             if "ORDER BY run_time DESC LIMIT 1" in stmt:
                 return [rows_by_run["r2"]]
             # An unscoped read would stack both runs — the failure mode
@@ -1744,7 +1777,8 @@ class TestFailedRowsRunScoping:
         body = client.get(FAILED_ROWS_URL, params={"run_id": "r1"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q-old"]
         stmt = _quarantine_stmt(sql_mock)
-        assert "run_id = 'r1'" in stmt
+        assert "run_id = :run_id" in stmt
+        assert _quarantine_parameters(sql_mock)["run_id"] == "r1"
         # A pinned run needs no latest-run resolve.
         assert SHAPING_VIEW_NAME not in stmt
 
@@ -1752,7 +1786,8 @@ class TestFailedRowsRunScoping:
         self._two_run_dispatch(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"run_id": "r1", "include_drafts": "true"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q-old"]
-        assert "run_id = 'r1'" in _quarantine_stmt(sql_mock)
+        assert "run_id = :run_id" in _quarantine_stmt(sql_mock)
+        assert _quarantine_parameters(sql_mock)["run_id"] == "r1"
 
     @pytest.mark.parametrize("run_id", ["ab'c", "x' OR '1'='1", "run id"])
     def test_unsafe_run_id_is_rejected_before_the_obo_gates(self, client, sql_mock, obo_sql_mock, obo_ws_mock, run_id):
@@ -1816,7 +1851,8 @@ class TestRunIdValidation:
         resp = client.get(f"/api/v1/dq-results/table/{FQN}", params={"run_id": run_id})
         assert resp.status_code == 200
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        assert f"run_id = '{run_id}'" in stmt
+        assert "run_id = :run_id" in stmt
+        assert sql_mock.query_dicts.call_args_list[0].kwargs["parameters"]["run_id"] == run_id
 
 
 # ---------------------------------------------------------------------------

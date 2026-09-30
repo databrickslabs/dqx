@@ -510,21 +510,22 @@ class ApplyRulesService:
         )
 
     def _require_binding_exists(self, binding_id: str) -> None:
-        e = escape_sql_string(binding_id)
-        sql = f"SELECT binding_id FROM {self._monitored_table} WHERE binding_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT binding_id FROM {self._monitored_table} WHERE binding_id = {self._sql.param('binding_id')}"
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id})
         if not rows:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
 
     def _get_by_natural_key(self, binding_id: str, rule_id: str, mapping_hash: str) -> AppliedRule | None:
-        e_binding = escape_sql_string(binding_id)
-        e_rule = escape_sql_string(rule_id)
-        e_hash = escape_sql_string(mapping_hash)
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE binding_id = '{e_binding}' AND rule_id = '{e_rule}' AND mapping_hash = '{e_hash}'"
+            f"WHERE binding_id = {self._sql.param('binding_id')} "
+            f"AND rule_id = {self._sql.param('rule_id')} "
+            f"AND mapping_hash = {self._sql.param('mapping_hash')}"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(
+            sql,
+            parameters={"binding_id": binding_id, "rule_id": rule_id, "mapping_hash": mapping_hash},
+        )
         if not rows:
             return None
         return self._row_to_applied_rule(rows[0])
@@ -541,15 +542,17 @@ class ApplyRulesService:
         is one extra reconcile of an auto row, which the sweep would attach again
         anyway.
         """
-        e_binding = escape_sql_string(binding_id)
-        e_rule = escape_sql_string(rule_id)
-        e_hash = escape_sql_string(mapping_hash)
         sql = (
             f"SELECT 1 FROM {self._suppressions_table} "  # noqa: S608
-            f"WHERE binding_id = '{e_binding}' AND rule_id = '{e_rule}' AND mapping_hash = '{e_hash}'"
+            f"WHERE binding_id = {self._sql.param('binding_id')} "
+            f"AND rule_id = {self._sql.param('rule_id')} "
+            f"AND mapping_hash = {self._sql.param('mapping_hash')}"
         )
         try:
-            rows = self._sql.query(sql)
+            rows = self._sql.query(
+                sql,
+                parameters={"binding_id": binding_id, "rule_id": rule_id, "mapping_hash": mapping_hash},
+            )
         except Exception:
             logger.warning(
                 "Suppression lookup failed for rule %s on binding %s; treating as not suppressed",
@@ -710,12 +713,11 @@ class ApplyRulesService:
 
     def list_applied(self, binding_id: str) -> list[AppliedRule]:
         """List every applied rule for *binding_id*."""
-        e = escape_sql_string(binding_id)
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE binding_id = '{e}' ORDER BY created_at"
+            f"WHERE binding_id = {self._sql.param('binding_id')} ORDER BY created_at"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"binding_id": binding_id})
         return [self._row_to_applied_rule(row) for row in rows]
 
     def list_bindings_for_rule(self, rule_id: str) -> list[AppliedRule]:
@@ -725,12 +727,11 @@ class ApplyRulesService:
         ``rule_id`` instead of ``binding_id``. Used by the rule-level DQ score
         aggregate to fan out to each binding's source table.
         """
-        e = escape_sql_string(rule_id)
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
-            f"WHERE rule_id = '{e}' ORDER BY created_at"
+            f"WHERE rule_id = {self._sql.param('rule_id')} ORDER BY created_at"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         return [self._row_to_applied_rule(row) for row in rows]
 
     def count_applications_for_rule(self, rule_id: str) -> int:
@@ -739,16 +740,14 @@ class ApplyRulesService:
         Used by the registry delete gate — a rule that's live on one or more
         tables cannot be deleted until every application is removed first.
         """
-        e = escape_sql_string(rule_id)
-        sql = f"SELECT COUNT(*) FROM {self._table} WHERE rule_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT COUNT(*) FROM {self._table} WHERE rule_id = {self._sql.param('rule_id')}"
+        rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
 
     def get_applied(self, applied_rule_id: str) -> AppliedRule | None:
         """Get a single applied rule by id."""
-        e = escape_sql_string(applied_rule_id)
-        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE id = {self._sql.param('id')}"
+        rows = self._sql.query(sql, parameters={"id": applied_rule_id})
         if not rows:
             return None
         return self._row_to_applied_rule(rows[0])

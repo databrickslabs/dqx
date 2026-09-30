@@ -14,6 +14,36 @@ from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
+def test_run_result_lookup_binds_untrusted_run_id(sql_executor_mock: MagicMock) -> None:
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
+    sql_executor_mock.query_dicts.return_value = []
+    service = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock())
+    run_id = "run\\' OR 1=1 --"
+
+    assert service.get_run_result_row("dq_validation_runs", run_id) is None
+    statement = sql_executor_mock.query_dicts.call_args.args[0]
+    assert "run_id = :run_id" in statement
+    assert run_id not in statement
+    assert sql_executor_mock.query_dicts.call_args.kwargs["parameters"] == {"run_id": run_id}
+
+
+def test_list_run_rows_binds_source_table_and_limit(sql_executor_mock: MagicMock) -> None:
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
+    sql_executor_mock.query_dicts.return_value = []
+    service = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock())
+    table_fqn = "cat.schema.t\\' OR 1=1 --"
+
+    assert service.list_run_rows("dq_profiling_results", limit=7, source_table_fqn=table_fqn) == []
+    statement = sql_executor_mock.query_dicts.call_args.args[0]
+    assert "source_table_fqn = :source_table_fqn" in statement
+    assert "LIMIT :limit" in statement
+    assert table_fqn not in statement
+    assert sql_executor_mock.query_dicts.call_args.kwargs["parameters"] == {
+        "source_table_fqn": table_fqn,
+        "limit": 7,
+    }
+
+
 def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMock) -> None:
     """Submissions use the reconciled job ID, not the obsolete config binding."""
     workspace = MagicMock(name="WorkspaceClient")

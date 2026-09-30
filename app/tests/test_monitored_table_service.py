@@ -28,6 +28,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     sql_executor_mock.query.return_value = []
     return sql_executor_mock
 
@@ -44,6 +45,7 @@ def profiling_sql(sql_executor_mock):
     mock.schema = "dqx_app_test"
     mock.dialect = "delta"
     mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+    mock.param.side_effect = lambda name: f":{name}"
     mock.query_dicts.return_value = []
     return mock
 
@@ -287,8 +289,11 @@ class TestBulkRegister:
         svc.bulk_register(["cat.schema.new1", "cat.schema.new2"], "alice@x")
         assert sql.query.call_count == 1
         select_sql = sql.query.call_args[0][0]
-        assert "cat.schema.new1" in select_sql
-        assert "cat.schema.new2" in select_sql
+        assert "IN (:table_fqn_0, :table_fqn_1)" in select_sql
+        assert sql.query.call_args.kwargs["parameters"] == {
+            "table_fqn_0": "cat.schema.new1",
+            "table_fqn_1": "cat.schema.new2",
+        }
 
     def test_bulk_register_seeds_default_grants_per_binding(self, sql, profiling_sql):
         """bulk_register seeds default grants for each successfully registered binding."""
@@ -352,23 +357,27 @@ class TestListMonitoredTables:
         assert sql.query.call_count == 4
         applied_sql = sql.query.call_args_list[1][0][0]
         assert "GROUP BY binding_id" in applied_sql
-        assert "IN ('b1', 'b2')" in applied_sql
+        assert "IN (:binding_id_0, :binding_id_1)" in applied_sql
         checks_sql = sql.query.call_args_list[2][0][0]
         assert "GROUP BY table_fqn" in checks_sql
-        assert "IN ('cat.schema.t1', 'cat.schema.t2')" in checks_sql
+        assert "IN (:table_fqn_0, :table_fqn_1)" in checks_sql
         assert "status != 'rejected'" in checks_sql
 
     def test_filters_by_status_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
         svc.list_monitored_tables(status="approved")
         list_sql = sql.query.call_args[0][0]
-        assert "status = 'approved'" in list_sql
+        assert "status = :status" in list_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"status": "approved"}
 
     def test_filters_by_owner_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
-        svc.list_monitored_tables(owner="bob@x")
+        value = "x\\' OR 1=1 --"
+        svc.list_monitored_tables(owner=value)
         list_sql = sql.query.call_args[0][0]
-        assert "owner = 'bob@x'" in list_sql
+        assert "owner = :owner" in list_sql
+        assert value not in list_sql
+        assert sql.query.call_args.kwargs["parameters"] == {"owner": value}
 
     def test_filters_by_catalog_in_python(self, svc, sql):
         sql.query.side_effect = [
@@ -550,6 +559,15 @@ class TestListMonitoredTables:
 
 
 class TestGet:
+    def test_get_binds_untrusted_binding_id(self, svc, sql):
+        sql.query.return_value = []
+        binding_id = "b\\' OR 1=1 --"
+
+        assert svc.get(binding_id) is None
+        assert "binding_id = :binding_id" in sql.query.call_args.args[0]
+        assert binding_id not in sql.query.call_args.args[0]
+        assert sql.query.call_args.kwargs["parameters"] == {"binding_id": binding_id}
+
     def test_returns_none_when_missing(self, svc, sql):
         sql.query.return_value = []
         assert svc.get("missing") is None
@@ -734,7 +752,12 @@ class TestGetBindingIdsByTableFqn:
         assert sql.query.call_count == 1
         stmt = sql.query.call_args[0][0]
         assert "SELECT table_fqn, binding_id FROM dqx_test.dqx_app_test.dq_monitored_tables" in stmt
-        assert "IN ('main.a.t1', 'main.a.t2', 'main.a.unmonitored')" in stmt
+        assert "IN (:table_fqn_0, :table_fqn_1, :table_fqn_2)" in stmt
+        assert sql.query.call_args.kwargs["parameters"] == {
+            "table_fqn_0": "main.a.t1",
+            "table_fqn_1": "main.a.t2",
+            "table_fqn_2": "main.a.unmonitored",
+        }
 
     def test_empty_input_short_circuits_without_sql(self, svc, sql):
         assert svc.get_binding_ids_by_table_fqn([]) == {}
@@ -896,7 +919,11 @@ class TestListMaterializedRuleStatuses:
         assert result == [("ar1-0", "pending_approval"), ("ar2-0", "approved")]
         row_query = sql.query.call_args_list[1][0][0]
         # Precise linkage — filters by applied_rule_id, never table_fqn.
-        assert "applied_rule_id IN ('ar1', 'ar2')" in row_query
+        assert "applied_rule_id IN (:applied_rule_id_0, :applied_rule_id_1)" in row_query
+        assert sql.query.call_args_list[1].kwargs["parameters"] == {
+            "applied_rule_id_0": "ar1",
+            "applied_rule_id_1": "ar2",
+        }
         assert "table_fqn" not in row_query
 
     def test_returns_empty_when_no_applied_rules(self, svc, sql):
@@ -1037,9 +1064,19 @@ class TestGetLatestProfile:
         profiling_sql.query_dicts.return_value = []
         svc.get_latest_profile("cat.schema.tbl")
         query = profiling_sql.query_dicts.call_args[0][0]
-        assert "source_table_fqn = 'cat.schema.tbl'" in query
+        assert "source_table_fqn = :table_fqn" in query
+        assert profiling_sql.query_dicts.call_args.kwargs["parameters"] == {"table_fqn": "cat.schema.tbl"}
         assert "status = 'SUCCESS'" in query
         assert "ORDER BY created_at DESC" in query
+
+
+def test_get_version_freezes_binds_binding_id(svc, sql) -> None:
+    sql.query.return_value = []
+    binding_id = "b\\' OR 1=1 --"
+
+    assert svc.get_version_freezes(binding_id) == []
+    assert "binding_id = :binding_id" in sql.query.call_args.args[0]
+    assert sql.query.call_args.kwargs["parameters"] == {"binding_id": binding_id}
 
 
 class TestListAppliedRulesMany:
@@ -1060,6 +1097,14 @@ class TestListAppliedRulesMany:
         assert sql.query.call_count == 1
         called_sql = sql.query.call_args[0][0]
         assert "binding_id IN (" in called_sql
+
+    def test_binds_untrusted_binding_ids(self, svc, sql):
+        sql.query.return_value = []
+        binding_id = "b\\' OR 1=1 --"
+
+        assert svc.list_applied_rules_many([binding_id]) == {}
+        assert binding_id not in sql.query.call_args.args[0]
+        assert sql.query.call_args.kwargs["parameters"] == {"binding_id_0": binding_id}
 
     def test_empty_input_issues_no_query(self, svc, sql):
         assert svc.list_applied_rules_many([]) == {}

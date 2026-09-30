@@ -138,18 +138,20 @@ class _FakeOltp:
         row[6] = "true" if inherit_val == "true" else "false"
         self.grants.setdefault(key, []).append(row)
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[object]]:
+    def param(self, name: str) -> str:
+        return f":{name}"
+
+    def query(
+        self, sql: str, *, parameters: dict[str, str] | None = None, timeout_seconds: int = 120
+    ) -> list[list[object]]:
+        parameters = parameters or {}
         if "created_by" in sql:
-            m = re.search(r"= '([^']*)'", sql)
-            owner = self.owners.get(m.group(1) if m else "")
+            owner = self.owners.get(parameters.get("object_id", ""))
             return [[owner]] if owner else []
         if "dq_data_product_members" in sql:
-            m = re.search(r"binding_id = '([^']*)'", sql)
-            binding_id = m.group(1) if m else ""
+            binding_id = parameters.get("binding_id", "")
             return [[pid] for pid in self.members.get(binding_id, [])]
-        ot = re.search(r"object_type = '([^']*)'", sql)
-        oid = re.search(r"object_id = '([^']*)'", sql)
-        key = (ot.group(1) if ot else "", oid.group(1) if oid else "")
+        key = (parameters.get("object_type", ""), parameters.get("object_id", ""))
         return list(self.grants.get(key, []))
 
     # CRUD-builder shortcuts — the service now calls these instead of raw

@@ -127,8 +127,8 @@ class TestRuleScore:
         }
         monitored_tables_mock.get.side_effect = details.get
 
-        def per_table_rows(stmt: str) -> list[dict[str, str | None]]:
-            if "'main.sales.orders'" in stmt:
+        def per_table_rows(_stmt: str, *, parameters: dict[str, str]) -> list[dict[str, str | None]]:
+            if parameters["input_location"] == "main.sales.orders":
                 return [measure_row("r1", 0.9, 10, 100)]
             return [measure_row("r2", 0.7, 30, 100)]
 
@@ -150,7 +150,8 @@ class TestRuleScore:
         stmt = sql_mock.query_dicts.call_args[0][0]
         # Catalog/schema are backtick-quoted (hyphenated-catalog support).
         assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{METRIC_VIEW_NAME}" in stmt
-        assert "'main.sales.orders'" in stmt
+        assert "input_location = :input_location" in stmt
+        assert sql_mock.query_dicts.call_args.kwargs["parameters"]["input_location"] == "main.sales.orders"
         assert "MEASURE(score)" in stmt
         assert "MEASURE(failed_tests)" in stmt
         assert "MEASURE(total_tests)" in stmt
@@ -169,7 +170,8 @@ class TestRuleScore:
         resp = client.get("/api/v1/dq-score/rule/r1")
         assert resp.status_code == 200
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert "run_mode = 'published'" in stmt
+        assert "run_mode = :run_mode" in stmt
+        assert sql_mock.query_dicts.call_args.kwargs["parameters"]["run_mode"] == "published"
 
     def test_include_drafts_drops_the_run_mode_filter(self, client, sql_mock, apply_rules_mock, monitored_tables_mock):
         apply_rules_mock.list_bindings_for_rule.return_value = [make_applied_rule("ar1", "b1")]
@@ -280,8 +282,8 @@ class TestRuleScore:
         }
         monitored_tables_mock.get.side_effect = details.get
 
-        def per_table_rows(stmt: str) -> list[dict[str, str | None]]:
-            if "'main.sales.orders'" in stmt:
+        def per_table_rows(_stmt: str, *, parameters: dict[str, str]) -> list[dict[str, str | None]]:
+            if parameters["input_location"] == "main.sales.orders":
                 return [measure_row("r1", 0.9, 10, 100)]
             return []  # never run -> no score
 

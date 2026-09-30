@@ -66,19 +66,18 @@ class CommentsService:
         )
 
     def list_comments(self, entity_type: str, entity_id: str) -> list[Comment]:
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_entity_type
+        from databricks_labs_dqx_app.backend.sql_utils import validate_entity_type
 
         validate_entity_type(entity_type, self.VALID_ENTITY_TYPES)
-        e_type = escape_sql_string(entity_type)
-        e_entity_id = escape_sql_string(entity_id)
         sql = (
             f"SELECT comment_id, entity_type, entity_id, user_email, comment, "
             f"{self._sql.ts_text('created_at')} "
             f"FROM {self._table} "
-            f"WHERE entity_type = '{e_type}' AND entity_id = '{e_entity_id}' "
+            f"WHERE entity_type = {self._sql.param('entity_type')} "
+            f"AND entity_id = {self._sql.param('entity_id')} "
             f"ORDER BY created_at ASC LIMIT 200"
         )
-        rows = self._sql.query(sql)
+        rows = self._sql.query(sql, parameters={"entity_type": entity_type, "entity_id": entity_id})
         return [
             Comment(
                 comment_id=row[0],

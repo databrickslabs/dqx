@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from databricks_labs_dqx_app.backend.config import AppConfig
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -109,10 +109,11 @@ def has_terminal_result(
     no row at all) is present.
     """
     table = sql.fqn(table_name)
-    er = escape_sql_string(run_id)
-    stmt = f"SELECT status FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
+    stmt = (
+        f"SELECT status FROM {table} WHERE run_id = {sql.param('run_id')} " "AND status != 'RUNNING' LIMIT 1"
+    )  # noqa: S608
     try:
-        rows = sql.query(stmt)
+        rows = sql.query(stmt, parameters={"run_id": run_id})
         if rows and rows[0]:
             return rows[0][0]
     except Exception:
@@ -158,15 +159,14 @@ def _get_run_fields(
     the Databricks job run.
     """
     table = sql.fqn(table_name)
-    er = escape_sql_string(run_id)
     stmt = (  # noqa: S608
         f"SELECT {columns} FROM {table} "
-        f"WHERE run_id = '{er}' "
+        f"WHERE run_id = {sql.param('run_id')} "
         f"ORDER BY job_run_id IS NOT NULL DESC, created_at DESC "
         f"LIMIT 1"
     )
     try:
-        rows = sql.query(stmt)
+        rows = sql.query(stmt, parameters={"run_id": run_id})
         if rows and rows[0]:
             return rows[0]
     except Exception:
@@ -250,7 +250,7 @@ def _get_running_job_run_ids(
     if not run_ids:
         return {}
     table = sql.fqn(table_name)
-    in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_ids)
+    in_list, parameters = bind_list(sql.param, "run_id", run_ids)
     stmt = (  # noqa: S608
         f"SELECT run_id, CAST(job_run_id AS STRING) FROM {table} "
         f"WHERE status = 'RUNNING' AND job_run_id IS NOT NULL "
@@ -258,7 +258,7 @@ def _get_running_job_run_ids(
     )
     mapping: dict[str, int] = {}
     try:
-        for row in sql.query(stmt) or []:
+        for row in sql.query(stmt, parameters=parameters) or []:
             if row and len(row) >= 2 and row[0] and row[1]:
                 try:
                     mapping[row[0]] = int(row[1])

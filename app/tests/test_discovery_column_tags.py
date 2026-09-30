@@ -32,9 +32,14 @@ class TestGetTableTagsFromSql:
 
     def test_read_column_tags_helper_formats_key_and_key_value(self) -> None:
         sql = create_autospec(SqlExecutor, instance=True)
+        sql.param.side_effect = lambda name: f":{name}"
         sql.query.return_value = [["cut", "class.age", ""], ["carat", "class.pii", "x"]]
         tags = read_column_tags(sql, "cat.sch.diamonds")
         assert tags == {"cut": ["class.age"], "carat": ["class.pii=x"]}
+        statement = sql.query.call_args.args[0]
+        assert "schema_name = :schema_name" in statement
+        assert "table_name = :table_name" in statement
+        assert sql.query.call_args.kwargs["parameters"] == {"schema_name": "sch", "table_name": "diamonds"}
 
 
 class TestGetTableTagsFallback:

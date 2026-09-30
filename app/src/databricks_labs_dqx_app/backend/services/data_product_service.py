@@ -70,7 +70,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_versions import Mo
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
 
 logger = logging.getLogger(__name__)
@@ -1071,13 +1071,8 @@ class DataProductService:
         return {s.table.binding_id: s for s in summaries}
 
     def _assert_name_available(self, name: str, exclude_product_id: str | None) -> None:
-        # NOTE: :meth:`select_rows` would route ``name`` through :func:`_render_value`,
-        # which uses :func:`escape_sql_string` (single-quote doubling only). Product
-        # names are user-supplied and untrusted, so we route through the STRICT variant
-        # (also escapes backslashes) to close a Delta string-literal escape hatch —
-        # see the docstring of :func:`escape_sql_string_strict` for the details.
-        e = escape_sql_string_strict(name)
-        rows = self._sql.query(f"SELECT product_id FROM {self._products_table} WHERE name = '{e}'")  # noqa: S608
+        sql = f"SELECT product_id FROM {self._products_table} WHERE name = {self._sql.param('name')}"
+        rows = self._sql.query(sql, parameters={"name": name})
         for row in rows:
             if exclude_product_id is None or row[0] != exclude_product_id:
                 raise DuplicateDataProductNameError(f"A data product named '{name}' already exists.")
@@ -1105,10 +1100,11 @@ class DataProductService:
         """
         if not product_ids:
             return {}
-        in_list = ", ".join(f"'{escape_sql_string(p)}'" for p in product_ids)
+        in_list, parameters = bind_list(self._sql.param, "product_id", product_ids)
         rows = self._sql.query(
             f"SELECT id, product_id, binding_id, pinned_version FROM {self._members_table} "  # noqa: S608
-            f"WHERE product_id IN ({in_list})"
+            f"WHERE product_id IN ({in_list})",
+            parameters=parameters,
         )
         result: dict[str, list[_MemberRow]] = {}
         for row in rows:
@@ -1169,9 +1165,8 @@ class DataProductService:
         return table
 
     def _fetch_product(self, product_id: str) -> DataProduct | None:
-        e = escape_sql_string(product_id)
-        sql = f"SELECT {self._select_cols()} FROM {self._products_table} WHERE product_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"SELECT {self._select_cols()} FROM {self._products_table} WHERE product_id = {self._sql.param('product_id')}"
+        rows = self._sql.query(sql, parameters={"product_id": product_id})
         if not rows:
             return None
         return self._row_to_product(rows[0])
@@ -1188,9 +1183,8 @@ class DataProductService:
         )
 
     def _fetch_product_with_score(self, product_id: str) -> tuple[DataProduct, CachedScore] | None:
-        e = escape_sql_string(product_id)
-        sql = f"{self._score_joined_select()} WHERE p.product_id = '{e}'"  # noqa: S608
-        rows = self._sql.query(sql)
+        sql = f"{self._score_joined_select()} WHERE p.product_id = {self._sql.param('product_id')}"
+        rows = self._sql.query(sql, parameters={"product_id": product_id})
         if not rows:
             return None
         row = rows[0]

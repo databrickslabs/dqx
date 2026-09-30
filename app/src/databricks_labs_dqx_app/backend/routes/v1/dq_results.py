@@ -27,7 +27,7 @@ Permission model (unchanged from Phase 1):
 
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -99,11 +99,9 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     SHAPING_VIEW_NAME,
     metric_view_fqn,
 )
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor, SqlParameterValue, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import (
-    escape_sql_string,
     quote_object_fqn,
-    sql_string_in_list,
     validate_fqn,
 )
 
@@ -123,19 +121,12 @@ _FAILED_ROWS_MAX = 100000
 _DEFAULT_LABEL_COLOR = "#6B7280"
 
 # Conservative allowlist for the user-supplied run_id filter. Observer run
-# ids are uuid4 strings (metrics_observer.DQMetricsObserver — hex plus
-# hyphens); the slightly wider charset tolerates prefixed/timestamped
-# overrides without admitting quotes, backslashes, whitespace, or control
-# characters. This validation is LOAD-BEARING: *escape_sql_string*
-# deliberately does not escape backslashes (it relies on upstream
-# validation, normally *validate_fqn* — which run_id never passes
-# through), so run_id must be charset-validated before it is interpolated
-# into any SQL string literal.
+# ids are uuid4 strings; the wider charset also accepts prefixed overrides.
 _RUN_ID_SAFE = re.compile(r"^[A-Za-z0-9_\-.:]+$")
 
 
 def _validate_run_id(run_id: str | None) -> None:
-    """Reject a run_id unsafe to embed in a SQL string literal (400)."""
+    """Reject a run_id outside the supported identifier format (400)."""
     if run_id is not None and not _RUN_ID_SAFE.fullmatch(run_id):
         raise HTTPException(
             status_code=400,
@@ -171,10 +162,8 @@ def _is_valid_fqn(table_fqn: str, source: str) -> bool:
     """Defense-in-depth re-validation of an app-DB-sourced table FQN.
 
     Binding/member FQNs were validated on write, but they round-trip
-    through the app database before being interpolated into SQL string
-    literals here — and *escape_sql_string* deliberately relies on
-    *validate_fqn* having rejected backslashes. Re-validate at the read
-    boundary and skip (never 500) anything that no longer passes.
+    through the app database. Re-validate at the read boundary and skip
+    (never 500) anything that no longer passes.
     """
     try:
         validate_fqn(table_fqn)
@@ -182,10 +171,6 @@ def _is_valid_fqn(table_fqn: str, source: str) -> bool:
         logger.warning(f"Skipping invalid table FQN from {source}")
         return False
     return True
-
-
-def _in_list(values: list[str]) -> str:
-    return ", ".join(f"'{escape_sql_string(v)}'" for v in values)
 
 
 def _fetch_check_rows(
@@ -207,10 +192,14 @@ def _fetch_check_rows(
         return []
     view = _shaping_view_fqn(sql)
     conds: list[str] = []
+    parameters: dict[str, SqlParameterValue] = {}
     if table_fqns is not None:
-        conds.append(f"input_location IN ({_in_list(table_fqns)})")
+        in_list, bound = bind_list(sql.param, "table_fqn", table_fqns)
+        conds.append(f"input_location IN ({in_list})")
+        parameters.update(bound)
     if run_id:
-        conds.append(f"run_id = '{escape_sql_string(run_id)}'")
+        conds.append(f"run_id = {sql.param('run_id')}")
+        parameters["run_id"] = run_id
     if not include_drafts:
         conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
@@ -225,7 +214,7 @@ def _fetch_check_rows(
         f"{where}"
         f"ORDER BY run_time"
     )
-    return parse_check_rows(sql.query_dicts(stmt))
+    return parse_check_rows(sql.query_dicts(stmt, parameters=parameters))
 
 
 def _fetch_asof_check_rows(
@@ -254,10 +243,14 @@ def _fetch_asof_check_rows(
         return []
     view = _genie_object_fqn(sql, ASOF_VIEW_NAME)
     conds = [f"include_drafts = {'true' if include_drafts else 'false'}"]
+    parameters: dict[str, SqlParameterValue] = {}
     if table_fqns is not None:
-        conds.append(f"input_location IN ({_in_list(table_fqns)})")
+        in_list, bound = bind_list(sql.param, "table_fqn", table_fqns)
+        conds.append(f"input_location IN ({in_list})")
+        parameters.update(bound)
     if run_id:
-        conds.append(f"run_id = '{escape_sql_string(run_id)}'")
+        conds.append(f"run_id = {sql.param('run_id')}")
+        parameters["run_id"] = run_id
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
         f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
@@ -267,7 +260,7 @@ def _fetch_asof_check_rows(
         f"WHERE {' AND '.join(conds)} "
         f"ORDER BY as_of_time"
     )
-    return parse_check_rows(sql.query_dicts(stmt))
+    return parse_check_rows(sql.query_dicts(stmt, parameters=parameters))
 
 
 def _wants_trends(axes: str) -> bool:
@@ -297,7 +290,11 @@ def _fetch_failed_records_by_run(
     if table_fqns is not None and not table_fqns:
         return {}
     metrics_table = _app_object_fqn(sql, "dq_metrics")
-    where = f"WHERE input_location IN ({_in_list(table_fqns)}) " if table_fqns is not None else ""
+    parameters: dict[str, SqlParameterValue] = {}
+    where = ""
+    if table_fqns is not None:
+        in_list, parameters = bind_list(sql.param, "table_fqn", table_fqns)
+        where = f"WHERE input_location IN ({in_list}) "
     stmt = (
         f"SELECT input_location, run_id, "
         f"MAX(CASE WHEN metric_name = 'input_row_count' THEN metric_value END) AS input_rows, "
@@ -307,7 +304,7 @@ def _fetch_failed_records_by_run(
         f"GROUP BY input_location, run_id"
     )
     out: dict[tuple[str, str], int | None] = {}
-    for row in sql.query_dicts(stmt):
+    for row in sql.query_dicts(stmt, parameters=parameters):
         fqn, run_id = row.get("input_location"), row.get("run_id")
         if not fqn or not run_id:
             continue
@@ -318,7 +315,9 @@ def _fetch_failed_records_by_run(
     return out
 
 
-def _facet_pushdown_predicate(facets: ResultFacets) -> str:
+def _facet_pushdown_predicate(
+    facets: ResultFacets, marker: Callable[[str], str]
+) -> tuple[str, dict[str, SqlParameterValue]]:
     """SQL predicate matching a quarantine row against the active facets.
 
     Mirrors :meth:`QuarantineSampleService.row_matches_filters` exactly, but
@@ -339,48 +338,51 @@ def _facet_pushdown_predicate(facets: ResultFacets) -> str:
 
     Legacy object-shaped payloads (a bare ``{name: message}`` map) are NOT
     matched here — they carry no ``user_metadata`` and were an explicit
-    non-goal for the pushdown. Every interpolated value is strict-escaped
-    (``sql_string_in_list``) because facet values are user-supplied.
+    non-goal for the pushdown. Facet values are bound because they are user-supplied.
 
-    Returns ``"true"`` when no facet is active (caller does not use it then).
+    Returns ``"true"`` with no parameters when no facet is active.
     """
+    dimensions, dimension_params = bind_list(marker, "dimension", facets.dimensions) if facets.dimensions else ("", {})
+    severities, severity_params = bind_list(marker, "severity", facets.severities) if facets.severities else ("", {})
+    rules, rule_params = bind_list(marker, "rule", facets.rules) if facets.rules else ("", {})
+    columns, column_params = bind_list(marker, "column", facets.columns) if facets.columns else ("", {})
+    parameters: dict[str, SqlParameterValue] = {**dimension_params, **severity_params, **rule_params, **column_params}
 
     def _exists(col: str) -> list[str]:
         parts: list[str] = []
         if facets.dimensions:
             parts.append(
                 f"exists(cast({col} as array<variant>), f -> "
-                f"variant_get(f, '$.user_metadata.dimension', 'string') IN ({sql_string_in_list(facets.dimensions)}))"
+                f"variant_get(f, '$.user_metadata.dimension', 'string') IN ({dimensions}))"
             )
         if facets.severities:
             parts.append(
                 f"exists(cast({col} as array<variant>), f -> "
-                f"variant_get(f, '$.user_metadata.severity', 'string') IN ({sql_string_in_list(facets.severities)}))"
+                f"variant_get(f, '$.user_metadata.severity', 'string') IN ({severities}))"
             )
         if facets.rules:
-            rule_list = sql_string_in_list(facets.rules)
             parts.append(
                 f"exists(cast({col} as array<variant>), f -> "
-                f"variant_get(f, '$.user_metadata.registry_rule_id', 'string') IN ({rule_list}) "
+                f"variant_get(f, '$.user_metadata.registry_rule_id', 'string') IN ({rules}) "
                 f"OR coalesce(variant_get(f, '$.user_metadata.name', 'string'), "
-                f"variant_get(f, '$.name', 'string')) IN ({rule_list}))"
+                f"variant_get(f, '$.name', 'string')) IN ({rules}))"
             )
         if facets.columns:
             parts.append(
                 f"exists(cast({col} as array<variant>), f -> arrays_overlap("
                 f"coalesce(cast(variant_get(f, '$.columns') as array<string>), "
                 f"cast(from_json(variant_get(f, '$.user_metadata.mapped_columns', 'string'), "
-                f"'array<string>') as array<string>)), array({sql_string_in_list(facets.columns)})))"
+                f"'array<string>') as array<string>)), array({columns})))"
             )
         return parts
 
     err = _exists("errors")
     warn = _exists("warnings")
     if not err:
-        return "true"
+        return "true", parameters
     # err[i] / warn[i] are the SAME facet over the two columns — OR them, then
     # AND the facets together (matches parse_failures + row_matches_filters).
-    return " AND ".join(f"({e} OR {w})" for e, w in zip(err, warn))
+    return " AND ".join(f"({e} OR {w})" for e, w in zip(err, warn)), parameters
 
 
 def _facets(
@@ -668,7 +670,8 @@ def _runs_from_metric_view(
         return RunsOut()
     breaches = breach_by_run or {}
     mv = metric_view_fqn(sql.catalog, rt.require_resources().genie_schema)
-    conds = [f"input_location IN ({_in_list(table_fqns)})"]
+    in_list, parameters = bind_list(sql.param, "table_fqn", table_fqns)
+    conds = [f"input_location IN ({in_list})"]
     if not include_drafts:
         conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
     stmt = (
@@ -680,7 +683,7 @@ def _runs_from_metric_view(
         f"GROUP BY run_id, run_time, run_mode "
         f"ORDER BY run_time DESC LIMIT {_RUNS_LIMIT}"
     )
-    rows = sql.query_dicts(stmt)
+    rows = sql.query_dicts(stmt, parameters=parameters)
     run_rows = [
         RunRowOut(
             run_id=row.get("run_id"),
@@ -1282,11 +1285,11 @@ def get_dq_results_failed_rows(
     # no app-side parse-and-filter over a wide window. The predicate mirrors
     # row_matches_filters exactly (see _facet_pushdown_predicate).
     quarantine_table = _app_object_fqn(sp_sql, "dq_quarantine_records")
-    e_fqn = escape_sql_string(table_fqn)
+    parameters: dict[str, SqlParameterValue] = {"table_fqn": table_fqn, "limit": limit, "offset": offset}
     if run_id:
-        # A pinned run: exactly that run's rows (run_id is charset-validated
-        # above — the _RUN_ID_SAFE precondition escape_sql_string relies on).
-        run_cond = f"AND run_id = '{escape_sql_string(run_id)}' "
+        # A pinned run: exactly that run's rows.
+        run_cond = f"AND run_id = {sp_sql.param('run_id')} "
+        parameters["run_id"] = run_id
     else:
         # Default: exactly the table's LATEST run, resolved the way the
         # dq-score endpoints resolve it. Quarantine rows have no run_mode
@@ -1296,11 +1299,14 @@ def get_dq_results_failed_rows(
         mode_cond = "" if include_drafts else f"AND run_mode = '{RUN_MODE_PUBLISHED}' "
         run_cond = (
             f"AND run_id = (SELECT run_id FROM {_shaping_view_fqn(sp_sql)} "
-            f"WHERE input_location = '{e_fqn}' {mode_cond}"
+            f"WHERE input_location = {sp_sql.param('table_fqn')} {mode_cond}"
             f"ORDER BY run_time DESC LIMIT 1) "
         )
-    # All facet values are strict-escaped inside the predicate builder.
-    facet_cond = f"AND ({_facet_pushdown_predicate(facets)}) " if active else ""
+    facet_cond = ""
+    if active:
+        facet_predicate, facet_parameters = _facet_pushdown_predicate(facets, sp_sql.param)
+        facet_cond = f"AND ({facet_predicate}) "
+        parameters.update(facet_parameters)
     # COUNT(*) OVER() (computed before LIMIT/OFFSET) is the true filtered
     # total; only needed when filtering — the unfiltered total is the cheaper
     # authoritative dq_metrics read below. A deterministic quarantine_id
@@ -1311,12 +1317,13 @@ def get_dq_results_failed_rows(
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
         f"to_json(errors) AS errors, to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at{count_col} "
-        f"FROM {quarantine_table} WHERE source_table_fqn = '{e_fqn}' "  # noqa: S608
+        f"FROM {quarantine_table} WHERE source_table_fqn = {sp_sql.param('table_fqn')} "  # noqa: S608
         f"{run_cond}{facet_cond}"
-        f"ORDER BY created_at DESC, quarantine_id DESC LIMIT {int(limit)} OFFSET {int(offset)}"
+        f"ORDER BY created_at DESC, quarantine_id DESC "
+        f"LIMIT {sp_sql.param('limit')} OFFSET {sp_sql.param('offset')}"
     )
     try:
-        raw_rows = sp_sql.query_dicts(stmt)
+        raw_rows = sp_sql.query_dicts(stmt, parameters=parameters)
     except Exception as exc:
         # Only reachable after both OBO checks passed, so this 500 leaks
         # nothing to unauthorized callers.
