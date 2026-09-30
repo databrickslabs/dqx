@@ -1,7 +1,6 @@
 import os
 from importlib import resources
 from pathlib import Path
-from typing import Self
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
@@ -35,7 +34,7 @@ class AppConfig(BaseSettings):
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
 
     @model_validator(mode="after")
-    def derive_sibling_schema_names(self) -> Self:
+    def derive_sibling_schema_names(self) -> "AppConfig":
         """Name app-owned sibling schemas after the bound volume's schema."""
         volume_parts = self.wheels_volume.split("/")
         schema = (
