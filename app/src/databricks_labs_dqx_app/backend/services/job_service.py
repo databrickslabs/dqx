@@ -403,8 +403,6 @@ class JobService:
         Uses the SP WorkspaceClient and SQL Statement Execution API.
         Returns a dict keyed by column name, or None if no row found.
         """
-        sql = (
-            f"SELECT * FROM {table} WHERE run_id = {self._sql.param('run_id')} " "AND status != 'RUNNING' LIMIT 1"
-        )  # noqa: S608
+        sql = f"SELECT * FROM {table} WHERE run_id = {self._sql.param('run_id')} " "AND status != 'RUNNING' LIMIT 1"
         rows = self._sql.query_dicts(sql, parameters={"run_id": run_id})
         return rows[0] if rows else None

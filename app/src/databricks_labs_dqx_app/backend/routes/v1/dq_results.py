@@ -1317,7 +1317,7 @@ def get_dq_results_failed_rows(
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
         f"to_json(errors) AS errors, to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at{count_col} "
-        f"FROM {quarantine_table} WHERE source_table_fqn = {sp_sql.param('table_fqn')} "  # noqa: S608
+        f"FROM {quarantine_table} WHERE source_table_fqn = {sp_sql.param('table_fqn')} "
         f"{run_cond}{facet_cond}"
         f"ORDER BY created_at DESC, quarantine_id DESC "
         f"LIMIT {sp_sql.param('limit')} OFFSET {sp_sql.param('offset')}"

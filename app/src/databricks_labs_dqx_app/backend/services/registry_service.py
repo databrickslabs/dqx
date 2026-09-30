@@ -497,7 +497,7 @@ class RegistryService:
         sql = (
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
             f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
-            f"FROM {self._versions_table} WHERE rule_id = {self._sql.param('rule_id')} ORDER BY version DESC"  # noqa: S608
+            f"FROM {self._versions_table} WHERE rule_id = {self._sql.param('rule_id')} ORDER BY version DESC"
         )
         rows = self._sql.query(sql, parameters={"rule_id": rule_id})
         return [self._row_to_version(row) for row in rows]
@@ -541,7 +541,7 @@ class RegistryService:
             f"SELECT rule_id, version, {definition} AS definition_json, polarity, "
             f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
             f"FROM {self._versions_table} WHERE rule_id = {self._sql.param('rule_id')} "
-            f"AND version = {self._sql.param('version')}"  # noqa: S608
+            f"AND version = {self._sql.param('version')}"
         )
         rows = self._sql.query(sql, parameters={"rule_id": rule_id, "version": version})
         if not rows:
@@ -823,7 +823,7 @@ class RegistryService:
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "
             f"WHERE fingerprint = {self._sql.param('fingerprint')} AND status = 'approved' "
-            f"AND rule_id != {self._sql.param('rule_id')}"  # noqa: S608
+            f"AND rule_id != {self._sql.param('rule_id')}"
         )
         rows = self._sql.query(sql, parameters={"fingerprint": rule.fingerprint, "rule_id": rule.rule_id})
         if not rows:

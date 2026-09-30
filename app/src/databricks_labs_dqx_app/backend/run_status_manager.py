@@ -109,9 +109,7 @@ def has_terminal_result(
     no row at all) is present.
     """
     table = sql.fqn(table_name)
-    stmt = (
-        f"SELECT status FROM {table} WHERE run_id = {sql.param('run_id')} " "AND status != 'RUNNING' LIMIT 1"
-    )  # noqa: S608
+    stmt = f"SELECT status FROM {table} WHERE run_id = {sql.param('run_id')} " "AND status != 'RUNNING' LIMIT 1"
     try:
         rows = sql.query(stmt, parameters={"run_id": run_id})
         if rows and rows[0]:

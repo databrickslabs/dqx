@@ -847,7 +847,7 @@ class Materializer:
             return set()
         rows = self._sql.query(
             f"SELECT rule_id FROM {self._quality_rules_table} "
-            f"WHERE applied_rule_id = {self._sql.param('applied_rule_id')}",  # noqa: S608
+            f"WHERE applied_rule_id = {self._sql.param('applied_rule_id')}",
             parameters={"applied_rule_id": applied_rule_id},
         )
         return {row[0] for row in rows if row and row[0]}
