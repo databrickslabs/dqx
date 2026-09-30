@@ -29,7 +29,9 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import (
     ScheduleConfigService,
 )
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    WAREHOUSE_UNAVAILABLE_DETAIL,
     CannotManageError,
+    WarehouseUnavailableError,
     ScheduleGrantService,
     manage_block_detail,
 )
@@ -94,7 +96,11 @@ async def _enforce_scheduler_grants(
         async with sem:
             return fqn, await grant_svc.can_schedule_async(fqn)
 
-    gate_results = await asyncio.gather(*(_gate(fqn) for fqn in target_fqns))
+    try:
+        gate_results = await asyncio.gather(*(_gate(fqn) for fqn in target_fqns))
+    except WarehouseUnavailableError as e:
+        logger.warning("Schedule gate inconclusive: %s", e)
+        raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
     manageable = [fqn for fqn, can_manage in gate_results if can_manage]
     blocked_fqns = [fqn for fqn, can_manage in gate_results if not can_manage]
 

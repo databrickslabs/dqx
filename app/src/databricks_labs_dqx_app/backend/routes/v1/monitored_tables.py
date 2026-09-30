@@ -47,7 +47,9 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    WAREHOUSE_UNAVAILABLE_DETAIL,
     CannotManageError,
+    WarehouseUnavailableError,
     ScheduleGrantService,
     manage_block_detail,
 )
@@ -616,6 +618,9 @@ def update_monitored_table_schedule(
             grant_svc.grant_select_to_schedulers(table_fqn)
         except CannotManageError as e:
             raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+        except WarehouseUnavailableError as e:
+            logger.warning("Schedule gate inconclusive for %s: %s", binding_id, e)
+            raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
         except Exception as e:
             logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
             raise HTTPException(

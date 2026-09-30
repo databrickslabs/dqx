@@ -25,7 +25,11 @@ from databricks_labs_dqx_app.backend.services.data_product_service import DataPr
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.schedule_config_service import ScheduleConfigService
-from databricks_labs_dqx_app.backend.services.schedule_grant_service import CannotManageError, ScheduleGrantService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    ScheduleGrantService,
+    WarehouseUnavailableError,
+)
 
 FQN = "cat.sch.tbl"
 
@@ -67,6 +71,19 @@ class TestMonitoredTableScheduleGate:
         assert exc.value.status_code == 403
         assert exc.value.detail["code"] == "cannot_manage_schedule_tables"
         assert exc.value.detail["tables"][0]["fqn"] == FQN
+        svc.update_schedule.assert_not_called()
+
+    def test_inconclusive_warehouse_check_is_a_retryable_503(self, obo_ws, perms, grant_svc):
+        svc = create_autospec(MonitoredTableService, instance=True)
+        svc.get.return_value = self._detail()
+        grant_svc.grant_select_to_schedulers.side_effect = WarehouseUnavailableError("cold start")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 0 * * *", schedule_tz="UTC")
+
+        with pytest.raises(HTTPException) as exc:
+            update_monitored_table_schedule("b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 503
+        assert "Try again" in exc.value.detail
         svc.update_schedule.assert_not_called()
 
     def test_grants_then_saves_when_manageable(self, obo_ws, perms, grant_svc):

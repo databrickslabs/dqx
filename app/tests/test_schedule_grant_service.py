@@ -11,6 +11,8 @@ from databricks.sdk.service.sql import StatementState
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     ScheduleGrantService,
+    StatementFailedError,
+    WarehouseUnavailableError,
     manage_block_detail,
 )
 
@@ -357,6 +359,14 @@ class TestWarehouseBackedGrants:
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
         return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="wh-1")
 
+    @pytest.fixture
+    def single_sp(self, sp):
+        """Scheduled runs execute as the app SP itself (no separate task runner)."""
+        sp.jobs.get.return_value = SimpleNamespace(
+            settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="app-sp-id"))
+        )
+
+    @pytest.mark.usefixtures("single_sp")
     def test_readable_table_needs_no_manage_and_no_app_grant(self, wh_service, obo, sp):
         # e.g. samples.*: every principal reads it, nobody can grant on it.
         sp.statement_execution.execute_statement.return_value = _stmt()
@@ -406,6 +416,37 @@ class TestWarehouseBackedGrants:
         with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
             wh_service.grant_select_to_schedulers(FQN)
 
+    def test_separate_task_runner_requires_manage_even_when_readable(self, wh_service, obo, sp):
+        # The task-runner SP's access can't be probed and granting it needs
+        # MANAGE, so the no-grant shortcut must not apply.
+        sp.statement_execution.execute_statement.return_value = _stmt()
+        obo.statement_execution.execute_statement.return_value = _stmt()
+
+        assert wh_service.can_schedule(FQN) is False
+        with pytest.raises(CannotManageError):
+            wh_service.grant_select_to_schedulers(FQN)
+        sp.statement_execution.execute_statement.assert_not_called()
+
+    @pytest.mark.usefixtures("single_sp")
+    def test_warehouse_timeout_is_not_reported_as_a_missing_grant(self, wh_service, obo, sp):
+        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
+        obo.statement_execution.execute_statement.return_value = _stmt()
+
+        with pytest.raises(WarehouseUnavailableError):
+            wh_service.can_schedule(FQN)
+        # Nothing cached: once the warehouse is up, the probe runs again.
+        sp.statement_execution.execute_statement.side_effect = None
+        sp.statement_execution.execute_statement.return_value = _stmt()
+        assert wh_service.can_schedule(FQN) is True
+
+    @pytest.mark.usefixtures("single_sp")
+    def test_warehouse_timeout_still_allows_a_manage_holder(self, wh_service, obo, sp):
+        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
+        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
+
+        assert wh_service.can_schedule(FQN) is True
+
+    @pytest.mark.usefixtures("single_sp")
     def test_preflight_runs_every_read_probe_concurrently(self, wh_service, obo, sp):
         fqns = ["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]
         # Six probes (scheduler + caller per table) must all be in flight at once
@@ -433,3 +474,36 @@ class TestWarehouseBackedGrants:
             wh_service.grant_select_to_schedulers(FQN)
         statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
         assert not [st for st in statements if st.startswith("GRANT")]
+
+
+class TestRunSql:
+    @pytest.fixture
+    def svc(self, obo, sp):
+        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="", warehouse_id="wh-1")
+
+    def test_polls_when_the_initial_response_has_no_status(self, svc, obo, monkeypatch):
+        monkeypatch.setattr("time.sleep", lambda _s: None)
+        obo.statement_execution.execute_statement.return_value = SimpleNamespace(statement_id="s-1", status=None)
+        obo.statement_execution.get_statement.return_value = _stmt()
+
+        svc._run_sql(obo, "SELECT 1")
+
+        obo.statement_execution.get_statement.assert_called_once_with("s-1")
+
+    def test_missing_status_and_statement_id_is_a_clear_warehouse_error(self, svc, obo):
+        obo.statement_execution.execute_statement.return_value = SimpleNamespace(statement_id=None, status=None)
+
+        with pytest.raises(WarehouseUnavailableError, match="no statement status"):
+            svc._run_sql(obo, "SELECT 1")
+
+    def test_failed_statement_carries_the_warehouse_message(self, svc, obo):
+        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "PERMISSION_DENIED")
+
+        with pytest.raises(StatementFailedError, match="PERMISSION_DENIED"):
+            svc._run_sql(obo, "SELECT 1")
+
+    def test_cancelled_statement_is_transient(self, svc, obo):
+        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.CANCELED)
+
+        with pytest.raises(WarehouseUnavailableError, match="CANCELED"):
+            svc._run_sql(obo, "SELECT 1")

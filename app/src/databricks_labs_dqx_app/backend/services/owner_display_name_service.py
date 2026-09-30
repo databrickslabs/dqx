@@ -239,7 +239,7 @@ def resolve_owner_display_name(owner: str | None, sp_ws: WorkspaceClient | None)
     return resolve_owners_cached([owner], sp_ws).get(owner.strip())
 
 
-class _OwnedObject(Protocol):
+class OwnedObject(Protocol):
     owner: str | None
     owner_display_name: str | None
 
@@ -249,7 +249,7 @@ class _SqlExecutor(Protocol):
 
 
 def fill_missing_owner_display_names(
-    objects: Sequence[_OwnedObject],
+    objects: Sequence[OwnedObject],
     sp_ws: WorkspaceClient | None,
     sql: _SqlExecutor,
     table: str,
@@ -293,12 +293,13 @@ def run_in_background(task: Callable[[], None]) -> None:
 
 
 def fill_owner_display_names_from_cache(
-    objects: Sequence[_OwnedObject],
+    objects: Sequence[OwnedObject],
     sp_ws: WorkspaceClient | None,
     sql: _SqlExecutor,
     table: str,
     *,
     defer: DeferredTaskRunner = run_in_background,
+    mark_unverified: Callable[[OwnedObject], None] | None = None,
 ) -> None:
     """Non-blocking counterpart of :func:`fill_missing_owner_display_names` for list reads.
 
@@ -307,6 +308,10 @@ def fill_owner_display_names_from_cache(
     fresh cache entry are resolved through *defer* (off the request path),
     which writes their names back to *table* in one batched ``UPDATE`` so the
     next read has them. Concurrent reads never queue the same owner twice.
+
+    *mark_unverified* is called for each object whose owner SCIM has confirmed
+    matches no principal (e.g. a mistyped imported email). Owners not yet
+    resolved, or whose lookup failed, are never reported.
     """
     missing = [o.owner for o in objects if o.owner and not o.owner_display_name]
     if not missing:
@@ -315,8 +320,14 @@ def fill_owner_display_names_from_cache(
     for obj in objects:
         if not obj.owner or obj.owner_display_name:
             continue
-        match = cached.get(obj.owner.strip())
-        if match is not None and match.kind != "group" and match.display_name:
+        owner = obj.owner.strip()
+        if owner not in cached:
+            continue
+        match = cached[owner]
+        if match is None:
+            if mark_unverified is not None:
+                mark_unverified(obj)
+        elif match.kind != "group" and match.display_name:
             obj.owner_display_name = match.display_name
     if sp_ws is None:
         return

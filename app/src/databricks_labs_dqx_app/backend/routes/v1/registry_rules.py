@@ -10,7 +10,6 @@ route below blocks (409) deleting a rule that's still applied anywhere.
 from typing import Annotated
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
-from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
@@ -28,7 +27,6 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_permissions_service,
     get_registry_service,
     get_rule_embeddings_service,
-    get_sp_ws,
     get_tag_reconcile_service,
     require_role,
 )
@@ -64,12 +62,7 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
     shape_key,
     slot_renames_between,
 )
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
-    claim_owner_resolution,
-    lookup_owners,
-    peek_owners,
-    release_owner_resolution,
-)
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 
@@ -95,61 +88,16 @@ def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
     return definitions if isinstance(definitions, list) else []
 
 
-def _enrich_owner_display_names(
-    outs: list[RegistryRuleOut],
-    sp_ws: WorkspaceClient | None,
-    svc: RegistryService,
-    background_tasks: BackgroundTasks,
+def _mark_owner_unverified(out: OwnedObject) -> None:
+    if isinstance(out, RegistryRuleOut):
+        out.owner_unverified = True
+
+
+def _fill_owner_display_names(
+    outs: list[RegistryRuleOut], svc: RegistryService, background_tasks: BackgroundTasks
 ) -> None:
-    """Fill ``owner_display_name`` for rows that stored NULL from cache only (mutates *outs*).
-
-    Imported rules take their ``owner`` from the contract/YAML (an email) and
-    can keep a NULL display name that renders as a raw email beside owners that
-    do show a friendly name. The read path never calls SCIM: cached names fill
-    the DTOs, and owners with no fresh cache entry are resolved after the
-    response is sent, which writes the names back so the next read has them.
-
-    Owners that SCIM confirms match no user, group, or service principal (a
-    mistyped imported email) are flagged ``owner_unverified`` so the UI can
-    warn. Owners whose lookup failed or hasn't happened yet are left unflagged.
-    """
-    missing = [o.owner for o in outs if o.owner and not o.owner_display_name]
-    if not missing:
-        return
-    cached, uncached = peek_owners(missing)
-    for out in outs:
-        if out.owner_display_name or not out.owner:
-            continue
-        owner = out.owner.strip()
-        if owner not in cached:
-            continue
-        match = cached[owner]
-        if match is None:
-            out.owner_unverified = True
-        elif match.kind != "group" and match.display_name:
-            out.owner_display_name = match.display_name
-    if sp_ws is None:
-        return
-    claimed = claim_owner_resolution(uncached)
-    if claimed:
-        background_tasks.add_task(_resolve_and_backfill_owners, claimed, sp_ws, svc)
-
-
-def _resolve_and_backfill_owners(owners: list[str], sp_ws: WorkspaceClient, svc: RegistryService) -> None:
-    """Resolve *owners* against SCIM and persist their display names in one batched write."""
-    try:
-        looked_up = lookup_owners(owners, sp_ws)
-        resolved = {
-            owner: match.display_name
-            for owner, match in looked_up.items()
-            if match is not None and match.kind != "group" and match.display_name
-        }
-        if resolved:
-            svc.backfill_owner_display_names(resolved)
-    except Exception:
-        logger.warning("Background owner display-name resolution failed (non-fatal)", exc_info=True)
-    finally:
-        release_owner_resolution(owners)
+    """Cache-only owner-name fill; owners confirmed to match no principal are flagged ``owner_unverified``."""
+    svc.fill_owner_display_names(outs, defer=background_tasks.add_task, mark_unverified=_mark_owner_unverified)
 
 
 # ------------------------------------------------------------------
@@ -171,13 +119,12 @@ def list_registry_rules(
     severity: Annotated[str | None, Query(description="Filter by the 'severity' tag")] = None,
     owner: Annotated[str | None, Query(description="Filter by owner")] = None,
     tag: Annotated[str | None, Query(description="Filter by presence of a free-text tag key")] = None,
-    sp_ws: Annotated[WorkspaceClient | None, Depends(get_sp_ws)] = None,
 ) -> list[RegistryRuleOut]:
     """List Rules Registry entries, optionally filtered."""
     try:
         rules = svc.list_rules(status=status, dimension=dimension, severity=severity, owner=owner, tag=tag)
         outs = [RegistryRuleOut.from_domain(r) for r in rules]
-        _enrich_owner_display_names(outs, sp_ws, svc, background_tasks)
+        _fill_owner_display_names(outs, svc, background_tasks)
         return outs
     except Exception as e:
         logger.error(f"Failed to list registry rules: {e}", exc_info=True)
@@ -194,7 +141,6 @@ def get_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     background_tasks: BackgroundTasks,
-    sp_ws: Annotated[WorkspaceClient | None, Depends(get_sp_ws)] = None,
 ) -> RegistryRuleDetailOut:
     """Get a single registry rule with its slots/params and current published snapshot."""
     try:
@@ -203,7 +149,7 @@ def get_registry_rule(
             raise HTTPException(status_code=404, detail=f"Registry rule not found: {rule_id}")
         rule, version = result
         out = RegistryRuleOut.from_domain(rule)
-        _enrich_owner_display_names([out], sp_ws, svc, background_tasks)
+        _fill_owner_display_names([out], svc, background_tasks)
         return RegistryRuleDetailOut(
             rule=out,
             current_version=RegistryRuleVersionOut.from_domain(version) if version else None,

@@ -1,5 +1,6 @@
 """Unit tests for owner_display_name_service — SCIM resolver (batch + single)."""
 
+import time
 from dataclasses import dataclass
 from unittest.mock import MagicMock, create_autospec
 
@@ -331,6 +332,28 @@ class TestFillOwnerDisplayNamesFromCache:
         sql.execute.side_effect = RuntimeError("db down")
         fill_owner_display_names_from_cache([_Owned("tasha@example.com")], sp_ws, sql, "t", defer=self._defer)
         self.deferred.pop()()
+
+    def test_confirmed_miss_is_reported_but_unresolved_owner_is_not(self) -> None:
+        owner_display_name_service._resolve_cache["jhon.doe@example.com"] = (time.time() + 60, None)
+        typo, pending = _Owned("jhon.doe@example.com"), _Owned("new@example.com")
+        flagged: list = []
+        fill_owner_display_names_from_cache(
+            [typo, pending], _make_sp_ws([]), MagicMock(), "t", defer=self._defer, mark_unverified=flagged.append
+        )
+        assert flagged == [typo]
+
+    def test_group_owner_is_neither_named_nor_flagged(self) -> None:
+        owner_display_name_service._resolve_cache["data-eng"] = (
+            time.time() + 60,
+            owner_display_name_service.ResolvedOwner("data-eng", "data-eng", "group"),
+        )
+        row = _Owned("data-eng")
+        flagged: list = []
+        fill_owner_display_names_from_cache(
+            [row], _make_sp_ws([]), MagicMock(), "t", defer=self._defer, mark_unverified=flagged.append
+        )
+        assert row.owner_display_name is None
+        assert flagged == []
 
     def test_nothing_deferred_without_a_client_or_missing_names(self) -> None:
         sql = MagicMock()

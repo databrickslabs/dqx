@@ -803,43 +803,21 @@ class TestDeleteBuiltinRules:
 # ---------------------------------------------------------------------------
 
 
-class TestBackfillOwnerDisplayNames:
-    def test_writes_name_back_for_missing_rows_only(self, svc, sql):
-        svc.backfill_owner_display_names({"c.psafos@example.com": "Christos Psafos"})
-        assert sql.execute.call_count == 1
-        emitted = sql.execute.call_args[0][0]
-        assert "UPDATE" in emitted and "dq_rules" in emitted
-        assert "WHEN 'c.psafos@example.com' THEN 'Christos Psafos'" in emitted
-        assert "owner IN ('c.psafos@example.com')" in emitted
-        # Only rows without a name are touched — never overwrites an explicit one.
-        assert "owner_display_name IS NULL OR owner_display_name = ''" in emitted
+class TestFillOwnerDisplayNames:
+    def test_delegates_to_the_shared_helper_for_the_rules_table(self, svc, sql, monkeypatch):
+        import databricks_labs_dqx_app.backend.services.registry_service as mod
 
-    def test_skips_empty_owner_or_name(self, svc, sql):
-        svc.backfill_owner_display_names({"": "Nobody", "a@x.com": "", "b@x.com": "Bob"})
-        assert sql.execute.call_count == 1
-        emitted = sql.execute.call_args[0][0]
-        assert "owner IN ('b@x.com')" in emitted
-        assert "Nobody" not in emitted
+        calls: list = []
+        monkeypatch.setattr(mod, "fill_owner_display_names_from_cache", lambda *a, **kw: calls.append((a, kw)))
+        objects, defer, mark = [object()], object(), object()
 
-    def test_batches_every_owner_into_one_update(self, svc, sql):
-        svc.backfill_owner_display_names({"a@x.com": "Alice", "b@x.com": "Bob", "c@x.com": "Cy"})
-        assert sql.execute.call_count == 1
-        assert "owner IN ('a@x.com', 'b@x.com', 'c@x.com')" in sql.execute.call_args[0][0]
+        svc.fill_owner_display_names(objects, defer=defer, mark_unverified=mark)
 
-    def test_escapes_sql_metacharacters(self, svc, sql):
-        svc.backfill_owner_display_names({"o'brien@x.com": "O'Brien"})
-        emitted = sql.execute.call_args[0][0]
-        assert "O''Brien" in emitted
-        assert "o''brien@x.com" in emitted
-
-    def test_write_failure_is_swallowed(self, svc, sql):
-        sql.execute.side_effect = RuntimeError("db down")
-        # Must not raise — the next read simply re-resolves.
-        svc.backfill_owner_display_names({"a@x.com": "Alice"})
-
-    def test_noop_for_empty_mapping(self, svc, sql):
-        svc.backfill_owner_display_names({})
-        sql.execute.assert_not_called()
+        [(args, kwargs)] = calls
+        assert args[0] is objects
+        assert args[2] is sql
+        assert "dq_rules" in args[3]
+        assert kwargs == {"defer": defer, "mark_unverified": mark}
 
 
 class TestListAndGet:

@@ -18,7 +18,7 @@ per-table ``dq_resolved_rules``.
 
 import json
 import logging
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime, timezone
 from typing import Any, cast, get_args
 from uuid import uuid4
@@ -42,8 +42,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    DeferredTaskRunner,
+    OwnedObject,
     canonicalize_owner,
-    owner_display_name_backfill_sql,
+    fill_owner_display_names_from_cache,
 )
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, WhereIn
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
@@ -151,27 +153,24 @@ class RegistryService:
         """Total registry rules, any status (homepage stat card)."""
         return self._sql.count(self._table)
 
-    def backfill_owner_display_names(self, resolved: dict[str, str]) -> None:
-        """Persist resolved owner display names onto rows that stored NULL.
+    def fill_owner_display_names(
+        self,
+        objects: Sequence[OwnedObject],
+        *,
+        defer: DeferredTaskRunner,
+        mark_unverified: Callable[[OwnedObject], None] | None = None,
+    ) -> None:
+        """Fill NULL ``owner_display_name`` on *objects* from cache; resolve the rest off the request path.
 
         Imported rules take their ``owner`` straight from the contract/YAML (an
-        email), and rows written while SCIM was unavailable keep a NULL
-        ``owner_display_name`` that renders as a raw email. Once the read path
-        resolves the owner, this writes the name back so it shows consistently
-        on every surface instead of being re-resolved on each request.
-
-        Only rows still missing a name for that owner are touched, so an
-        explicitly-set name is never overwritten, and ``updated_at`` is left
-        alone because this is a cosmetic backfill, not a user edit.
-        Best-effort: a failure is swallowed (the next read re-resolves).
+        email) and can keep a NULL display name that renders as a raw email.
+        See :func:`fill_owner_display_names_from_cache` — resolved names are
+        written back to the rules table so later reads have them, and an
+        explicitly-set name is never overwritten.
         """
-        sql = owner_display_name_backfill_sql(self._table, resolved)
-        if sql is None:
-            return
-        try:
-            self._sql.execute(sql)
-        except Exception:
-            logger.warning("Owner display-name backfill failed (non-fatal)", exc_info=True)
+        fill_owner_display_names_from_cache(
+            objects, self._sp_ws, self._sql, self._table, defer=defer, mark_unverified=mark_unverified
+        )
 
     def list_rules(
         self,

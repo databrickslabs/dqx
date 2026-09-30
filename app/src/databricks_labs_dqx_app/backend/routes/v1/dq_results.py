@@ -102,6 +102,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
+    escape_sql_string_strict,
     quote_object_fqn,
     sql_string_in_list,
     validate_fqn,
@@ -281,13 +282,20 @@ def _catalog_gate_predicates(allowed_catalogs: frozenset[str] | None) -> list[st
     Only the access gate is pushed down: drilldown facets stay app-side
     because ``compute_entity_results`` derives batch and trend instants
     from the full, pre-facet scope. ``None`` means no gate; an empty set
-    matches nothing.
+    matches nothing. Matches the table's catalog prefix in both plain
+    (``cat.``) and backtick-quoted (```cat`.``) form, agreeing with
+    :func:`catalog_of` for catalog names that contain dots.
     """
     if allowed_catalogs is None:
         return []
     if not allowed_catalogs:
         return ["false"]
-    return [f"split(input_location, '\\\\.')[0] IN ({sql_string_in_list(sorted(allowed_catalogs))})"]
+    prefixes: list[str] = []
+    for catalog in sorted(allowed_catalogs):
+        prefixes.append(f"{catalog}.")
+        prefixes.append(f"`{catalog.replace('`', '``')}`.")
+    ors = " OR ".join(f"startswith(input_location, '{escape_sql_string_strict(p)}')" for p in prefixes)
+    return [f"({ors})"]
 
 
 def _wants_trends(axes: str) -> bool:

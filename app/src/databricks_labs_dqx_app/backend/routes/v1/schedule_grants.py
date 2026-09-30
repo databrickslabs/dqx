@@ -23,7 +23,11 @@ from databricks_labs_dqx_app.backend.models import (
     SchedulePreflightOut,
     SchedulePreflightTableOut,
 )
-from databricks_labs_dqx_app.backend.services.schedule_grant_service import ScheduleGrantService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    WAREHOUSE_UNAVAILABLE_DETAIL,
+    ScheduleGrantService,
+    WarehouseUnavailableError,
+)
 
 router = APIRouter()
 
@@ -45,6 +49,9 @@ async def preflight_schedule_grants(
     """Return per-table grantability for the tables a schedule will run against."""
     try:
         results = await grant_svc.preflight_async(body.table_fqns)
+    except WarehouseUnavailableError as e:
+        logger.warning("Schedule-grant preflight inconclusive: %s", e)
+        raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
     except Exception as e:
         logger.error("Schedule-grant preflight failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to check schedule permissions.")

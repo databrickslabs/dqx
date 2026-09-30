@@ -818,7 +818,10 @@ class TestGlobalResults:
         sql_dispatch(sql_mock)
         client.get("/api/v1/dq-results/global")
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        assert "split(input_location, '\\\\.')[0] IN ('dev', 'main')" in stmt
+        assert (
+            "(startswith(input_location, 'dev.') OR startswith(input_location, '`dev`.') OR "
+            "startswith(input_location, 'main.') OR startswith(input_location, '`main`.'))"
+        ) in stmt
 
     def test_global_outcome_facet_keeps_only_matching_checks(self, client, sql_mock):
         sql_dispatch(
@@ -1923,3 +1926,13 @@ class TestRefreshScores:
         score_cache_mock.refresh_all_for_tables.side_effect = RuntimeError("warehouse down")
         resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": [FQN]})
         assert resp.status_code == 500
+
+
+def test_catalog_gate_matches_quoted_dotted_catalogs_and_escapes_strictly():
+    from databricks_labs_dqx_app.backend.routes.v1.dq_results import _catalog_gate_predicates
+
+    [pred] = _catalog_gate_predicates(frozenset({"my.catalog", "o'k\\"}))
+    assert "startswith(input_location, '`my.catalog`.')" in pred
+    assert "startswith(input_location, 'o''k\\\\.')" in pred
+    assert _catalog_gate_predicates(frozenset()) == ["false"]
+    assert _catalog_gate_predicates(None) == []

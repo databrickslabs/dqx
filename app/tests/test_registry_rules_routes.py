@@ -7,7 +7,6 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,8 +21,6 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
-from databricks_labs_dqx_app.backend.services import owner_display_name_service
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import ResolvedOwner
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
     backfill_rule_embeddings,
@@ -86,102 +83,38 @@ class TestListAndGet:
         assert result[0].rule_id == "r1"
         svc.list_rules.assert_called_once_with(status="draft", dimension=None, severity=None, owner=None, tag=None)
 
-    @pytest.fixture(autouse=True)
-    def _clear_owner_cache(self):
-        owner_display_name_service._resolve_cache.clear()
-        owner_display_name_service._inflight.clear()
-        yield
-        owner_display_name_service._resolve_cache.clear()
-        owner_display_name_service._inflight.clear()
+    def test_list_fills_owner_names_through_the_shared_cache_helper(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule()]
+        tasks = BackgroundTasks()
 
-    @staticmethod
-    def _owned_rule(owner: str) -> RegistryRule:
+        result = list_registry_rules(svc=svc, background_tasks=tasks)
+
+        svc.fill_owner_display_names.assert_called_once()
+        args, kwargs = svc.fill_owner_display_names.call_args
+        assert args[0] == result
+        # SCIM resolution runs after the response, never on the request path.
+        assert kwargs["defer"] == tasks.add_task
+
+    def test_get_fills_owner_names_through_the_shared_cache_helper(self):
+        svc = MagicMock()
+        svc.get_rule_with_version.return_value = (_rule(), None)
+
+        result = get_registry_rule("r1", svc=svc, background_tasks=BackgroundTasks())
+
+        args, _ = svc.fill_owner_display_names.call_args
+        assert args[0] == [result.rule]
+
+    def test_confirmed_missing_owner_is_flagged_unverified(self):
         rule = _rule()
-        rule.owner = owner
-        rule.owner_display_name = None
-        return rule
-
-    @staticmethod
-    def _cache(owner: str, resolved: ResolvedOwner | None) -> None:
-        owner_display_name_service._resolve_cache[owner.lower()] = (time.time() + 60, resolved)
-
-    def test_list_fills_cached_owner_display_name_without_scim(self, monkeypatch):
+        rule.owner = "jhon.doe@example.com"
         svc = MagicMock()
-        svc.list_rules.return_value = [self._owned_rule("c.psafos@example.com")]
-        self._cache("c.psafos@example.com", ResolvedOwner("c.psafos@example.com", "Christos Psafos", "user"))
-        scim = MagicMock()
-        monkeypatch.setattr(owner_display_name_service, "_lookup_users", scim)
-        tasks = BackgroundTasks()
+        svc.list_rules.return_value = [rule]
+        svc.fill_owner_display_names.side_effect = lambda outs, *, defer, mark_unverified: mark_unverified(outs[0])
 
-        result = list_registry_rules(svc=svc, background_tasks=tasks, sp_ws=MagicMock())
+        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks())
 
-        assert result[0].owner_display_name == "Christos Psafos"
-        assert result[0].owner_unverified is False
-        scim.assert_not_called()
-        assert not tasks.tasks
-
-    def test_list_defers_uncached_owner_resolution_to_a_background_task(self, monkeypatch):
-        svc = MagicMock()
-        svc.list_rules.return_value = [self._owned_rule("c.psafos@example.com")]
-        tasks = BackgroundTasks()
-        sp_ws = MagicMock()
-
-        result = list_registry_rules(svc=svc, background_tasks=tasks, sp_ws=sp_ws)
-
-        # The response doesn't wait on SCIM: the raw owner shows until the task backfills.
-        assert result[0].owner_display_name is None
-        assert result[0].owner_unverified is False
-        svc.backfill_owner_display_names.assert_not_called()
-        [task] = tasks.tasks
-
-        import databricks_labs_dqx_app.backend.routes.v1.registry_rules as mod
-
-        monkeypatch.setattr(
-            mod,
-            "lookup_owners",
-            lambda owners, ws: {
-                "c.psafos@example.com": ResolvedOwner("c.psafos@example.com", "Christos Psafos", "user")
-            },
-        )
-        task.func(*task.args, **task.kwargs)
-        svc.backfill_owner_display_names.assert_called_once_with({"c.psafos@example.com": "Christos Psafos"})
-        assert not owner_display_name_service._inflight
-
-    def test_concurrent_reads_queue_one_resolution_per_owner(self):
-        svc = MagicMock()
-        svc.list_rules.return_value = [self._owned_rule("c.psafos@example.com")]
-        first, second = BackgroundTasks(), BackgroundTasks()
-
-        list_registry_rules(svc=svc, background_tasks=first, sp_ws=MagicMock())
-        list_registry_rules(svc=svc, background_tasks=second, sp_ws=MagicMock())
-
-        assert len(first.tasks) == 1
-        assert not second.tasks
-
-    def test_list_keeps_group_owner_verified_without_display_name(self):
-        svc = MagicMock()
-        svc.list_rules.return_value = [self._owned_rule("data-eng-group")]
-        self._cache("data-eng-group", ResolvedOwner("data-eng-group", "data-eng-group", "group"))
-        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks(), sp_ws=MagicMock())
-        assert result[0].owner_display_name is None
-        assert result[0].owner == "data-eng-group"
-        assert result[0].owner_unverified is False
-
-    def test_list_flags_owner_with_no_databricks_principal(self):
-        svc = MagicMock()
-        svc.list_rules.return_value = [self._owned_rule("jhon.doe@example.com")]
-        self._cache("jhon.doe@example.com", None)
-        tasks = BackgroundTasks()
-        result = list_registry_rules(svc=svc, background_tasks=tasks, sp_ws=MagicMock())
-        assert result[0].owner == "jhon.doe@example.com"
         assert result[0].owner_unverified is True
-        assert not tasks.tasks
-
-    def test_list_does_not_flag_owner_before_it_is_resolved(self):
-        svc = MagicMock()
-        svc.list_rules.return_value = [self._owned_rule("alice@example.com")]
-        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks(), sp_ws=MagicMock())
-        assert result[0].owner_unverified is False
 
     def test_get_returns_detail_with_no_version_when_unpublished(self):
         svc = MagicMock()
