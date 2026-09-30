@@ -970,27 +970,29 @@ def _compute_geospatial_stats(
     # embedded backticks so column names with special characters produce valid SQL.
     geom = quote_column_name(column_label)
     area = _geospatial_area_expr(geom, column_type, profiler_options)
-    # Null island: a POINT at the origin with zero (or absent) Z/M ordinates. Mirrors is_not_null_island.
-    null_island = (
-        f"{geom} IS NOT NULL AND st_geometrytype({geom}) = 'ST_Point' "
-        f"AND st_x({geom}) = 0.0 AND st_y({geom}) = 0.0 "
-        f"AND (st_z({geom}) IS NULL OR st_z({geom}) = 0.0) "
-        f"AND (st_m({geom}) IS NULL OR st_m({geom}) = 0.0)"
-    )
+    # st_area, st_npoints, st_geometrytype and st_isempty accept both GEOMETRY and GEOGRAPHY.
     aggregations = [
-        F.expr(f"min(st_xmin({geom}))").alias(_GEO_STAT_MIN_X),
-        F.expr(f"max(st_xmax({geom}))").alias(_GEO_STAT_MAX_X),
-        F.expr(f"min(st_ymin({geom}))").alias(_GEO_STAT_MIN_Y),
-        F.expr(f"max(st_ymax({geom}))").alias(_GEO_STAT_MAX_Y),
         F.expr(f"min({area})").alias(_GEO_STAT_MIN_AREA),
         F.expr(f"max({area})").alias(_GEO_STAT_MAX_AREA),
         F.expr(f"min(st_npoints({geom}))").alias(_GEO_STAT_MIN_NUM_POINTS),
         F.expr(f"max(st_npoints({geom}))").alias(_GEO_STAT_MAX_NUM_POINTS),
         F.expr(f"array_sort(collect_set(st_geometrytype({geom})))").alias(_GEO_STAT_TYPES),
         F.expr(f"count_if({geom} IS NULL OR st_isempty({geom}))").alias(_GEO_STAT_EMPTY_COUNT),
-        F.expr(f"count_if({geom} IS NULL OR NOT st_isvalid({geom}))").alias(_GEO_STAT_INVALID_COUNT),
-        F.expr(f"count_if({null_island})").alias(_GEO_STAT_NULL_ISLAND_COUNT),
     ]
+    if not is_geography(column_type):
+        null_island = (
+            f"st_geometrytype({geom}) = '{POINT_TYPE}' "
+            f"AND st_xmin({geom}) = 0.0 AND st_xmax({geom}) = 0.0 "
+            f"AND st_ymin({geom}) = 0.0 AND st_ymax({geom}) = 0.0"
+        )
+        aggregations += [
+            F.expr(f"min(st_xmin({geom}))").alias(_GEO_STAT_MIN_X),
+            F.expr(f"max(st_xmax({geom}))").alias(_GEO_STAT_MAX_X),
+            F.expr(f"min(st_ymin({geom}))").alias(_GEO_STAT_MIN_Y),
+            F.expr(f"max(st_ymax({geom}))").alias(_GEO_STAT_MAX_Y),
+            F.expr(f"count_if({geom} IS NULL OR NOT st_isvalid({geom}))").alias(_GEO_STAT_INVALID_COUNT),
+            F.expr(f"count_if({null_island})").alias(_GEO_STAT_NULL_ISLAND_COUNT),
+        ]
     try:
         row = df.agg(*aggregations).first()
     except AnalysisException as exc:
@@ -1095,7 +1097,9 @@ def _build_geospatial_profiles(
 
     profiles.extend(_build_geospatial_range_profiles(column_name, column_type, stats, profiler_options, dq_filter))
     profiles.extend(
-        _build_geospatial_quality_profiles(column_name, stats, profiler_metrics, profiler_options, dq_filter)
+        _build_geospatial_quality_profiles(
+            column_name, column_type, stats, profiler_metrics, profiler_options, dq_filter
+        )
     )
     return profiles
 
@@ -1203,6 +1207,7 @@ def _build_geospatial_range_profiles(
 
 def _build_geospatial_quality_profiles(
     column_name: str,
+    column_type: T.DataType,
     stats: dict[str, Any],
     profiler_metrics: dict[str, Any],
     profiler_options: dict[str, Any],
@@ -1212,10 +1217,13 @@ def _build_geospatial_quality_profiles(
     Builds profiles for empty, OGC-invalid, or null-island values in geometry columns.
 
     Profiles are emitted only when the sampled violation ratio is within *max_null_ratio*.
-    Columns with some empty/invalid/null-island values are still profiled.
+    Columns with some empty/invalid/null-island values are still profiled. The OGC-validity
+    (*st_isvalid*) and null-island (*st_x*/*st_y*) checks only accept GEOMETRY, so those profiles
+    are skipped for geography columns.
 
     Args:
         column_name: Input column name.
+        column_type: Input column type, used to skip profiles unsupported for geography columns.
         stats: Dictionary of stats from profiling values in the input column.
         profiler_metrics: Dictionary of profiling metrics from profiling values in the input column.
         profiler_options: Profiler options.
@@ -1231,12 +1239,13 @@ def _build_geospatial_quality_profiles(
     max_null_ratio = profiler_options.get(
         PROFILE_OPTION_MAX_NULL_RATIO, DEFAULT_PROFILE_OPTIONS[PROFILE_OPTION_MAX_NULL_RATIO]
     )
+    property_profiles = [(_GEO_STAT_EMPTY_COUNT, "is_non_empty_geometry")]
+    if not is_geography(column_type):
+        property_profiles.append((_GEO_STAT_INVALID_COUNT, "is_ogc_valid"))
+        if set(stats.get(_GEO_STAT_TYPES) or []) == {POINT_TYPE}:
+            property_profiles.append((_GEO_STAT_NULL_ISLAND_COUNT, "is_not_null_island"))
+
     profiles = []
-    property_profiles = [
-        (_GEO_STAT_EMPTY_COUNT, "is_non_empty_geometry"),
-        (_GEO_STAT_INVALID_COUNT, "is_ogc_valid"),
-        (_GEO_STAT_NULL_ISLAND_COUNT, "is_not_null_island"),
-    ]
     for stat_key, profile_name in property_profiles:
         violation_ratio = stats.get(stat_key, 0) / total
         if violation_ratio <= max_null_ratio:

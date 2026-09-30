@@ -2632,7 +2632,8 @@ def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_g
     stats, profiles = profiler.profile(geom_df, options=options)
 
     geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
-    assert geo_profile_names == set(GEOSPATIAL_PROFILE_NAMES)
+    # Polygons do not support null island checks
+    assert geo_profile_names == set(GEOSPATIAL_PROFILE_NAMES) - {"is_not_null_island"}
 
     geometry_type_profile = next(p for p in profiles if p.name == "geometry_type")
     assert geometry_type_profile.parameters == {"type": "ST_Polygon"}
@@ -2663,6 +2664,17 @@ def test_profiler_geospatial_geography_uses_geodesic_area(skip_if_runtime_not_ge
     profiler = DQProfiler(ws)
     options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
     _, profiles = profiler.profile(geog_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geog"}
+    # st_xmin/xmax/ymin/ymax, st_isvalid and st_x/st_y accept GEOMETRY only
+    assert geo_profile_names == {
+        "geometry_type",
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+        "is_non_empty_geometry",
+    }
 
     area_profiles = [p for p in profiles if p.name in {"is_area_not_less_than", "is_area_not_greater_than"}]
     assert area_profiles
@@ -2724,7 +2736,13 @@ def test_profiler_geospatial_point_column_skips_area_and_num_points(skip_if_runt
         "is_num_points_not_less_than",
         "is_num_points_not_greater_than",
     }
-    assert {"geometry_type", "has_x_coordinate_between", "has_y_coordinate_between"} <= geo_profile_names
+    # Points are the only geometry type that supports the null-island check
+    assert {
+        "geometry_type",
+        "has_x_coordinate_between",
+        "has_y_coordinate_between",
+        "is_not_null_island",
+    } <= geo_profile_names
 
 
 def test_profiler_geospatial_linestring_column_keeps_num_points_skips_area(
@@ -2740,9 +2758,9 @@ def test_profiler_geospatial_linestring_column_keeps_num_points_skips_area(
     _, profiles = profiler.profile(line_df, options=options)
 
     geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
-    # Linestrings have a meaningful coordinate count but no area.
+    # Linestrings have a meaningful coordinate count but do not support area or null island checks
     assert {"is_num_points_not_less_than", "is_num_points_not_greater_than"} <= geo_profile_names
-    assert not geo_profile_names & {"is_area_not_less_than", "is_area_not_greater_than"}
+    assert not geo_profile_names & {"is_area_not_less_than", "is_area_not_greater_than", "is_not_null_island"}
 
 
 def _round_stats(

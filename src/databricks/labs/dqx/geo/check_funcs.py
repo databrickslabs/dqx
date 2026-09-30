@@ -395,7 +395,7 @@ def is_ogc_valid(column: str | Column, convert_column: bool = True) -> Column:
         column: column to check; can be a string column name or a column expression
         convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
             WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
-            native GEOMETRY/GEOGRAPHY value.
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_isvalid* accepts GEOMETRY only).
 
     Returns:
         Column object indicating whether the values in the input column are valid geometries
@@ -462,7 +462,7 @@ def is_not_null_island(column: str | Column, convert_column: bool = True) -> Col
         column: column to check; can be a string column name or a column expression
         convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
             WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
-            native GEOMETRY/GEOGRAPHY value.
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_x*/*st_y* accept POINT GEOMETRY only).
 
     Returns:
         Column object indicating whether the values in the input column are NULL island geometries
@@ -539,7 +539,7 @@ def has_x_coordinate_between(
         max_value: maximum value of the x coordinates
         convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
             WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
-            native GEOMETRY/GEOGRAPHY value.
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_xmin*/*st_xmax* accept GEOMETRY only).
 
     Returns:
         Column object indicating whether the x coordinates of the geometries in the input column are between a given range
@@ -576,7 +576,7 @@ def has_y_coordinate_between(
         max_value: maximum value of the y coordinates
         convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
             WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
-            native GEOMETRY/GEOGRAPHY value.
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_ymin*/*st_ymax* accept GEOMETRY only).
 
     Returns:
         Column object indicating whether the y coordinates of the geometries in the input column are between a given range

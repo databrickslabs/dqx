@@ -1,5 +1,5 @@
 import decimal
-from unittest.mock import create_autospec
+from unittest.mock import Mock, create_autospec
 
 import pytest
 import pyspark.sql.types as T
@@ -9,6 +9,7 @@ from pyspark.errors import AnalysisException
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import (
+    GEOSPATIAL_PROFILE_NAMES,
     PROFILE_BUILDER_REGISTRY,
     deregister_profile_builder,
     make_geospatial_profile,
@@ -810,3 +811,98 @@ def test_make_geospatial_profile_reraises_unexpected_analysis_error():
             {"count_non_null": 5},
             {"profile_geospatial": True, "geospatial_srid": 3857},
         )
+
+
+class _FakeGeographyType(T.DataType):
+    """Stand-in for a native GEOGRAPHY type; pyspark exposes no public geography DataType to construct."""
+
+    @classmethod
+    def typeName(cls) -> str:
+        return "geography"
+
+
+_GEOMETRY_STATS = {
+    "min_x_coordinate": -1.0,
+    "max_x_coordinate": 2.0,
+    "min_y_coordinate": -1.0,
+    "max_y_coordinate": 2.0,
+    "min_area": 1.0,
+    "max_area": 4.0,
+    "min_num_points": 5,
+    "max_num_points": 5,
+    "geometry_types": ["ST_Polygon"],
+    "empty_geometry_count": 0,
+    "invalid_geometry_count": 0,
+    "null_island_count": 0,
+}
+
+
+def _mock_geo_df(stats: dict) -> DataFrame:
+    df = create_autospec(DataFrame, instance=True)
+    df.columns = ["geom"]
+    row = Mock()
+    row.asDict.return_value = stats
+    df.agg.return_value.first.return_value = row
+    return df
+
+
+def _geospatial_profile_names(column_type: T.DataType, stats: dict) -> set[str]:
+    df = _mock_geo_df(stats)
+    profiles = make_geospatial_profile(
+        df, "geom", column_type, {"count_non_null": 100}, {"profile_geospatial": True, "geospatial_srid": 3857}
+    )
+    return {profile.name for profile in profiles or []}
+
+
+def test_make_geospatial_profile_polygon_geometry_skips_null_island():
+    names = _geospatial_profile_names(_FakeGeometryType(), dict(_GEOMETRY_STATS))
+    # st_x/st_y accept POINT only, so null-island is not emitted for a polygon column
+    assert names == set(GEOSPATIAL_PROFILE_NAMES) - {"is_not_null_island"}
+
+
+def test_make_geospatial_profile_point_geometry_emits_null_island():
+    stats = dict(_GEOMETRY_STATS, geometry_types=["ST_Point"])
+    names = _geospatial_profile_names(_FakeGeometryType(), stats)
+    # Points support null-island, but have zero area and a fixed point count
+    assert names == set(GEOSPATIAL_PROFILE_NAMES) - {
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+    }
+
+
+def test_make_geospatial_profile_geography_skips_geometry_only_profiles():
+    stats = {
+        "min_area": 1.0,
+        "max_area": 4.0,
+        "min_num_points": 5,
+        "max_num_points": 5,
+        "geometry_types": ["ST_Polygon"],
+        "empty_geometry_count": 0,
+    }
+    df = _mock_geo_df(stats)
+    profiles = (
+        make_geospatial_profile(
+            df,
+            "geog",
+            _FakeGeographyType(),
+            {"count_non_null": 100},
+            {"profile_geospatial": True, "geospatial_srid": 3857},
+        )
+        or []
+    )
+    names = {profile.name for profile in profiles}
+    # st_xmin/xmax/ymin/ymax, st_isvalid and st_x/st_y accept GEOMETRY only
+    assert names == {
+        "geometry_type",
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+        "is_non_empty_geometry",
+    }
+    area_profiles = [p for p in profiles if p.name.startswith("is_area")]
+    assert area_profiles and all(
+        p.parameters.get("geodesic") is True and "srid" not in p.parameters for p in area_profiles
+    )
