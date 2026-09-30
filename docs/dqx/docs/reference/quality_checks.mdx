@@ -49,6 +49,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_equal_to`                      | Checks whether the values in the input column are equal to the provided value.                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); `value`: comparison value as number, string, date, timestamp, column name, or SQL expression, where string literals must be single quoted, e.g. 'string_value'; `abs_tolerance`: (optional) numeric values are considered equal if the absolute difference is less than or equal to the tolerance (formula: `abs(a - b) <= tolerance`); `rel_tolerance`: differences in numeric values within this relative tolerance are ignored (formula: `abs(a - b) <= rel_tolerance * max(abs(a), abs(b))`); `allow_nulls`: (optional) if True (default), null values pass the check; if False, null values fail the check |
 | `is_not_less_than`                 | Checks whether the values in the input column are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `limit`: limit as number, date, timestamp, column name or sql expression; `allow_nulls`: (optional) if True (default), null values pass the check; if False, null values fail the check |
 | `is_not_greater_than`              | Checks whether the values in the input column are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `limit`: limit as number, date, timestamp, column name or sql expression; `allow_nulls`: (optional) if True (default), null values pass the check; if False, null values fail the check |
+| `has_num_decimal_places`           | Checks whether numeric values in the input column have no more than the given number of decimal places. Values whose string form is non-numeric fail with a separate message. Decimal places are counted from the value's string form, so `DECIMAL` and string columns are counted exactly; `float`/`double` columns reflect the stored value (1.10 is stored as 1.1).                                                     | `column`: column to check (can be a string column name or a column expression); `limit`: maximum number of decimal places allowed as a non-negative integer, column name, or sql expression; `allow_nulls`: (optional) if True (default), null values pass the check; if False, null values fail the check |
 | `is_valid_date`                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `date_format`: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `is_valid_timestamp`               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression); `timestamp_format`: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                                                                                                                                                                           |
 | `is_valid_json`                    | Checks whether the values in the input column are valid JSON strings.                                                                                                                                                                                                                                                                                                                                                             | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -432,6 +433,14 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col3
       limit: col2 + 10
+
+# has_num_decimal_places check
+- criticality: error
+  check:
+    function: has_num_decimal_places
+    arguments:
+      column: col2
+      limit: 2
 
 # is_valid_date check
 - criticality: error
@@ -1254,6 +1263,14 @@ checks = [
       check_func=check_funcs.is_not_greater_than,
       column="col3", # or as expr: F.col("col3")
       check_func_kwargs={"limit": "col2 + 10"} # or as expr: F.col("col2") + F.lit(10)
+    ),
+
+    # has_num_decimal_places check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_num_decimal_places,
+      column="col2",
+      check_func_kwargs={"limit": 2}
     ),
 
     # is_valid_date check

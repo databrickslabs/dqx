@@ -37,6 +37,7 @@ EXPECTED_PARAMETER_ORDER = {
     "is_not_greater_than": ("column", "limit", "allow_nulls"),
     "is_in_range": ("column", "min_limit", "max_limit", "allow_nulls"),
     "is_not_in_range": ("column", "min_limit", "max_limit", "allow_nulls"),
+    "has_num_decimal_places": ("column", "limit", "allow_nulls"),
     "regex_match": ("column", "regex", "negate"),
     "is_not_null_and_not_empty_array": ("column",),
     "is_valid_date": ("column", "date_format"),
