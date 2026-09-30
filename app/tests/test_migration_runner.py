@@ -25,9 +25,11 @@ future migration authors from silently breaking the contract:
 """
 
 import re
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
+
+import databricks_labs_dqx_app.backend.migrations as migrations
 
 from databricks_labs_dqx_app.backend.migrations import (
     ANALYTICAL_TABLE_NAMES,
@@ -37,6 +39,32 @@ from databricks_labs_dqx_app.backend.migrations import (
     _validate_template_safe,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+
+def test_migration_record_binds_runtime_description(monkeypatch: pytest.MonkeyPatch) -> None:
+    description = "a\\' OR TRUE --"
+    monkeypatch.setattr(
+        migrations,
+        "MIGRATIONS",
+        [
+            migrations.Migration(
+                version=999, description=description, sql_template="CREATE TABLE {catalog}.{schema}.t (x INT)"
+            )
+        ],
+    )
+    sql = create_autospec(SqlExecutor, instance=True)
+    sql.catalog = "cat"
+    sql.schema = "sch"
+    sql.q.side_effect = lambda name: f"`{name}`"
+    sql.query.return_value = []
+
+    assert MigrationRunner(sql=sql).run_all() == 1
+
+    record = next(call for call in sql.execute.call_args_list if "INSERT INTO" in call.args[0])
+    assert "VALUES (:version, :description, current_timestamp())" in record.args[0]
+    assert description not in record.args[0]
+    assert record.kwargs["parameters"] == {"version": 999, "description": description}
+
 
 # ---------------------------------------------------------------------------
 # Template scanner: positive + negative + live regression

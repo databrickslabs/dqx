@@ -58,7 +58,7 @@ from databricks_labs_dqx_app.backend.common.permissions import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_object_id
+from databricks_labs_dqx_app.backend.sql_utils import validate_object_id
 
 logger = logging.getLogger(__name__)
 
@@ -690,9 +690,6 @@ class PermissionsService:
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid principal type.") from exc
 
-    def _opt(self, value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
-
     def _record_history(
         self,
         object_type: str,
@@ -706,16 +703,27 @@ class PermissionsService:
     ) -> None:
         """Append an audit row (best-effort; failures never roll back the grant)."""
         try:
-            inherit_sql = "NULL" if inherit is None else ("TRUE" if inherit else "FALSE")
             sql = (
-                f"INSERT INTO {self._history_table} "  # noqa: S608
+                f"INSERT INTO {self._history_table} "
                 "(object_type, object_id, principal_id, principal_name, privileges, inherit, action, changed_by, changed_at) "
-                f"VALUES ('{escape_sql_string(object_type)}', '{escape_sql_string(object_id)}', "
-                f"'{escape_sql_string(principal_id)}', {self._opt(principal_name)}, "
-                f"{self._opt(privileges)}, {inherit_sql}, '{escape_sql_string(action)}', "
-                f"{self._opt(actor)}, now())"
+                f"VALUES ({self._sql.param('object_type')}, {self._sql.param('object_id')}, "
+                f"{self._sql.param('principal_id')}, {self._sql.param('principal_name')}, "
+                f"{self._sql.param('privileges')}, {self._sql.param('inherit')}, "
+                f"{self._sql.param('action')}, {self._sql.param('changed_by')}, now())"
             )
-            self._sql.execute(sql)
+            self._sql.execute(
+                sql,
+                parameters={
+                    "object_type": object_type,
+                    "object_id": object_id,
+                    "principal_id": principal_id,
+                    "principal_name": principal_name or None,
+                    "privileges": privileges or None,
+                    "inherit": inherit,
+                    "action": action,
+                    "changed_by": actor or None,
+                },
+            )
         except Exception:
             logger.warning(
                 "Failed to record object-grant history for %s/%s (non-fatal)", object_type, object_id, exc_info=True

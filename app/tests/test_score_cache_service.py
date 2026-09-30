@@ -351,10 +351,12 @@ class TestScoreHistoryAppend:
         inserts = _history_inserts(oltp)
         assert len(inserts) == 1
         stmt = inserts[0]
-        assert "'global', 'global'" in stmt
-        assert "0.9123" in stmt
-        assert " 7," in stmt
-        assert " 70," in stmt
+        parameters = next(call.kwargs["parameters"] for call in oltp.execute.call_args_list if stmt == call.args[0])
+        assert parameters["scope_type"] == "global"
+        assert parameters["scope_key"] == "global"
+        assert parameters["score"] == 0.9123
+        assert parameters["failed_tests"] == 7
+        assert parameters["total_tests"] == 70
         assert "now()" in stmt
 
     def test_table_refresh_appends_history_with_run_time(self, svc, oltp, warehouse):
@@ -362,8 +364,10 @@ class TestScoreHistoryAppend:
         svc.refresh_for_tables([FQN_A])
         inserts = _history_inserts(oltp)
         assert len(inserts) == 1
-        assert f"'table', '{FQN_A}'" in inserts[0]
-        assert "CAST('2026-07-10 08:00:00' AS TIMESTAMP)" in inserts[0]
+        insert_call = next(call for call in oltp.execute.call_args_list if inserts[0] == call.args[0])
+        assert insert_call.kwargs["parameters"]["scope_type"] == "table"
+        assert insert_call.kwargs["parameters"]["scope_key"] == FQN_A
+        assert insert_call.kwargs["parameters"]["run_time"] == "2026-07-10 08:00:00"
 
     def test_null_score_upserts_do_not_pollute_history(self, svc, oltp, warehouse):
         """'Computed, nothing found' rows update the cache but must not
@@ -379,18 +383,30 @@ class TestScoreHistoryAppend:
         trims = _history_trims(oltp)
         assert len(trims) == 1
         stmt = trims[0]
-        assert "scope_type = 'global'" in stmt
-        assert "scope_key = 'global'" in stmt
+        trim_call = next(call for call in oltp.execute.call_args_list if stmt == call.args[0])
+        assert trim_call.kwargs["parameters"] == {"scope_type": "global", "scope_key": "global"}
         # count-trim: keep the newest HISTORY_KEEP_ROWS rows.
         assert "ORDER BY computed_at DESC LIMIT 200" in stmt
         assert "computed_at <" in stmt
 
-    def test_scope_key_is_escaped_in_history_statements(self, svc, oltp):
+    def test_scope_key_is_bound_in_history_statements(self, svc, oltp):
         oltp.query_dicts.return_value = [{"score": "0.5", "failed_tests": "1", "total_tests": "2"}]
         svc.refresh_product("p'1")
-        for stmt in _history_inserts(oltp) + _history_trims(oltp):
-            assert "p''1" in stmt
-            assert "'p'1'" not in stmt
+        for call in oltp.execute.call_args_list:
+            if _HISTORY in call.args[0]:
+                assert "p'1" not in call.args[0]
+                assert call.kwargs["parameters"]["scope_key"] == "p'1"
+
+    def test_scope_key_with_quote_and_backslash_is_bound_in_history(self, svc, oltp):
+        key = "p'\\1"
+        oltp.query_dicts.return_value = [{"score": "0.5", "failed_tests": "1", "total_tests": "2"}]
+
+        svc.refresh_product(key)
+
+        history_calls = [call for call in oltp.execute.call_args_list if _HISTORY in call.args[0]]
+        assert len(history_calls) == 2
+        assert all(key not in call.args[0] for call in history_calls)
+        assert all(call.kwargs["parameters"]["scope_key"] == key for call in history_calls)
 
 
 class TestGetHistory:

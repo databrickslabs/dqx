@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
+from databricks_labs_dqx_app.backend.sql_utils import validate_schedule_name
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +173,8 @@ class ScheduleConfigService:
                 "delete",
                 version=existing.version,
             )
-        escaped = escape_sql_string(name)
-        sql = f"DELETE FROM {self._table} WHERE schedule_name = '{escaped}'"
-        self._sql.execute(sql)
+        sql = f"DELETE FROM {self._table} WHERE schedule_name = {self._sql.param('schedule_name')}"
+        self._sql.execute(sql, parameters={"schedule_name": name})
         logger.info("Deleted schedule config: %s (user=%s)", name, user_email)
 
     def get_history(self, name: str) -> list[dict[str, Any]]:
@@ -219,17 +218,23 @@ class ScheduleConfigService:
         version: int = 0,
     ) -> None:
         try:
-            escaped_name = escape_sql_string(name)
-            escaped_json = escape_sql_string(config_json)
-            escaped_user = escape_sql_string(user_email)
-            escaped_action = escape_sql_string(action)
             sql = (
                 f"INSERT INTO {self._history_table} "
                 "(schedule_name, config_json, version, action, changed_by, changed_at) "
-                f"VALUES ('{escaped_name}', '{escaped_json}', {version}, '{escaped_action}', "
-                f"'{escaped_user}', now())"
+                f"VALUES ({self._sql.param('schedule_name')}, {self._sql.param('config_json')}, "
+                f"{self._sql.param('version')}, {self._sql.param('action')}, "
+                f"{self._sql.param('changed_by')}, now())"
             )
-            self._sql.execute(sql)
+            self._sql.execute(
+                sql,
+                parameters={
+                    "schedule_name": name,
+                    "config_json": config_json,
+                    "version": version,
+                    "action": action,
+                    "changed_by": user_email,
+                },
+            )
         except Exception:
             logger.warning("Failed to record history for %s (non-fatal)", name, exc_info=True)
 

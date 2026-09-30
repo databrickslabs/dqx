@@ -109,12 +109,9 @@ class TestRenderCheckMatchesHandAuthoredShape:
             "check": {"function": "is_not_null", "arguments": {"column": "customer_id"}},
         }
         catalog.save("cat.schema.customers", [hand_authored_check], "alice@x")
-        inserted_sql = sql_executor_mock.execute.call_args_list[0].args[0]
-        # Pull the JSON literal that RulesCatalogService actually persisted
-        # for the hand-authored check out of the INSERT statement.
-        start = inserted_sql.index("parse_json('") + len("parse_json('")
-        end = inserted_sql.index("')", start)
-        stored_hand_authored = json.loads(inserted_sql[start:end])
+        stored_hand_authored = json.loads(
+            sql_executor_mock.execute.call_args_list[0].kwargs["parameters"]["check_json"]
+        )
 
         # The runner only ever reads these three things off a
         # dq_resolved_rules row: function, arguments, and top-level
@@ -1124,6 +1121,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
     sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+    sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     sql_executor_mock.param.side_effect = lambda name: f":{name}"
@@ -1182,6 +1180,29 @@ def _version_snapshot(rule_id: str = "r1", version: int = 1, severity: str = "Hi
 
 
 class TestMaterializeBindingBasics:
+    def test_materialized_row_binds_creator_with_quote_and_backslash(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        creator = "alice'\\team@example.com"
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "customer_id"}],
+            mapping_hash="h",
+            created_by=creator,
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+        sql.query.return_value = []
+
+        materializer.materialize_binding("b1")
+
+        call = sql.execute.call_args_list[0]
+        assert creator not in call.args[0]
+        assert call.kwargs["parameters"]["created_by"] == creator
+
     def test_raises_for_missing_binding(self, materializer, monitored_tables):
         monitored_tables.get.return_value = None
         with pytest.raises(MaterializationError):
@@ -1201,7 +1222,7 @@ class TestMaterializeBindingBasics:
         insert_sql = sql.execute.call_args_list[0].args[0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_resolved_rules" in insert_sql
         assert "'draft'" in insert_sql
-        assert "'ar1-0'" in insert_sql
+        assert sql.execute.call_args_list[0].kwargs["parameters"]["row_id"] == "ar1-0"
         assert "'registry'" in insert_sql
 
     def test_uses_pinned_version_when_set(self, materializer, sql, registry, monitored_tables):
@@ -1248,8 +1269,7 @@ class TestMaterializeBindingBasics:
         sql.query.return_value = []
 
         materializer.materialize_binding("b1")
-        insert_sql = sql.execute.call_args_list[0].args[0]
-        stored = _extract_json_literal(insert_sql)
+        stored = json.loads(sql.execute.call_args_list[0].kwargs["parameters"]["check_json"])
         assert stored["criticality"] == "warn"  # Low overrides the rule's High tag
         assert stored["user_metadata"]["severity"] == "Low"
 
@@ -1286,9 +1306,9 @@ class TestMaterializeBindingIdempotency:
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
 
-        update_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE")]
+        update_calls = [c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE")]
         assert len(update_calls) == 1
-        assert "status = 'approved'" in update_calls[0]
+        assert update_calls[0].kwargs["parameters"]["status"] == "approved"
         insert_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("INSERT")]
         assert not insert_calls
 
@@ -1331,8 +1351,8 @@ class TestAutoUpgradeBehaviour:
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "status = 'pending_approval'" in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["status"] == "pending_approval"
 
     def test_behaviour_a_keeps_approved_when_version_moves(
         self, materializer, sql, registry, monitored_tables, app_settings
@@ -1355,8 +1375,8 @@ class TestAutoUpgradeBehaviour:
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "status = 'approved'" in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["status"] == "approved"
 
     def test_unpinned_severity_edit_requires_review_even_with_auto_upgrade(
         self, materializer, sql, registry, monitored_tables, app_settings
@@ -1387,8 +1407,8 @@ class TestAutoUpgradeBehaviour:
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "status = 'pending_approval'" in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["status"] == "pending_approval"
 
     def test_pinned_row_content_change_always_goes_to_pending_approval(
         self, materializer, sql, registry, monitored_tables, app_settings
@@ -1414,8 +1434,8 @@ class TestAutoUpgradeBehaviour:
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "status = 'pending_approval'" in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["status"] == "pending_approval"
 
 
 class TestCleanup:
@@ -1630,8 +1650,8 @@ class TestRematerializeForRule:
         sql.query.side_effect = fake_query
         materializer.rematerialize_for_rule("r1")
 
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "status = 'pending_approval'" in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["status"] == "pending_approval"
 
 
 class TestRenderCheckNativeCrossTable:
@@ -1803,12 +1823,6 @@ class TestNativeArityBinding:
         assert "status" not in str(check["check"]["arguments"])
         # The filter is rendered with col_2 substituted.
         assert check["filter"] == "status IS NOT NULL"
-
-
-def _extract_json_literal(sql_text: str) -> dict:
-    start = sql_text.index("parse_json('") + len("parse_json('")
-    end = sql_text.index("')", start)
-    return json.loads(sql_text[start:end])
 
 
 class TestRenderBindingChecks:

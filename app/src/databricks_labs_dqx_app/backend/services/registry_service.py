@@ -43,7 +43,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlParameterValue, WhereIn, bind_list
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
+from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
 
@@ -1053,79 +1053,117 @@ class RegistryService:
     # Internal persistence helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
-
     def _insert(self, rule: RegistryRule) -> None:
-        definition_expr = self._sql.json_literal_expr(json.dumps(rule.definition.model_dump(mode="json")))
-        metadata_expr = self._sql.json_literal_expr(json.dumps(rule.user_metadata))
+        definition_expr = self._sql.json_parameter_expr("definition")
+        metadata_expr = self._sql.json_parameter_expr("user_metadata")
         sql = (
             f"INSERT INTO {self._table} "
             "(rule_id, mode, status, version, polarity, author_kind, definition, user_metadata, "
             "fingerprint, owner, owner_display_name, is_builtin, source, created_by, created_at, "
             "updated_by, updated_at) VALUES "
-            f"('{escape_sql_string(rule.rule_id)}', '{escape_sql_string(rule.mode)}', "
-            f"'{escape_sql_string(rule.status)}', {rule.version}, {self._opt_str(rule.polarity)}, "
-            f"{self._opt_str(rule.author_kind)}, {definition_expr}, {metadata_expr}, "
-            f"{self._opt_str(rule.fingerprint)}, {self._opt_str(rule.owner)}, "
-            f"{self._opt_str(rule.owner_display_name)}, "
-            f"{'TRUE' if rule.is_builtin else 'FALSE'}, {self._opt_str(rule.source)}, "
-            f"{self._opt_str(rule.created_by)}, now(), {self._opt_str(rule.updated_by)}, now())"
+            f"({self._sql.param('rule_id')}, {self._sql.param('mode')}, "
+            f"{self._sql.param('status')}, {self._sql.param('version')}, {self._sql.param('polarity')}, "
+            f"{self._sql.param('author_kind')}, {definition_expr}, {metadata_expr}, "
+            f"{self._sql.param('fingerprint')}, {self._sql.param('owner')}, "
+            f"{self._sql.param('owner_display_name')}, "
+            f"{self._sql.param('is_builtin')}, {self._sql.param('source')}, "
+            f"{self._sql.param('created_by')}, now(), {self._sql.param('updated_by')}, now())"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "rule_id": rule.rule_id,
+                "mode": rule.mode,
+                "status": rule.status,
+                "version": rule.version,
+                "polarity": rule.polarity or None,
+                "author_kind": rule.author_kind or None,
+                "definition": json.dumps(rule.definition.model_dump(mode="json")),
+                "user_metadata": json.dumps(rule.user_metadata),
+                "fingerprint": rule.fingerprint or None,
+                "owner": rule.owner or None,
+                "owner_display_name": rule.owner_display_name or None,
+                "is_builtin": rule.is_builtin,
+                "source": rule.source or None,
+                "created_by": rule.created_by or None,
+                "updated_by": rule.updated_by or None,
+            },
+        )
+
+    @staticmethod
+    def _update_parameters(rule: RegistryRule) -> dict[str, str | int | None]:
+        return {
+            "rule_id": rule.rule_id,
+            "mode": rule.mode,
+            "status": rule.status,
+            "version": rule.version,
+            "polarity": rule.polarity or None,
+            "author_kind": rule.author_kind or None,
+            "definition": json.dumps(rule.definition.model_dump(mode="json")),
+            "user_metadata": json.dumps(rule.user_metadata),
+            "fingerprint": rule.fingerprint or None,
+            "owner": rule.owner or None,
+            "owner_display_name": rule.owner_display_name or None,
+            "pending_rationale": rule.pending_rationale or None,
+            "last_decision_rationale": rule.last_decision_rationale or None,
+            "updated_by": rule.updated_by or None,
+        }
 
     def _update(self, rule: RegistryRule) -> None:
-        definition_expr = self._sql.json_literal_expr(json.dumps(rule.definition.model_dump(mode="json")))
-        metadata_expr = self._sql.json_literal_expr(json.dumps(rule.user_metadata))
-        e_rule_id = escape_sql_string(rule.rule_id)
+        definition_expr = self._sql.json_parameter_expr("definition")
+        metadata_expr = self._sql.json_parameter_expr("user_metadata")
         sql = (
             f"UPDATE {self._table} SET "
-            f"  mode = '{escape_sql_string(rule.mode)}', "
-            f"  status = '{escape_sql_string(rule.status)}', "
-            f"  version = {rule.version}, "
-            f"  polarity = {self._opt_str(rule.polarity)}, "
-            f"  author_kind = {self._opt_str(rule.author_kind)}, "
+            f"  mode = {self._sql.param('mode')}, "
+            f"  status = {self._sql.param('status')}, "
+            f"  version = {self._sql.param('version')}, "
+            f"  polarity = {self._sql.param('polarity')}, "
+            f"  author_kind = {self._sql.param('author_kind')}, "
             f"  definition = {definition_expr}, "
             f"  user_metadata = {metadata_expr}, "
-            f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
-            f"  owner = {self._opt_str(rule.owner)}, "
-            f"  owner_display_name = {self._opt_str(rule.owner_display_name)}, "
-            f"  pending_rationale = {self._opt_str(rule.pending_rationale)}, "
-            f"  last_decision_rationale = {self._opt_str(rule.last_decision_rationale)}, "
-            f"  updated_by = {self._opt_str(rule.updated_by)}, "
+            f"  fingerprint = {self._sql.param('fingerprint')}, "
+            f"  owner = {self._sql.param('owner')}, "
+            f"  owner_display_name = {self._sql.param('owner_display_name')}, "
+            f"  pending_rationale = {self._sql.param('pending_rationale')}, "
+            f"  last_decision_rationale = {self._sql.param('last_decision_rationale')}, "
+            f"  updated_by = {self._sql.param('updated_by')}, "
             f"  updated_at = now() "
-            f"WHERE rule_id = '{e_rule_id}'"
+            f"WHERE rule_id = {self._sql.param('rule_id')}"
         )
-        self._sql.execute(sql)
+        self._sql.execute(sql, parameters=self._update_parameters(rule))
 
     def _update_approve_cas(self, rule: RegistryRule, *, expected_version: int, expected_status: str) -> bool:
         """Conditional approve write — returns False if another writer won the race."""
-        definition_expr = self._sql.json_literal_expr(json.dumps(rule.definition.model_dump(mode="json")))
-        metadata_expr = self._sql.json_literal_expr(json.dumps(rule.user_metadata))
-        e_rule_id = escape_sql_string(rule.rule_id)
-        e_expected_status = escape_sql_string(expected_status)
+        definition_expr = self._sql.json_parameter_expr("definition")
+        metadata_expr = self._sql.json_parameter_expr("user_metadata")
         sql = (
             f"UPDATE {self._table} SET "
-            f"  mode = '{escape_sql_string(rule.mode)}', "
-            f"  status = '{escape_sql_string(rule.status)}', "
-            f"  version = {rule.version}, "
-            f"  polarity = {self._opt_str(rule.polarity)}, "
-            f"  author_kind = {self._opt_str(rule.author_kind)}, "
+            f"  mode = {self._sql.param('mode')}, "
+            f"  status = {self._sql.param('status')}, "
+            f"  version = {self._sql.param('version')}, "
+            f"  polarity = {self._sql.param('polarity')}, "
+            f"  author_kind = {self._sql.param('author_kind')}, "
             f"  definition = {definition_expr}, "
             f"  user_metadata = {metadata_expr}, "
-            f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
-            f"  owner = {self._opt_str(rule.owner)}, "
-            f"  owner_display_name = {self._opt_str(rule.owner_display_name)}, "
-            f"  pending_rationale = {self._opt_str(rule.pending_rationale)}, "
-            f"  last_decision_rationale = {self._opt_str(rule.last_decision_rationale)}, "
-            f"  updated_by = {self._opt_str(rule.updated_by)}, "
+            f"  fingerprint = {self._sql.param('fingerprint')}, "
+            f"  owner = {self._sql.param('owner')}, "
+            f"  owner_display_name = {self._sql.param('owner_display_name')}, "
+            f"  pending_rationale = {self._sql.param('pending_rationale')}, "
+            f"  last_decision_rationale = {self._sql.param('last_decision_rationale')}, "
+            f"  updated_by = {self._sql.param('updated_by')}, "
             f"  updated_at = now() "
-            f"WHERE rule_id = '{e_rule_id}' "
-            f"  AND version = {expected_version} "
-            f"  AND status = '{e_expected_status}'"
+            f"WHERE rule_id = {self._sql.param('rule_id')} "
+            f"  AND version = {self._sql.param('expected_version')} "
+            f"  AND status = {self._sql.param('expected_status')}"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                **self._update_parameters(rule),
+                "expected_version": expected_version,
+                "expected_status": expected_status,
+            },
+        )
         # Executors don't return rowcount portably — confirm via re-read.
         refreshed = self._get(rule.rule_id)
         return (
@@ -1143,20 +1181,29 @@ class RegistryService:
         asymmetry inherited from the Phase 2A baseline), so a hex id is
         supplied explicitly on that dialect only.
         """
-        definition_expr = self._sql.json_literal_expr(json.dumps(rule.definition.model_dump(mode="json")))
-        metadata_expr = self._sql.json_literal_expr(json.dumps(rule.user_metadata))
-        e_rule_id = escape_sql_string(rule.rule_id)
-        e_user = escape_sql_string(user_email)
+        definition_expr = self._sql.json_parameter_expr("definition")
+        metadata_expr = self._sql.json_parameter_expr("user_metadata")
         columns = "rule_id, version, mode, definition, polarity, user_metadata, created_by, created_at"
         values = (
-            f"'{e_rule_id}', {rule.version}, '{escape_sql_string(rule.mode)}', {definition_expr}, "
-            f"{self._opt_str(rule.polarity)}, {metadata_expr}, '{e_user}', now()"
+            f"{self._sql.param('rule_id')}, {self._sql.param('version')}, {self._sql.param('mode')}, "
+            f"{definition_expr}, {self._sql.param('polarity')}, {metadata_expr}, "
+            f"{self._sql.param('created_by')}, now()"
         )
+        parameters = {
+            "rule_id": rule.rule_id,
+            "version": rule.version,
+            "mode": rule.mode,
+            "definition": json.dumps(rule.definition.model_dump(mode="json")),
+            "polarity": rule.polarity or None,
+            "user_metadata": json.dumps(rule.user_metadata),
+            "created_by": user_email,
+        }
         if self._sql.dialect != "postgres":
             columns = f"id, {columns}"
-            values = f"'{uuid4().hex[:16]}', {values}"
+            values = f"{self._sql.param('id')}, {values}"
+            parameters["id"] = uuid4().hex[:16]
         sql = f"INSERT INTO {self._versions_table} ({columns}) VALUES ({values})"
-        self._sql.execute(sql)
+        self._sql.execute(sql, parameters=parameters)
 
     def _record_history(
         self,
@@ -1172,20 +1219,28 @@ class RegistryService:
     ) -> None:
         """Insert an audit row into ``dq_rules_history`` (best-effort)."""
         try:
-            definition_sql = (
-                self._sql.json_literal_expr(json.dumps(definition.model_dump(mode="json")))
-                if definition is not None
-                else "NULL"
-            )
+            definition_sql = self._sql.json_parameter_expr("definition") if definition is not None else "NULL"
             sql = (
                 f"INSERT INTO {self._history_table} "
                 "(rule_id, definition, version, action, prev_status, new_status, changed_by, changed_at, rationale) "
                 "VALUES "
-                f"({self._opt_str(rule_id)}, {definition_sql}, {version}, '{escape_sql_string(action)}', "
-                f"{self._opt_str(prev_status)}, {self._opt_str(new_status)}, {self._opt_str(user_email)}, now(), "
-                f"{self._opt_str(rationale)})"
+                f"({self._sql.param('rule_id')}, {definition_sql}, {self._sql.param('version')}, "
+                f"{self._sql.param('action')}, {self._sql.param('prev_status')}, "
+                f"{self._sql.param('new_status')}, {self._sql.param('changed_by')}, now(), "
+                f"{self._sql.param('rationale')})"
             )
-            self._sql.execute(sql)
+            parameters = {
+                "rule_id": rule_id or None,
+                "version": version,
+                "action": action,
+                "prev_status": prev_status or None,
+                "new_status": new_status or None,
+                "changed_by": user_email or None,
+                "rationale": rationale or None,
+            }
+            if definition is not None:
+                parameters["definition"] = json.dumps(definition.model_dump(mode="json"))
+            self._sql.execute(sql, parameters=parameters)
         except Exception:
             logger.warning("Failed to record registry history for %s (non-fatal)", rule_id, exc_info=True)
 

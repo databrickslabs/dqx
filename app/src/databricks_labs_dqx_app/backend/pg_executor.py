@@ -465,6 +465,10 @@ class PgExecutor:
         """Return a Postgres expression that yields a JSONB value for *json_str*."""
         return f"'{escape_sql_string(json_str)}'::jsonb"
 
+    def json_parameter_expr(self, name: str) -> str:
+        """Cast bound JSON text to Postgres JSONB."""
+        return f"{self.param(name)}::jsonb"
+
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as a string.
 
@@ -539,7 +543,13 @@ class PgExecutor:
         ms = max(1, int(timeout_seconds) * 1000)
         run_trusted_sql(cur, f"SET LOCAL statement_timeout = {ms}")
 
-    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
+    def execute(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> None:
         """Run a single non-result-returning statement and commit it.
 
         ``timeout_seconds`` is enforced via
@@ -549,7 +559,10 @@ class PgExecutor:
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 self._apply_statement_timeout(cur, timeout_seconds)
-                run_trusted_sql(cur, sql)
+                if parameters is None:
+                    run_trusted_sql(cur, sql)
+                else:
+                    run_parameterized_sql(cur, sql, parameters)
             conn.commit()
 
     def execute_no_schema(self, sql: str) -> None:
@@ -630,9 +643,9 @@ class PgExecutor:
         ``RawSql("current_timestamp()")`` is translated to Postgres'
         ``CURRENT_TIMESTAMP``.
         """
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
         self.execute(
-            _build_insert(table, values, self.q, _pg_render_value),
-            timeout_seconds=timeout_seconds,
+            _build_insert(table, values, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
         )
 
     def update(
@@ -647,8 +660,10 @@ class PgExecutor:
 
         See :meth:`OltpExecutorProtocol.update` for the contract.
         """
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
         self.execute(
-            _build_update(table, updates, where, self.q, _pg_render_value),
+            _build_update(table, updates, where, self.q, render),
+            parameters=parameters,
             timeout_seconds=timeout_seconds,
         )
 
@@ -663,9 +678,9 @@ class PgExecutor:
 
         See :meth:`OltpExecutorProtocol.delete` for the contract.
         """
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
         self.execute(
-            _build_delete(table, where, self.q, _pg_render_value),
-            timeout_seconds=timeout_seconds,
+            _build_delete(table, where, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
         )
 
     def count(
@@ -742,8 +757,9 @@ class PgExecutor:
         if not key_cols:
             raise ValueError("upsert requires at least one key column")
 
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
-        all_vals = [_pg_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
+        all_vals = [render(v) for v in list(key_cols.values()) + list(value_cols.values())]
 
         # Natural-key columns get quoted via q() so reserved words like
         # ``check`` survive. Service-provided keys are already validated
@@ -759,7 +775,7 @@ class PgExecutor:
             conflict_clause = f"ON CONFLICT ({', '.join(quoted_keys)}) DO NOTHING"
 
         sql = f"INSERT INTO {table} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
-        self.execute(sql, timeout_seconds=timeout_seconds)
+        self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 
     def upsert_with_audit(
         self,
@@ -796,8 +812,9 @@ class PgExecutor:
                 "with its initial INSERT value (e.g. {'version': 1})"
             )
 
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
-        all_vals = [_pg_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
+        all_vals = [render(v) for v in list(key_cols.values()) + list(value_cols.values())]
         quoted_cols = [self.q(c) for c in all_cols]
         quoted_keys = [self.q(c) for c in key_cols]
         alias = self.q(self._UPSERT_TARGET_ALIAS)
@@ -820,7 +837,7 @@ class PgExecutor:
                 update_pairs.append(f"{qcol} = {alias}.{qcol} + 1")
                 needs_alias = True
             else:
-                update_pairs.append(f"{qcol} = {_pg_render_value(val)}")
+                update_pairs.append(f"{qcol} = {render(val)}")
 
         if update_pairs:
             conflict_clause = f"ON CONFLICT ({', '.join(quoted_keys)}) DO UPDATE SET {', '.join(update_pairs)}"
@@ -836,7 +853,7 @@ class PgExecutor:
         sql = (
             f"INSERT INTO {target} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
         )
-        self.execute(sql, timeout_seconds=timeout_seconds)
+        self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 
     def select_json_text(self, col: str) -> str:
         """Postgres JSONB cells are coerced to text by :func:`_to_text` already."""

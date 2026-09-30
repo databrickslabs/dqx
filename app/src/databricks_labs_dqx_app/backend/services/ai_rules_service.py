@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import re
 from collections.abc import Collection
 from importlib.resources import files
@@ -1055,14 +1056,20 @@ class AiRulesService:
         ast.setdefault("joins", [])
         if not isinstance(ast.get("joins"), list):
             ast["joins"] = []
+        if not self._valid_lowcode_sql_operands(ast):
+            logger.warning("AI-generated lowcode rule dropped: invalid interval or percentile operand")
+            return None
         # Usability gate (dqlake's `_lowcode_rows_usable`): an AST that compiles
         # to an empty predicate is not a real low-code rule.
-        if not lowcode_is_usable(ast):
-            logger.warning("AI-generated lowcode rule dropped: AST has no compilable rows")
-            return None
-
         group_by = self._clean_str(proposal.get("group_by_columns")) or ""
-        compiled = compile_lowcode_body(ast, group_by)
+        try:
+            if not lowcode_is_usable(ast):
+                logger.warning("AI-generated lowcode rule dropped: AST has no compilable rows")
+                return None
+            compiled = compile_lowcode_body(ast, group_by)
+        except ValueError:
+            logger.warning("AI-generated lowcode rule dropped: invalid AST or group_by columns")
+            return None
 
         # Safety-gate every compiled SQL fragment with the same check the
         # RegistryService applies on create (`is_sql_query_safe`, comments
@@ -1086,6 +1093,39 @@ class AiRulesService:
             "definition": body,
             "slots": slots,
         }
+
+    @staticmethod
+    def _valid_lowcode_sql_operands(ast: dict[str, Any]) -> bool:
+        """Check model values that the low-code compiler emits as SQL tokens."""
+        interval_units = {"minutes", "hours", "days", "weeks", "months", "years"}
+        for row in ast["rows"]:
+            if not isinstance(row, dict):
+                continue
+            value = row.get("value")
+            if row.get("kind") == "row" and row.get("operator") == "is in last":
+                if not isinstance(value, dict):
+                    return False
+                number = value.get("number", 0)
+                unit = value.get("unit", "days")
+                if type(number) is not int or number < 0 or not isinstance(unit, str) or unit not in interval_units:
+                    return False
+            for spec in (row, value):
+                if not isinstance(spec, dict):
+                    continue
+                aggregate = spec.get("aggregate")
+                if aggregate is not None and not isinstance(aggregate, str):
+                    return False
+                if aggregate not in {"percentile", "percentile_approx"}:
+                    continue
+                quantile = spec.get("aggregate_param")
+                if quantile is not None and (
+                    isinstance(quantile, bool)
+                    or not isinstance(quantile, (int, float))
+                    or not 0 <= quantile <= 1
+                    or not math.isfinite(quantile)
+                ):
+                    return False
+        return True
 
     @staticmethod
     def _build_lowcode_body(

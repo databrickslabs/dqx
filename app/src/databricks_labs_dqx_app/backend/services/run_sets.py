@@ -19,7 +19,6 @@ from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import RunSetSource, RunSetTrigger
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor, bind_list
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -123,9 +122,17 @@ class RunSetService:
         self._sql.execute(
             f"INSERT INTO {self._run_sets_table} "
             f"(run_set_id, product_id, product_version, source, {trigger_col}, created_by, created_at) VALUES "
-            f"('{escape_sql_string(run_set_id)}', {self._opt_str(product_id)}, "
-            f"{self._opt_int(product_version)}, '{escape_sql_string(source)}', "
-            f"'{escape_sql_string(trigger)}', {self._opt_str(created_by)}, now())"
+            f"({self._sql.param('run_set_id')}, {self._sql.param('product_id')}, "
+            f"{self._sql.param('product_version')}, {self._sql.param('source')}, "
+            f"{self._sql.param('trigger')}, {self._sql.param('created_by')}, now())",
+            parameters={
+                "run_set_id": run_set_id,
+                "product_id": product_id or None,
+                "product_version": product_version,
+                "source": source,
+                "trigger": trigger,
+                "created_by": created_by or None,
+            },
         )
         logger.info(
             "Created run set %s (product_id=%s, source=%s, trigger=%s)", run_set_id, product_id, source, trigger
@@ -137,8 +144,15 @@ class RunSetService:
         member_id = uuid4().hex
         self._sql.execute(
             f"INSERT INTO {self._members_table} (id, run_set_id, run_id, binding_id, binding_version) VALUES "
-            f"('{escape_sql_string(member_id)}', '{escape_sql_string(run_set_id)}', "
-            f"'{escape_sql_string(run_id)}', '{escape_sql_string(binding_id)}', {self._opt_int(binding_version)})"
+            f"({self._sql.param('id')}, {self._sql.param('run_set_id')}, "
+            f"{self._sql.param('run_id')}, {self._sql.param('binding_id')}, {self._sql.param('binding_version')})",
+            parameters={
+                "id": member_id,
+                "run_set_id": run_set_id,
+                "run_id": run_id,
+                "binding_id": binding_id,
+                "binding_version": binding_version,
+            },
         )
 
     def delete_empty(self, run_set_id: str) -> None:
@@ -345,14 +359,6 @@ class RunSetService:
         if value not in _RUN_SET_TRIGGERS:
             raise ValueError(f"Invalid run set trigger {value!r}; expected one of {sorted(_RUN_SET_TRIGGERS)}")
         return cast(RunSetTrigger, value)
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
-
-    @staticmethod
-    def _opt_int(value: int | None) -> str:
-        return str(int(value)) if value is not None else "NULL"
 
     @staticmethod
     def _parse_int(value: Any) -> int | None:

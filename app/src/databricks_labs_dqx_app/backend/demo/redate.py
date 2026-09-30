@@ -7,17 +7,17 @@ value is engine-computed; only the timestamps are moved. A pair of delete
 builders drops the rows of throwaway runs (e.g. the validation gate's baseline
 runs) so they cannot win a "latest run" selection against the re-dated trend.
 
-All functions are pure: they take fully-qualified table names (already
-qualified by the caller) plus scalar values and return a SQL string. User- or
-run-derived string values (*run_id*, *scope_type*, *scope_key* and the target
-timestamp) are escaped via *escape_sql_string* (ANSI doubled-quote escaping).
+All functions are pure. Statements with runtime values return SQL text and
+parameters separately; callers supply their executor's parameter marker.
 Fully-qualified table names are app-internal constants and are interpolated
 verbatim.
 """
 
 from datetime import datetime
+from collections.abc import Callable
 
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+SqlParameters = dict[str, str | int]
+SqlStatement = tuple[str, SqlParameters]
 
 
 def iso(dt: datetime) -> str:
@@ -32,26 +32,34 @@ def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _ts(target_iso: str) -> str:
-    """Build a ``CAST('<iso>' AS TIMESTAMP)`` expression from an escaped literal."""
-    return f"CAST('{escape_sql_string(target_iso)}' AS TIMESTAMP)"
+def _ts(marker: Callable[[str], str]) -> str:
+    """Build a timestamp cast around an executor-specific parameter marker."""
+    return f"CAST({marker('target_iso')} AS TIMESTAMP)"
 
 
-def build_redate_metrics_sql(metrics_fqn: str, run_id: str, target_iso: str) -> str:
+def build_redate_metrics_sql(
+    metrics_fqn: str, run_id: str, target_iso: str, *, marker: Callable[[str], str]
+) -> SqlStatement:
     """Build SQL to re-date a *dq_metrics* run's *run_time*.
 
     Args:
         metrics_fqn: Fully-qualified *dq_metrics* table name.
         run_id: The run identifier to match.
         target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*).
+        marker: The executor's named parameter marker function.
 
     Returns:
-        An ``UPDATE`` statement targeting the matched run.
+        An ``UPDATE`` template and its bound values.
     """
-    return f"UPDATE {metrics_fqn} SET run_time = {_ts(target_iso)} WHERE run_id = '{escape_sql_string(run_id)}'"
+    return (
+        f"UPDATE {metrics_fqn} SET run_time = {_ts(marker)} WHERE run_id = {marker('run_id')}",
+        {"run_id": run_id, "target_iso": target_iso},
+    )
 
 
-def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str, duration_seconds: int = 45) -> str:
+def build_redate_runs_sql(
+    runs_fqn: str, run_id: str, target_iso: str, duration_seconds: int = 45, *, marker: Callable[[str], str]
+) -> SqlStatement:
     """Build SQL to re-date a *dq_validation_runs* run's *created_at* / *updated_at*.
 
     The run's *created_at* (start) is set to *target_iso* and its *updated_at*
@@ -71,18 +79,22 @@ def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str, duration_
         duration_seconds: The run's fabricated wall-clock duration in seconds
             (a positive offset applied to *updated_at*). Must be positive so the
             derived span is positive.
+        marker: The executor's named parameter marker function.
 
     Returns:
-        An ``UPDATE`` statement targeting the matched run.
+        An ``UPDATE`` template and its bound values.
     """
-    start = _ts(target_iso)
+    start = _ts(marker)
     end = f"{start} + INTERVAL {int(duration_seconds)} SECONDS"
     return (
-        f"UPDATE {runs_fqn} SET created_at = {start}, updated_at = {end} WHERE run_id = '{escape_sql_string(run_id)}'"
+        f"UPDATE {runs_fqn} SET created_at = {start}, updated_at = {end} WHERE run_id = {marker('run_id')}",
+        {"run_id": run_id, "target_iso": target_iso},
     )
 
 
-def build_redate_versions_sql(versions_fqn: str, binding_id: str, version: int, target_iso: str) -> str:
+def build_redate_versions_sql(
+    versions_fqn: str, binding_id: str, version: int, target_iso: str, *, marker: Callable[[str], str]
+) -> SqlStatement:
     """Build SQL to re-date a ``dq_monitored_table_versions`` freeze's *created_at*.
 
     A binding's version freezes are written at seed-time "now" (see
@@ -98,20 +110,21 @@ def build_redate_versions_sql(versions_fqn: str, binding_id: str, version: int, 
     Args:
         versions_fqn: Fully-qualified *dq_monitored_table_versions* table name.
         binding_id: The monitored-table binding whose freeze to re-date.
-        version: The version integer identifying the freeze row (an app-internal
-            integer, interpolated verbatim after an ``int`` cast).
+        version: The version integer identifying the freeze row.
         target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*).
+        marker: The executor's named parameter marker function.
 
     Returns:
-        An ``UPDATE`` statement targeting the matched ``(binding_id, version)`` freeze.
+        An ``UPDATE`` template and its bound values.
     """
     return (
-        f"UPDATE {versions_fqn} SET created_at = {_ts(target_iso)} "
-        f"WHERE binding_id = '{escape_sql_string(binding_id)}' AND version = {int(version)}"
+        f"UPDATE {versions_fqn} SET created_at = {_ts(marker)} "
+        + f"WHERE binding_id = {marker('binding_id')} AND version = {marker('version')}",
+        {"binding_id": binding_id, "version": int(version), "target_iso": target_iso},
     )
 
 
-def build_delete_metrics_sql(metrics_fqn: str, run_id: str) -> str:
+def build_delete_metrics_sql(metrics_fqn: str, run_id: str, *, marker: Callable[[str], str]) -> SqlStatement:
     """Build SQL to delete a run's *dq_metrics* rows.
 
     Used to discard a throwaway run (e.g. a validation-gate baseline run) so it
@@ -120,14 +133,15 @@ def build_delete_metrics_sql(metrics_fqn: str, run_id: str) -> str:
     Args:
         metrics_fqn: Fully-qualified *dq_metrics* table name.
         run_id: The run identifier whose rows to delete.
+        marker: The executor's named parameter marker function.
 
     Returns:
-        A ``DELETE`` statement targeting the matched run.
+        A ``DELETE`` template and its bound values.
     """
-    return f"DELETE FROM {metrics_fqn} WHERE run_id = '{escape_sql_string(run_id)}'"
+    return f"DELETE FROM {metrics_fqn} WHERE run_id = {marker('run_id')}", {"run_id": run_id}
 
 
-def build_delete_runs_sql(runs_fqn: str, run_id: str) -> str:
+def build_delete_runs_sql(runs_fqn: str, run_id: str, *, marker: Callable[[str], str]) -> SqlStatement:
     """Build SQL to delete a run's *dq_validation_runs* row.
 
     Used to discard a throwaway run (e.g. a validation-gate baseline run) so it
@@ -136,11 +150,12 @@ def build_delete_runs_sql(runs_fqn: str, run_id: str) -> str:
     Args:
         runs_fqn: Fully-qualified *dq_validation_runs* table name.
         run_id: The run identifier whose row to delete.
+        marker: The executor's named parameter marker function.
 
     Returns:
-        A ``DELETE`` statement targeting the matched run.
+        A ``DELETE`` template and its bound values.
     """
-    return f"DELETE FROM {runs_fqn} WHERE run_id = '{escape_sql_string(run_id)}'"
+    return f"DELETE FROM {runs_fqn} WHERE run_id = {marker('run_id')}", {"run_id": run_id}
 
 
 def build_delete_orphan_metrics_sql(metrics_fqn: str, runs_fqn: str) -> str:
@@ -169,7 +184,9 @@ def build_delete_orphan_metrics_sql(metrics_fqn: str, runs_fqn: str) -> str:
     return f"DELETE FROM {metrics_fqn} WHERE run_id NOT IN (SELECT run_id FROM {runs_fqn} WHERE run_id IS NOT NULL)"
 
 
-def build_redate_latest_history_sql(history_fqn: str, scope_type: str, scope_key: str, target_iso: str) -> str:
+def build_redate_latest_history_sql(
+    history_fqn: str, scope_type: str, scope_key: str, target_iso: str, *, marker: Callable[[str], str]
+) -> SqlStatement:
     """Build SQL to re-date the most recently appended *dq_score_history* row of a scope.
 
     Used when re-dating a point that *ScoreCacheService* just appended
@@ -180,21 +197,21 @@ def build_redate_latest_history_sql(history_fqn: str, scope_type: str, scope_key
         scope_type: Scope type, one of ``"table"``, ``"product"`` or ``"global"``.
         scope_key: Scope key identifying the trend series.
         target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*).
+        marker: The executor's named parameter marker function.
 
     Returns:
-        An ``UPDATE`` statement moving the latest row's *computed_at* and
-        *run_time* to *target_iso*.
+        An ``UPDATE`` template and its bound values.
     """
-    e_type, e_key = escape_sql_string(scope_type), escape_sql_string(scope_key)
     return (
-        f"UPDATE {history_fqn} SET computed_at = {_ts(target_iso)}, run_time = {_ts(target_iso)} "
-        f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' AND computed_at = ("
-        f"SELECT MAX(computed_at) FROM {history_fqn} "
-        f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}')"
+        f"UPDATE {history_fqn} SET computed_at = {_ts(marker)}, run_time = {_ts(marker)} "
+        + f"WHERE scope_type = {marker('scope_type')} AND scope_key = {marker('scope_key')} AND computed_at = ("
+        + f"SELECT MAX(computed_at) FROM {history_fqn} "
+        + f"WHERE scope_type = {marker('scope_type')} AND scope_key = {marker('scope_key')})",
+        {"scope_type": scope_type, "scope_key": scope_key, "target_iso": target_iso},
     )
 
 
-def build_delete_history_after_sql(history_fqn: str, cutoff_iso: str) -> str:
+def build_delete_history_after_sql(history_fqn: str, cutoff_iso: str, *, marker: Callable[[str], str]) -> SqlStatement:
     """Build SQL to delete every *dq_score_history* row appended after *cutoff_iso*.
 
     Used after the final "truthful now" cache refresh: that refresh appends one
@@ -208,8 +225,9 @@ def build_delete_history_after_sql(history_fqn: str, cutoff_iso: str) -> str:
         history_fqn: Fully-qualified *dq_score_history* table name.
         cutoff_iso: Cutoff timestamp literal body (*YYYY-MM-DD HH:MM:SS*); rows
             with *computed_at* strictly greater than this are deleted.
+        marker: The executor's named parameter marker function.
 
     Returns:
-        A ``DELETE`` statement removing rows newer than the cutoff.
+        A ``DELETE`` template and its bound values.
     """
-    return f"DELETE FROM {history_fqn} WHERE computed_at > {_ts(cutoff_iso)}"
+    return f"DELETE FROM {history_fqn} WHERE computed_at > {_ts(marker)}", {"target_iso": cutoff_iso}

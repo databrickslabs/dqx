@@ -92,14 +92,14 @@ class TestUserCanSelect:
         obo_sql.query.side_effect = RuntimeError("PERMISSION_DENIED: user lacks SELECT")
         assert QuarantineSampleService.user_can_select(obo_sql, FQN) is False
 
-    def test_probe_is_zero_row_and_targets_quoted_table(self):
-        # The self-check must be cheap (no data returned) and must embed the
-        # identifier backtick-quoted so exotic names can't break out.
+    def test_probe_is_zero_row_and_binds_quoted_table(self):
+        # The self-check must be cheap and bind the whole quoted identifier.
         obo_sql = create_autospec(SqlExecutor, instance=True)
         obo_sql.query.return_value = []
         QuarantineSampleService.user_can_select(obo_sql, FQN)
         stmt = obo_sql.query.call_args[0][0]
-        assert "`cat`.`schema`.`tbl`" in stmt
+        assert stmt == "SELECT 1 FROM IDENTIFIER(:table_name) LIMIT 0"
+        assert obo_sql.query.call_args.kwargs["parameters"] == {"table_name": "`cat`.`schema`.`tbl`"}
         assert "LIMIT 0" in stmt
 
     def test_rejects_malformed_fqn_before_any_query(self):

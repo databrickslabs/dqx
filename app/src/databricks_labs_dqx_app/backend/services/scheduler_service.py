@@ -43,6 +43,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import Mon
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor, bind_list
+from databricks_labs_dqx_app.backend.sql_utils import quote_ident, quote_object_fqn
 
 logger = get_logger("scheduler")
 
@@ -2126,7 +2127,7 @@ class SchedulerService:
         views_to_drop: set[str] = set()
 
         for table_name in ("dq_profiling_results", "dq_validation_runs"):
-            table = f"`{self._catalog}`.`{self._schema}`.{table_name}"
+            table = quote_object_fqn(self._catalog, self._schema, table_name)
             terminal_sql = (
                 f"SELECT DISTINCT view_fqn FROM {table} "
                 f"WHERE view_fqn IS NOT NULL AND status IN ('SUCCESS', 'FAILED', 'CANCELED')"
@@ -2268,7 +2269,7 @@ class SchedulerService:
 
         list_sql = (
             f"SELECT table_name "
-            f"FROM `{self._catalog}`.information_schema.tables "
+            f"FROM {quote_ident(self._catalog)}.information_schema.tables "
             f"WHERE table_schema = {self._tmp_sql.param('table_schema')} "
             f"  AND table_type = 'VIEW' "
             f"  AND table_name LIKE 'tmp\\_view\\_%' ESCAPE '\\\\' "
@@ -2298,9 +2299,11 @@ class SchedulerService:
             return
 
         in_use_sql = (
-            f"SELECT view_fqn FROM `{self._catalog}`.`{self._schema}`.dq_validation_runs WHERE status = 'RUNNING' "
+            f"SELECT view_fqn FROM {quote_object_fqn(self._catalog, self._schema, 'dq_validation_runs')} "
+            f"WHERE status = 'RUNNING' "
             f"UNION ALL "
-            f"SELECT view_fqn FROM `{self._catalog}`.`{self._schema}`.dq_profiling_results WHERE status = 'RUNNING'"
+            f"SELECT view_fqn FROM {quote_object_fqn(self._catalog, self._schema, 'dq_profiling_results')} "
+            f"WHERE status = 'RUNNING'"
         )
         in_use: set[str] = set()
         try:
@@ -2461,7 +2464,7 @@ class SchedulerService:
         # ``dq_quarantine_records`` honours its own cutoff so PII row
         # payloads can be aged out faster than the trend tables.
         for table_name, time_col in _DELTA_RETENTION_TABLES:
-            table = f"`{self._catalog}`.`{self._schema}`.{table_name}"
+            table = quote_object_fqn(self._catalog, self._schema, table_name)
             cutoff = quarantine_days if table_name == _QUARANTINE_TABLE_NAME else days
             stmt = f"DELETE FROM {table} WHERE {time_col} < current_timestamp() - INTERVAL {cutoff} DAY"
             try:

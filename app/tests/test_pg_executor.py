@@ -343,6 +343,17 @@ class TestUpsertSqlShape:
         executor.execute = lambda sql, **_: captured.append(sql)  # type: ignore[method-assign]
         return captured
 
+    def test_upsert_binds_untrusted_text(self) -> None:
+        executor = _make_pg_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.upsert('"dq"."t"', {"id": value}, {"status": value})
+
+        call = executor.execute.call_args
+        assert value not in call.args[0]
+        assert value in call.kwargs["parameters"].values()
+
     def test_do_update_branch_when_value_cols_populated(self) -> None:
         executor = _make_pg_executor()
         captured = self._capture(executor)
@@ -362,8 +373,8 @@ class TestUpsertSqlShape:
         assert '"updated_by" = EXCLUDED."updated_by"' in sql
         # Column names in the INSERT list must be quoted (reserved-word safety).
         assert '("setting_key", "setting_value", "updated_by")' in sql
-        # String literals must be ANSI-escaped.
-        assert "'max_concurrent_runs'" in sql
+        # Runtime values use psycopg markers rather than SQL literals.
+        assert "VALUES (%(value_0)s, %(value_1)s, %(value_2)s)" in sql
 
     def test_do_nothing_branch_when_value_cols_empty(self) -> None:
         """Empty ``value_cols`` is the reviewer-flagged 'ensure-row-exists' shape."""
@@ -445,7 +456,18 @@ class TestPgCrudBuilders:
         executor = _make_pg_executor()
         captured = self._capture(executor)
         executor.insert('"dq"."settings"', values={"key": "flag", "value": "on"})
-        assert captured == ['INSERT INTO "dq"."settings" ("key", "value") VALUES (\'flag\', \'on\')']
+        assert captured == ['INSERT INTO "dq"."settings" ("key", "value") VALUES (%(value_0)s, %(value_1)s)']
+
+    def test_insert_binds_untrusted_text(self) -> None:
+        executor = _make_pg_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.insert('"dq"."settings"', values={"owner": value})
+
+        statement = executor.execute.call_args.args[0]
+        assert value not in statement
+        assert executor.execute.call_args.kwargs["parameters"] == {"value_0": value}
 
     def test_insert_translates_current_timestamp_via_pg_render(self) -> None:
         """The Spark idiom ``current_timestamp()`` must not appear in Postgres output."""
@@ -467,7 +489,22 @@ class TestPgCrudBuilders:
             updates={"status": "approved"},
             where={"id": "row-1"},
         )
-        assert captured == ['UPDATE "dq"."t" SET "status" = \'approved\' WHERE "id" = \'row-1\'']
+        assert captured == ['UPDATE "dq"."t" SET "status" = %(value_0)s WHERE "id" = %(value_1)s']
+
+    def test_update_and_delete_bind_untrusted_text(self) -> None:
+        executor = _make_pg_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.update('"dq"."t"', updates={"status": value}, where={"id": value})
+        update_call = executor.execute.call_args
+        assert value not in update_call.args[0]
+        assert update_call.kwargs["parameters"] == {"value_0": value, "value_1": value}
+
+        executor.delete('"dq"."t"', where={"id": value})
+        delete_call = executor.execute.call_args
+        assert value not in delete_call.args[0]
+        assert delete_call.kwargs["parameters"] == {"value_0": value}
 
     def test_update_reserved_word_column_is_quoted(self) -> None:
         """Reserved words like ``check`` survive because we route through :meth:`q`."""
@@ -479,8 +516,8 @@ class TestPgCrudBuilders:
             where={"order": "asc"},
         )
         sql = captured[0]
-        assert '"check" = \'1\'' in sql
-        assert '"order" = \'asc\'' in sql
+        assert '"check" = %(value_0)s' in sql
+        assert '"order" = %(value_1)s' in sql
 
     def test_update_translates_current_timestamp(self) -> None:
         """UPDATE ... SET updated_at = current_timestamp() → CURRENT_TIMESTAMP."""
@@ -499,13 +536,13 @@ class TestPgCrudBuilders:
         executor = _make_pg_executor()
         captured = self._capture(executor)
         executor.delete('"dq"."t"', where={"id": "row-1"})
-        assert captured == ['DELETE FROM "dq"."t" WHERE "id" = \'row-1\'']
+        assert captured == ['DELETE FROM "dq"."t" WHERE "id" = %(value_0)s']
 
     def test_delete_wherein_bulk(self) -> None:
         executor = _make_pg_executor()
         captured = self._capture(executor)
         executor.delete('"dq"."t"', where={"rule_id": WhereIn(["r1", "r2", "r3"])})
-        assert captured == ['DELETE FROM "dq"."t" WHERE "rule_id" IN (\'r1\', \'r2\', \'r3\')']
+        assert captured == ['DELETE FROM "dq"."t" WHERE "rule_id" IN (%(value_0)s, %(value_1)s, %(value_2)s)']
 
     def test_count_no_where(self) -> None:
         executor = _make_pg_executor()
@@ -587,6 +624,17 @@ class TestUpsertWithAuditSqlShape:
         executor.execute = lambda sql, **_: captured.append(sql)  # type: ignore[method-assign]
         return captured
 
+    def test_upsert_with_audit_binds_untrusted_text(self) -> None:
+        executor = _make_pg_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.upsert_with_audit('"dq"."t"', {"id": value}, {"updated_by": value})
+
+        call = executor.execute.call_args
+        assert value not in call.args[0]
+        assert value in call.kwargs["parameters"].values()
+
     def test_preserve_created_excludes_created_cols_from_update_set(self) -> None:
         executor = _make_pg_executor()
         captured = self._capture(executor)
@@ -643,8 +691,8 @@ class TestUpsertWithAuditSqlShape:
         # The conflict target is aliased so the increment can address the
         # existing row unambiguously.
         assert 'INSERT INTO "dq"."dq_schedule_config" AS "dqx_upsert_target"' in sql
-        # INSERT VALUES include the literal initial 1 (not the increment expr).
-        assert "VALUES ('main', '{\"k\":\"v\"}', 1, 'alice@x', CURRENT_TIMESTAMP)" in sql
+        # INSERT VALUES bind the initial 1; the timestamp remains a trusted SQL expression.
+        assert "VALUES (%(value_0)s, %(value_1)s, %(value_2)s, %(value_3)s, CURRENT_TIMESTAMP)" in sql
         # DO UPDATE references the alias so the planner picks the existing
         # row (not EXCLUDED).
         assert '"version" = "dqx_upsert_target"."version" + 1' in sql
@@ -1654,6 +1702,16 @@ class TestDataPathMethods:
         # One-shot statements MUST auto-commit (parity with SqlExecutor).
         _conn_of(executor).commit.assert_called_once()
 
+    def test_execute_binds_runtime_value(self) -> None:
+        executor = _make_pg_executor()
+        value = "x\\' OR 1=1 --"
+
+        executor.execute("UPDATE t SET owner = %(owner)s", parameters={"owner": value})
+
+        cur = _cursor_of(executor)
+        assert cur.execute.call_args_list[-1].args == ("UPDATE t SET owner = %(owner)s", {"owner": value})
+        _conn_of(executor).commit.assert_called_once()
+
     def test_execute_no_schema_delegates_to_execute(self) -> None:
         executor = _make_pg_executor()
         executor.execute_no_schema("CREATE SCHEMA IF NOT EXISTS s")
@@ -1910,6 +1968,10 @@ class TestSimpleProperties:
     def test_json_literal_expr_escapes_apostrophes(self) -> None:
         e = _make_pg_executor()
         assert e.json_literal_expr("it's") == "'it''s'::jsonb"
+
+    def test_json_parameter_expression_uses_psycopg_marker(self) -> None:
+        e = _make_pg_executor()
+        assert e.json_parameter_expr("definition_json") == "%(definition_json)s::jsonb"
 
 
 class TestTokenHolder:

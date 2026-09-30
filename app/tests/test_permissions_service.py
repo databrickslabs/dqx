@@ -699,6 +699,7 @@ def mock_sql() -> MagicMock:
     m.fqn.side_effect = lambda t: t
     m.ts_text.side_effect = lambda c: c
     m.q.side_effect = lambda i: f"`{i}`"
+    m.param.side_effect = lambda name: f":{name}"
     m.query.return_value = []
     # The service's DELETE + INSERT for grants now go through the CRUD
     # builder shortcuts; wire them through to the mocked ``execute``.
@@ -725,6 +726,27 @@ def test_set_grant_deletes_then_inserts(mock_sql, app_settings_mock):
     assert "TRUE" in executed
     # History row written.
     assert "dq_object_grants_history" in executed
+
+
+def test_grant_history_binds_principal_name_with_quote_and_backslash(mock_sql, app_settings_mock):
+    payload = "Alice\\' OR 1=1 --"
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "registry_rule",
+        "r1",
+        "u1",
+        principal_type="user",
+        principal_name=payload,
+        privileges={Privilege.SELECT},
+        inherit=True,
+        grantor=payload,
+    )
+    history = next(
+        c for c in mock_sql.execute.call_args_list if c.args[0].startswith("INSERT INTO dq_object_grants_history")
+    )
+    assert payload not in history.args[0]
+    assert history.kwargs["parameters"]["principal_name"] == payload
+    assert history.kwargs["parameters"]["changed_by"] == payload
 
 
 def test_set_grant_full_set_stored_as_all_privileges(mock_sql, app_settings_mock):

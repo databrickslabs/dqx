@@ -233,6 +233,15 @@ class TestRunRetentionUsesQuarantineCutoff:
         for stmt in non_quarantine_delta:
             assert f"INTERVAL {_RETENTION_DAYS_DEFAULT} DAY" in stmt
 
+    def test_delta_table_names_quote_embedded_backticks(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="team`prod", schema="studio`main", distinct_sql=True)
+
+        svc._run_retention()
+
+        delta_stmts = [call.args[0] for call in mocks.sql.execute.call_args_list]
+        assert delta_stmts
+        assert all("DELETE FROM `team``prod`.`studio``main`." in stmt for stmt in delta_stmts)
+
 
 # ---------------------------------------------------------------------------
 # Scheduler service — _run_retention uses dialect-specific INTERVAL syntax

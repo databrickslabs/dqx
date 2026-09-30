@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.common.authorization import ROLE_PRIORITY, UserRole
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -186,11 +185,11 @@ class RoleService:
         the audit log with ``changed_by = NULL``. New call sites should
         always pass the OBO user email.
         """
-        escaped_role = escape_sql_string(role)
-        escaped_group = escape_sql_string(group_name)
-
-        sql = f"DELETE FROM {self._table} WHERE role = '{escaped_role}' AND group_name = '{escaped_group}'"
-        self._sql.execute(sql)
+        sql = (
+            f"DELETE FROM {self._table} WHERE role = {self._sql.param('role')} "
+            f"AND group_name = {self._sql.param('group_name')}"
+        )
+        self._sql.execute(sql, parameters={"role": role, "group_name": group_name})
         self._record_history(
             role=role,
             group_name=group_name,
@@ -273,17 +272,16 @@ class RoleService:
         post-hoc.
         """
         try:
-            escaped_role = escape_sql_string(role)
-            escaped_group = escape_sql_string(group_name)
-            escaped_action = escape_sql_string(action)
-            user_sql = f"'{escape_sql_string(user_email)}'" if user_email else "NULL"
             sql = (
                 f"INSERT INTO {self._history_table} "
                 f"(role, group_name, action, changed_by, changed_at) VALUES "
-                f"('{escaped_role}', '{escaped_group}', '{escaped_action}', "
-                f"{user_sql}, now())"
+                f"({self._sql.param('role')}, {self._sql.param('group_name')}, "
+                f"{self._sql.param('action')}, {self._sql.param('changed_by')}, now())"
             )
-            self._sql.execute(sql)
+            self._sql.execute(
+                sql,
+                parameters={"role": role, "group_name": group_name, "action": action, "changed_by": user_email or None},
+            )
         except Exception:
             logger.warning(
                 "Failed to record role-mapping history for %s -> %s (non-fatal)",

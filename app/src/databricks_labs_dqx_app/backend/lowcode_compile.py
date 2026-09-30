@@ -24,12 +24,13 @@ exhaustively unit-tested and never widen the ``Any`` surface beyond the
 JSON-shaped AST the model returns.
 """
 
+import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from databricks_labs_dqx_app.backend.sql_utils import quote_ident, validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string_strict, quote_ident, validate_identifier
 
 # --- Operator / aggregate vocabulary (mirrors ui/lib/lowcodeOperators.ts) ----
 
@@ -237,7 +238,7 @@ def _quote(value: object) -> str:
         return str(value)
     if value is None:
         return "NULL"
-    escaped = str(value).replace("'", "''")
+    escaped = escape_sql_string_strict(str(value))
     return f"'{escaped}'"
 
 
@@ -272,37 +273,15 @@ def _quote_list(values: list[object], qualify: bool = False) -> str:
     return ", ".join(_value_sql(v, qualify) for v in values)
 
 
-def _split_top_level_commas(value: str) -> list[str]:
-    """Split at TOP-LEVEL commas only — commas inside parens or single-quoted
-    literals are not split points (mirrors ``splitTopLevelCommas``)."""
-    out: list[str] = []
-    depth = 0
-    in_quote = False
-    start = 0
-    i = 0
-    length = len(value)
-    while i < length:
-        ch = value[i]
-        if in_quote:
-            if ch == "'" and i + 1 < length and value[i + 1] == "'":
-                i += 2
-                continue
-            if ch == "'":
-                in_quote = False
-            i += 1
-            continue
-        if ch == "'":
-            in_quote = True
-        elif ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth = max(0, depth - 1)
-        elif ch == "," and depth == 0:
-            out.append(value[start:i])
-            start = i + 1
-        i += 1
-    out.append(value[start:])
-    return [s.strip() for s in out if s.strip()]
+def _parse_group_by_columns(value: str) -> list[str]:
+    """Accept only column slots, which remain bare for merge_columns."""
+    if not value.strip():
+        return []
+    columns = [column.strip() for column in value.split(",")]
+    for column in columns:
+        if not re.fullmatch(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}", column):
+            raise ValueError("Invalid group_by column: expected a column slot")
+    return columns
 
 
 def _join_key_refs(joins: list[dict[str, Any]]) -> list[str]:
@@ -349,11 +328,22 @@ def _select_key_projection(bare_key: str) -> str:
 def _agg_expr(spec: dict[str, Any], qualify: bool = False) -> str:
     agg = spec.get("aggregate")
     col = spec.get("column_ref")
+    if agg is not None and not isinstance(agg, str):
+        raise ValueError("Invalid aggregate")
     if not agg or agg not in _AGG_SQL:
         return ""
     if not col:
         return ""
-    return _AGG_SQL[agg](_ref(col, qualify), spec.get("aggregate_param"))
+    param = spec.get("aggregate_param")
+    if agg in {"percentile", "percentile_approx"} and param is not None:
+        if (
+            isinstance(param, bool)
+            or not isinstance(param, (int, float))
+            or not 0 <= param <= 1
+            or not math.isfinite(param)
+        ):
+            raise ValueError("Invalid percentile quantile")
+    return _AGG_SQL[agg](_ref(col, qualify), param)
 
 
 def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> str:
@@ -404,6 +394,13 @@ def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> 
         obj = value if isinstance(value, dict) else {}
         number = obj.get("number", 0)
         unit = obj.get("unit", "days")
+        if (
+            type(number) is not int
+            or number < 0
+            or not isinstance(unit, str)
+            or unit not in {"minutes", "hours", "days", "weeks", "months", "years"}
+        ):
+            raise ValueError("Invalid interval")
         return f"{left} >= current_timestamp() - INTERVAL '{number} {unit}'"
     if op in ("is a valid", "is not a valid"):
         as_type = VALIDITY_SQL_TYPE.get(str(value))
@@ -520,7 +517,10 @@ def compile_ast_to_sql(ast: dict[str, Any], qualify: bool = False) -> str:
         if i == 0:
             parts.append(frag)
         else:
-            parts.append(f"{row.get('combinator') or 'AND'} {frag}")
+            combinator = row.get("combinator") or "AND"
+            if combinator not in {"AND", "OR"}:
+                raise ValueError("Invalid combinator: expected AND or OR")
+            parts.append(f"{combinator} {frag}")
     return " ".join(parts)
 
 
@@ -583,7 +583,7 @@ def compile_lowcode_body(ast: dict[str, Any], group_by: str) -> CompiledLowcodeB
     # and GROUP BY stay bare (see below).
     predicate = compile_ast_to_sql(ast, qualify=has_joins)
     joins_sql = compile_joins_to_sql(joins)
-    gb_columns = _split_top_level_commas(group_by or "")
+    gb_columns = _parse_group_by_columns(group_by or "")
 
     if not joins_sql and not gb_columns:
         return CompiledLowcodeBody(predicate=predicate)

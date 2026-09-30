@@ -32,7 +32,6 @@ from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, bind_list
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +242,7 @@ class ReviewStatusService:
         cleaned_status = status.strip()
         allowed = {entry["value"] for entry in self._settings.get_run_review_statuses()}
         if cleaned_status not in allowed:
-            raise ValueError(f"Unknown review status {cleaned_status!r}. " f"Allowed values: {sorted(allowed)}")
+            raise ValueError(f"Unknown review status {cleaned_status!r}. Allowed values: {sorted(allowed)}")
 
         previous_effective = self.get_effective(run_id).status
 
@@ -360,19 +359,18 @@ class ReviewStatusService:
         Failures are logged at WARNING with the stack trace so they remain
         investigable post-hoc.
         """
-        run_id_lit = f"'{escape_sql_string(run_id)}'"
-        status_lit = f"'{escape_sql_string(status)}'"
-        if previous_status is None:
-            prev_lit = "NULL"
-        else:
-            prev_lit = f"'{escape_sql_string(previous_status)}'"
-        changed_by_lit = f"'{escape_sql_string(changed_by)}'"
-
         try:
             self._sql.execute(
                 f"INSERT INTO {self._history_table} "
                 f"(run_id, status, previous_status, changed_by, changed_at) "
-                f"VALUES ({run_id_lit}, {status_lit}, {prev_lit}, {changed_by_lit}, now())"
+                f"VALUES ({self._sql.param('run_id')}, {self._sql.param('status')}, "
+                f"{self._sql.param('previous_status')}, {self._sql.param('changed_by')}, now())",
+                parameters={
+                    "run_id": run_id,
+                    "status": status,
+                    "previous_status": previous_status,
+                    "changed_by": changed_by,
+                },
             )
         except Exception:
             logger.warning(

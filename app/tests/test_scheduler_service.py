@@ -288,6 +288,22 @@ class TestAdvanceAfterFailure:
 
 
 class TestGcOrphanViews:
+    def test_catalog_and_schema_are_quoted_in_gc_queries(self, make_scheduler):
+        svc, mocks = make_scheduler(
+            catalog="team`prod",
+            schema="studio`main",
+            tmp_schema="tmp`views",
+            distinct_sql=True,
+            distinct_tmp_sql=True,
+        )
+        mocks.tmp.query.return_value = [("tmp_view_aaaa1111",)]
+        mocks.sql.query.return_value = []
+
+        svc._gc_orphan_views()
+
+        assert "FROM `team``prod`.information_schema.tables" in mocks.tmp.query.call_args.args[0]
+        assert "FROM `team``prod`.`studio``main`.dq_validation_runs" in mocks.sql.query.call_args.args[0]
+
     def test_no_candidates_returns_quickly(self, gc_scheduler):
         svc, mocks = gc_scheduler
         mocks.tmp.query.return_value = []
@@ -414,6 +430,16 @@ class TestMaybeGcOrphanViews:
 
 
 class TestSweepStaleTmpViews:
+    def test_result_tables_quote_embedded_backticks(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="team`prod", schema="studio`main", distinct_sql=True)
+        mocks.sql.query.return_value = []
+
+        svc._sweep_stale_tmp_views()
+
+        statements = [call.args[0] for call in mocks.sql.query.call_args_list]
+        assert len(statements) == 4
+        assert all("FROM `team``prod`.`studio``main`." in stmt for stmt in statements)
+
     def test_drops_views_for_terminal_runs(self, gc_scheduler):
         svc, mocks = gc_scheduler
         mocks.sql.query.side_effect = [

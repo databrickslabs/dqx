@@ -142,6 +142,16 @@ def _applied_row(
 
 
 class TestRegister:
+    def test_register_binds_owner_with_quote_and_backslash(self, svc, sql):
+        owner = "alice'\\team@example.com"
+        sql.query.return_value = []
+
+        svc.register("cat.schema.tbl", "creator@example.com", owner=owner)
+
+        call = sql.execute.call_args
+        assert owner not in call.args[0]
+        assert call.kwargs["parameters"]["owner"] == owner
+
     def test_registers_new_binding_as_draft(self, svc, sql):
         sql.query.return_value = []  # no existing binding
         table = svc.register("cat.schema.tbl", "alice@x", owner="bob@x")
@@ -152,7 +162,7 @@ class TestRegister:
         sql.execute.assert_called_once()
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_monitored_tables" in insert_sql
-        assert "cat.schema.tbl" in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["table_fqn"] == "cat.schema.tbl"
 
     def test_insert_writes_concrete_schedule_kind(self, svc, sql):
         # Regression: the Delta CHECK constraint
@@ -163,7 +173,7 @@ class TestRegister:
         svc.register("cat.schema.tbl", "alice@x")
         insert_sql = sql.execute.call_args[0][0]
         assert "schedule_kind" in insert_sql
-        assert "'dq_only'" in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_kind"] == "dq_only"
 
     def test_defaults_owner_to_creator_when_unset(self, svc, sql):
         # No owner supplied (owner unresolved upstream) -> the creator becomes
@@ -171,8 +181,7 @@ class TestRegister:
         sql.query.return_value = []
         table = svc.register("cat.schema.tbl", "alice@x")
         assert table.owner == "alice@x"
-        insert_sql = sql.execute.call_args[0][0]
-        assert "alice@x" in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["owner"] == "alice@x"
 
     def test_rejects_duplicate_table_fqn(self, svc, sql):
         sql.query.return_value = [_table_row(table_fqn="cat.schema.tbl")]
@@ -194,9 +203,8 @@ class TestRegister:
         table = svc.register(fqn, "alice@x", owner="bob@x")
         assert table.table_fqn == fqn
         insert_sql = sql.execute.call_args[0][0]
-        # table_fqn is stored as a SQL string literal, so the embedded single
-        # quotes are doubled by escape_sql_string() rather than appearing raw.
-        assert "main.''ftr_mv_test''.''ftr_gold_mv_bkp''" in insert_sql
+        assert fqn not in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["table_fqn"] == fqn
 
     def test_rejects_fqn_with_embedded_backtick(self, svc, sql):
         # A raw backtick would let the identifier break out of quote_fqn's
@@ -258,17 +266,15 @@ class TestBulkRegister:
         assert result.skipped_existing == ["cat.schema.existing"]
         assert result.invalid == ["bad-fqn"]
         assert sql.execute.call_count == 2
-        inserted_fqns = {call.args[0].split("VALUES")[1] for call in sql.execute.call_args_list}
-        assert any("cat.schema.new1" in v for v in inserted_fqns)
-        assert any("cat.schema.new2" in v for v in inserted_fqns)
+        inserted_fqns = {call.kwargs["parameters"]["table_fqn"] for call in sql.execute.call_args_list}
+        assert inserted_fqns == {"cat.schema.new1", "cat.schema.new2"}
 
     def test_defaults_owner_to_creator_when_unset(self, svc, sql):
         # Bulk register with no shared owner -> each binding defaults to the
         # creator (no per-table UC owner lookup on the bulk path).
         sql.query.return_value = []
         svc.bulk_register(["cat.schema.new1"], "alice@x")
-        insert_sql = sql.execute.call_args[0][0]
-        assert "alice@x" in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["owner"] == "alice@x"
 
     def test_dedupes_within_input(self, svc, sql):
         sql.query.return_value = []
@@ -704,7 +710,8 @@ class TestRefreshRunTimestamps:
         assert "last_run_at = CAST(" in update_sql
         assert "last_profiled_at = CAST(" in update_sql
         assert "updated_at" not in update_sql
-        assert "WHERE table_fqn = 'cat.s.t1'" in update_sql
+        assert "WHERE table_fqn = :table_fqn" in update_sql
+        assert sql.execute.call_args.kwargs["parameters"]["table_fqn"] == "cat.s.t1"
 
     def test_skips_tables_with_no_runs_and_no_profiles(self, svc, sql, profiling_sql):
         profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
@@ -725,7 +732,7 @@ class TestRefreshRunTimestamps:
         assert written == 1
         update_sql = sql.execute.call_args[0][0]
         assert "last_run_at = CAST(" in update_sql
-        assert "last_profiled_at = NULL" in update_sql
+        assert sql.execute.call_args.kwargs["parameters"]["last_profiled_at"] is None
 
     def test_drops_invalid_fqns_before_interpolation(self, svc, sql, profiling_sql):
         profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
@@ -823,8 +830,8 @@ class TestUpdateSchedule:
         assert table.schedule_cron == "0 6 * * *"
         assert table.schedule_tz == "UTC"
         update_sql = sql.execute.call_args[0][0]
-        assert "schedule_cron = '0 6 * * *'" in update_sql
-        assert "schedule_tz = 'UTC'" in update_sql
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_cron"] == "0 6 * * *"
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_tz"] == "UTC"
         # Schedule is orthogonal to the review lifecycle — status is untouched.
         assert "status =" not in update_sql
 
@@ -833,41 +840,39 @@ class TestUpdateSchedule:
         table = svc.update_schedule("b1", None, "UTC", "alice@x")
         assert table.schedule_cron is None
         assert table.schedule_tz is None
-        update_sql = sql.execute.call_args[0][0]
-        assert "schedule_cron = NULL" in update_sql
-        assert "schedule_tz = NULL" in update_sql
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_cron"] is None
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_tz"] is None
 
     def test_persists_schedule_kind(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
         table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="profiling_only")
         assert table.schedule_kind == "profiling_only"
-        update_sql = sql.execute.call_args[0][0]
-        assert "schedule_kind = 'profiling_only'" in update_sql
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_kind"] == "profiling_only"
 
     def test_defaults_schedule_kind_to_dq_only(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
         table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x")
         assert table.schedule_kind == "dq_only"
-        assert "schedule_kind = 'dq_only'" in sql.execute.call_args[0][0]
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_kind"] == "dq_only"
 
     def test_persists_schedule_sample_size(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
         table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_sample_size=5000)
         assert table.schedule_sample_size == 5000
         # Numeric column — written bare, not quoted like the text columns.
-        assert "schedule_sample_size = 5000" in sql.execute.call_args[0][0]
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_sample_size"] == 5000
 
     def test_zero_sample_size_stores_null_meaning_full_table(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
         table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_sample_size=0)
         assert table.schedule_sample_size is None
-        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_sample_size"] is None
 
     def test_clearing_cron_also_nulls_sample_size(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="approved", schedule_cron="0 6 * * *")]
         table = svc.update_schedule("b1", None, "UTC", "alice@x", schedule_sample_size=5000)
         assert table.schedule_sample_size is None
-        assert "schedule_sample_size = NULL" in sql.execute.call_args[0][0]
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_sample_size"] is None
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []
@@ -888,7 +893,7 @@ class TestUpdateOwner:
         assert table.owner == "bob@x"
         assert table.updated_by == "alice@x"
         update_sql = sql.execute.call_args[0][0]
-        assert "owner = 'bob@x'" in update_sql
+        assert sql.execute.call_args.kwargs["parameters"]["owner"] == "bob@x"
         assert "status =" not in update_sql
 
     def test_rejects_blank_owner(self, svc, sql):

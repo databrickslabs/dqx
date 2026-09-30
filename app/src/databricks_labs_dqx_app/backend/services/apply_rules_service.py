@@ -38,7 +38,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -463,37 +462,61 @@ class ApplyRulesService:
         existing.pass_threshold = _clamp_pass_threshold(pass_threshold)
         if tags is not None:
             existing.user_metadata = dict(tags)
-        e_id = escape_sql_string(existing.id or "")
-        metadata_expr = self._sql.json_literal_expr(json.dumps(existing.user_metadata))
+        metadata_expr = self._sql.json_parameter_expr("user_metadata")
         sql = (
             f"UPDATE {self._table} SET "
-            f"  pinned_version = {existing.pinned_version if existing.pinned_version is not None else 'NULL'}, "
-            f"  severity_override = {self._opt_str(existing.severity_override)}, "
-            f"  row_filter = {self._opt_str(existing.row_filter)}, "
-            f"  pass_threshold = {existing.pass_threshold if existing.pass_threshold is not None else 'NULL'}, "
+            f"  pinned_version = {self._sql.param('pinned_version')}, "
+            f"  severity_override = {self._sql.param('severity_override')}, "
+            f"  row_filter = {self._sql.param('row_filter')}, "
+            f"  pass_threshold = {self._sql.param('pass_threshold')}, "
             f"  user_metadata = {metadata_expr} "
-            f"WHERE id = '{e_id}'"
+            f"WHERE id = {self._sql.param('id')}"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "pinned_version": existing.pinned_version,
+                "severity_override": existing.severity_override,
+                "row_filter": existing.row_filter,
+                "pass_threshold": existing.pass_threshold,
+                "user_metadata": json.dumps(existing.user_metadata),
+                "id": existing.id or "",
+            },
+        )
         logger.info("Updated applied rule %s (re-applied with identical mapping)", existing.id)
         return existing
 
     def _insert(self, applied: AppliedRule) -> None:
-        column_mapping_expr = self._sql.json_literal_expr(json.dumps(applied.column_mapping))
-        metadata_expr = self._sql.json_literal_expr(json.dumps(applied.user_metadata))
+        column_mapping_expr = self._sql.json_parameter_expr("column_mapping")
+        metadata_expr = self._sql.json_parameter_expr("user_metadata")
         sql = (
             f"INSERT INTO {self._table} "
             "(id, binding_id, rule_id, pinned_version, severity_override, row_filter, pass_threshold, "
             "column_mapping, user_metadata, mapping_hash, created_by, created_at) VALUES "
-            f"('{escape_sql_string(applied.id or '')}', '{escape_sql_string(applied.binding_id)}', "
-            f"'{escape_sql_string(applied.rule_id)}', "
-            f"{applied.pinned_version if applied.pinned_version is not None else 'NULL'}, "
-            f"{self._opt_str(applied.severity_override)}, {self._opt_str(applied.row_filter)}, "
-            f"{applied.pass_threshold if applied.pass_threshold is not None else 'NULL'}, "
+            f"({self._sql.param('id')}, {self._sql.param('binding_id')}, "
+            f"{self._sql.param('rule_id')}, "
+            f"{self._sql.param('pinned_version')}, "
+            f"{self._sql.param('severity_override')}, {self._sql.param('row_filter')}, "
+            f"{self._sql.param('pass_threshold')}, "
             f"{column_mapping_expr}, {metadata_expr}, "
-            f"'{escape_sql_string(applied.mapping_hash or '')}', {self._opt_str(applied.created_by)}, now())"
+            f"{self._sql.param('mapping_hash')}, {self._sql.param('created_by')}, now())"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "id": applied.id or "",
+                "binding_id": applied.binding_id,
+                "rule_id": applied.rule_id,
+                "pinned_version": applied.pinned_version,
+                "severity_override": applied.severity_override,
+                "row_filter": applied.row_filter,
+                "pass_threshold": applied.pass_threshold,
+                "column_mapping": json.dumps(applied.column_mapping),
+                "user_metadata": json.dumps(applied.user_metadata),
+                "mapping_hash": applied.mapping_hash or "",
+                "created_by": applied.created_by,
+            },
+        )
 
     def _touch_binding(self, binding_id: str, user_email: str) -> None:
         """Bump the monitored table's ``updated_at`` / ``updated_by`` after an edit.
@@ -503,10 +526,10 @@ class ApplyRulesService:
         stale — and the B2-118 draft-run gate reads that column as the binding's
         last-change instant. ``now()`` rewrites to each backend's native syntax.
         """
-        e = escape_sql_string(binding_id)
         self._sql.execute(
             f"UPDATE {self._monitored_table} SET updated_at = now(), "  # noqa: S608
-            f"updated_by = {self._opt_str(user_email)} WHERE binding_id = '{e}'"
+            f"updated_by = {self._sql.param('updated_by')} WHERE binding_id = {self._sql.param('binding_id')}",
+            parameters={"updated_by": user_email, "binding_id": binding_id},
         )
 
     def _require_binding_exists(self, binding_id: str) -> None:
@@ -823,10 +846,6 @@ class ApplyRulesService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
 
     @staticmethod
     def _parse_json_dict(raw: str | None) -> dict[str, Any]:

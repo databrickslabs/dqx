@@ -87,7 +87,7 @@ from databricks_labs_dqx_app.backend.sql_executor import bind_list
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
+from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
 
@@ -744,10 +744,10 @@ class Materializer:
     ) -> None:
         existing = self._get_materialized_row(row_id)
         check_json = json.dumps(check, sort_keys=True)
-        check_expr = self._sql.json_literal_expr(json.dumps(check))
+        check_expr = self._sql.json_parameter_expr("check_json")
         # dqx-core per-rule fingerprint, stored so the dq_rules_core view can
         # expose it (same contract as RulesCatalogService's authored rows).
-        e_fp = escape_sql_string(compute_rule_fingerprint(check))
+        fingerprint = compute_rule_fingerprint(check)
 
         if existing is None:
             self._sql.execute(
@@ -755,10 +755,21 @@ class Materializer:
                 f"(rule_id, table_fqn, {self._check_col}, version, status, source, "
                 "registry_rule_id, registry_version, applied_rule_id, rule_fingerprint, "
                 "created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{escape_sql_string(row_id)}', '{escape_sql_string(table_fqn)}', {check_expr}, "
-                f"{version_number}, 'draft', 'registry', '{escape_sql_string(applied.rule_id)}', "
-                f"{version_number}, '{escape_sql_string(applied.id or '')}', '{e_fp}', "
-                f"{self._opt_str(applied.created_by)}, now(), {self._opt_str(applied.created_by)}, now())"
+                f"VALUES ({self._sql.param('row_id')}, {self._sql.param('table_fqn')}, {check_expr}, "
+                f"{self._sql.param('version')}, 'draft', 'registry', {self._sql.param('registry_rule_id')}, "
+                f"{self._sql.param('version')}, {self._sql.param('applied_rule_id')}, "
+                f"{self._sql.param('fingerprint')}, "
+                f"{self._sql.param('created_by')}, now(), {self._sql.param('created_by')}, now())",
+                parameters={
+                    "row_id": row_id,
+                    "table_fqn": table_fqn,
+                    "check_json": json.dumps(check),
+                    "version": version_number,
+                    "registry_rule_id": applied.rule_id,
+                    "applied_rule_id": applied.id or "",
+                    "fingerprint": fingerprint,
+                    "created_by": applied.created_by,
+                },
             )
             return
 
@@ -774,17 +785,27 @@ class Materializer:
         new_status = self._decide_status(existing_status, content_changed, pinned, auto_upgrade, version_changed)
         self._sql.execute(
             f"UPDATE {self._quality_rules_table} SET "
-            f"  table_fqn = '{escape_sql_string(table_fqn)}', "
+            f"  table_fqn = {self._sql.param('table_fqn')}, "
             f"  {self._check_col} = {check_expr}, "
-            f"  version = {version_number}, "
-            f"  status = '{escape_sql_string(new_status)}', "
+            f"  version = {self._sql.param('version')}, "
+            f"  status = {self._sql.param('status')}, "
             "  source = 'registry', "
-            f"  registry_rule_id = '{escape_sql_string(applied.rule_id)}', "
-            f"  registry_version = {version_number}, "
-            f"  applied_rule_id = '{escape_sql_string(applied.id or '')}', "
-            f"  rule_fingerprint = '{e_fp}', "
+            f"  registry_rule_id = {self._sql.param('registry_rule_id')}, "
+            f"  registry_version = {self._sql.param('version')}, "
+            f"  applied_rule_id = {self._sql.param('applied_rule_id')}, "
+            f"  rule_fingerprint = {self._sql.param('fingerprint')}, "
             "  updated_at = now() "
-            f"WHERE rule_id = '{escape_sql_string(row_id)}'"
+            f"WHERE rule_id = {self._sql.param('row_id')}",
+            parameters={
+                "table_fqn": table_fqn,
+                "check_json": json.dumps(check),
+                "version": version_number,
+                "status": new_status,
+                "registry_rule_id": applied.rule_id,
+                "applied_rule_id": applied.id or "",
+                "fingerprint": fingerprint,
+                "row_id": row_id,
+            },
         )
 
     @staticmethod
@@ -879,10 +900,6 @@ class Materializer:
             existing_id = row[0]
             if existing_id not in written_ids:
                 self._sql.delete(self._quality_rules_table, where={"rule_id": existing_id})
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
 
     def render_binding_checks(self, binding_id: str, rule_ids: list[str] | None = None) -> list[dict[str, Any]]:
         """Render the binding's CURRENT persisted applied-rules state to check dicts.

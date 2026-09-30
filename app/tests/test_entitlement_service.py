@@ -301,9 +301,10 @@ class TestVerifyAndRecord:
         sql_executor_mock.query.return_value = []  # nothing fresh
         outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_VERIFIED}
-        # Gate 1 ran as the CALLER (OBO executor), zero-row and quoted.
-        probe = obo_sql_mock.query.call_args.args[0]
-        assert probe == "SELECT 1 FROM `main`.`sales`.`orders` LIMIT 0"
+        # Gate 1 ran as the CALLER (OBO executor), zero-row and bound.
+        probe = obo_sql_mock.query.call_args
+        assert probe.args[0] == "SELECT 1 FROM IDENTIFIER(:table_name) LIMIT 0"
+        assert probe.kwargs["parameters"] == {"table_name": "`main`.`sales`.`orders`"}
         # Gate 2 ran as the CALLER too (OBO metadata read).
         obo_ws_mock.tables.get.assert_called_once_with(FQN)
         assert sql_executor_mock.upsert.call_args.args[1] == {"user_email": EMAIL, "table_fqn": FQN}
@@ -401,7 +402,8 @@ class TestVerifyAndRecord:
         lock = threading.Lock()
         state = {"in_flight": 0, "max_in_flight": 0, "started": 0}
 
-        def blocking_probe(_stmt: str) -> list[list[str]]:
+        def blocking_probe(_stmt: str, *, parameters: dict[str, str]) -> list[list[str]]:
+            assert "table_name" in parameters
             with lock:
                 state["in_flight"] += 1
                 state["started"] += 1

@@ -20,6 +20,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
     sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+    sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     sql_executor_mock.param.side_effect = lambda name: f":{name}"
@@ -93,6 +94,17 @@ def _cas_confirm_row(rule, *, approver: str) -> list[str]:
 
 
 class TestCreateRule:
+    def test_create_binds_user_and_definition(self, svc, sql):
+        email = "alice'\\admin@example.com"
+        definition = _native_definition()
+
+        svc.create_rule(mode="dqx_native", definition=definition, user_email=email)
+
+        call = sql.execute.call_args_list[0]
+        assert email not in call.args[0]
+        assert call.kwargs["parameters"]["created_by"] == email
+        assert call.kwargs["parameters"]["definition"] == json.dumps(definition.model_dump(mode="json"))
+
     def test_creates_draft_rule_with_fingerprint(self, svc, sql):
         rule, warning = svc.create_rule(
             mode="dqx_native",
@@ -106,11 +118,8 @@ class TestCreateRule:
         inserted_sql = sql.execute.call_args_list[0].args[0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_rules" in inserted_sql
 
-    def test_create_multiline_sql_query_doubles_json_backslashes_for_delta(self, svc, sql):
-        """Multiline sql_query rules must survive parse_json() on Delta."""
-        from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal
-
-        sql.json_literal_expr.side_effect = lambda j: f"parse_json('{escape_json_for_sql_string_literal(j)}')"
+    def test_create_multiline_sql_query_binds_json_text(self, svc, sql):
+        """Multiline sql_query rules retain their SQL when passed as JSON text."""
         definition = RuleDefinition.model_validate(
             {
                 "body": {
@@ -123,10 +132,9 @@ class TestCreateRule:
             }
         )
         svc.create_rule(mode="sql", definition=definition, user_email="alice@x", source="import")
-        inserted_sql = sql.execute.call_args_list[0].args[0]
-        assert "parse_json(" in inserted_sql
-        assert "\\\\n" in inserted_sql
-        assert "\nFROM samples" not in inserted_sql.split("parse_json(", 1)[1]
+        inserted_call = sql.execute.call_args_list[0]
+        assert "parse_json(:definition)" in inserted_call.args[0]
+        assert "\nFROM samples" in json.loads(inserted_call.kwargs["parameters"]["definition"])["body"]["sql_query"]
 
     def test_defaults_owner_to_creator_when_unset(self, svc):
         # No owner supplied -> the creator becomes the accountable owner.
@@ -208,10 +216,7 @@ class TestCreateRule:
         definition.error_message = "Column {{column}} must not be null"
         rule, _ = svc.create_rule(mode="dqx_native", definition=definition, user_email="alice@x")
         assert rule.definition.error_message == "Column {{column}} must not be null"
-        inserted_sql = sql.execute.call_args_list[0].args[0]
-        start = inserted_sql.index("parse_json('") + len("parse_json('")
-        end = inserted_sql.index("')", start)
-        stored_definition = json.loads(inserted_sql[start:end])
+        stored_definition = json.loads(sql.execute.call_args_list[0].kwargs["parameters"]["definition"])
         assert stored_definition["error_message"] == "Column {{column}} must not be null"
 
     def test_records_history_on_create(self, svc, sql):
@@ -477,9 +482,9 @@ class TestUpdateDraft:
 
         assert updated.user_metadata["description"] == "edited description"
         assert updated.definition.parameters[0].value is None
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "edited description" in update_sql
-        assert '"value": null' in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert json.loads(update_call.kwargs["parameters"]["user_metadata"])["description"] == "edited description"
+        assert '"value": null' in update_call.kwargs["parameters"]["definition"]
 
     def test_edits_approved_rule_in_place_without_bumping_version(self, svc, sql):
         """Edit-in-place revision path: an ``approved`` rule is editable, its
@@ -531,8 +536,8 @@ class TestUpdateDraft:
         updated = svc.update_draft("r1", user_email="alice@x", author_kind="ai_assisted")
 
         assert updated.author_kind == "ai_assisted"
-        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert "author_kind = 'ai_assisted'" in update_sql
+        update_call = next(c for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["author_kind"] == "ai_assisted"
 
     def test_author_kind_untouched_when_not_provided(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
@@ -681,12 +686,10 @@ class TestLifecycle:
         sql.query.side_effect = [[_row_for(rule)], [_cas_confirm_row(rule, approver="approver@x")]]
         svc.approve("r1", "approver@x")
         snapshot_insert = next(
-            c.args[0]
-            for c in sql.execute.call_args_list
-            if "INSERT INTO" in c.args[0] and "dq_rule_versions" in c.args[0]
+            c for c in sql.execute.call_args_list if "INSERT INTO" in c.args[0] and "dq_rule_versions" in c.args[0]
         )
-        assert "mode" in snapshot_insert
-        assert "'sql'" in snapshot_insert
+        assert "mode" in snapshot_insert.args[0]
+        assert snapshot_insert.kwargs["parameters"]["mode"] == "sql"
 
     def test_reapprove_after_second_submit_bumps_to_v2(self, svc, sql):
         pending = self._rule("pending_approval", version=1)
@@ -1378,12 +1381,12 @@ class TestMatchOrCreateApprovedRule:
         svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
 
         insert = next(
-            c.args[0] for c in sql.execute.call_args_list if "INSERT INTO dqx_test.dqx_app_test.dq_rules " in c.args[0]
+            c for c in sql.execute.call_args_list if "INSERT INTO dqx_test.dqx_app_test.dq_rules " in c.args[0]
         )
         # source='profiling' + author_kind='ai_assisted' ("Co-authored with AI")
         # make the auto-created rule auditable.
-        assert "'profiling'" in insert
-        assert "'ai_assisted'" in insert
+        assert insert.kwargs["parameters"]["source"] == "profiling"
+        assert insert.kwargs["parameters"]["author_kind"] == "ai_assisted"
 
     def test_match_or_create_seeds_grants_on_create(self, sql):
         """match_or_create_approved_rule seeds grants when it creates a new rule (created=True).
@@ -1507,11 +1510,10 @@ class TestFilterFieldOnCreateRule:
         sql.execute.reset_mock()
         svc.approve(rule.rule_id, "approver@x")
         # The approve call should have written a version snapshot — check the SQL
-        calls = [c.args[0] for c in sql.execute.call_args_list]
-        version_insert = next(c for c in calls if "dq_rule_versions" in c and c.startswith("INSERT"))
-        start = version_insert.index("parse_json('") + len("parse_json('")
-        end = version_insert.index("')", start)
-        stored_def = json.loads(version_insert[start:end])
+        version_insert = next(
+            c for c in sql.execute.call_args_list if "dq_rule_versions" in c.args[0] and c.args[0].startswith("INSERT")
+        )
+        stored_def = json.loads(version_insert.kwargs["parameters"]["definition"])
         assert stored_def["filter"] == "status = 'active'"
 
     def test_unsafe_filter_semicolon_rejected_on_create(self, svc, sql):

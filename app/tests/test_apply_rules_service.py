@@ -27,6 +27,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
     sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
     sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+    sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     sql_executor_mock.param.side_effect = lambda name: f":{name}"
@@ -107,6 +108,17 @@ def _applied_row(
 
 
 class TestApplyRule:
+    def test_apply_binds_severity_with_quote_and_backslash(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [[["b1"]], []]
+        severity = "High'\\unexpected"
+
+        svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", severity_override=severity)
+
+        call = sql.execute.call_args_list[0]
+        assert severity not in call.args[0]
+        assert call.kwargs["parameters"]["severity_override"] == severity
+
     def test_applies_published_rule(self, svc, sql, registry):
         registry.get_rule.return_value = _published_rule()
         sql.query.side_effect = [
@@ -195,8 +207,7 @@ class TestApplyRule:
         ]
         applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=None)
         assert applied.pinned_version == 1
-        insert_sql = sql.execute.call_args[0][0]
-        assert ", 1, " in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["pinned_version"] == 1
 
     def test_new_application_explicit_pin_wins_regardless_of_setting(self, svc, sql, registry, app_settings):
         app_settings.get_default_auto_upgrade.return_value = False
@@ -320,7 +331,7 @@ class TestAttachAutoMapping:
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in insert_sql
         # The origin marker is persisted in the INSERT payload.
-        assert "tag_auto" in insert_sql
+        assert json.loads(sql.execute.call_args.kwargs["parameters"]["user_metadata"])["origin"] == "tag_auto"
 
     def test_hand_applied_row_is_never_touched(self, svc, sql, registry):
         # An owner hand-applied the SAME rule with the SAME mapping: pinned to

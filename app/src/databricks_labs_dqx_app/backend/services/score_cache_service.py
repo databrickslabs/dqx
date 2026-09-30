@@ -462,23 +462,31 @@ class ScoreCacheService:
         older than the oldest kept ``computed_at`` are deleted, so ties
         on the boundary timestamp are kept rather than over-trimmed.
         """
-        e_type = escape_sql_string(scope_type)
-        e_key = escape_sql_string(scope_key)
-        failed_expr = str(int(failed_tests)) if failed_tests is not None else "NULL"
-        total_expr = str(int(total_tests)) if total_tests is not None else "NULL"
-        run_time_expr = f"CAST('{escape_sql_string(run_time)}' AS TIMESTAMP)" if run_time else "NULL"
+        parameters = {
+            "scope_type": scope_type,
+            "scope_key": scope_key,
+            "score": float(score),
+            "failed_tests": failed_tests,
+            "total_tests": total_tests,
+            "run_time": run_time,
+        }
         self._oltp.execute(
             f"INSERT INTO {self._history_table} "  # noqa: S608
             f"(scope_type, scope_key, score, failed_tests, total_tests, run_time, computed_at) "
-            f"VALUES ('{e_type}', '{e_key}', {float(score)}, {failed_expr}, {total_expr}, "
-            f"{run_time_expr}, now())"
+            f"VALUES ({self._oltp.param('scope_type')}, {self._oltp.param('scope_key')}, "
+            f"{self._oltp.param('score')}, {self._oltp.param('failed_tests')}, "
+            f"{self._oltp.param('total_tests')}, CAST({self._oltp.param('run_time')} AS TIMESTAMP), now())",
+            parameters=parameters,
         )
         self._oltp.execute(
             f"DELETE FROM {self._history_table} "  # noqa: S608
-            f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' AND computed_at < ("
+            f"WHERE scope_type = {self._oltp.param('scope_type')} "
+            f"AND scope_key = {self._oltp.param('scope_key')} AND computed_at < ("
             f"SELECT MIN(computed_at) FROM ("
             f"SELECT computed_at FROM {self._history_table} "
-            f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' "
+            f"WHERE scope_type = {self._oltp.param('scope_type')} "
+            f"AND scope_key = {self._oltp.param('scope_key')} "
             f"ORDER BY computed_at DESC LIMIT {HISTORY_KEEP_ROWS}"
-            f") newest_rows)"
+            f") newest_rows)",
+            parameters={"scope_type": scope_type, "scope_key": scope_key},
         )

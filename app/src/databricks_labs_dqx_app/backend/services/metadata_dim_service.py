@@ -25,8 +25,8 @@ score views in :mod:`backend.services.score_view_service`.
 
 Write pattern (full refresh, idempotent): ``CREATE OR REPLACE TABLE`` first
 (establishing the empty schema even when there are zero rows), then — only
-when rows exist — a single ``INSERT INTO ... VALUES (...), (...)`` built
-from escaped literals. Table FQNs are backtick-quoted per part via
+when rows exist — bounded ``INSERT INTO ... VALUES (...), (...)`` batches
+with bound values. Table FQNs are backtick-quoted per part via
 :func:`quote_object_fqn` so a hyphenated catalog stays parseable. Both
 writes go through the SP ``SqlExecutor`` (``sp_sql``).
 
@@ -38,7 +38,6 @@ catches.
 """
 
 import logging
-from datetime import datetime
 
 from databricks_labs_dqx_app.backend.registry_models import (
     MonitoredTable,
@@ -50,13 +49,14 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor, SqlParameterValue
+from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
 logger = logging.getLogger(__name__)
 
 DIM_RULES_TABLE_NAME = "dim_dq_rules"
 DIM_MONITORED_TABLES_TABLE_NAME = "dim_dq_monitored_tables"
+_INSERT_BATCH_SIZE = 50
 
 # Column DDL for the two dims. Kept as module constants (mirroring the
 # view-name constants in ``score_view_service``) so the CREATE-OR-REPLACE and
@@ -107,8 +107,7 @@ class MetadataDimService:
         if not rules:
             logger.info("Refreshed %s with %d rule(s)", DIM_RULES_TABLE_NAME, 0)
             return
-        values = ", ".join(self._rule_values(rule) for rule in rules)
-        self._sql.execute(f"INSERT INTO {fqn} VALUES {values}")
+        self._insert_rows(fqn, [self._rule_values(rule) for rule in rules])
         logger.info("Refreshed %s with %d rule(s)", DIM_RULES_TABLE_NAME, len(rules))
 
     def _refresh_monitored_tables(self) -> None:
@@ -118,79 +117,61 @@ class MetadataDimService:
         if not summaries:
             logger.info("Refreshed %s with %d table(s)", DIM_MONITORED_TABLES_TABLE_NAME, 0)
             return
-        values = ", ".join(self._table_values(summary.table) for summary in summaries)
-        self._sql.execute(f"INSERT INTO {fqn} VALUES {values}")
+        self._insert_rows(fqn, [self._table_values(summary.table) for summary in summaries])
         logger.info("Refreshed %s with %d table(s)", DIM_MONITORED_TABLES_TABLE_NAME, len(summaries))
 
-    def _rule_values(self, rule: RegistryRule) -> str:
-        """One ``(...)`` VALUES tuple for *rule*, columns in ``_RULES_COLUMNS_DDL`` order.
+    def _rule_values(self, rule: RegistryRule) -> dict[str, SqlParameterValue]:
+        """Bound values for *rule*, in ``_RULES_COLUMNS_DDL`` order.
 
         The descriptive columns read the rule's OWN reserved
         ``user_metadata`` tags via the registry_models helpers — the raw
         default, never resolved against any run's applied severity.
         """
         metadata = rule.user_metadata
-        cells = [
-            self._str_lit(rule.rule_id),
-            self._str_lit(get_rule_name(metadata)),
-            self._str_lit(get_rule_description(metadata)),
-            self._str_lit(get_rule_dimension(metadata)),
-            self._str_lit(get_rule_severity(metadata)),
-            self._str_lit(rule.mode),
-            self._str_lit(rule.status),
-            self._bool_lit(rule.is_builtin),
-            self._str_lit(rule.owner),
-            self._int_lit(rule.version),
-            self._ts_lit(rule.created_at),
-            self._ts_lit(rule.updated_at),
-        ]
-        return "(" + ", ".join(cells) + ")"
+        return {
+            "rule_id": rule.rule_id,
+            "name": get_rule_name(metadata),
+            "description": get_rule_description(metadata),
+            "dimension": get_rule_dimension(metadata),
+            "default_severity": get_rule_severity(metadata),
+            "mode": rule.mode,
+            "status": rule.status,
+            "is_builtin": rule.is_builtin,
+            "owner": rule.owner,
+            "version": rule.version,
+            "created_at": rule.created_at.isoformat() if rule.created_at else None,
+            "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+        }
 
-    def _table_values(self, table: MonitoredTable) -> str:
-        """One ``(...)`` VALUES tuple for *table*, columns in ``_MONITORED_TABLES_COLUMNS_DDL`` order."""
-        cells = [
-            self._str_lit(table.binding_id),
-            self._str_lit(table.table_fqn),
-            self._str_lit(table.owner),
-            self._str_lit(table.status),
-            self._str_lit(table.schedule_cron),
-            self._int_lit(table.version),
-            self._ts_lit(table.created_at),
-            self._ts_lit(table.updated_at),
-        ]
-        return "(" + ", ".join(cells) + ")"
+    def _table_values(self, table: MonitoredTable) -> dict[str, SqlParameterValue]:
+        """Bound values for *table*, in ``_MONITORED_TABLES_COLUMNS_DDL`` order."""
+        return {
+            "binding_id": table.binding_id,
+            "table_fqn": table.table_fqn,
+            "owner": table.owner,
+            "status": table.status,
+            "schedule_cron": table.schedule_cron,
+            "version": table.version,
+            "created_at": table.created_at.isoformat() if table.created_at else None,
+            "updated_at": table.updated_at.isoformat() if table.updated_at else None,
+        }
 
-    @staticmethod
-    def _str_lit(value: str | None) -> str:
-        """Single-quoted, escaped string literal, or the ``NULL`` literal for None.
+    def _bind_rows(self, rows: list[dict[str, SqlParameterValue]]) -> tuple[str, dict[str, SqlParameterValue]]:
+        """Build one VALUES clause with distinct markers for every cell."""
+        parameters: dict[str, SqlParameterValue] = {}
+        tuples: list[str] = []
+        for index, row in enumerate(rows):
+            cells: list[str] = []
+            for column, value in row.items():
+                name = f"{column}_{index}"
+                parameters[name] = value
+                marker = self._sql.param(name)
+                cells.append(f"CAST({marker} AS TIMESTAMP)" if column in {"created_at", "updated_at"} else marker)
+            tuples.append("(" + ", ".join(cells) + ")")
+        return ", ".join(tuples), parameters
 
-        ``escape_sql_string`` deliberately does not escape backslashes (see its
-        docstring) — it relies on ``validate_fqn`` to reject them upstream for
-        the fully-qualified-name call sites it was written for. The values
-        here are free-text rule/table metadata (name, description, owner,
-        ...) authored by app users and never passed through ``validate_fqn``,
-        so a trailing or embedded backslash must be escaped locally first —
-        otherwise it consumes the literal's closing quote on the Databricks
-        SQL string-literal path and breaks (or injects into) the generated
-        INSERT statement.
-        """
-        if value is None:
-            return "NULL"
-        backslash = chr(92)
-        escaped_backslashes = value.replace(backslash, backslash + backslash)
-        return f"'{escape_sql_string(escaped_backslashes)}'"
-
-    @staticmethod
-    def _int_lit(value: int | None) -> str:
-        """Bare integer literal, or the ``NULL`` literal for None."""
-        return "NULL" if value is None else str(int(value))
-
-    @staticmethod
-    def _bool_lit(value: bool) -> str:
-        """``TRUE`` / ``FALSE`` literal."""
-        return "TRUE" if value else "FALSE"
-
-    @staticmethod
-    def _ts_lit(value: datetime | None) -> str:
-        """Delta ``TIMESTAMP'<iso>'`` literal, or the ``NULL`` literal for None."""
-        return "NULL" if value is None else f"TIMESTAMP'{value.isoformat()}'"
+    def _insert_rows(self, fqn: str, rows: list[dict[str, SqlParameterValue]]) -> None:
+        """Insert metadata in bounded batches for the Statement Execution API."""
+        for start in range(0, len(rows), _INSERT_BATCH_SIZE):
+            values, parameters = self._bind_rows(rows[start : start + _INSERT_BATCH_SIZE])
+            self._sql.execute(f"INSERT INTO {fqn} VALUES {values}", parameters=parameters)

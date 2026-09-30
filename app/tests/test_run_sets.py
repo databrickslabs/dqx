@@ -73,6 +73,20 @@ def test_run_id_batch_lookup_binds_values(service, oltp_sql) -> None:
 
 
 class TestCreateAndAddMember:
+    def test_create_and_member_bind_untrusted_values(self, service, oltp_sql):
+        payload = "x\\' OR 1=1 --"
+        service.create(payload, 7, "approved", "manual", payload)
+        create_call = oltp_sql.execute.call_args
+        assert payload not in create_call.args[0]
+        assert create_call.kwargs["parameters"]["product_id"] == payload
+        assert create_call.kwargs["parameters"]["created_by"] == payload
+
+        service.add_member(payload, payload, payload, None)
+        member_call = oltp_sql.execute.call_args
+        assert payload not in member_call.args[0]
+        assert member_call.kwargs["parameters"]["run_id"] == payload
+        assert member_call.kwargs["parameters"]["binding_version"] is None
+
     def test_create_inserts_run_set_row_and_returns_id(self, service, oltp_sql):
         run_set_id = service.create(
             product_id=None, product_version=None, source="approved", trigger="manual", created_by="alice@x"
@@ -80,31 +94,33 @@ class TestCreateAndAddMember:
         assert run_set_id
         sql = oltp_sql.execute.call_args[0][0]
         assert f"INSERT INTO {_RUN_SETS}" in sql
-        assert "'approved'" in sql
-        assert "'manual'" in sql
-        assert "NULL" in sql  # product_id / product_version
+        params = oltp_sql.execute.call_args.kwargs["parameters"]
+        assert params["source"] == "approved"
+        assert params["trigger"] == "manual"
+        assert params["product_id"] is None
+        assert params["product_version"] is None
 
     def test_create_with_product_writes_product_columns(self, service, oltp_sql):
         service.create(product_id="prod-1", product_version=3, source="draft", trigger="scheduled", created_by="bot")
-        sql = oltp_sql.execute.call_args[0][0]
-        assert "'prod-1'" in sql
-        assert "3" in sql
-        assert "'draft'" in sql
-        assert "'scheduled'" in sql
+        params = oltp_sql.execute.call_args.kwargs["parameters"]
+        assert params["product_id"] == "prod-1"
+        assert params["product_version"] == 3
+        assert params["source"] == "draft"
+        assert params["trigger"] == "scheduled"
 
     def test_add_member_inserts_member_row(self, service, oltp_sql):
         service.add_member("rs-1", "run-1", "b1", 2)
         sql = oltp_sql.execute.call_args[0][0]
         assert f"INSERT INTO {_MEMBERS}" in sql
-        assert "'rs-1'" in sql
-        assert "'run-1'" in sql
-        assert "'b1'" in sql
-        assert "2" in sql
+        params = oltp_sql.execute.call_args.kwargs["parameters"]
+        assert params["run_set_id"] == "rs-1"
+        assert params["run_id"] == "run-1"
+        assert params["binding_id"] == "b1"
+        assert params["binding_version"] == 2
 
     def test_add_member_null_binding_version_for_draft(self, service, oltp_sql):
         service.add_member("rs-1", "run-1", "b1", None)
-        sql = oltp_sql.execute.call_args[0][0]
-        assert "NULL" in sql
+        assert oltp_sql.execute.call_args.kwargs["parameters"]["binding_version"] is None
 
     def test_delete_empty_removes_the_run_set_row(self, service, oltp_sql):
         service.delete_empty("rs-1")

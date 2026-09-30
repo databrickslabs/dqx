@@ -198,7 +198,10 @@ class QuarantineSampleService:
         """
         validate_fqn(table_fqn)
         try:
-            obo_sql.query(f"SELECT 1 FROM {quote_fqn(table_fqn)} LIMIT 0")
+            obo_sql.query(
+                "SELECT 1 FROM IDENTIFIER(:table_name) LIMIT 0",
+                parameters={"table_name": quote_fqn(table_fqn)},
+            )
             return True
         except Exception:
             # table_fqn is validated above (no control characters), so it is

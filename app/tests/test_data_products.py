@@ -665,11 +665,21 @@ class TestCreate:
         assert product.owner == "alice@x"  # defaults to creator
         insert_sql = sql.execute.call_args[0][0]
         assert f"INSERT INTO {_PRODUCTS}" in insert_sql
-        assert "'Orders'" in insert_sql
+        assert ":name" in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["name"] == "Orders"
         # schedule_kind (B2-52) defaults to dq_only and is persisted on create.
         assert product.schedule_kind == "dq_only"
         assert "schedule_kind" in insert_sql
-        assert "'dq_only'" in insert_sql
+        assert sql.execute.call_args.kwargs["parameters"]["schedule_kind"] == "dq_only"
+
+    def test_create_binds_name_with_quote_and_backslash(self, service, sql):
+        payload = "Order\\' OR 1=1 --"
+        sql.query.return_value = []
+        service.create(payload, payload, None, "alice@x")
+        insert = sql.execute.call_args
+        assert payload not in insert.args[0]
+        assert insert.kwargs["parameters"]["name"] == payload
+        assert insert.kwargs["parameters"]["description"] == payload
 
     def test_create_duplicate_name_raises(self, service, sql):
         sql.query.return_value = [["p-existing"]]

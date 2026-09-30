@@ -48,7 +48,11 @@ class TestPreview:
         result = await service.preview("cat.sch.tbl")
 
         sql = sql_executor_mock.query_dicts.call_args.args[0]
-        assert sql == "SELECT * FROM `cat`.`sch`.`tbl` LIMIT 500"
+        assert sql == "SELECT * FROM IDENTIFIER(:table_name) LIMIT CAST(:limit AS INT)"
+        assert sql_executor_mock.query_dicts.call_args.kwargs["parameters"] == {
+            "table_name": "`cat`.`sch`.`tbl`",
+            "limit": 500,
+        }
         assert result.columns == ["id", "name"]
         assert result.rows == [{"id": "1", "name": "a"}]
         assert result.generated_sql is None

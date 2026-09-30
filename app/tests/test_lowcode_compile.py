@@ -42,6 +42,36 @@ class TestCompileAstToSql:
         ]
         assert compile_ast_to_sql(_ast(rows)) == "{{a}} IS NOT NULL AND {{b}} IS NULL OR {{c}} IS NOT NULL"
 
+    def test_rejects_sql_in_combinator(self):
+        rows = [_row(), _row(combinator="OR TRUE UNION SELECT secret", column_ref="b")]
+        with pytest.raises(ValueError, match="Invalid combinator"):
+            compile_ast_to_sql(_ast(rows))
+
+    def test_literal_escapes_backslash_and_quote(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="status", operator="=", value="x\\' OR TRUE")]))
+        assert sql == "{{status}} = 'x\\\\'' OR TRUE'"
+
+    @pytest.mark.parametrize(
+        "interval",
+        [
+            {"number": "1' OR TRUE --", "unit": "days"},
+            {"number": 7, "unit": "days' OR TRUE --"},
+            {"number": True, "unit": "days"},
+            {"number": -1, "unit": "days"},
+        ],
+    )
+    def test_rejects_invalid_interval_operands(self, interval):
+        with pytest.raises(ValueError, match="Invalid interval"):
+            compile_ast_to_sql(_ast([_row(column_ref="created_at", operator="is in last", value=interval)]))
+
+    def test_valid_interval_keeps_expected_sql(self):
+        assert (
+            compile_ast_to_sql(
+                _ast([_row(column_ref="created_at", operator="is in last", value={"number": 7, "unit": "days"})])
+            )
+            == "{{created_at}} >= current_timestamp() - INTERVAL '7 days'"
+        )
+
     def test_qualified_ref_is_backtick_quoted(self):
         assert (
             compile_ast_to_sql(_ast([_row(column_ref="orders.total", operator=">", value=5)])) == "`orders`.`total` > 5"
@@ -79,6 +109,30 @@ class TestCompileAstToSql:
             "value": 5,
         }
         assert compile_ast_to_sql(_ast([row])) == "COUNT({{id}}) <= 5"
+
+    @pytest.mark.parametrize("aggregate_param", ["0.5) OR TRUE --", True, -0.1, 1.1])
+    def test_rejects_invalid_percentile_quantile(self, aggregate_param):
+        row = {
+            "kind": "aggregated",
+            "aggregate": "percentile",
+            "aggregate_param": aggregate_param,
+            "column_ref": "amount",
+            "operator": ">",
+            "value": 0,
+        }
+        with pytest.raises(ValueError, match="Invalid percentile quantile"):
+            compile_ast_to_sql(_ast([row]))
+
+    def test_valid_percentile_quantile_keeps_expected_sql(self):
+        row = {
+            "kind": "aggregated",
+            "aggregate": "percentile_approx",
+            "aggregate_param": 0.9,
+            "column_ref": "amount",
+            "operator": ">",
+            "value": 0,
+        }
+        assert compile_ast_to_sql(_ast([row])) == "PERCENTILE_APPROX({{amount}}, 0.9) > 0"
 
 
 class TestColumnRefValue:
@@ -213,6 +267,18 @@ class TestCompileLowcodeBody:
             "SELECT {{customer_id}}, (NOT (COUNT({{order_id}}) <= 100)) AS condition "
             "FROM {{input_view}} GROUP BY {{customer_id}}"
         )
+
+    def test_multiple_group_by_slots_remain_bare_merge_columns(self):
+        body = compile_lowcode_body(_ast([_row()]), "{{customer_id}}, {{region}}")
+        assert body.merge_columns == ["{{customer_id}}", "{{region}}"]
+        assert body.sql_query is not None
+        assert "SELECT {{customer_id}}, {{region}}," in body.sql_query
+        assert "GROUP BY {{customer_id}}, {{region}}" in body.sql_query
+
+    @pytest.mark.parametrize("group_by", ["{{id}}, (SELECT secret FROM other)", "{{id}} OR TRUE", "{{bad`name}}"])
+    def test_rejects_non_column_group_by_expression(self, group_by):
+        with pytest.raises(ValueError, match="Invalid group_by column"):
+            compile_lowcode_body(_ast([_row()]), group_by)
 
     def test_joins_only_merges_on_input_side_keys(self):
         joins = [

@@ -41,7 +41,8 @@ def test_add_comment_accepts_all_supported_types(svc, sql, entity_type):
     assert comment.entity_id == "obj-1"
     insert_sql = sql.execute.call_args[0][0]
     assert "INSERT INTO dqx_test.dqx_app_test.dq_comments" in insert_sql
-    assert entity_type in insert_sql
+    assert ":entity_type" in insert_sql
+    assert sql.execute.call_args.kwargs["parameters"]["entity_type"] == entity_type
 
 
 @pytest.mark.parametrize("entity_type", ["monitored_table", "data_product"])
@@ -56,3 +57,22 @@ def test_add_comment_rejects_unknown_type(svc, sql):
     with pytest.raises(ValueError):
         svc.add_comment("workspace", "obj-1", "alice@x", "nope")
     sql.execute.assert_not_called()
+
+
+def test_comment_writes_bind_quotes_and_backslashes(svc, sql):
+    payload = "a\\' OR 1=1 --"
+    svc.add_comment("rule", payload, payload, payload)
+    insert = sql.execute.call_args
+    assert payload not in insert.args[0]
+    assert insert.kwargs["parameters"] == {
+        "comment_id": insert.kwargs["parameters"]["comment_id"],
+        "entity_type": "rule",
+        "entity_id": payload,
+        "user_email": payload,
+        "comment": payload,
+    }
+
+    svc.delete_comment(payload, payload)
+    delete = sql.execute.call_args
+    assert payload not in delete.args[0]
+    assert delete.kwargs["parameters"] == {"comment_id": payload, "user_email": payload}

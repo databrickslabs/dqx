@@ -38,22 +38,27 @@ class CommentsService:
         self._table = sql.fqn("dq_comments")
 
     def add_comment(self, entity_type: str, entity_id: str, user_email: str, comment: str) -> Comment:
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_entity_type
+        from databricks_labs_dqx_app.backend.sql_utils import validate_entity_type
 
         validate_entity_type(entity_type, self.VALID_ENTITY_TYPES)
 
         comment_id = uuid4().hex[:16]
-        e_comment = escape_sql_string(comment)
-        e_email = escape_sql_string(user_email)
-        e_entity_id = escape_sql_string(entity_id)
-        e_type = escape_sql_string(entity_type)
-
         sql = (
             f"INSERT INTO {self._table} (comment_id, entity_type, entity_id, user_email, comment, created_at) "
-            f"VALUES ('{comment_id}', '{e_type}', '{e_entity_id}', "
-            f"'{e_email}', '{e_comment}', now())"
+            f"VALUES ({self._sql.param('comment_id')}, {self._sql.param('entity_type')}, "
+            f"{self._sql.param('entity_id')}, {self._sql.param('user_email')}, "
+            f"{self._sql.param('comment')}, now())"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "comment_id": comment_id,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "user_email": user_email,
+                "comment": comment,
+            },
+        )
         logger.info("Added comment %s on %s/%s by %s", comment_id, entity_type, entity_id, user_email)
 
         return Comment(
@@ -91,10 +96,9 @@ class CommentsService:
         ]
 
     def delete_comment(self, comment_id: str, user_email: str) -> None:
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
-        e_id = escape_sql_string(comment_id)
-        e_email = escape_sql_string(user_email)
-        sql = f"DELETE FROM {self._table} " f"WHERE comment_id = '{e_id}' AND user_email = '{e_email}'"
-        self._sql.execute(sql)
+        sql = (
+            f"DELETE FROM {self._table} WHERE comment_id = {self._sql.param('comment_id')} "
+            f"AND user_email = {self._sql.param('user_email')}"
+        )
+        self._sql.execute(sql, parameters={"comment_id": comment_id, "user_email": user_email})
         logger.info("Deleted comment %s by %s", comment_id, user_email)

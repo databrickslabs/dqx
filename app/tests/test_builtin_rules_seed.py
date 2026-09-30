@@ -227,7 +227,8 @@ class TestSeedBuiltinRulesIfAbsent:
         sql_executor_mock.dialect = "delta"
         sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
         sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
-        sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+        sql_executor_mock.param.side_effect = lambda name: f":{name}"
+        sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
         sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
         sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
         sql_executor_mock.query.return_value = []  # no rule pre-exists by fingerprint
@@ -239,10 +240,12 @@ class TestSeedBuiltinRulesIfAbsent:
         created = seed_builtin_rules_if_absent(registry)
         assert created == expected
 
-        executed_sql = [c.args[0] for c in sql_executor_mock.execute.call_args_list]
-        insert_calls = [sql for sql in executed_sql if "INSERT INTO" in sql and "dq_rules " in sql]
+        insert_calls = [
+            call
+            for call in sql_executor_mock.execute.call_args_list
+            if "INSERT INTO" in call.args[0] and "dq_rules " in call.args[0]
+        ]
         assert len(insert_calls) == expected
-        for sql in insert_calls:
-            assert "'dqx_native'" in sql
-            assert "'lowcode'" not in sql
-            assert "'sql'" not in sql
+        for call in insert_calls:
+            assert call.kwargs["parameters"]["mode"] == "dqx_native"
+            assert ":mode" in call.args[0]

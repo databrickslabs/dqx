@@ -9,6 +9,8 @@ guards against a user schedule silently hijacking — or being overwritten
 by — a Data Product's tracker row in ``dq_schedule_runs``.
 """
 
+import json
+
 import pytest
 
 from databricks_labs_dqx_app.backend.services.schedule_config_service import (
@@ -72,6 +74,15 @@ def test_history_binds_schedule_name(schedule_config_service, sql_executor_mock)
     statement = sql_executor_mock.query.call_args.args[0]
     assert "schedule_name = :schedule_name" in statement
     assert sql_executor_mock.query.call_args.kwargs["parameters"] == {"schedule_name": "team:nightly"}
+
+
+def test_history_write_binds_config_with_quote_and_backslash(schedule_config_service, sql_executor_mock):
+    payload = "path\\' OR 1=1 --"
+    schedule_config_service.save("main", {"note": payload}, payload)
+    history = sql_executor_mock.execute.call_args
+    assert payload not in history.args[0]
+    assert json.loads(history.kwargs["parameters"]["config_json"]) == {"note": payload}
+    assert history.kwargs["parameters"]["changed_by"] == payload
 
 
 class TestSaveRejectsReservedTablePrefix:

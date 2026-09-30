@@ -54,6 +54,15 @@ def _history_inserts(sql_executor_mock) -> list[str]:
 
 
 class TestSetStatusHistory:
+    def test_history_binds_run_id_with_quote_and_backslash(self, review_status_service):
+        svc, sql = review_status_service
+        payload = "run\\' OR 1=1 --"
+        svc.set_status(payload, "Confirmed", user_email=payload)
+        history = sql.execute.call_args
+        assert payload not in history.args[0]
+        assert history.kwargs["parameters"]["run_id"] == payload
+        assert history.kwargs["parameters"]["changed_by"] == payload
+
     def test_set_status_records_history(self, review_status_service):
         svc, sql_executor_mock = review_status_service
         svc.set_status("run-1", "Confirmed", user_email="alice@example.com")
@@ -62,9 +71,10 @@ class TestSetStatusHistory:
         inserts = _history_inserts(sql_executor_mock)
         assert len(inserts) == 1, f"expected one history INSERT, got: {inserts}"
         sql = inserts[0]
-        assert "'Confirmed'" in sql
-        assert "'Pending review'" in sql  # previous effective (virtual default)
-        assert "'alice@example.com'" in sql
+        params = sql_executor_mock.execute.call_args.kwargs["parameters"]
+        assert params["status"] == "Confirmed"
+        assert params["previous_status"] == "Pending review"  # previous effective (virtual default)
+        assert params["changed_by"] == "alice@example.com"
         # Timestamp from the DB, not the app clock.
         assert "now()" in sql
 

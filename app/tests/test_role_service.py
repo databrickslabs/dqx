@@ -28,6 +28,7 @@ def role_service(sql_executor_mock):
     # column / table name appearing in the right slot.
     sql_executor_mock.fqn.side_effect = lambda t: t
     sql_executor_mock.ts_text.side_effect = lambda c: c
+    sql_executor_mock.param.side_effect = lambda name: f":{name}"
     svc = RoleService(sql=sql_executor_mock)
     return svc
 
@@ -259,14 +260,16 @@ class TestCreateMappingHistoryRecording:
         )
         inserts = _history_inserts(sql_executor_mock)
         assert len(inserts) == 1, f"expected exactly one history INSERT, got: {inserts}"
-        sql = inserts[0]
-        assert "'create'" in sql
-        assert f"'{UserRole.RULE_APPROVER.value}'" in sql
-        assert "'approvers'" in sql
-        assert "'alice@example.com'" in sql
+        params = sql_executor_mock.execute.call_args.kwargs["parameters"]
+        assert params == {
+            "role": UserRole.RULE_APPROVER.value,
+            "group_name": "approvers",
+            "action": "create",
+            "changed_by": "alice@example.com",
+        }
         # Timestamps must come from the DB, not the app process clock,
         # so the audit log doesn't drift with app server timezone bugs.
-        assert "now()" in sql
+        assert "now()" in inserts[0]
 
     def test_history_failure_does_not_break_primary_write(self, role_service, sql_executor_mock):
         # The history INSERT is best-effort — losing one audit row is
@@ -285,6 +288,15 @@ class TestCreateMappingHistoryRecording:
 
 
 class TestDeleteMappingHistoryRecording:
+    def test_delete_binds_group_with_quote_and_backslash(self, role_service, sql_executor_mock):
+        payload = "team\\' OR 1=1 --"
+        role_service.delete_mapping(UserRole.VIEWER.value, payload, user_email=payload)
+        delete, history = sql_executor_mock.execute.call_args_list
+        assert payload not in delete.args[0]
+        assert delete.kwargs["parameters"] == {"role": UserRole.VIEWER.value, "group_name": payload}
+        assert payload not in history.args[0]
+        assert history.kwargs["parameters"]["changed_by"] == payload
+
     def test_delete_records_delete_action_in_history(self, role_service, sql_executor_mock):
         role_service.delete_mapping(
             role=UserRole.RULE_AUTHOR.value,
@@ -295,11 +307,13 @@ class TestDeleteMappingHistoryRecording:
         # the INSERT into dq_role_mappings_history.
         inserts = _history_inserts(sql_executor_mock)
         assert len(inserts) == 1, f"expected exactly one history INSERT, got: {inserts}"
-        sql = inserts[0]
-        assert "'delete'" in sql
-        assert f"'{UserRole.RULE_AUTHOR.value}'" in sql
-        assert "'writers'" in sql
-        assert "'charlie@example.com'" in sql
+        params = sql_executor_mock.execute.call_args.kwargs["parameters"]
+        assert params == {
+            "role": UserRole.RULE_AUTHOR.value,
+            "group_name": "writers",
+            "action": "delete",
+            "changed_by": "charlie@example.com",
+        }
 
     def test_delete_without_user_email_records_null_actor(self, role_service, sql_executor_mock):
         # Legacy call sites that don't pass user_email still produce an
@@ -308,10 +322,9 @@ class TestDeleteMappingHistoryRecording:
         role_service.delete_mapping(role=UserRole.VIEWER.value, group_name="viewers")
         inserts = _history_inserts(sql_executor_mock)
         assert len(inserts) == 1
-        sql = inserts[0]
-        assert "'delete'" in sql
-        # NULL appears unquoted — confirms we didn't stringify None.
-        assert "NULL" in sql
+        params = sql_executor_mock.execute.call_args.kwargs["parameters"]
+        assert params["action"] == "delete"
+        assert params["changed_by"] is None
 
     def test_history_failure_does_not_break_delete(self, role_service, sql_executor_mock):
         # First execute() call (DELETE) succeeds; second (history INSERT)
@@ -319,7 +332,7 @@ class TestDeleteMappingHistoryRecording:
         # service must not propagate the failure.
         outcomes = [None, RuntimeError("history table unavailable")]
 
-        def _exec(_sql):
+        def _exec(_sql, *, parameters=None):
             outcome = outcomes.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome

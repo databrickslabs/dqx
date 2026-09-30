@@ -71,7 +71,6 @@ from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, bind_list
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
 
 logger = logging.getLogger(__name__)
 
@@ -337,12 +336,22 @@ class DataProductService:
             f"INSERT INTO {self._products_table} "
             "(product_id, name, description, owner, owner_display_name, schedule_cron, schedule_tz, "
             "schedule_kind, status, version, created_by, created_at, updated_by, updated_at) VALUES ("
-            f"'{escape_sql_string(product.product_id)}', '{escape_sql_string_strict(product.name)}', "
-            f"{self._opt_str(product.description)}, "
-            f"{self._opt_str(product.owner)}, "
-            f"{self._opt_str(product.owner_display_name)}, NULL, NULL, "
-            f"{self._opt_str(product.schedule_kind)}, "
-            f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
+            f"{self._sql.param('product_id')}, {self._sql.param('name')}, "
+            f"{self._sql.param('description')}, {self._sql.param('owner')}, "
+            f"{self._sql.param('owner_display_name')}, NULL, NULL, "
+            f"{self._sql.param('schedule_kind')}, {self._sql.param('status')}, 0, "
+            f"{self._sql.param('created_by')}, now(), {self._sql.param('updated_by')}, now())",
+            parameters={
+                "product_id": product.product_id,
+                "name": product.name,
+                "description": product.description or None,
+                "owner": product.owner or None,
+                "owner_display_name": product.owner_display_name or None,
+                "schedule_kind": product.schedule_kind or None,
+                "status": product.status,
+                "created_by": created_by or None,
+                "updated_by": created_by or None,
+            },
         )
         if self._perms is not None:
             self._perms.seed_default_grants(
@@ -1221,17 +1230,6 @@ class DataProductService:
             last_decision_rationale=row[15] if len(row) > 15 else None,
             schedule_sample_size=parse_schedule_sample_size(row[16] if len(row) > 16 else None),
         )
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        # Free-text fields (name/description/owner display) — use the
-        # backslash-safe escape so a trailing ``\`` cannot break out of the
-        # Delta string-literal path (``escape_sql_string`` only doubles quotes).
-        return f"'{escape_sql_string_strict(value)}'" if value else "NULL"
-
-    @staticmethod
-    def _opt_int(value: int | None) -> str:
-        return str(int(value)) if value is not None else "NULL"
 
     @staticmethod
     def _parse_int(value: Any) -> int | None:

@@ -111,6 +111,12 @@ from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor, bind_list
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
+
+def _execute_redate(executor: OltpExecutorProtocol, statement: redate.SqlStatement) -> None:
+    sql, parameters = statement
+    executor.execute(sql, parameters=parameters)
+
+
 logger = logging.getLogger(__name__)
 
 # A run is considered catastrophically misfiring when nearly every row fails a
@@ -871,8 +877,10 @@ class DemoSeedService:
         runs_fqn = self._app_sql.fqn("dq_validation_runs")
         deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
         while True:
-            self._app_sql.execute(redate.build_delete_metrics_sql(metrics_fqn, run_id))
-            self._app_sql.execute(redate.build_delete_runs_sql(runs_fqn, run_id))
+            _execute_redate(
+                self._app_sql, redate.build_delete_metrics_sql(metrics_fqn, run_id, marker=self._app_sql.param)
+            )
+            _execute_redate(self._app_sql, redate.build_delete_runs_sql(runs_fqn, run_id, marker=self._app_sql.param))
             remaining = self._app_sql.query_dicts(
                 f"SELECT 1 FROM {metrics_fqn} WHERE run_id = {self._app_sql.param('run_id')} LIMIT 1",
                 parameters={"run_id": run_id},
@@ -970,7 +978,7 @@ class DemoSeedService:
         """Return ``(input_rows, {check_name: failed_rows})`` for a run from ``dq_metrics``."""
         metrics_fqn = self._app_sql.fqn("dq_metrics")
         rows = self._app_sql.query_dicts(
-            f"SELECT metric_name, metric_value FROM {metrics_fqn} " f"WHERE run_id = {self._app_sql.param('run_id')}",
+            f"SELECT metric_name, metric_value FROM {metrics_fqn} WHERE run_id = {self._app_sql.param('run_id')}",
             parameters={"run_id": run_id},
         )
         input_rows = 0
@@ -1214,7 +1222,12 @@ class DemoSeedService:
                 # the final week's run still resolves to the top version.
                 instant = first + (span * index) // count if count else first
                 target_iso = redate.iso(instant)
-                self._oltp.execute(redate.build_redate_versions_sql(versions_fqn, binding_id, version, target_iso))
+                _execute_redate(
+                    self._oltp,
+                    redate.build_redate_versions_sql(
+                        versions_fqn, binding_id, version, target_iso, marker=self._oltp.param
+                    ),
+                )
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
         """Edit + re-approve the card-validation rule to a new version at TIGHTEN_WEEK.
@@ -1255,7 +1268,9 @@ class DemoSeedService:
     def _delete_history_after(self, cutoff_iso: str) -> None:
         """Delete ``dq_score_history`` rows appended after *cutoff_iso* (the polluting real-now appends)."""
         history_fqn = self._oltp.fqn("dq_score_history")
-        self._oltp.execute(redate.build_delete_history_after_sql(history_fqn, cutoff_iso))
+        _execute_redate(
+            self._oltp, redate.build_delete_history_after_sql(history_fqn, cutoff_iso, marker=self._oltp.param)
+        )
 
     def _delete_orphan_metrics(self) -> None:
         """Delete ``dq_metrics`` rows whose run has no ``dq_validation_runs`` row.
@@ -1308,8 +1323,14 @@ class DemoSeedService:
         deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
         while True:
             self._wait_for_metrics(run_id)
-            self._app_sql.execute(redate.build_redate_metrics_sql(metrics_fqn, run_id, target_iso))
-            self._app_sql.execute(redate.build_redate_runs_sql(runs_fqn, run_id, target_iso))
+            _execute_redate(
+                self._app_sql,
+                redate.build_redate_metrics_sql(metrics_fqn, run_id, target_iso, marker=self._app_sql.param),
+            )
+            _execute_redate(
+                self._app_sql,
+                redate.build_redate_runs_sql(runs_fqn, run_id, target_iso, marker=self._app_sql.param),
+            )
             if not self._metrics_off_target(run_id, target_iso):
                 return
             if time.monotonic() >= deadline:
@@ -1352,7 +1373,7 @@ class DemoSeedService:
         deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
         while True:
             rows = self._app_sql.query_dicts(
-                f"SELECT run_id FROM {metrics_fqn} " f"WHERE run_id = {self._app_sql.param('run_id')} LIMIT 1",
+                f"SELECT run_id FROM {metrics_fqn} WHERE run_id = {self._app_sql.param('run_id')} LIMIT 1",
                 parameters={"run_id": run_id},
             )
             if rows:
@@ -1364,7 +1385,12 @@ class DemoSeedService:
     def _redate_history(self, scope_type: str, scope_key: str, target_iso: str) -> None:
         """Re-date the most recently appended ``dq_score_history`` row of a scope to *target_iso*."""
         history_fqn = self._oltp.fqn("dq_score_history")
-        self._oltp.execute(redate.build_redate_latest_history_sql(history_fqn, scope_type, scope_key, target_iso))
+        _execute_redate(
+            self._oltp,
+            redate.build_redate_latest_history_sql(
+                history_fqn, scope_type, scope_key, target_iso, marker=self._oltp.param
+            ),
+        )
 
     @staticmethod
     def _week_instant(now: datetime, week: int, weeks: int) -> datetime:

@@ -8,7 +8,6 @@ from databricks.labs.dqx.rule import compute_rule_fingerprint
 
 from databricks_labs_dqx_app.backend.rule_enums import RuleSource, RuleStatus
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -162,28 +161,36 @@ class RulesCatalogService:
         if duplicates:
             logger.info("Skipped %d duplicate check(s) for table %s", len(duplicates), table_fqn)
 
-        e_table = escape_sql_string(table_fqn)
-        e_source = escape_sql_string(source)
-        e_user = escape_sql_string(user_email)
-
         created: list[RuleCatalogEntry] = []
         check_col = self._check_col
         for check in non_dup_checks:
             rule_id = uuid4().hex[:16]
             check_json = json.dumps(check)
-            check_expr = self._sql.json_literal_expr(check_json)
+            check_expr = self._sql.json_parameter_expr("check_json")
             # dqx-core per-rule fingerprint (SHA-256 of the canonicalized check),
             # stored so the dq_rules_core view can expose it and external
             # pipelines can load these rules via DQEngine.load_checks.
-            e_fp = escape_sql_string(compute_rule_fingerprint(check))
+            fingerprint = compute_rule_fingerprint(check)
             sql = (
                 f"INSERT INTO {self._table} "
                 f"(rule_id, table_fqn, {check_col}, version, status, source, "
                 f"rule_fingerprint, created_by, created_at, updated_by, updated_at) "
-                f"VALUES ('{rule_id}', '{e_table}', {check_expr}, 1, 'draft', '{e_source}', "
-                f"'{e_fp}', '{e_user}', now(), '{e_user}', now())"
+                f"VALUES ({self._sql.param('rule_id')}, {self._sql.param('table_fqn')}, {check_expr}, "
+                f"1, 'draft', {self._sql.param('source')}, "
+                f"{self._sql.param('fingerprint')}, {self._sql.param('created_by')}, now(), "
+                f"{self._sql.param('created_by')}, now())"
             )
-            self._sql.execute(sql)
+            self._sql.execute(
+                sql,
+                parameters={
+                    "rule_id": rule_id,
+                    "table_fqn": table_fqn,
+                    "check_json": check_json,
+                    "source": source,
+                    "fingerprint": fingerprint,
+                    "created_by": user_email,
+                },
+            )
             self._record_history(
                 table_fqn=table_fqn,
                 check_json=check_json,
@@ -232,24 +239,30 @@ class RulesCatalogService:
         # single check object for the VARIANT/JSONB column.
         check = checks[0]
         check_json = json.dumps(check)
-        check_expr = self._sql.json_literal_expr(check_json)
-        e_user = escape_sql_string(user_email)
-        e_rule_id = escape_sql_string(rule_id)
+        check_expr = self._sql.json_parameter_expr("check_json")
         # Recompute the per-rule fingerprint from the new check content so the
         # stored value stays in lock-step with the rule (see save()).
-        e_fp = escape_sql_string(compute_rule_fingerprint(check))
+        fingerprint = compute_rule_fingerprint(check)
 
         sql = (
             f"UPDATE {self._table} SET "
             f"  {self._check_col} = {check_expr}, "
             f"  version = version + 1, "
             f"  status = 'draft', "
-            f"  rule_fingerprint = '{e_fp}', "
-            f"  updated_by = '{e_user}', "
+            f"  rule_fingerprint = {self._sql.param('fingerprint')}, "
+            f"  updated_by = {self._sql.param('updated_by')}, "
             f"  updated_at = now() "
-            f"WHERE rule_id = '{e_rule_id}'"
+            f"WHERE rule_id = {self._sql.param('rule_id')}"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "check_json": check_json,
+                "fingerprint": fingerprint,
+                "updated_by": user_email,
+                "rule_id": rule_id,
+            },
+        )
         self._record_history(
             table_fqn=entry.table_fqn,
             check_json=check_json,
@@ -395,9 +408,8 @@ class RulesCatalogService:
     def delete(self, rule_id: str, user_email: str) -> None:
         """Delete a single rule by rule_id."""
         entry = self.get_by_rule_id(rule_id)
-        e_rule_id = escape_sql_string(rule_id)
-        sql = f"DELETE FROM {self._table} WHERE rule_id = '{e_rule_id}'"
-        self._sql.execute(sql)
+        sql = f"DELETE FROM {self._table} WHERE rule_id = {self._sql.param('rule_id')}"
+        self._sql.execute(sql, parameters={"rule_id": rule_id})
         table_fqn = entry.table_fqn if entry else "unknown"
         version = entry.version if entry else 0
         source = entry.source if entry else "ui"
@@ -420,9 +432,8 @@ class RulesCatalogService:
 
     def delete_by_table(self, table_fqn: str, user_email: str) -> None:
         """Delete all rules for a table."""
-        e_table = escape_sql_string(table_fqn)
-        sql = f"DELETE FROM {self._table} WHERE table_fqn = '{e_table}'"
-        self._sql.execute(sql)
+        sql = f"DELETE FROM {self._table} WHERE table_fqn = {self._sql.param('table_fqn')}"
+        self._sql.execute(sql, parameters={"table_fqn": table_fqn})
         self._record_history(
             table_fqn=table_fqn,
             check_json=None,
@@ -466,18 +477,22 @@ class RulesCatalogService:
                 f"but current is v{entry.version}. Another user may have modified the rule."
             )
 
-        e_status = escape_sql_string(status)
-        e_user = escape_sql_string(user_email)
-        e_rule_id = escape_sql_string(rule_id)
-
         sql = (
             f"UPDATE {self._table} SET "
-            f"  status = '{e_status}', "
-            f"  updated_by = '{e_user}', "
+            f"  status = {self._sql.param('status')}, "
+            f"  updated_by = {self._sql.param('updated_by')}, "
             f"  updated_at = now() "
-            f"WHERE rule_id = '{e_rule_id}' AND version = {entry.version}"
+            f"WHERE rule_id = {self._sql.param('rule_id')} AND version = {self._sql.param('version')}"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "status": status,
+                "updated_by": user_email,
+                "rule_id": rule_id,
+                "version": entry.version,
+            },
+        )
         # Always include the post-state ``check`` payload + explicit
         # prev/new status pair so dashboards reconstructing the trail
         # don't have to walk back to the prior save row.
@@ -705,22 +720,29 @@ class RulesCatalogService:
         double quotes for Postgres).
         """
         try:
-            e_table = escape_sql_string(table_fqn)
-            e_source = escape_sql_string(source)
-            e_action = escape_sql_string(action)
-            e_user = escape_sql_string(user_email)
-            rule_id_sql = f"'{escape_sql_string(rule_id)}'" if rule_id else "NULL"
-            check_sql = self._sql.json_literal_expr(check_json) if check_json else "NULL"
-            prev_sql = f"'{escape_sql_string(prev_status)}'" if prev_status else "NULL"
-            new_sql = f"'{escape_sql_string(new_status)}'" if new_status else "NULL"
+            check_sql = self._sql.json_parameter_expr("check_json") if check_json else "NULL"
 
             sql = (
                 f"INSERT INTO {self._history_table} "
                 f"(rule_id, table_fqn, {self._check_col}, version, source, action, "
                 f"prev_status, new_status, changed_by, changed_at) VALUES "
-                f"({rule_id_sql}, '{e_table}', {check_sql}, {version}, '{e_source}', "
-                f"'{e_action}', {prev_sql}, {new_sql}, '{e_user}', now())"
+                f"({self._sql.param('rule_id')}, {self._sql.param('table_fqn')}, {check_sql}, "
+                f"{self._sql.param('version')}, {self._sql.param('source')}, "
+                f"{self._sql.param('action')}, {self._sql.param('prev_status')}, "
+                f"{self._sql.param('new_status')}, {self._sql.param('changed_by')}, now())"
             )
-            self._sql.execute(sql)
+            parameters = {
+                "rule_id": rule_id or None,
+                "table_fqn": table_fqn,
+                "version": version,
+                "source": source,
+                "action": action,
+                "prev_status": prev_status or None,
+                "new_status": new_status or None,
+                "changed_by": user_email,
+            }
+            if check_json:
+                parameters["check_json"] = check_json
+            self._sql.execute(sql, parameters=parameters)
         except Exception:
             logger.warning("Failed to record history for %s (non-fatal)", table_fqn, exc_info=True)

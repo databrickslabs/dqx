@@ -129,7 +129,6 @@ from dataclasses import dataclass
 
 from databricks_labs_dqx_app.backend.migrations.postgres import OLTP_TABLE_NAMES
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -639,12 +638,14 @@ class MigrationRunner:
                     else:
                         raise
 
-        escaped_desc = escape_sql_string(migration.description)
         record_sql = (
             f"INSERT INTO {self._meta_table} (version, description, applied_at) "
-            f"VALUES ({migration.version}, '{escaped_desc}', current_timestamp())"
+            "VALUES (:version, :description, current_timestamp())"
         )
-        self._sql.execute(record_sql)
+        self._sql.execute(
+            record_sql,
+            parameters={"version": migration.version, "description": migration.description},
+        )
         logger.info(
             "Migration v%d applied successfully: %s",
             migration.version,

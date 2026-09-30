@@ -53,6 +53,7 @@ def _svc(**over):
     )
     deps.update(over)
     deps["app_sql"].param.side_effect = lambda name: f":{name}"
+    deps["oltp"].param.side_effect = lambda name: f"%({name})s"
     return DemoSeedService(**deps), deps
 
 
@@ -719,11 +720,16 @@ def test_history_cleanup_cutoff_is_final_week_instant_not_now():
     # the final-week instant is the intended cutoff (now - 30min), NOT a value
     # near real wall-clock now — every genuine point is at-or-before it
     expected_cutoff = redate.iso(svc._week_instant(now, weeks - 1, weeks))
-    executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
-    cleanup = [s for s in executed if s.startswith("DELETE FROM") and "dq_score_history" in s and "computed_at >" in s]
+    cleanup = [
+        call
+        for call in deps["oltp"].execute.call_args_list
+        if call.args[0].startswith("DELETE FROM")
+        and "dq_score_history" in call.args[0]
+        and "computed_at >" in call.args[0]
+    ]
     assert cleanup, "expected a dq_score_history post-cutoff cleanup DELETE"
     assert any(
-        expected_cutoff in s for s in cleanup
+        call.kwargs["parameters"]["target_iso"] == expected_cutoff for call in cleanup
     ), f"cleanup cutoff must be the final-week instant {expected_cutoff!r}; got {cleanup!r}"
 
 
@@ -802,16 +808,22 @@ def test_redate_version_freezes_spreads_freezes_across_trend_window():
 
     svc._redate_version_freezes(now, weeks)
 
-    executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
-    version_updates = [s for s in executed if "dq_monitored_table_versions" in s and s.startswith("UPDATE")]
+    version_updates = [
+        call
+        for call in deps["oltp"].execute.call_args_list
+        if "dq_monitored_table_versions" in call.args[0] and call.args[0].startswith("UPDATE")
+    ]
     # every logged freeze is re-dated (2 bindings x 2 versions)
     assert len(version_updates) == 4
     first_iso = redate.iso(svc._week_instant(now, 0, weeks))
     last_iso = redate.iso(svc._week_instant(now, weeks - 1, weeks))
     # v1 anchors at the first-week instant; the last freeze stays strictly before
     # the final-week instant so the final run still resolves to the top version
-    assert any(first_iso in s and "version = 1" in s and "b-orders" in s for s in version_updates)
-    assert all(last_iso not in s for s in version_updates)
+    assert any(
+        call.kwargs["parameters"] == {"binding_id": "b-orders", "version": 1, "target_iso": first_iso}
+        for call in version_updates
+    )
+    assert all(call.kwargs["parameters"]["target_iso"] != last_iso for call in version_updates)
 
 
 def test_redate_version_freezes_noop_without_freezes_or_weeks():
@@ -1149,7 +1161,7 @@ def test_weekly_trend_redates_every_run_id_once_per_binding_per_week():
     svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", now)
 
     metrics_updates = [
-        c.args[0]
+        c
         for c in deps["app_sql"].execute.call_args_list
         if c.args[0].startswith("UPDATE") and "dq_metrics" in c.args[0]
     ]
@@ -1158,7 +1170,9 @@ def test_weekly_trend_redates_every_run_id_once_per_binding_per_week():
     # every week's target instant is represented in the re-dates
     week_isos = {redate.iso(DemoSeedService._week_instant(now, w, weeks)) for w in range(weeks)}
     for target_iso in week_isos:
-        assert any(target_iso in s for s in metrics_updates), f"week instant {target_iso} was never re-dated"
+        assert any(
+            c.kwargs["parameters"]["target_iso"] == target_iso for c in metrics_updates
+        ), f"week instant {target_iso} was never re-dated"
 
 
 def test_weekly_trend_tightens_card_rule_exactly_once_no_version_cluster():
@@ -1250,13 +1264,13 @@ def test_weekly_trend_redates_history_for_every_scope_each_week():
     svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
 
     history_updates = [
-        call.args[0]
+        call
         for call in deps["oltp"].execute.call_args_list
         if call.args and call.args[0].startswith("UPDATE") and "dq_score_history" in call.args[0]
     ]
-    table_redates = [s for s in history_updates if "scope_type = 'table'" in s]
-    product_redates = [s for s in history_updates if "scope_type = 'product'" in s]
-    global_redates = [s for s in history_updates if "scope_type = 'global'" in s]
+    table_redates = [c for c in history_updates if c.kwargs["parameters"]["scope_type"] == "table"]
+    product_redates = [c for c in history_updates if c.kwargs["parameters"]["scope_type"] == "product"]
+    global_redates = [c for c in history_updates if c.kwargs["parameters"]["scope_type"] == "global"]
     assert len(table_redates) == len(binding_map) * weeks  # every table, every week
     assert len(product_redates) == 1 * weeks  # the one product, every week
     assert len(global_redates) == 1 * weeks  # global, every week
@@ -1333,11 +1347,10 @@ def test_validation_gate_deletes_gate_runs_from_both_tables():
     binding_map = {"customers": "b-customers", "orders": "b-orders"}
     svc._validation_gate(binding_map, "admin@example.com")
 
-    executed = [call.args[0] for call in deps["app_sql"].execute.call_args_list]
-    deletes = [sql for sql in executed if sql.startswith("DELETE FROM")]
+    deletes = [call for call in deps["app_sql"].execute.call_args_list if call.args[0].startswith("DELETE FROM")]
     # one DELETE per gate run against each of the two tables
-    assert any(s.startswith("DELETE FROM") and "dq_metrics" in s and "gate-run" in s for s in deletes)
-    assert any(s.startswith("DELETE FROM") and "dq_validation_runs" in s and "gate-run" in s for s in deletes)
+    assert any("dq_metrics" in c.args[0] and c.kwargs["parameters"]["run_id"] == "gate-run" for c in deletes)
+    assert any("dq_validation_runs" in c.args[0] and c.kwargs["parameters"]["run_id"] == "gate-run" for c in deletes)
 
 
 # ---------------------------------------------------------------------------

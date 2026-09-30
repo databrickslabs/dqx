@@ -474,6 +474,84 @@ class TestGenerateRuleLowcode:
         assert result["mode"] == "sql"
         assert gateway.query.call_count == 3
 
+    @pytest.mark.parametrize(
+        "proposal_overrides",
+        [
+            {
+                "lowcode_ast": {
+                    "rows": [
+                        {"kind": "row", "column_ref": "amount", "operator": ">", "value": 0},
+                        {
+                            "kind": "row",
+                            "combinator": "OR TRUE UNION SELECT secret",
+                            "column_ref": "amount",
+                            "operator": ">",
+                            "value": 1,
+                        },
+                    ],
+                    "joins": [],
+                }
+            },
+            {"group_by_columns": "{{amount}} OR TRUE"},
+        ],
+    )
+    async def test_malformed_lowcode_falls_through_to_sql(self, proposal_overrides):
+        gateway = _gateway_returning(_NATIVE_DECLINE, _lowcode_proposal(**proposal_overrides), _sql_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="amount must be positive", user_email="a@x")
+
+        assert result["mode"] == "sql"
+        assert gateway.query.call_count == 3
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {
+                "kind": "row",
+                "column_ref": "created_at",
+                "operator": "is in last",
+                "value": {"number": "1' OR TRUE --", "unit": "days"},
+            },
+            {
+                "kind": "row",
+                "column_ref": "created_at",
+                "operator": "is in last",
+                "value": {"number": 7, "unit": "days' OR TRUE --"},
+            },
+            {
+                "kind": "row",
+                "column_ref": "created_at",
+                "operator": "is in last",
+                "value": {"number": 7, "unit": ["days"]},
+            },
+            {
+                "kind": "aggregated",
+                "aggregate": "percentile",
+                "aggregate_param": "0.5) OR TRUE --",
+                "column_ref": "amount",
+                "operator": ">",
+                "value": 0,
+            },
+            {
+                "kind": "aggregated",
+                "aggregate": ["percentile"],
+                "aggregate_param": 0.5,
+                "column_ref": "amount",
+                "operator": ">",
+                "value": 0,
+            },
+        ],
+    )
+    async def test_unsafe_lowcode_numeric_operands_fall_through_to_sql(self, row):
+        proposal = _lowcode_proposal(lowcode_ast={"rows": [row], "joins": []})
+        gateway = _gateway_returning(_NATIVE_DECLINE, proposal, _sql_proposal())
+
+        result = await _service(gateway).generate_rule(description="d", user_email="a@x")
+
+        assert result["mode"] == "sql"
+        assert gateway.query.call_count == 3
+
     async def test_unsafe_compiled_lowcode_is_rejected_and_falls_through(self):
         # A column-reference operand carrying a forbidden keyword lands OUTSIDE
         # any quoted literal in the compiled predicate, so the safety gate

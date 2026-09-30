@@ -167,6 +167,10 @@ class OltpExecutorProtocol(Protocol):
         """
         ...
 
+    def json_parameter_expr(self, name: str) -> str:
+        """Return the backend JSON conversion around a named bound parameter."""
+        ...
+
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as an ISO-string-safe expression.
 
@@ -176,7 +180,13 @@ class OltpExecutorProtocol(Protocol):
         """
         ...
 
-    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
+    def execute(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> None:
         """Run a non-returning statement and commit it."""
 
     def execute_no_schema(self, sql: str) -> None:
@@ -467,14 +477,17 @@ def _render_value(value: Any) -> str:
 
 def _bound_read_renderer(
     marker: Callable[[str], str],
+    *,
+    prefix: str = "where",
+    raw_renderer: Callable[[RawSql], str] | None = None,
 ) -> tuple[Callable[[Any], str], dict[str, SqlParameterValue]]:
-    """Render read predicates with bound values while preserving explicit SQL expressions."""
+    """Render runtime values as named markers while preserving explicit SQL expressions."""
     parameters: dict[str, SqlParameterValue] = {}
 
     def render(value: Any) -> str:
         if isinstance(value, RawSql):
-            return value.expr
-        name = f"where_{len(parameters)}"
+            return raw_renderer(value) if raw_renderer is not None else value.expr
+        name = f"{prefix}_{len(parameters)}"
         parameters[name] = value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
         return marker(name)
 
@@ -730,6 +743,10 @@ class SqlExecutor:
         """
         return f"parse_json('{escape_json_for_sql_string_literal(json_str)}')"
 
+    def json_parameter_expr(self, name: str) -> str:
+        """Parse JSON text supplied through a bound Databricks SQL parameter."""
+        return f"parse_json({self.param(name)})"
+
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as an ISO-formatted string.
 
@@ -742,7 +759,13 @@ class SqlExecutor:
         """
         return f"CAST({col} AS STRING)"
 
-    def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
+    def execute(
+        self,
+        sql: str,
+        *,
+        parameters: Mapping[str, SqlParameterValue] | None = None,
+        timeout_seconds: int = 120,
+    ) -> None:
         """Execute a SQL statement that does not return rows.
 
         Polls for completion when the warehouse is cold-starting.
@@ -756,6 +779,7 @@ class SqlExecutor:
             disposition=Disposition.INLINE,
             format=Format.JSON_ARRAY,
             wait_timeout="30s",
+            parameters=_statement_parameters(parameters) if parameters is not None else None,
         )
         if not resp.status:
             raise RuntimeError(f"SQL statement returned no status\nSQL: {sql}")
@@ -907,9 +931,9 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.insert` for the contract.
         """
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
         self.execute(
-            _build_insert(table, values, self.q, _render_value),
-            timeout_seconds=timeout_seconds,
+            _build_insert(table, values, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
         )
 
     def update(
@@ -924,8 +948,10 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.update` for the contract.
         """
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
         self.execute(
-            _build_update(table, updates, where, self.q, _render_value),
+            _build_update(table, updates, where, self.q, render),
+            parameters=parameters,
             timeout_seconds=timeout_seconds,
         )
 
@@ -940,9 +966,9 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.delete` for the contract.
         """
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
         self.execute(
-            _build_delete(table, where, self.q, _render_value),
-            timeout_seconds=timeout_seconds,
+            _build_delete(table, where, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
         )
 
     def count(
@@ -1037,11 +1063,12 @@ class SqlExecutor:
         # side so the two backends stay symmetric — without this the
         # Postgres path accepts a reserved-word column and Delta
         # raises a parse error.
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
         on_clause = " AND ".join(f"target.{self.q(k)} = source.{self.q(k)}" for k in key_cols)
-        source_select = ", ".join(f"{_render_value(v)} AS {self.q(k)}" for k, v in key_cols.items())
-        update_set = ", ".join(f"{self.q(k)} = {_render_value(v)}" for k, v in value_cols.items())
+        source_select = ", ".join(f"{render(v)} AS {self.q(k)}" for k, v in key_cols.items())
+        update_set = ", ".join(f"{self.q(k)} = {render(v)}" for k, v in value_cols.items())
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
-        all_vals = [_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
+        all_vals = [render(v) for v in list(key_cols.values()) + list(value_cols.values())]
         insert_cols = ", ".join(self.q(c) for c in all_cols)
         insert_vals = ", ".join(all_vals)
 
@@ -1051,7 +1078,7 @@ class SqlExecutor:
             f"WHEN MATCHED THEN UPDATE SET {update_set} "
             f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"
         )
-        self.execute(sql, timeout_seconds=timeout_seconds)
+        self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 
     def upsert_with_audit(
         self,
@@ -1085,8 +1112,9 @@ class SqlExecutor:
         # Postgres side so the two backends stay symmetric — without
         # this the Postgres path accepts a reserved-word audit column
         # and Delta raises a parse error.
+        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
         on_clause = " AND ".join(f"target.{self.q(k)} = source.{self.q(k)}" for k in key_cols)
-        source_select = ", ".join(f"{_render_value(v)} AS {self.q(k)}" for k, v in key_cols.items())
+        source_select = ", ".join(f"{render(v)} AS {self.q(k)}" for k, v in key_cols.items())
 
         # UPDATE SET excludes created_* columns when preserve_created;
         # the increment column (if any) gets the dialect-specific
@@ -1101,11 +1129,11 @@ class SqlExecutor:
                 # disambiguate from the source row.
                 update_pairs.append(f"{qcol} = target.{qcol} + 1")
             else:
-                update_pairs.append(f"{qcol} = {_render_value(val)}")
+                update_pairs.append(f"{qcol} = {render(val)}")
         update_set = ", ".join(update_pairs)
 
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
-        all_vals = [_render_value(v) for v in list(key_cols.values()) + list(value_cols.values())]
+        all_vals = [render(v) for v in list(key_cols.values()) + list(value_cols.values())]
         insert_cols = ", ".join(self.q(c) for c in all_cols)
         insert_vals = ", ".join(all_vals)
 
@@ -1115,7 +1143,7 @@ class SqlExecutor:
             f"WHEN MATCHED THEN UPDATE SET {update_set} "
             f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"
         )
-        self.execute(sql, timeout_seconds=timeout_seconds)
+        self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 
     def select_json_text(self, col: str) -> str:
         """Delta needs ``to_json`` to serialise VARIANT through JSON_ARRAY."""

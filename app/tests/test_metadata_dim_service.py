@@ -101,6 +101,22 @@ class TestConstants:
 
 
 class TestRefreshRules:
+    def test_free_text_is_bound_in_batch_insert(self, service, sql_executor_mock, registry, monitored_tables) -> None:
+        payload = "O'\\ OR 1=1 --"
+        registry.list_rules.return_value = [
+            _rule(rule_id="r1", user_metadata={"description": payload}),
+            _rule(rule_id="r2", user_metadata={"description": payload}),
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        service.refresh()
+
+        insert = next(
+            c for c in sql_executor_mock.execute.call_args_list if c.args[0].startswith(f"INSERT INTO {DIM_RULES_FQN}")
+        )
+        assert payload not in insert.args[0]
+        assert insert.kwargs["parameters"]["description_0"] == payload
+        assert insert.kwargs["parameters"]["description_1"] == payload
+
     def test_creates_then_inserts_with_quoted_fqn(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         registry.list_rules.return_value = [_rule()]
         monitored_tables.list_monitored_tables.return_value = []
@@ -144,12 +160,23 @@ class TestRefreshRules:
         service.refresh()
 
         insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
-        expected = (
-            "('r1', 'id_not_null', 'id must be present', 'Completeness', 'High', "
-            "'dqx_native', 'approved', FALSE, 'alice@example.com', 2, "
-            f"TIMESTAMP'{_TS.isoformat()}', TIMESTAMP'{_TS.isoformat()}')"
-        )
-        assert insert == f"INSERT INTO {DIM_RULES_FQN} VALUES {expected}"
+        assert ":description_0" in insert
+        assert "CAST(:created_at_0 AS TIMESTAMP)" in insert
+        params = next(c.kwargs["parameters"] for c in sql_executor_mock.execute.call_args_list if c.args[0] == insert)
+        assert params == {
+            "rule_id_0": "r1",
+            "name_0": "id_not_null",
+            "description_0": "id must be present",
+            "dimension_0": "Completeness",
+            "default_severity_0": "High",
+            "mode_0": "dqx_native",
+            "status_0": "approved",
+            "is_builtin_0": False,
+            "owner_0": "alice@example.com",
+            "version_0": 2,
+            "created_at_0": _TS.isoformat(),
+            "updated_at_0": _TS.isoformat(),
+        }
 
     def test_missing_tags_and_timestamps_become_null(
         self, service, sql_executor_mock, registry, monitored_tables
@@ -163,10 +190,13 @@ class TestRefreshRules:
         insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
         # name/description/dimension/severity/owner/timestamps -> NULL;
         # is_builtin -> TRUE; version -> 0.
-        assert insert == (
-            f"INSERT INTO {DIM_RULES_FQN} VALUES "
-            "('r1', NULL, NULL, NULL, NULL, 'dqx_native', 'approved', TRUE, NULL, 0, NULL, NULL)"
-        )
+        params = next(c.kwargs["parameters"] for c in sql_executor_mock.execute.call_args_list if c.args[0] == insert)
+        assert params["name_0"] is None
+        assert params["description_0"] is None
+        assert params["owner_0"] is None
+        assert params["is_builtin_0"] is True
+        assert params["version_0"] == 0
+        assert params["created_at_0"] is None
 
     def test_string_values_are_escaped(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         registry.list_rules.return_value = [_rule(user_metadata={"name": "O'Brien's rule"})]
@@ -174,7 +204,9 @@ class TestRefreshRules:
         service.refresh()
 
         insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
-        assert "'O''Brien''s rule'" in insert
+        assert "O'Brien's rule" not in insert
+        params = next(c.kwargs["parameters"] for c in sql_executor_mock.execute.call_args_list if c.args[0] == insert)
+        assert params["name_0"] == "O'Brien's rule"
 
     def test_trailing_backslash_is_escaped(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         # escape_sql_string only doubles single quotes; a bare trailing
@@ -190,8 +222,9 @@ class TestRefreshRules:
         service.refresh()
 
         insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
-        expected = "'matches paths like C:" + backslash * 2 + "data" + backslash * 2 + "'"
-        assert expected in insert
+        assert description not in insert
+        params = next(c.kwargs["parameters"] for c in sql_executor_mock.execute.call_args_list if c.args[0] == insert)
+        assert params["description_0"] == description
 
     def test_multiple_rules_join_into_one_insert(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         registry.list_rules.return_value = [_rule(rule_id="r1"), _rule(rule_id="r2")]
@@ -200,8 +233,21 @@ class TestRefreshRules:
 
         inserts = [s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO")]
         assert len(inserts) == 1
-        assert "'r1'" in inserts[0] and "'r2'" in inserts[0]
+        assert ":rule_id_0" in inserts[0] and ":rule_id_1" in inserts[0]
         assert "), (" in inserts[0]
+
+    def test_large_refresh_bounds_parameters_per_statement(
+        self, service, sql_executor_mock, registry, monitored_tables
+    ) -> None:
+        registry.list_rules.return_value = [_rule(rule_id=f"r{index}") for index in range(51)]
+        monitored_tables.list_monitored_tables.return_value = []
+        service.refresh()
+
+        inserts = [
+            c for c in sql_executor_mock.execute.call_args_list if c.args[0].startswith(f"INSERT INTO {DIM_RULES_FQN}")
+        ]
+        assert len(inserts) == 2
+        assert max(len(c.kwargs["parameters"]) for c in inserts) <= 600
 
     def test_zero_rules_creates_but_does_not_insert(
         self, service, sql_executor_mock, registry, monitored_tables
@@ -244,11 +290,17 @@ class TestRefreshMonitoredTables:
         service.refresh()
 
         insert = next(s for s in _executed(sql_executor_mock) if DIM_TABLES_FQN in s and s.startswith("INSERT INTO"))
-        expected = (
-            "('b1', 'cat.sch.orders', 'bob@example.com', 'approved', '0 0 * * *', 3, "
-            f"TIMESTAMP'{_TS.isoformat()}', TIMESTAMP'{_TS.isoformat()}')"
-        )
-        assert insert == f"INSERT INTO {DIM_TABLES_FQN} VALUES {expected}"
+        params = next(c.kwargs["parameters"] for c in sql_executor_mock.execute.call_args_list if c.args[0] == insert)
+        assert params == {
+            "binding_id_0": "b1",
+            "table_fqn_0": "cat.sch.orders",
+            "owner_0": "bob@example.com",
+            "status_0": "approved",
+            "schedule_cron_0": "0 0 * * *",
+            "version_0": 3,
+            "created_at_0": _TS.isoformat(),
+            "updated_at_0": _TS.isoformat(),
+        }
 
     def test_null_schedule_and_owner_become_null(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         registry.list_rules.return_value = []
@@ -258,9 +310,11 @@ class TestRefreshMonitoredTables:
         service.refresh()
 
         insert = next(s for s in _executed(sql_executor_mock) if DIM_TABLES_FQN in s and s.startswith("INSERT INTO"))
-        assert insert == (
-            f"INSERT INTO {DIM_TABLES_FQN} VALUES ('b1', 'cat.sch.orders', NULL, 'approved', NULL, 0, NULL, NULL)"
-        )
+        params = next(c.kwargs["parameters"] for c in sql_executor_mock.execute.call_args_list if c.args[0] == insert)
+        assert params["owner_0"] is None
+        assert params["schedule_cron_0"] is None
+        assert params["version_0"] == 0
+        assert params["created_at_0"] is None
 
     def test_zero_tables_creates_but_does_not_insert(
         self, service, sql_executor_mock, registry, monitored_tables

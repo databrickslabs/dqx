@@ -74,6 +74,19 @@ def test_query_binds_runtime_value_without_inlining_it() -> None:
     assert request["parameters"] == [StatementParameterListItem(name="owner", type="STRING", value=value)]
 
 
+def test_execute_binds_runtime_value_without_inlining_it() -> None:
+    workspace = MagicMock()
+    executor = SqlExecutor(workspace, "test-wh", "dqx", "public")
+    workspace.statement_execution.execute_statement.return_value.status.state = StatementState.SUCCEEDED
+    value = "x\\' OR 1=1 --"
+
+    executor.execute("UPDATE bindings SET owner = :owner", parameters={"owner": value})
+
+    request = workspace.statement_execution.execute_statement.call_args.kwargs
+    assert request["statement"] == "UPDATE bindings SET owner = :owner"
+    assert request["parameters"] == [StatementParameterListItem(name="owner", type="STRING", value=value)]
+
+
 def test_query_dicts_binds_typed_runtime_values() -> None:
     workspace = MagicMock()
     executor = SqlExecutor(workspace, "test-wh", "dqx", "public")
@@ -105,6 +118,11 @@ def test_bind_list_keeps_values_out_of_sql_markers() -> None:
     assert markers == ":rule_id_0, :rule_id_1"
     assert value not in markers
     assert parameters == {"rule_id_0": value, "rule_id_1": "safe"}
+
+
+def test_json_parameter_expression_uses_bound_marker() -> None:
+    executor = SqlExecutor(MagicMock(), "test-wh", "dqx", "public")
+    assert executor.json_parameter_expr("definition_json") == "parse_json(:definition_json)"
 
 
 # ===========================================================================
@@ -447,19 +465,67 @@ class TestSqlExecutorCrudDelegation:
         executor = _make_sql_executor()
         captured = self._capture_execute(executor)
         executor.insert("dq.t", values={"id": "abc", "count": 3})
-        assert captured == ["INSERT INTO dq.t (`id`, `count`) VALUES ('abc', 3)"]
+        assert captured == ["INSERT INTO dq.t (`id`, `count`) VALUES (:value_0, :value_1)"]
+
+    def test_insert_binds_untrusted_text(self) -> None:
+        executor = _make_sql_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.insert("dq.t", values={"owner": value})
+
+        statement = executor.execute.call_args.args[0]
+        assert value not in statement
+        assert executor.execute.call_args.kwargs["parameters"] == {"value_0": value}
 
     def test_update_delegates_with_delta_quoting(self) -> None:
         executor = _make_sql_executor()
         captured = self._capture_execute(executor)
         executor.update("dq.t", updates={"status": "done"}, where={"id": "r1"})
-        assert captured == ["UPDATE dq.t SET `status` = 'done' WHERE `id` = 'r1'"]
+        assert captured == ["UPDATE dq.t SET `status` = :value_0 WHERE `id` = :value_1"]
 
     def test_delete_delegates_with_delta_quoting(self) -> None:
         executor = _make_sql_executor()
         captured = self._capture_execute(executor)
         executor.delete("dq.t", where={"id": "r1"})
-        assert captured == ["DELETE FROM dq.t WHERE `id` = 'r1'"]
+        assert captured == ["DELETE FROM dq.t WHERE `id` = :value_0"]
+
+    def test_update_and_delete_bind_untrusted_text(self) -> None:
+        executor = _make_sql_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.update("dq.t", updates={"status": value}, where={"id": value})
+        update_call = executor.execute.call_args
+        assert value not in update_call.args[0]
+        assert update_call.kwargs["parameters"] == {"value_0": value, "value_1": value}
+
+        executor.delete("dq.t", where={"id": value})
+        delete_call = executor.execute.call_args
+        assert value not in delete_call.args[0]
+        assert delete_call.kwargs["parameters"] == {"value_0": value}
+
+    def test_upsert_binds_untrusted_text(self) -> None:
+        executor = _make_sql_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.upsert("dq.t", {"id": value}, {"status": value})
+
+        call = executor.execute.call_args
+        assert value not in call.args[0]
+        assert value in call.kwargs["parameters"].values()
+
+    def test_upsert_with_audit_binds_untrusted_text(self) -> None:
+        executor = _make_sql_executor()
+        executor.execute = MagicMock()
+        value = "x\\' OR 1=1 --"
+
+        executor.upsert_with_audit("dq.t", {"id": value}, {"updated_by": value})
+
+        call = executor.execute.call_args
+        assert value not in call.args[0]
+        assert value in call.kwargs["parameters"].values()
 
     def test_count_delegates_and_parses_query_result(self) -> None:
         executor = _make_sql_executor()

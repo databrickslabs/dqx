@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
 @pytest.fixture
 def svc(sql_executor_mock):
     sql_executor_mock.param.side_effect = lambda name: f":{name}"
+    sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
     return RulesCatalogService(sql=sql_executor_mock)
 
 
@@ -43,6 +44,17 @@ def test_get_by_rule_id_binds_runtime_id(svc, sql_executor_mock) -> None:
     assert svc.get_by_rule_id(rule_id) is None
     assert "rule_id = :rule_id" in sql_executor_mock.query.call_args.args[0]
     assert sql_executor_mock.query.call_args.kwargs["parameters"] == {"rule_id": rule_id}
+
+
+def test_delete_binds_rule_id_with_quote_and_backslash(svc, sql_executor_mock) -> None:
+    sql_executor_mock.query.return_value = []
+    rule_id = "r'\\ OR 1=1 --"
+
+    svc.delete(rule_id, user_email="a@example.com")
+
+    call = sql_executor_mock.execute.call_args_list[0]
+    assert rule_id not in call.args[0]
+    assert call.kwargs["parameters"] == {"rule_id": rule_id}
 
 
 # ---------------------------------------------------------------------------
@@ -439,10 +451,10 @@ class TestRuleFingerprintPersisted:
         }
         svc.save("main.sales.orders", [check], user_email="a@b.com")
 
-        insert_sql = sql_executor_mock.execute.call_args_list[0].args[0]
-        assert "rule_fingerprint" in insert_sql
+        insert_call = sql_executor_mock.execute.call_args_list[0]
+        assert "rule_fingerprint" in insert_call.args[0]
         # The stored value is exactly what dqx-core would compute for the check.
-        assert compute_rule_fingerprint(check) in insert_sql
+        assert insert_call.kwargs["parameters"]["fingerprint"] == compute_rule_fingerprint(check)
 
     def test_update_rewrites_the_fingerprint(self, svc, sql_executor_mock):
         from databricks.labs.dqx.rule import compute_rule_fingerprint
@@ -464,5 +476,5 @@ class TestRuleFingerprintPersisted:
         }
         svc.update_rule("rid1", [new_check], user_email="a@b.com")
 
-        update_sql = next(c.args[0] for c in sql_executor_mock.execute.call_args_list if c.args[0].startswith("UPDATE"))
-        assert f"rule_fingerprint = '{compute_rule_fingerprint(new_check)}'" in update_sql
+        update_call = next(c for c in sql_executor_mock.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert update_call.kwargs["parameters"]["fingerprint"] == compute_rule_fingerprint(new_check)

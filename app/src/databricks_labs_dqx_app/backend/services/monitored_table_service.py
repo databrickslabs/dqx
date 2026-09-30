@@ -50,7 +50,7 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor, bind_list
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -388,13 +388,25 @@ class MonitoredTableService:
             "(binding_id, table_fqn, owner, owner_display_name, status, version, created_by, "
             "created_at, updated_by, updated_at, schedule_kind) "
             "VALUES "
-            f"('{escape_sql_string(binding.binding_id)}', '{escape_sql_string(binding.table_fqn)}', "
-            f"{self._opt_str(binding.owner)}, {self._opt_str(binding.owner_display_name)}, "
-            f"'{escape_sql_string(binding.status)}', 0, "
-            f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now(), "
-            f"'{escape_sql_string(binding.schedule_kind)}')"
+            f"({self._sql.param('binding_id')}, {self._sql.param('table_fqn')}, "
+            f"{self._sql.param('owner')}, {self._sql.param('owner_display_name')}, "
+            f"{self._sql.param('status')}, 0, "
+            f"{self._sql.param('created_by')}, now(), {self._sql.param('updated_by')}, now(), "
+            f"{self._sql.param('schedule_kind')})"
         )
-        self._sql.execute(sql)
+        self._sql.execute(
+            sql,
+            parameters={
+                "binding_id": binding.binding_id,
+                "table_fqn": binding.table_fqn,
+                "owner": binding.owner,
+                "owner_display_name": binding.owner_display_name,
+                "status": binding.status,
+                "created_by": binding.created_by,
+                "updated_by": binding.updated_by,
+                "schedule_kind": binding.schedule_kind,
+            },
+        )
 
     # ------------------------------------------------------------------
     # List / Get
@@ -649,12 +661,16 @@ class MonitoredTableService:
         (mirrors :class:`ScoreCacheService`'s timestamp writes); a ``None``
         value is written as SQL ``NULL``.
         """
-        e = escape_sql_string(table_fqn)
         self._sql.execute(
             f"UPDATE {self._table} SET "  # noqa: S608
-            f"last_run_at = {self._opt_timestamp(last_run_at)}, "
-            f"last_profiled_at = {self._opt_timestamp(last_profiled_at)} "
-            f"WHERE table_fqn = '{e}'"
+            f"last_run_at = CAST({self._sql.param('last_run_at')} AS TIMESTAMP), "
+            f"last_profiled_at = CAST({self._sql.param('last_profiled_at')} AS TIMESTAMP) "
+            f"WHERE table_fqn = {self._sql.param('table_fqn')}",
+            parameters={
+                "last_run_at": last_run_at.isoformat() if last_run_at else None,
+                "last_profiled_at": last_profiled_at.isoformat() if last_profiled_at else None,
+                "table_fqn": table_fqn,
+            },
         )
 
     def _latest_validation_run_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
@@ -971,14 +987,21 @@ class MonitoredTableService:
         tz = schedule_tz if cron is not None else None
         kind = schedule_kind if schedule_kind in get_args(ScheduleKind) else SCHEDULE_KIND_DEFAULT
         sample = normalize_schedule_sample_size(schedule_sample_size) if cron is not None else None
-        e = escape_sql_string(binding_id)
         self._sql.execute(
-            f"UPDATE {self._table} SET schedule_cron = {self._opt_str(cron)}, "
-            f"schedule_tz = {self._opt_str(tz)}, "
-            f"schedule_kind = {self._opt_str(kind)}, "
-            f"schedule_sample_size = {sample if sample is not None else 'NULL'}, "
-            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
-            f"WHERE binding_id = '{e}'"
+            f"UPDATE {self._table} SET schedule_cron = {self._sql.param('schedule_cron')}, "
+            f"schedule_tz = {self._sql.param('schedule_tz')}, "
+            f"schedule_kind = {self._sql.param('schedule_kind')}, "
+            f"schedule_sample_size = {self._sql.param('schedule_sample_size')}, "
+            f"updated_by = {self._sql.param('updated_by')}, updated_at = now() "
+            f"WHERE binding_id = {self._sql.param('binding_id')}",
+            parameters={
+                "schedule_cron": cron,
+                "schedule_tz": tz,
+                "schedule_kind": kind,
+                "schedule_sample_size": sample,
+                "updated_by": user_email,
+                "binding_id": binding_id,
+            },
         )
         table.schedule_cron = cron
         table.schedule_tz = tz
@@ -1014,11 +1037,11 @@ class MonitoredTableService:
         table = self._get(binding_id)
         if table is None:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
-        e = escape_sql_string(binding_id)
         self._sql.execute(
-            f"UPDATE {self._table} SET owner = {self._opt_str(owner)}, "
-            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
-            f"WHERE binding_id = '{e}'"
+            f"UPDATE {self._table} SET owner = {self._sql.param('owner')}, "
+            f"updated_by = {self._sql.param('updated_by')}, updated_at = now() "
+            f"WHERE binding_id = {self._sql.param('binding_id')}",
+            parameters={"owner": owner, "updated_by": user_email, "binding_id": binding_id},
         )
         table.owner = owner
         table.updated_by = user_email
@@ -1171,22 +1194,6 @@ class MonitoredTableService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
-
-    @staticmethod
-    def _opt_timestamp(value: datetime | None) -> str:
-        """SQL literal for a nullable timestamp column write.
-
-        ``CAST('<iso>' AS TIMESTAMP)`` parses identically on Delta and
-        Postgres; ``None`` becomes ``NULL``. The ISO string never contains a
-        quote, but it is escaped anyway for uniformity with the other writers.
-        """
-        if value is None:
-            return "NULL"
-        return f"CAST('{escape_sql_string(value.isoformat())}' AS TIMESTAMP)"
 
     @classmethod
     def _parse_status(cls, value: str | None, *, binding_id: str) -> MonitoredTableStatus:

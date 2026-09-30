@@ -104,8 +104,12 @@ class TableDataService:
     async def preview(self, table_fqn: str) -> PreviewResult:
         """Return the first :attr:`PREVIEW_LIMIT` rows of *table_fqn*."""
         validate_fqn(table_fqn)
-        sql = f"SELECT * FROM {quote_fqn(table_fqn)} LIMIT {self.PREVIEW_LIMIT}"
-        rows = await asyncio.to_thread(self._sql.query_dicts, sql)
+        sql = "SELECT * FROM IDENTIFIER(:table_name) LIMIT CAST(:limit AS INT)"
+        rows = await asyncio.to_thread(
+            self._sql.query_dicts,
+            sql,
+            parameters={"table_name": quote_fqn(table_fqn), "limit": self.PREVIEW_LIMIT},
+        )
         return self._to_result(rows, generated_sql=None)
 
     async def query(self, table_fqn: str, question: str, user_email: str) -> PreviewResult:
@@ -206,7 +210,11 @@ class TableDataService:
     async def _table_columns(self, table_fqn: str) -> list[str]:
         """Best-effort column names for the prompt context (empty on failure)."""
         try:
-            rows = await asyncio.to_thread(self._sql.query_dicts, f"SELECT * FROM {quote_fqn(table_fqn)} LIMIT 1")
+            rows = await asyncio.to_thread(
+                self._sql.query_dicts,
+                "SELECT * FROM IDENTIFIER(:table_name) LIMIT 1",
+                parameters={"table_name": quote_fqn(table_fqn)},
+            )
         except Exception:
             logger.warning("Could not read columns for AI query context", exc_info=True)
             return []
