@@ -309,6 +309,29 @@ def validate_schedule_name(name: str) -> str:
 
 
 # \A/\Z (not ^/$) so a trailing newline can't sneak past the end anchor.
+# Same character rule as the task runner's run-id check
+# (``dqx_task_runner.runner._validate_run_id``); the runner ships as its own
+# wheel without the app backend, so it keeps its own copy — keep them in step.
+_RUN_ID_RE = re.compile(r"\A[a-zA-Z0-9_-]{1,64}\Z")
+
+
+def validate_run_id(run_id: str) -> str:
+    """Validate an app-minted run id (letters, digits, ``_``, ``-``; 1-64 chars).
+
+    Run ids reach SQL as single-quoted literals via ``escape_sql_string``,
+    which deliberately does not escape backslashes, so ids arriving from a
+    request (e.g. a path parameter) must be checked against this allowlist
+    first.
+
+    Raises ValueError for anything else. Returns the id unchanged.
+    """
+    if not run_id or not _RUN_ID_RE.match(run_id):
+        raise ValueError(
+            f"Invalid run_id: '{run_id}'. Must be 1-64 characters using only letters, digits, underscores, or hyphens."
+        )
+    return run_id
+
+
 _OBJECT_ID_RE = re.compile(r"\A[a-zA-Z0-9_-]{1,128}\Z")
 
 

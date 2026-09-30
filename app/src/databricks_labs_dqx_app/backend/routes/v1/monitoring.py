@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 from databricks_labs_dqx_app.backend.models import ValidationStatusOut
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn, validate_run_id
 
 router = APIRouter()
 
@@ -63,12 +64,18 @@ def get_validation_status_by_table(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> ValidationStatusOut:
-    """Return the latest run's pass/fail status for a table.
+    """Return the latest completed run's pass/fail status for a table.
 
     Meant for external polling (e.g. a Site24x7 REST monitor authenticating
     with a Databricks OAuth token) — 200 on a clean run, 503 on a failed one.
+    In-progress and canceled runs are skipped: they say nothing about the data.
+    400 for a malformed table name.
     """
-    row = job_svc.get_latest_run_result_row(sql.fqn(_RUNS_TABLE), table_fqn)
+    try:
+        validate_fqn(table_fqn)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    row = job_svc.get_latest_completed_run_result_row(sql.fqn(_RUNS_TABLE), table_fqn)
     if row is None:
         raise HTTPException(status_code=404, detail=f"No validation run recorded for '{table_fqn}'")
     return _raise_for_status(row)
@@ -88,8 +95,13 @@ def get_validation_status_by_run(
     """Return a specific run's pass/fail status.
 
     Same 200/503 contract as ``getValidationStatusByTable`` but keyed by
-    ``run_id`` instead of table name.
+    ``run_id`` instead of table name; a canceled run is reported as such (503).
+    400 for a malformed run id.
     """
+    try:
+        validate_run_id(run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     row = job_svc.get_run_result_row(sql.fqn(_RUNS_TABLE), run_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
