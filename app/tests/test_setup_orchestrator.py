@@ -309,16 +309,39 @@ async def test_wheel_publication_failure_blocks_migrations(resources: ActiveReso
 
 
 @pytest.mark.asyncio
-async def test_migration_failure_blocks_completion_and_activation(resources: ActiveResources) -> None:
+async def test_lakebase_migration_failure_reports_stage_without_secret(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture
+) -> None:
+    class PrivilegeError(RuntimeError):
+        sqlstate = "42501"
+
     fixture = _make_orchestrator(resources)
-    fixture.orchestrator.pg_migrations.failure = RuntimeError("credential=secret")
+    fixture.orchestrator.pg_migrations.failure = PrivilegeError("credential=secret")
 
     report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
 
     assert report.current_step == SetupStepId.MIGRATIONS
     assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    assert report.step(SetupStepId.MIGRATIONS).code == "lakebase_migration_failed"
     assert "credential=secret" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert "Lakebase migration failed" in caplog.text
+    assert "SQLSTATE 42501" in caplog.text
+    assert "credential=secret" not in caplog.text
     assert not any(event.startswith("persist:") for event in fixture.events)
+    assert "activate" not in fixture.events
+
+
+@pytest.mark.asyncio
+async def test_delta_migration_failure_reports_stage(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    fixture.orchestrator.delta_migrations.failure = RuntimeError("SQL: sensitive statement")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.MIGRATIONS).code == "delta_migration_failed"
+    assert "SQL: sensitive statement" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert "pg_migrations" in fixture.events
+    assert "delta_migrations" in fixture.events
     assert "activate" not in fixture.events
 
 

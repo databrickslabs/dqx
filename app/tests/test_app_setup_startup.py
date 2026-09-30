@@ -270,6 +270,52 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
 
 
 @pytest.mark.asyncio
+async def test_startup_does_not_activate_when_score_views_fail(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed view DDL must keep setup from reporting the app as ready."""
+    from databricks_labs_dqx_app.backend import startup
+
+    workspace = MagicMock()
+    delta_sql = MagicMock()
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    delta_sql.execute.side_effect = RuntimeError("SQLSTATE 42501")
+    orchestrator = MagicMock()
+    orchestrator.reconcile = AsyncMock()
+    compute = MagicMock()
+    compute.sp_application_id.return_value = "app-sp"
+
+    async def get_workspace() -> MagicMock:
+        return workspace
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: resources)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: delta_sql)
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
+    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
+    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
+    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+
+    context = await startup.start_studio(FastAPI())
+    assert context is not None
+    try:
+        with pytest.raises(RuntimeError, match="SQLSTATE 42501"):
+            await activate_studio(context)
+    finally:
+        await deactivate_studio(context)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("include_bundle_resources", [False, True])
 async def test_startup_reconciles_studio_resource_tags(
     resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, include_bundle_resources: bool

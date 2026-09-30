@@ -263,14 +263,45 @@ def test_catalog_and_main_schema_capabilities_pass(checkers: ResourceCheckers, w
     assert result.code == ""
 
 
-def test_sibling_schema_creation_is_idempotent(checkers: ResourceCheckers, sql: MagicMock) -> None:
+def test_sibling_schema_creation_is_idempotent(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+) -> None:
     """Removing IF NOT EXISTS would make a second setup reconciliation fail."""
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
     result = checkers.ensure_sibling_schemas()
 
     assert result.id == SetupStepId.SCHEMAS
     assert result.state == StepState.PASSED
     assert sql.execute_no_schema.call_count == 2
     assert all("CREATE SCHEMA IF NOT EXISTS" in call.args[0] for call in sql.execute_no_schema.call_args_list)
+
+
+def test_existing_genie_schema_without_create_privilege_blocks_setup(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    """A shared Genie schema must not let setup claim views can be created."""
+    workspace.grants.get_effective.side_effect = [
+        _effective_permissions(Privilege.ALL_PRIVILEGES),
+        _effective_permissions(Privilege.USE_SCHEMA),
+    ]
+
+    result = checkers.ensure_sibling_schemas()
+
+    assert result.id == SetupStepId.SCHEMAS
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "sibling_schema_permissions_missing"
+    assert "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`genie` TO `app-sp-id`;" in result.instructions
+
+
+def test_app_owned_sibling_schemas_pass_without_explicit_grants(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = [_effective_permissions(), _effective_permissions()]
+    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
+
+    result = checkers.ensure_sibling_schemas()
+
+    assert result.state == StepState.PASSED
 
 
 def test_lakebase_connectivity_failure_is_sanitized(checkers: ResourceCheckers, pg: MagicMock) -> None:

@@ -106,6 +106,7 @@ The schemas, wheels volume, and Lakebase Postgres **project** are declared as bu
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state
  │   └── dq_migrations                ← Delta migration version tracker
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
+ ├── genie (DAB) / <volume schema>_genie (Marketplace) ← derived views exposed to Genie
  └── wheels (UC volume)               ← DQX + task-runner wheels uploaded at app startup
 
 Lakebase (Postgres) — required:

@@ -1,9 +1,10 @@
 import os
 from importlib import resources
 from pathlib import Path
+from typing import Self
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .._metadata import app_name, app_slug
@@ -28,10 +29,24 @@ class AppConfig(BaseSettings):
     api_prefix: str = Field(default="/api")
     catalog: str = Field(default="dqx")
     schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
-    tmp_schema_name: str = Field(default="dqx_studio_tmp", validation_alias="DQX_TMP_SCHEMA")
-    genie_schema_name: str = Field(default="genie", validation_alias="DQX_GENIE_SCHEMA")
+    tmp_schema_name: str = Field(default="", validation_alias="DQX_TMP_SCHEMA")
+    genie_schema_name: str = Field(default="", validation_alias="DQX_GENIE_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
+
+    @model_validator(mode="after")
+    def derive_sibling_schema_names(self) -> Self:
+        """Name app-owned sibling schemas after the bound volume's schema."""
+        volume_parts = self.wheels_volume.split("/")
+        schema = (
+            volume_parts[3]
+            if len(volume_parts) == 5 and volume_parts[:2] == ["", "Volumes"] and all(volume_parts[2:])
+            else self.schema_name
+        )
+        self.tmp_schema_name = self.tmp_schema_name or f"{schema}_tmp"
+        self.genie_schema_name = self.genie_schema_name or f"{schema}_genie"
+        return self
+
     tag_bundle_owned_resources: bool = Field(
         default=False,
         validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",

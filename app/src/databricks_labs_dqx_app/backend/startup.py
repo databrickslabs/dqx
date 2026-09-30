@@ -461,10 +461,7 @@ async def _run_post_migration_startup(
 
 
 def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
-    try:
-        ScoreViewService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_views()
-    except Exception:
-        logger.warning("Could not create the DQ score views")
+    ScoreViewService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_views()
 
 
 async def _ensure_metadata_dims(

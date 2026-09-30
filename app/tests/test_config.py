@@ -49,8 +49,9 @@ def test_bundle_resource_tagging_accepts_dab_opt_in(monkeypatch) -> None:
     assert AppConfig(_env_file=None).tag_bundle_owned_resources is True
 
 
-def test_genie_schema_name_default_and_env(monkeypatch):
+def test_sibling_schema_names_follow_bound_volume_schema(monkeypatch):
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
+    monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
     # Re-import so pydantic-settings picks up the cleared env.
     import importlib
 
@@ -59,7 +60,12 @@ def test_genie_schema_name_default_and_env(monkeypatch):
     importlib.reload(config_module)
     from databricks_labs_dqx_app.backend.config import AppConfig
 
-    assert AppConfig().genie_schema_name == "genie"
+    config = AppConfig(_env_file=None, wheels_volume="/Volumes/main/dqx/wheels")
+    assert config.tmp_schema_name == "dqx_tmp"
+    assert config.genie_schema_name == "dqx_genie"
 
     monkeypatch.setenv("DQX_GENIE_SCHEMA", "custom_genie")
-    assert AppConfig().genie_schema_name == "custom_genie"
+    monkeypatch.setenv("DQX_TMP_SCHEMA", "custom_tmp")
+    configured = AppConfig(_env_file=None, wheels_volume="/Volumes/main/dqx/wheels")
+    assert configured.genie_schema_name == "custom_genie"
+    assert configured.tmp_schema_name == "custom_tmp"

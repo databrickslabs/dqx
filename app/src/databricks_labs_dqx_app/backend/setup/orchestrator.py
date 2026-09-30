@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Protocol
@@ -260,13 +261,26 @@ class SetupOrchestrator:
     async def _run_migrations(self) -> SetupStep:
         try:
             await asyncio.to_thread(self.pg_migrations.run_all)
-            await asyncio.to_thread(self.delta_migrations.run_all)
-            return _passed(SetupStepId.MIGRATIONS, "Postgres and Delta migrations are current.")
-        except Exception:
+        except Exception as error:
+            sqlstate = getattr(error, "sqlstate", None)
+            diagnostic = (
+                f", SQLSTATE {sqlstate}" if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else ""
+            )
+            logger.error(f"Lakebase migration failed ({type(error).__name__}{diagnostic})")
             return _failed(
                 SetupStepId.MIGRATIONS,
-                "database_migration_failed",
-                "Could not apply required database migrations.",
+                "lakebase_migration_failed",
+                "Could not apply the required Lakebase database migrations.",
+            )
+        try:
+            await asyncio.to_thread(self.delta_migrations.run_all)
+            return _passed(SetupStepId.MIGRATIONS, "Postgres and Delta migrations are current.")
+        except Exception as error:
+            logger.error(f"Delta migration failed ({type(error).__name__})")
+            return _failed(
+                SetupStepId.MIGRATIONS,
+                "delta_migration_failed",
+                "Could not apply the required Delta database migrations.",
             )
 
     def _append_and_stop(self, steps: list[SetupStep], step: SetupStep) -> SetupReport | None:

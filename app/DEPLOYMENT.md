@@ -8,6 +8,8 @@ Production deployment uses [Declarative Automation Bundles](https://docs.databri
 
 **Marketplace installation** requires three existing resource bindings and a workspace service principal for the task-runner job. Bind a SQL warehouse, a Lakebase Postgres endpoint, and a Unity Catalog volume; the bound volume determines the main catalog and schema. Create the workspace service principal before installation and grant the installing identity the Service Principal: User role on it. The principal is assigned as the job's `run_as` identity in the Jobs UI, not in the Marketplace resource picker. Before opening the app, ensure an administrator is a member of the workspace group named by `DQX_ADMIN_GROUP`. The setup wizard verifies the three bindings, creates the sibling schemas, runs migrations, publishes wheels, gives precise grant instructions when a capability is missing, and links to the Jobs UI for the service principal assignment.
 
+The Marketplace app derives sibling schema names from the volume's schema: a volume under `/Volumes/<catalog>/<schema>/<volume>` uses `<schema>_tmp` for temporary views and `<schema>_genie` for Genie-facing views. The data schema is always `<schema>` from that bound path. `DQX_TMP_SCHEMA` and `DQX_GENIE_SCHEMA` remain available as deployment environment overrides; changing the volume binding or an override after installation changes where Studio looks for its objects. Setup checks the app service principal's `USE SCHEMA` and `CREATE TABLE` privileges on both sibling schemas, including schemas that already existed. A failed view creation keeps setup from reporting ready.
+
 Lakebase is mandatory. Delta-backed application (OLTP) state was removed and cannot be migrated. Marketplace currently supports replacing the SQL warehouse; swapping the Lakebase endpoint or volume, and smoke-validating the task runner, are planned follow-up capabilities.
 
 Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the canonical application source and Marketplace templates but excludes the generated `app/marketplace/` artifact. `app/scripts/release_marketplace.sh studio-vX.Y.Z` validates the requested version against the application at `HEAD`, creates `dqx-studio/marketplace/vX.Y.Z`, builds and force-stages the complete self-contained source, signs and verifies its local commit, then creates and verifies the annotated signed Studio version tag on that generated commit. This ordering is required because Marketplace checks out the tag and deploys the configured `app/marketplace/` source path. The build **copies** the committed, self-contained lock at `app/marketplace_templates/uv.lock` (a tracked template) rather than re-resolving: it runs no `uv lock` and downloads no wheels, so the artifact can't drift with the package index or a `uv` version, and needs no network. A test (`test_marketplace_template_lock_matches_app_runtime_closure`) keeps that template in step with the app's runtime dependencies. To refresh it after a dependency or DQX-version change, regenerate it deliberately in an environment with public-PyPI (or proxy) access — resolve the release dependencies with `uv lock` and normalize the URLs to public PyPI — then commit the result. Because `databricks-labs-dqx` currently pins `litellm<=1.82.6` (which has no Python 3.13/3.14 wheels), that regeneration must temporarily cap the app's `requires-python` to `<3.13` to avoid an unsolvable resolver fork; revert the cap after regenerating. The script never pushes; inspect the branch, then explicitly push both refs with `git push origin dqx-studio/marketplace/vX.Y.Z` and `git push origin studio-vX.Y.Z`. The DAB `release` target consumes this same prebuilt artifact; source-build targets continue to use `.build/`.
@@ -89,7 +91,7 @@ These are configured at the workspace or account level — not by you, not by th
 
 ### The catalog must already exist
 
-The bundle **does not create the catalog itself** — that's deliberate. Catalogs are typically owned by a governance team and creating them requires `CREATE CATALOG` on the metastore. Pick an existing catalog you (or an admin group you're in) have rights on, and set `catalog_name` in [Step 4](#step-4-configure-databricksyml). The bundle creates the schemas (`dqx_studio`, `dqx_studio_tmp`) and the wheels volume *inside* that catalog — no `CREATE CATALOG` permission required at the metastore level.
+The bundle **does not create the catalog itself** — that's deliberate. Catalogs are typically owned by a governance team and creating them requires `CREATE CATALOG` on the metastore. Pick an existing catalog you (or an admin group you're in) have rights on, and set `catalog_name` in [Step 4](#step-4-configure-databricksyml). The bundle creates the main, temporary, Genie, and demo schemas and the wheels volume *inside* that catalog — no `CREATE CATALOG` permission required at the metastore level.
 
 ## Step 1: Create a Service Principal
 
@@ -117,7 +119,7 @@ Contact your workspace admin or enable it via the workspace settings if not alre
 
 ## Step 3: Stateful storage and destroy protection
 
-DQX Studio's stateful resources — the two schemas (`dqx_studio`, `dqx_studio_tmp`), the wheels volume, and the Lakebase Postgres project — are all declared with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which **blocks `databricks bundle destroy` from dropping the resource** and wiping the data. All are declared at the base level in `app/databricks.yml`:
+DQX Studio's stateful resources — the main, temporary, Genie, and demo schemas, the wheels volume, and the Lakebase Postgres project — are all declared with `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which **blocks `databricks bundle destroy` from dropping the resource** and wiping the data. All are declared at the base level in `app/databricks.yml`:
 
 ```bash
 grep -A1 'lifecycle:' app/databricks.yml | head
@@ -191,6 +193,7 @@ All target-level variables, their defaults, and what they control:
 | `sql_warehouse_size` | `Small` | No | Cluster size of the bundle-managed warehouse (e.g. `2X-Small`, `Small`, `Medium`). |
 | `schema_name` | `dqx_studio` | No | Main schema — holds run history, profiling, metrics, and quarantine tables. Declared as `resources.schemas.main_schema` in the bundle with `lifecycle.prevent_destroy: true`. |
 | `tmp_schema_name` | `dqx_studio_tmp` | No | Per-user temp-view schema. Declared as `resources.schemas.tmp_schema` with `lifecycle.prevent_destroy: true`. |
+| `genie_schema_name` | `genie` | No | Genie-facing derived views and dimensions. Declared as `resources.schemas.genie_schema` with `lifecycle.prevent_destroy: true`. Existing DAB targets retain this default to avoid replacing a protected schema; for new targets, set it to a dedicated name such as `dqx_studio_genie`. |
 | `wheels_volume_name` | `wheels` | No | UC volume under `<catalog>.<schema_name>` for the DQX + task-runner wheels. Declared as `resources.volumes.wheels` with `lifecycle.prevent_destroy: true`. |
 | `lakebase_project_id` | `dqx-studio-db` | No | Lakebase Postgres project id for OLTP state. Declared as `resources.postgres_projects.dqx_studio` with `lifecycle.prevent_destroy: true`. Autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling). |
 | `lakebase_branch` | `dqx` | No | Project branch the app uses; auto-created with a `primary` endpoint on first deploy. |
@@ -286,14 +289,17 @@ These are the UC grants `bundle deploy` applies from the `grants:` blocks in `da
 -- App SP + task-runner SP: full privileges on the schemas + volume
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio     TO `<app-sp-id>`;
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio_tmp TO `<app-sp-id>`;
+GRANT ALL PRIVILEGES ON SCHEMA <catalog>.<genie_schema_name> TO `<app-sp-id>`;
 GRANT ALL PRIVILEGES ON VOLUME <catalog>.dqx_studio.wheels TO `<app-sp-id>`;
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio     TO `<job-sp-id>`;
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio_tmp TO `<job-sp-id>`;
+GRANT ALL PRIVILEGES ON SCHEMA <catalog>.<genie_schema_name> TO `<job-sp-id>`;
 GRANT ALL PRIVILEGES ON VOLUME <catalog>.dqx_studio.wheels TO `<job-sp-id>`;
 
 -- End users create dry-run / preview temp views (via their OBO token) in the
 -- tmp schema, so they need USE SCHEMA + CREATE TABLE there.
 GRANT USE SCHEMA, CREATE TABLE ON SCHEMA <catalog>.dqx_studio_tmp TO `account users`;
+GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.<genie_schema_name> TO `account users`;
 
 -- Deployer needs SELECT for the embed-credentials Insights dashboard
 -- (bundle uses ${workspace.current_user.userName}).

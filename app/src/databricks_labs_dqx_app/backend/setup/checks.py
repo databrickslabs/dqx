@@ -106,7 +106,10 @@ class ResourceCheckers:
         return _passed(SetupStepId.UNITY_CATALOG, "Required Unity Catalog permissions are available.")
 
     def ensure_sibling_schemas(self) -> SetupStep:
-        """Create the app-owned temporary and Genie schemas if they are absent."""
+        """Create sibling schemas and verify the app can create views in them."""
+        app_sp = self._app_sp_id()
+        if not app_sp:
+            return _identity_required(SetupStepId.SCHEMAS)
         try:
             catalog = _validated_identifier(self._resources.volume.catalog)
             schemas = (
@@ -122,6 +125,27 @@ class ResourceCheckers:
                 "Could not create the required application schemas.",
                 action=SetupActionId.RECONCILE,
             )
+        for schema in schemas:
+            full_name = f"{catalog}.{schema}"
+            response = self._effective_permissions("SCHEMA", full_name, app_sp)
+            if response is None:
+                return _action_required(
+                    SetupStepId.SCHEMAS,
+                    "sibling_schema_permission_check_failed",
+                    "Could not verify the app service principal's sibling-schema permissions.",
+                )
+            missing = _missing_privileges(response, _SCHEMA_PRIVILEGES)
+            if missing and not self._is_owner("SCHEMA", full_name, app_sp):
+                quoted_schema = f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}"
+                principal = _instruction_identifier(app_sp)
+                return SetupStep(
+                    id=SetupStepId.SCHEMAS,
+                    state=StepState.ACTION_REQUIRED,
+                    code="sibling_schema_permissions_missing",
+                    summary="The app service principal needs permission to create views in a sibling schema.",
+                    instructions=(f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {principal};",),
+                    actions=(SetupActionId.VERIFY_AGAIN,),
+                )
         return _passed(SetupStepId.SCHEMAS, "Required application schemas are available.")
 
     def check_lakebase(self) -> SetupStep:
