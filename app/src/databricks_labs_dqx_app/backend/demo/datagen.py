@@ -24,14 +24,14 @@ data lines up exactly with the rule bindings.
 Security: every table fully-qualified name is validated with *validate_fqn* and
 the table is checked against the known set from *manifest* before it reaches
 SQL, and every string literal (such as column comments) is escaped with
-*escape_sql_string*. Simple identifiers are emitted unquoted; exotic
+*escape_sql_string_strict*. Simple identifiers are emitted unquoted; exotic
 catalog/schema names are backtick-quoted via *quote_fqn*.
 """
 
 from databricks_labs_dqx_app.backend.demo import manifest
 from databricks_labs_dqx_app.backend.demo.manifest import TIGHTEN_WEEK
 from databricks_labs_dqx_app.backend.sql_utils import (
-    escape_sql_string,
+    escape_sql_string_strict,
     fqn_needs_quoting,
     quote_fqn,
     quote_ident,
@@ -333,7 +333,7 @@ def build_column_comment_sql(table: str, column: str, comment: str, catalog: str
     """
     _require_known_table(table)
     fqn = _fqn(catalog, schema, table)
-    return f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(column)} COMMENT '{escape_sql_string(comment)}'"
+    return f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(column)} COMMENT '{escape_sql_string_strict(comment)}'"
 
 
 # --------------------------------------------------------------------------- #

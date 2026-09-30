@@ -164,8 +164,7 @@ class AppSettingsService:
         via the WARNING log without short-circuiting the rest of the
         app.
         """
-        sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = '{_CONFIG_KEY}'"
-        rows = self._sql.query(sql)
+        rows = self._sql.select_rows(self._table, ["setting_value"], where={"setting_key": _CONFIG_KEY})
         if not rows:
             logger.info("No config found in settings table, returning default")
             return WorkspaceConfig(run_configs=[])
@@ -192,8 +191,7 @@ class AppSettingsService:
 
     def get_setting(self, key: str) -> str | None:
         """Read a single setting value by key."""
-        sql = f"SELECT setting_value FROM {self._table} WHERE setting_key = {self._sql.param('setting_key')}"
-        rows = self._sql.query(sql, parameters={"setting_key": key})
+        rows = self._sql.select_rows(self._table, ["setting_value"], where={"setting_key": key})
         return rows[0][0] if rows else None
 
     def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:

@@ -74,6 +74,13 @@ def test_query_binds_runtime_value_without_inlining_it() -> None:
     assert request["parameters"] == [StatementParameterListItem(name="owner", type="STRING", value=value)]
 
 
+def test_fqn_quotes_exotic_identifier_parts() -> None:
+    executor = SqlExecutor(MagicMock(), "test-wh", "prod-east", "main;DROP SCHEMA x")
+
+    assert executor.fqn("dq_resolved_rules") == "`prod-east`.`main;DROP SCHEMA x`.dq_resolved_rules"
+    assert executor.fqn("dq;DELETE FROM users") == "`prod-east`.`main;DROP SCHEMA x`.`dq;DELETE FROM users`"
+
+
 def test_execute_binds_runtime_value_without_inlining_it() -> None:
     workspace = MagicMock()
     executor = SqlExecutor(workspace, "test-wh", "dqx", "public")
@@ -477,6 +484,20 @@ class TestSqlExecutorCrudDelegation:
         statement = executor.execute.call_args.args[0]
         assert value not in statement
         assert executor.execute.call_args.kwargs["parameters"] == {"value_0": value}
+
+    def test_insert_binds_timestamp_with_cast(self) -> None:
+        from databricks_labs_dqx_app.backend import sql_executor
+
+        executor = _make_sql_executor()
+        executor.execute = MagicMock()
+        value = "2026-07-10 08:00:00' OR 1=1 --"
+
+        executor.insert("dq.t", values={"run_time": sql_executor.TimestampValue(value)})
+
+        call = executor.execute.call_args
+        assert "CAST(:value_0 AS TIMESTAMP)" in call.args[0]
+        assert value not in call.args[0]
+        assert call.kwargs["parameters"] == {"value_0": value}
 
     def test_update_delegates_with_delta_quoting(self) -> None:
         executor = _make_sql_executor()

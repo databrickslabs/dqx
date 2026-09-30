@@ -26,7 +26,7 @@ from databricks_labs_dqx_app.backend.services.score_cache_service import (
     ScoreCacheService,
     parse_cached_score,
 )
-from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor, TimestampValue
 
 _CACHE = "dqx_test.dqx_app_test.dq_score_cache"
 _MEMBERS = "dqx_test.dqx_app_test.dq_data_product_members"
@@ -117,11 +117,21 @@ class TestRefreshForTables:
         assert values["total_tests"] == 1000
         assert values["latest_run_id"] == "r1"
         run_time = values["run_time"]
-        assert isinstance(run_time, RawSql)
-        assert run_time.expr == "CAST('2026-07-10 08:00:00' AS TIMESTAMP)"
+        assert isinstance(run_time, TimestampValue)
+        assert run_time.value == "2026-07-10 08:00:00"
         computed_at = values["computed_at"]
         assert isinstance(computed_at, RawSql)
         assert computed_at.expr == "current_timestamp()"
+
+    def test_run_time_from_warehouse_is_bound(self, svc, oltp, warehouse):
+        run_time = "2026-07-10 08:00:00' OR 1=1 --"
+        warehouse.query_dicts.return_value = [_measure_row(FQN_A, run_time=run_time)]
+
+        svc.refresh_for_tables([FQN_A])
+
+        value = _upsert_by_key(oltp)[("table", FQN_A)]["run_time"]
+        assert isinstance(value, TimestampValue)
+        assert value.value == run_time
 
     def test_table_with_no_published_run_still_gets_a_null_score_row(self, svc, oltp, warehouse):
         """'Computed, nothing found' must be distinguishable from 'never
@@ -250,7 +260,7 @@ class TestListMonitoredTableFqns:
         stmt = oltp.query.call_args[0][0]
         assert _MONITORED in stmt
         assert "table_fqn" in stmt
-        assert "LIMIT :limit" in stmt
+        assert "LIMIT CAST(:limit AS INT)" in stmt
         assert oltp.query.call_args.kwargs["parameters"] == {"limit": RECONCILE_MAX_TABLES}
 
     def test_blank_rows_are_dropped(self, svc, oltp):
@@ -432,7 +442,7 @@ class TestGetHistory:
         assert _HISTORY in stmt
         assert "scope_type = :scope_type" in stmt
         assert "scope_key = :scope_key" in stmt
-        assert "ORDER BY computed_at DESC LIMIT :limit" in stmt
+        assert "ORDER BY computed_at DESC LIMIT CAST(:limit AS INT)" in stmt
         assert oltp.query_dicts.call_args.kwargs["parameters"] == {
             "scope_type": "global",
             "scope_key": "global",

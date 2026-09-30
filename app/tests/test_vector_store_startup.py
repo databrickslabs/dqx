@@ -60,7 +60,7 @@ class TestStartsWhenAiEnabled:
 
     async def test_prefers_pg_executor_over_delta_when_provided(self, app, sp_ws, sql_executor_mock, monkeypatch):
         pg_executor = create_autospec(SqlExecutor, instance=True)
-        pg_executor.query.return_value = [("true",)]
+        pg_executor.select_rows.return_value = [["true"]]
         # Delta executor would report AI disabled — proves pg_executor,
         # not sp_sql, is the one actually consulted when both are present.
         sql_executor_mock.query.return_value = [("false",)]

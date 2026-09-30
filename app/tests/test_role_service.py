@@ -370,7 +370,7 @@ class TestListHistory:
 
         sent_sql = sql_executor_mock.query.call_args.args[0]
         assert "ORDER BY changed_at DESC" in sent_sql
-        assert "LIMIT :limit" in sent_sql
+        assert "LIMIT CAST(:limit AS INT)" in sent_sql
         assert sql_executor_mock.query.call_args.kwargs["parameters"]["limit"] == 50
 
     def test_list_history_clamps_limit(self, role_service, sql_executor_mock):
@@ -378,7 +378,7 @@ class TestListHistory:
         sql_executor_mock.query.return_value = []
         role_service.list_history(limit=10_000_000)
         sent_sql = sql_executor_mock.query.call_args.args[0]
-        assert "LIMIT :limit" in sent_sql
+        assert "LIMIT CAST(:limit AS INT)" in sent_sql
         assert sql_executor_mock.query.call_args.kwargs["parameters"]["limit"] == 1000
 
     def test_list_history_applies_filters(self, role_service, sql_executor_mock):

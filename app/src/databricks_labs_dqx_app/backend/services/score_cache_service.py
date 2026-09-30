@@ -51,9 +51,10 @@ from databricks_labs_dqx_app.backend.sql_executor import (
     RawSql,
     SqlExecutor,
     SqlParameterValue,
+    TimestampValue,
     bind_list,
 )
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +306,7 @@ class ScoreCacheService:
         """
         stmt = (
             f"SELECT table_fqn FROM {self._monitored_table} "  # noqa: S608
-            f"ORDER BY table_fqn LIMIT {self._oltp.param('limit')}"
+            f"ORDER BY table_fqn LIMIT CAST({self._oltp.param('limit')} AS INT)"
         )
         rows = self._oltp.query(stmt, parameters={"limit": int(limit)})
         return [row[0] for row in rows if row and row[0]]
@@ -385,7 +386,7 @@ class ScoreCacheService:
             f"FROM {self._history_table} "  # noqa: S608
             f"WHERE scope_type = {self._oltp.param('scope_type')} "
             f"AND scope_key = {self._oltp.param('scope_key')} "
-            f"ORDER BY computed_at DESC LIMIT {self._oltp.param('limit')}"
+            f"ORDER BY computed_at DESC LIMIT CAST({self._oltp.param('limit')} AS INT)"
         )
         points = [
             parse_cached_score(
@@ -426,9 +427,7 @@ class ScoreCacheService:
                 "failed_tests": failed_tests,
                 "total_tests": total_tests,
                 "latest_run_id": latest_run_id,
-                # CAST('...' AS TIMESTAMP) parses on both backends; the
-                # value is the warehouse's own stringified run_time.
-                "run_time": (RawSql(f"CAST('{escape_sql_string(run_time)}' AS TIMESTAMP)") if run_time else None),
+                "run_time": TimestampValue(run_time) if run_time else None,
                 "computed_at": RawSql("current_timestamp()"),
             },
         )

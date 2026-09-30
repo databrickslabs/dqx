@@ -105,12 +105,12 @@ def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
     def _upsert(_table, *, key_cols, value_cols, **_kwargs):
         store[key_cols["setting_key"]] = value_cols["setting_value"]
 
-    def _query(_sql, *, parameters=None):
-        value = store.get((parameters or {}).get("setting_key"))
-        return [(value,)] if value is not None else []
+    def _select_rows(_table: str, _columns: list[str], *, where: dict[str, str]) -> list[list[str]]:
+        value = store.get(where["setting_key"])
+        return [[value]] if value is not None else []
 
     sql_executor_mock.upsert.side_effect = _upsert
-    sql_executor_mock.query.side_effect = _query
+    sql_executor_mock.select_rows.side_effect = _select_rows
     return store
 
 

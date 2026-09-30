@@ -318,7 +318,7 @@ class JobService:
             f"  FROM {table}"
             f"{where}"
             f") WHERE rn = 1 "
-            f"ORDER BY created_at DESC LIMIT {self._sql.param('limit')}"
+            f"ORDER BY created_at DESC LIMIT CAST({self._sql.param('limit')} AS INT)"
         )
         return self._sql.query_dicts(sql, parameters=parameters)
 

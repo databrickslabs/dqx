@@ -180,7 +180,7 @@ class RunSetService:
             f"SELECT run_set_id, product_id, product_version, source, {trigger_col} AS trigger_value, "  # noqa: S608
             f"created_by, {created_at} AS created_at "
             f"FROM {self._run_sets_table} WHERE product_id = {self._sql.param('product_id')} "
-            f"ORDER BY created_at DESC LIMIT {self._sql.param('limit')}"
+            f"ORDER BY created_at DESC LIMIT CAST({self._sql.param('limit')} AS INT)"
         )
         rows = self._sql.query(sql, parameters={"product_id": product_id, "limit": int(limit)})
         run_set_ids = [row[0] for row in rows]

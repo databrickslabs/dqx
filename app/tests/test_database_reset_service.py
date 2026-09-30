@@ -37,10 +37,10 @@ _DELETE_RE = re.compile(r"^DELETE FROM cat\.sch\.([a-z_][a-z0-9_]*)")
 class _FakeExecutor:
     """Records the SQL it is asked to execute; ``fqn`` is deterministic.
 
-    Also implements the ``query``/``upsert`` slice of ``OltpExecutorProtocol``
+    Also implements the ``select_rows``/``upsert`` slice of ``OltpExecutorProtocol``
     that :class:`AppSettingsService` uses, so the reset service's default
     re-provisioning step (which seeds via an ``AppSettingsService`` built over
-    the OLTP executor) runs against this fake. ``query`` returns ``[]`` so the
+    the OLTP executor) runs against this fake. ``select_rows`` returns ``[]`` so the
     ``dq_app_settings`` seeds read as absent (as they are right after a clear)
     and get re-seeded; ``upsert`` records the keys written into
     ``upserted_keys`` for assertions.
@@ -72,6 +72,9 @@ class _FakeExecutor:
 
     def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:
         self.upserted_keys.append(str(key_cols.get("setting_key")))
+
+    def select_rows(self, table: str, columns: list[str], *, where: dict[str, str]) -> list[list[str]]:
+        return []
 
 
 def _targeted_tables(executed: list[str]) -> list[str]:
@@ -196,8 +199,8 @@ class _StatefulSettingsExecutor:
 
     Implements the ``OltpExecutorProtocol`` slice the reset and
     :class:`AppSettingsService` use — ``fqn``, ``execute`` (honouring the
-    preserving ``DELETE ... WHERE setting_key NOT IN (...)``), ``query`` (the
-    ``SELECT setting_value ... WHERE setting_key = '...'`` reads), and
+    preserving ``DELETE ... WHERE setting_key NOT IN (...)``), ``select_rows``
+    (settings reads filtered by key), and
     ``upsert`` — so a real ``ResetStatusStore`` can be driven end-to-end
     through a simulated wipe. DELETEs against any other table are accepted and
     ignored (they don't touch the settings store).
@@ -228,6 +231,10 @@ class _StatefulSettingsExecutor:
 
     def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:
         self.settings[str(key_cols["setting_key"])] = str(value_cols.get("setting_value"))
+
+    def select_rows(self, table: str, columns: list[str], *, where: dict[str, str]) -> list[list[str]]:
+        key = where["setting_key"]
+        return [[self.settings[key]]] if key in self.settings else []
 
 
 class TestRunningStatusSurvivesTheWipe:

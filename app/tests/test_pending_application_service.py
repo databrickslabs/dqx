@@ -20,7 +20,7 @@ from databricks_labs_dqx_app.backend.services.pending_application_service import
 def sql(sql_executor_mock):
     sql_executor_mock.dialect = "delta"
     sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
-    sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+    sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     sql_executor_mock.param.side_effect = lambda name: f":{name}"
@@ -51,11 +51,26 @@ def test_record_inserts_new_when_none_exists(svc, sql):
     assert len(inserts) == 1
     insert = inserts[0]
     assert "dq_pending_applications" in insert
-    assert "'b1'" in insert
-    assert "'r1'" in insert
-    assert "'alice@example.com'" in insert
-    # column_mapping goes through the json literal helper.
-    assert "parse_json('[{\"column\": \"customer_id\"}]')" in insert
+    assert ":binding_id" in insert
+    assert ":rule_id" in insert
+    assert ":created_by" in insert
+    assert "parse_json(:column_mapping)" in insert
+    params = next(call.kwargs["parameters"] for call in sql.execute.call_args_list if call.args[0] == insert)
+    assert params["binding_id"] == "b1"
+    assert params["rule_id"] == "r1"
+    assert params["created_by"] == "alice@example.com"
+    assert json.loads(params["column_mapping"]) == [{"column": "customer_id"}]
+
+
+def test_record_binds_json_with_quotes_and_backslashes(svc, sql):
+    mapping = [{"column": "quote' backslash\\ OR 1=1 --"}]
+
+    svc.record("b1", "r1", mapping, "alice@example.com")
+
+    insert = next(call for call in sql.execute.call_args_list if call.args[0].startswith("INSERT INTO"))
+    assert "parse_json(:column_mapping)" in insert.args[0]
+    assert mapping[0]["column"] not in insert.args[0]
+    assert insert.kwargs["parameters"]["column_mapping"] == json.dumps(mapping)
 
 
 def test_record_updates_existing_row(svc, sql):
@@ -74,9 +89,25 @@ def test_record_updates_existing_row(svc, sql):
     updates = [s for s in executed if s.strip().startswith("UPDATE")]
     assert len(updates) == 1
     update = updates[0]
-    assert "SET `column_mapping`" in update
-    assert "WHERE `id` = 'pa1'" in update
-    assert "parse_json('[{\"column\": \"new_col\"}]')" in update
+    assert "SET column_mapping = parse_json(:column_mapping)" in update
+    assert "WHERE id = :id" in update
+    params = next(call.kwargs["parameters"] for call in sql.execute.call_args_list if call.args[0] == update)
+    assert params["id"] == "pa1"
+    assert json.loads(params["column_mapping"]) == [{"column": "new_col"}]
+
+
+def test_record_update_binds_json_with_quotes_and_backslashes(svc, sql):
+    sql.query.return_value = [
+        ["pa1", "b1", "r1", "[]", "bob@example.com", "2026-07-01T00:00:00+00:00"],
+    ]
+    mapping = [{"column": "quote' backslash\\ OR 1=1 --"}]
+
+    svc.record("b1", "r1", mapping, "alice@example.com")
+
+    update = next(call for call in sql.execute.call_args_list if call.args[0].startswith("UPDATE"))
+    assert "parse_json(:column_mapping)" in update.args[0]
+    assert mapping[0]["column"] not in update.args[0]
+    assert update.kwargs["parameters"]["column_mapping"] == json.dumps(mapping)
 
 
 def test_list_for_rule_parses_rows(svc, sql):

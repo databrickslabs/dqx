@@ -433,6 +433,15 @@ class RawSql:
         self.expr = expr
 
 
+class TimestampValue:
+    """Timestamp text that the CRUD renderer casts from a bound value."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
 class WhereIn:
     """Marker for ``WHERE <col> IN (<v1>, <v2>, ...)`` predicates.
 
@@ -488,6 +497,9 @@ def _bound_read_renderer(
         if isinstance(value, RawSql):
             return raw_renderer(value) if raw_renderer is not None else value.expr
         name = f"{prefix}_{len(parameters)}"
+        if isinstance(value, TimestampValue):
+            parameters[name] = value.value
+            return f"CAST({marker(name)} AS TIMESTAMP)"
         parameters[name] = value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
         return marker(name)
 
@@ -708,7 +720,10 @@ class SqlExecutor:
         the dialect branch lives here once instead of being repeated at
         every call site.
         """
-        return f"{self._catalog}.{self._schema}.{table}"
+        return ".".join(
+            part if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) else self.q(part)
+            for part in (self._catalog, self._schema, table)
+        )
 
     def q(self, identifier: str) -> str:
         """Quote an identifier for this dialect.

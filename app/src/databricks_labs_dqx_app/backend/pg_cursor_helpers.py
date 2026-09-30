@@ -35,6 +35,7 @@ of contract for both helpers — see :func:`run_trusted_sql` for the full
 rationale.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
@@ -46,6 +47,9 @@ if TYPE_CHECKING:
     # trust-boundary helpers) can be imported in a Delta-only environment
     # without installing psycopg. The runtime call below is duck-typed.
     from psycopg import Cursor
+
+
+_QUOTED_SQL_TEXT = re.compile("'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
 
 
 def run_trusted_sql(cur: "Cursor[Any]", sql: str) -> None:
@@ -131,6 +135,11 @@ def run_parameterized_sql(cur: "Cursor[Any]", sql: str, params: Sequence[Any] | 
     distinction between "template" and "value" once the caller has
     concatenated them.
 
+    Percent signs inside quoted identifiers and SQL string constants must
+    be supplied as literal SQL text. This helper doubles them for psycopg's
+    placeholder parser; callers must not pre-escape them. Parameter markers
+    belong outside quoted text.
+
     Example::
 
         run_parameterized_sql(
@@ -145,4 +154,7 @@ def run_parameterized_sql(cur: "Cursor[Any]", sql: str, params: Sequence[Any] | 
     integer and description go through psycopg's binder so neither
     needs manual escaping.
     """
-    _ = cur.execute(cast(LiteralString, sql), params)
+    # psycopg parses percent signs even inside quoted identifiers/literals.
+    # Their contents are SQL text; real parameter markers live outside quotes.
+    template = _QUOTED_SQL_TEXT.sub(lambda match: match[0].replace("%", "%%"), sql)
+    _ = cur.execute(cast(LiteralString, template), params)

@@ -59,6 +59,9 @@ class _FakeExecutor:
     def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:
         self.upserted_keys.append(str(key_cols.get("setting_key")))
 
+    def select_rows(self, table: str, columns: list[str], *, where: dict[str, str]) -> list[list[str]]:
+        return []
+
 
 def _build_client(
     *,

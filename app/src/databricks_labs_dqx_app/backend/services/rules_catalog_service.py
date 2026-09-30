@@ -661,7 +661,7 @@ class RulesCatalogService:
                 f"SELECT rule_id, table_fqn, {check_text} AS check_json, version, source, "  # noqa: S608
                 f"action, prev_status, new_status, changed_by, {changed_at} AS changed_at "
                 f"FROM {self._history_table} WHERE rule_id = {self._sql.param('rule_id')} "
-                f"ORDER BY changed_at DESC LIMIT {self._sql.param('limit')}"
+                f"ORDER BY changed_at DESC LIMIT CAST({self._sql.param('limit')} AS INT)"
             )
             rows = self._sql.query(sql, parameters={"rule_id": rule_id, "limit": int(limit)})
             return [self._history_row_to_dict(row) for row in rows]

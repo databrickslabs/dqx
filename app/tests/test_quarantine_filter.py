@@ -87,7 +87,7 @@ class TestQueryQuarantine:
         assert "exists" not in count_call.lower()
         assert "exists" not in data_call.lower()
         assert "run_id = :run_id" in count_call
-        assert "LIMIT :limit OFFSET :offset" in data_call
+        assert "LIMIT CAST(:limit AS INT) OFFSET CAST(:offset AS INT)" in data_call
 
     def test_appends_check_name_predicate(self):
         sql = _sql(count=3)
@@ -122,7 +122,7 @@ class TestQueryQuarantine:
         sql = _sql(count=100)
         _query_quarantine(sql, _AppConf(), "run-1", offset=20, limit=5, check_name="my_check")
         data_call = sql.query_dicts.call_args.args[0]
-        assert "LIMIT :limit OFFSET :offset" in data_call
+        assert "LIMIT CAST(:limit AS INT) OFFSET CAST(:offset AS INT)" in data_call
         assert sql.query_dicts.call_args.kwargs["parameters"]["offset"] == 20
 
 
@@ -177,4 +177,5 @@ class TestHyphenatedAppCatalog:
         assert resp.status_code == 200
         assert self.QUOTED_TABLE in sql.query_dicts.call_args.args[0]
         assert "run_id = :run_id" in sql.query_dicts.call_args.args[0]
+        assert "LIMIT CAST(:limit AS INT)" in sql.query_dicts.call_args.args[0]
         assert sql.query_dicts.call_args.kwargs["parameters"] == {"run_id": "run-1", "limit": 50_000}

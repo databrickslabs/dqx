@@ -9,9 +9,10 @@ suite runs offline in <1s.
 import os
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
+from psycopg import ClientCursor, Connection, pq
 
 # ---------------------------------------------------------------------------
 # Module-level env shim: ensure the AppConfig import has predictable values.
@@ -199,6 +200,60 @@ def sql_executor_mock() -> MagicMock:
 def workspace_client_mock() -> MagicMock:
     """A flexible WorkspaceClient mock — most tests only need a couple of attrs."""
     return MagicMock(name="WorkspaceClient")
+
+
+@pytest.fixture(params=["delta", "postgres"])
+def settings_query_executor(request: pytest.FixtureRequest) -> Iterator[tuple[object, MagicMock, MagicMock]]:
+    """Exercise real settings reads while replacing database connections."""
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.service.sql import StatementState
+    from psycopg_pool import ConnectionPool
+    from pydantic import SecretStr
+
+    from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, StaticCredentialProvider
+    from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    if request.param == "delta":
+        response = workspace.statement_execution.execute_statement.return_value
+        response.status.state = StatementState.SUCCEEDED
+        yield (
+            SqlExecutor(workspace, "test-warehouse", "test-catalog", "test-schema"),
+            response.result,
+            workspace.statement_execution.execute_statement,
+        )
+        return
+
+    pool = create_autospec(ConnectionPool, instance=True)
+    cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+    with (
+        patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool", return_value=pool),
+        patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
+    ):
+        executor = PgExecutor(
+            ws=workspace,
+            endpoint=None,
+            database="test-db",
+            schema="test-schema",
+            username="test-user",
+            host="test-host",
+            credential_provider=StaticCredentialProvider(SecretStr("test-password")),
+        )
+        try:
+            yield executor, cursor, cursor.execute
+        finally:
+            executor.close()
+
+
+@pytest.fixture
+def pg_binding_cursor() -> Iterator[ClientCursor[tuple[object, ...]]]:
+    """Use psycopg's real parser with a connection that never contacts a server."""
+    # libpq rejects the unknown option before attempting any connection.
+    connection: Connection[tuple[object, ...]] = Connection(pq.PGconn.connect(b"invalid_test_option=1"))
+    try:
+        yield ClientCursor(connection)
+    finally:
+        connection.close()
 
 
 @pytest.fixture

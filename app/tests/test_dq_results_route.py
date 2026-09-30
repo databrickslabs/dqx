@@ -1263,7 +1263,7 @@ class TestFailedRowsShapeAndFilters:
         call = next(c for c in sql_mock.query_dicts.call_args_list if "dq_quarantine_records" in c.args[0])
         statement = call.args[0]
         assert "source_table_fqn = :table_fqn" in statement
-        assert "LIMIT :limit OFFSET :offset" in statement
+        assert "LIMIT CAST(:limit AS INT) OFFSET CAST(:offset AS INT)" in statement
         assert facet not in statement
         assert call.kwargs["parameters"]["dimension_0"] == facet
         assert call.kwargs["parameters"]["limit"] == 7
@@ -1436,7 +1436,7 @@ class TestFailedRowsShapeAndFilters:
 
     def test_unfiltered_scan_uses_limit(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 7})
-        assert "LIMIT :limit" in _quarantine_stmt(sql_mock)
+        assert "LIMIT CAST(:limit AS INT)" in _quarantine_stmt(sql_mock)
         assert _quarantine_parameters(sql_mock)["limit"] == 7
 
     def test_query_orders_with_quarantine_id_tiebreak(self, client, sql_mock):
@@ -1448,7 +1448,7 @@ class TestFailedRowsShapeAndFilters:
     def test_offset_is_pushed_for_pagination(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 50, "offset": 100})
         stmt = _quarantine_stmt(sql_mock)
-        assert "LIMIT :limit OFFSET :offset" in stmt
+        assert "LIMIT CAST(:limit AS INT) OFFSET CAST(:offset AS INT)" in stmt
         assert _quarantine_parameters(sql_mock)["offset"] == 100
 
     @pytest.mark.parametrize("limit", [0, 100001])
@@ -1488,7 +1488,7 @@ class TestFailedRowsTrueTotal:
             metrics_rows=[metrics_row(FQN, "r1", input_rows=5000, valid_rows=200)],
         )
         body = client.get(FAILED_ROWS_URL, params={"limit": 1}).json()
-        assert "LIMIT :limit OFFSET :offset" in _quarantine_stmt(sql_mock)  # cap enforced in SQL
+        assert "LIMIT CAST(:limit AS INT) OFFSET CAST(:offset AS INT)" in _quarantine_stmt(sql_mock)
         assert _quarantine_parameters(sql_mock)["limit"] == 1
         assert len(body["rows"]) == 1
         assert body["total"] == 4800  # NOT the page size

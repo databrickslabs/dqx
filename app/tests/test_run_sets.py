@@ -59,7 +59,7 @@ def test_list_for_product_binds_product_id_and_limit(service, oltp_sql) -> None:
     assert service.list_for_product(product_id, limit=7) == []
     statement = oltp_sql.query.call_args.args[0]
     assert "product_id = :product_id" in statement
-    assert "LIMIT :limit" in statement
+    assert "LIMIT CAST(:limit AS INT)" in statement
     assert product_id not in statement
     assert oltp_sql.query.call_args.kwargs["parameters"] == {"product_id": product_id, "limit": 7}
 

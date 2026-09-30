@@ -180,7 +180,7 @@ def get_metrics_trend(
         f"WITH recent_runs AS ("
         f"  SELECT DISTINCT m.run_id, m.run_time "
         f"  FROM {metrics_table} m WHERE m.input_location = {sql.param('input_location')} "
-        f"  ORDER BY m.run_time DESC LIMIT {sql.param('limit')}"
+        f"  ORDER BY m.run_time DESC LIMIT CAST({sql.param('limit')} AS INT)"
         f") "
         f"SELECT m.run_id, m.input_location, m.metric_name, m.metric_value, "
         f"       m.rule_set_fingerprint, r.run_type, r.requesting_user, r.created_at "

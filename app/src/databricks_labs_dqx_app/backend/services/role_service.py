@@ -240,7 +240,7 @@ class RoleService:
             f"FROM {self._history_table} "
             f"{where}"
             f"ORDER BY changed_at DESC "
-            f"LIMIT {self._sql.param('limit')}"
+            f"LIMIT CAST({self._sql.param('limit')} AS INT)"
         )
         rows = self._sql.query(sql, parameters=parameters)
         return [

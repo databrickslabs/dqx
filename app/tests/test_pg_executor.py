@@ -469,6 +469,20 @@ class TestPgCrudBuilders:
         assert value not in statement
         assert executor.execute.call_args.kwargs["parameters"] == {"value_0": value}
 
+    def test_insert_binds_timestamp_with_cast(self) -> None:
+        from databricks_labs_dqx_app.backend import sql_executor
+
+        executor = _make_pg_executor()
+        executor.execute = MagicMock()
+        value = "2026-07-10 08:00:00' OR 1=1 --"
+
+        executor.insert("dq.t", values={"run_time": sql_executor.TimestampValue(value)})
+
+        call = executor.execute.call_args
+        assert "CAST(%(value_0)s AS TIMESTAMP)" in call.args[0]
+        assert value not in call.args[0]
+        assert call.kwargs["parameters"] == {"value_0": value}
+
     def test_insert_translates_current_timestamp_via_pg_render(self) -> None:
         """The Spark idiom ``current_timestamp()`` must not appear in Postgres output."""
         executor = _make_pg_executor()
@@ -1955,6 +1969,12 @@ class TestSimpleProperties:
         """Postgres has one catalog per connection — fqn drops the catalog part."""
         e = _make_pg_executor(schema="my_schema")
         assert e.fqn("dq_resolved_rules") == "my_schema.dq_resolved_rules"
+
+    def test_fqn_quotes_exotic_identifier_parts(self) -> None:
+        e = _make_pg_executor(schema='main";DROP SCHEMA x')
+
+        assert e.fqn("dq_resolved_rules") == '"main"";DROP SCHEMA x".dq_resolved_rules'
+        assert e.fqn('dq";DELETE FROM users') == '"main"";DROP SCHEMA x"."dq"";DELETE FROM users"'
 
     def test_ts_text_is_identity(self) -> None:
         """Postgres lets ``_to_text`` ISO-format the timestamp on the way out."""

@@ -58,8 +58,7 @@ from databricks_labs_dqx_app.backend.registry_models import AppliedRule, Monitor
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -128,17 +127,18 @@ class MonitoredTableVersionService:
         )
 
         row_id = uuid4().hex
-        state_expr = self._sql.json_literal_expr(json.dumps(state))
-        self._sql.insert(
-            self._versions_table,
-            values={
+        self._sql.execute(
+            f"INSERT INTO {self._versions_table} "
+            f"(id, binding_id, {self._sql.q('version')}, state_json, created_by, created_at, refrozen_at) "
+            f"VALUES ({self._sql.param('id')}, {self._sql.param('binding_id')}, "
+            f"{self._sql.param('version')}, {self._sql.json_parameter_expr('state_json')}, "
+            f"{self._sql.param('created_by')}, now(), NULL)",
+            parameters={
                 "id": row_id,
                 "binding_id": binding_id,
                 "version": new_version,
-                "state_json": RawSql(state_expr),
+                "state_json": json.dumps(state),
                 "created_by": user_email,
-                "created_at": RawSql("now()"),
-                "refrozen_at": None,
             },
         )
         logger.info(
@@ -185,14 +185,13 @@ class MonitoredTableVersionService:
                 current,
             )
             return
-        state_expr = self._sql.json_literal_expr(json.dumps(state))
-        self._sql.update(
-            self._versions_table,
-            updates={
-                "state_json": RawSql(state_expr),
-                "refrozen_at": RawSql("now()"),
-            },
-            where={"binding_id": binding_id, "version": current},
+        self._sql.execute(
+            f"UPDATE {self._versions_table} SET "
+            f"{self._sql.q('state_json')} = {self._sql.json_parameter_expr('state_json')}, "
+            f"{self._sql.q('refrozen_at')} = now() "
+            f"WHERE {self._sql.q('binding_id')} = {self._sql.param('binding_id')} "
+            f"AND {self._sql.q('version')} = {self._sql.param('version')}",
+            parameters={"state_json": json.dumps(state), "binding_id": binding_id, "version": current},
         )
         logger.info(
             "Re-froze monitored-table %s version %d in place (%d rule refs)",
@@ -523,7 +522,3 @@ class MonitoredTableVersionService:
             return datetime.fromisoformat(str(value).replace(" ", "T"))
         except ValueError:
             return None
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"

@@ -1320,7 +1320,7 @@ def get_dq_results_failed_rows(
         f"FROM {quarantine_table} WHERE source_table_fqn = {sp_sql.param('table_fqn')} "
         f"{run_cond}{facet_cond}"
         f"ORDER BY created_at DESC, quarantine_id DESC "
-        f"LIMIT {sp_sql.param('limit')} OFFSET {sp_sql.param('offset')}"
+        f"LIMIT CAST({sp_sql.param('limit')} AS INT) OFFSET CAST({sp_sql.param('offset')} AS INT)"
     )
     try:
         raw_rows = sp_sql.query_dicts(stmt, parameters=parameters)

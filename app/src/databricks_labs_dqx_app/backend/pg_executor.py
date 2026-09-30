@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -451,7 +452,9 @@ class PgExecutor:
         ``schema.table``; :meth:`SqlExecutor.fqn` returns three parts.
         See :meth:`SqlExecutor.fqn` for the parity contract.
         """
-        return f"{self._schema}.{table}"
+        return ".".join(
+            part if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) else self.q(part) for part in (self._schema, table)
+        )
 
     def q(self, identifier: str) -> str:
         """Quote a Postgres identifier (ANSI double quotes, doubled internal ``"``)."""

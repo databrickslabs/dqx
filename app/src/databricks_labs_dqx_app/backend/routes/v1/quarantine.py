@@ -84,7 +84,7 @@ def _query_quarantine(
         f"to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM {table} WHERE {where} "  # noqa: S608
-        f"ORDER BY created_at DESC LIMIT {sql.param('limit')} OFFSET {sql.param('offset')}"
+        f"ORDER BY created_at DESC LIMIT CAST({sql.param('limit')} AS INT) OFFSET CAST({sql.param('offset')} AS INT)"
     )
     rows = sql.query_dicts(data_sql, parameters={**parameters, "limit": limit, "offset": offset})
     return rows, total_count
@@ -231,7 +231,7 @@ def export_quarantine_records(
         f"to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM {table} WHERE {where} ORDER BY created_at DESC "  # noqa: S608
-        f"LIMIT {sql.param('limit')}"
+        f"LIMIT CAST({sql.param('limit')} AS INT)"
     )
     rows = sql.query_dicts(stmt, parameters=parameters)
 

@@ -42,7 +42,7 @@ def sql(sql_executor_mock):
     sql_executor_mock.dialect = "delta"
     sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
     sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
-    sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+    sql_executor_mock.json_parameter_expr.side_effect = lambda name: f"parse_json(:{name})"
     sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
     sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
     sql_executor_mock.param.side_effect = lambda name: f":{name}"
@@ -115,12 +115,35 @@ def _dispatch(sql, mapping: dict[str, list]):
     sql.query.side_effect = _fn
 
 
+def _inserted_snapshot(sql) -> dict:
+    insert = next(call for call in sql.execute.call_args_list if call.args[0].startswith(f"INSERT INTO {_VERSIONS}"))
+    return json.loads(insert.kwargs["parameters"]["state_json"])
+
+
 # ---------------------------------------------------------------------------
 # freeze_new_version
 # ---------------------------------------------------------------------------
 
 
 class TestFreezeNewVersion:
+    def test_snapshot_json_is_bound(self, service, sql, monitored_tables, rules_catalog):
+        payload = "quote' backslash\\ OR 1=1 --"
+        detail = _detail(["ar1"])
+        detail.applied_rules[0].applied_rule.column_mapping = [{"column": payload}]
+        monitored_tables.get.return_value = detail
+        rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
+        _dispatch(sql, {f"FROM {_TABLES}": [["0"]]})
+
+        service.freeze_new_version("b1", "alice@x")
+
+        insert = next(
+            call for call in sql.execute.call_args_list if call.args[0].startswith(f"INSERT INTO {_VERSIONS}")
+        )
+        assert "parse_json(:state_json)" in insert.args[0]
+        assert payload not in insert.args[0]
+        state = json.loads(insert.kwargs["parameters"]["state_json"])
+        assert state["applied_rules"][0]["column_mapping"] == [{"column": payload}]
+
     def test_bumps_version_and_freezes_scoped_refs(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1", "ar2"])
         # Table's approved rows include a directly-authored (non-registry) rule
@@ -143,7 +166,7 @@ class TestFreezeNewVersion:
         assert any(f"UPDATE {_TABLES} SET" in s and "= 2" in s and "`version`" in s for s in exec_sqls)
         assert any(f"INSERT INTO {_VERSIONS}" in s and "checks_json" not in s for s in exec_sqls)
         # frozen state carries references to ONLY the binding's own applied rules
-        state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
+        state = _inserted_snapshot(sql)
         ref_ids = {r["applied_rule_id"] for r in state["rule_refs"]}
         assert ref_ids == {"ar1", "ar2"}
         assert all(r["registry_version"] == 1 for r in state["rule_refs"])
@@ -163,7 +186,7 @@ class TestFreezeNewVersion:
 
         service.freeze_new_version("b1", "alice@x")
 
-        state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
+        state = _inserted_snapshot(sql)
         assert state["rule_refs"][0]["pass_threshold"] == 0
 
     def test_state_json_carries_applied_rule_display_metadata(self, service, sql, monitored_tables, rules_catalog):
@@ -173,7 +196,7 @@ class TestFreezeNewVersion:
 
         service.freeze_new_version("b1", "alice@x")
 
-        state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
+        state = _inserted_snapshot(sql)
         assert len(state["applied_rules"]) == 1
         entry = state["applied_rules"][0]
         assert entry["applied_rule_id"] == "ar1"
@@ -200,6 +223,22 @@ class TestFreezeNewVersion:
 
 
 class TestRefreezeCurrent:
+    def test_refrozen_snapshot_json_is_bound(self, service, sql, monitored_tables, rules_catalog):
+        payload = "quote' backslash\\ OR 1=1 --"
+        detail = _detail(["ar1"])
+        detail.applied_rules[0].applied_rule.column_mapping = [{"column": payload}]
+        monitored_tables.get.return_value = detail
+        rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
+        _dispatch(sql, {f"FROM {_TABLES}": [["3"]]})
+
+        service.refreeze_current("b1")
+
+        update = next(call for call in sql.execute.call_args_list if call.args[0].startswith(f"UPDATE {_VERSIONS}"))
+        assert "parse_json(:state_json)" in update.args[0]
+        assert payload not in update.args[0]
+        state = json.loads(update.kwargs["parameters"]["state_json"])
+        assert state["applied_rules"][0]["column_mapping"] == [{"column": payload}]
+
     def test_rewrites_in_place_and_stamps_refrozen_at(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1"])
         rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
@@ -209,11 +248,13 @@ class TestRefreezeCurrent:
 
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
         # version stays 3, refrozen_at stamped, no INSERT / no version bump on the table.
-        # The identifier is now backtick-quoted by the CRUD-builder helpers, so we
-        # match on the FROM/SET structure instead of a bare column reference.
+        # Version remains bound while refrozen_at is stamped in the database.
         assert any(
-            f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s and "`version` = 3" in s for s in exec_sqls
+            f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s and "`version` = :version" in s
+            for s in exec_sqls
         )
+        update = next(call for call in sql.execute.call_args_list if call.args[0].startswith(f"UPDATE {_VERSIONS}"))
+        assert update.kwargs["parameters"]["version"] == 3
         assert not any(f"INSERT INTO {_VERSIONS}" in s for s in exec_sqls)
         assert not any(f"UPDATE {_TABLES} SET" in s and "`version`" in s for s in exec_sqls)
 

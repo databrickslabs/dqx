@@ -26,8 +26,7 @@ from typing import Any
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import ColumnMappingGroup
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +77,10 @@ class PendingApplicationService:
         existing = self._get_by_natural_key(binding_id, rule_id)
         if existing is not None:
             existing.column_mapping = column_mapping
-            mapping_expr = self._sql.json_literal_expr(json.dumps(column_mapping))
-            self._sql.update(
-                self._table,
-                updates={"column_mapping": RawSql(mapping_expr)},
-                where={"id": existing.id or ""},
+            self._sql.execute(
+                f"UPDATE {self._table} SET column_mapping = {self._sql.json_parameter_expr('column_mapping')} "
+                f"WHERE id = {self._sql.param('id')}",
+                parameters={"column_mapping": json.dumps(column_mapping), "id": existing.id or ""},
             )
             logger.info("Updated pending application for binding %s rule %s", binding_id, rule_id)
             return existing
@@ -95,16 +93,17 @@ class PendingApplicationService:
             created_by=user_email,
             created_at=datetime.now(timezone.utc),
         )
-        mapping_expr = self._sql.json_literal_expr(json.dumps(pending.column_mapping))
-        self._sql.insert(
-            self._table,
-            values={
+        self._sql.execute(
+            f"INSERT INTO {self._table} "
+            "(id, binding_id, rule_id, column_mapping, created_by, created_at) VALUES "
+            f"({self._sql.param('id')}, {self._sql.param('binding_id')}, {self._sql.param('rule_id')}, "
+            f"{self._sql.json_parameter_expr('column_mapping')}, {self._sql.param('created_by')}, now())",
+            parameters={
                 "id": pending.id or "",
                 "binding_id": binding_id,
                 "rule_id": rule_id,
-                "column_mapping": RawSql(mapping_expr),
+                "column_mapping": json.dumps(pending.column_mapping),
                 "created_by": user_email,
-                "created_at": RawSql("now()"),
             },
         )
         logger.info("Recorded pending application for binding %s rule %s", binding_id, rule_id)
@@ -149,10 +148,6 @@ class PendingApplicationService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _opt_str(value: str | None) -> str:
-        return f"'{escape_sql_string(value)}'" if value else "NULL"
 
     @staticmethod
     def _parse_column_mapping(raw: str | None) -> list[ColumnMappingGroup]:

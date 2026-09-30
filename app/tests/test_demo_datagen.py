@@ -42,3 +42,9 @@ def test_build_column_comment_sql_quotes_column_identifier():
     import re
 
     assert not re.search(r"ALTER COLUMN\s+card_last4\s+COMMENT", sql)
+
+
+def test_build_column_comment_sql_escapes_trailing_backslash():
+    sql = d.build_column_comment_sql("customers", "card_last4", "quote' trailing\\", CAT, SCH)
+
+    assert sql.endswith("COMMENT 'quote'' trailing\\\\'")

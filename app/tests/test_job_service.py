@@ -36,7 +36,7 @@ def test_list_run_rows_binds_source_table_and_limit(sql_executor_mock: MagicMock
     assert service.list_run_rows("dq_profiling_results", limit=7, source_table_fqn=table_fqn) == []
     statement = sql_executor_mock.query_dicts.call_args.args[0]
     assert "source_table_fqn = :source_table_fqn" in statement
-    assert "LIMIT :limit" in statement
+    assert "LIMIT CAST(:limit AS INT)" in statement
     assert table_fqn not in statement
     assert sql_executor_mock.query_dicts.call_args.kwargs["parameters"] == {
         "source_table_fqn": table_fqn,

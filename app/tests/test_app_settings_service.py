@@ -6,10 +6,13 @@ even when unset), and seeding happens only via the explicit
 """
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.service.sql import StatementParameterListItem
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 
 
 @pytest.fixture
@@ -19,15 +22,50 @@ def settings_service(sql_executor_mock):
     return AppSettingsService(sql=sql_executor_mock), sql_executor_mock
 
 
-def test_get_setting_binds_runtime_key(settings_service) -> None:
-    service, sql = settings_service
-    sql.query.return_value = [["stored"]]
+def test_get_setting_binds_runtime_key(
+    settings_query_executor: tuple[OltpExecutorProtocol, MagicMock, MagicMock],
+) -> None:
+    executor, result, execute = settings_query_executor
+    result.data_array = [["stored"]]
+    result.fetchall.return_value = [["stored"]]
+    service = AppSettingsService(executor)
     key = "x\\' OR 1=1 --"
 
     assert service.get_setting(key) == "stored"
-    assert "setting_key = :setting_key" in sql.query.call_args.args[0]
-    assert key not in sql.query.call_args.args[0]
-    assert sql.query.call_args.kwargs["parameters"] == {"setting_key": key}
+    if executor.dialect == "delta":
+        statement = execute.call_args.kwargs["statement"]
+        assert statement == (
+            "SELECT `setting_value` FROM `test-catalog`.`test-schema`.dq_app_settings WHERE `setting_key` = :where_0"
+        )
+        assert execute.call_args.kwargs["parameters"] == [
+            StatementParameterListItem(name="where_0", type="STRING", value=key)
+        ]
+    else:
+        statement = execute.call_args.args[0]
+        assert statement == (
+            'SELECT "setting_value" FROM "test-schema".dq_app_settings WHERE "setting_key" = %(where_0)s'
+        )
+        assert execute.call_args.args[1] == {"where_0": key}
+    assert key not in statement
+
+
+def test_get_config_binds_config_key(
+    settings_query_executor: tuple[OltpExecutorProtocol, MagicMock, MagicMock],
+) -> None:
+    executor, result, execute = settings_query_executor
+    result.data_array = [['{"run_configs": []}']]
+    result.fetchall.return_value = [['{"run_configs": []}']]
+    service = AppSettingsService(executor)
+
+    assert service.get_config().run_configs == []
+    if executor.dialect == "delta":
+        assert "workspace_config" not in execute.call_args.kwargs["statement"]
+        assert execute.call_args.kwargs["parameters"] == [
+            StatementParameterListItem(name="where_0", type="STRING", value="workspace_config")
+        ]
+    else:
+        assert "workspace_config" not in execute.call_args.args[0]
+        assert execute.call_args.args[1] == {"where_0": "workspace_config"}
 
 
 class TestRunReviewStatusReadIsSideEffectFree:

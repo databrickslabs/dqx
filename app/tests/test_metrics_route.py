@@ -290,7 +290,7 @@ class TestHyphenatedAppCatalog:
         assert self.QUOTED_METRICS in stmt
         assert self.QUOTED_RUNS in stmt
         assert "m.input_location = :input_location" in stmt
-        assert "LIMIT :limit" in stmt
+        assert "LIMIT CAST(:limit AS INT)" in stmt
         assert sql_mock.query_dicts.call_args.kwargs["parameters"] == {
             "input_location": "main.sales.orders",
             "limit": 50,
