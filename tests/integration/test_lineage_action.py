@@ -1071,14 +1071,15 @@ def test_end_to_end_streaming_via_dqengine(
         observer=DQMetricsObserver(),
         actions=[lineage_action],
     )
+    streaming_output = OutputConfig(
+        location=output_table,
+        options={"checkPointLocation": checkpoint_location},
+        trigger={"availableNow": True},
+    )
     engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table, is_streaming=True),
-        output_config=OutputConfig(
-            location=output_table,
-            options={"checkPointLocation": checkpoint_location},
-            trigger={"availableNow": True},
-        ),
+        output_config=streaming_output,
     )
 
     # The listener bus flushes onQueryProgress callbacks asynchronously after the availableNow
