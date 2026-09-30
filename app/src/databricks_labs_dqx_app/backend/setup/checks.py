@@ -103,6 +103,23 @@ class ResourceCheckers:
                 instructions=required_catalog_grants(app_sp, self._resources),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
+        user_catalog_response = self._effective_permissions("CATALOG", self._resources.volume.catalog, "account users")
+        if user_catalog_response is None:
+            return _action_required(
+                SetupStepId.UNITY_CATALOG,
+                "catalog_user_permission_check_failed",
+                "Could not verify user access to the application catalog.",
+            )
+        if _missing_privileges(user_catalog_response, frozenset({"USE_CATALOG"})):
+            catalog = _instruction_identifier(self._resources.volume.catalog)
+            return SetupStep(
+                id=SetupStepId.UNITY_CATALOG,
+                state=StepState.ACTION_REQUIRED,
+                code="catalog_user_permissions_missing",
+                summary="Users need access to the application catalog for previews and Genie queries.",
+                instructions=(f"GRANT USE CATALOG ON CATALOG {catalog} TO `account users`;",),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
         return _passed(SetupStepId.UNITY_CATALOG, "Required Unity Catalog permissions are available.")
 
     def ensure_sibling_schemas(self) -> SetupStep:
@@ -146,6 +163,32 @@ class ResourceCheckers:
                     instructions=(f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {principal};",),
                     actions=(SetupActionId.VERIFY_AGAIN,),
                 )
+        for schema, required in (
+            (schemas[0], _SCHEMA_PRIVILEGES),
+            (schemas[1], frozenset({"USE_SCHEMA", "SELECT"})),
+        ):
+            response = self._effective_permissions("SCHEMA", f"{catalog}.{schema}", "account users")
+            if response is None:
+                return _action_required(
+                    SetupStepId.SCHEMAS,
+                    "sibling_schema_user_permission_check_failed",
+                    "Could not verify user access to an application schema.",
+                )
+            if _missing_privileges(response, required):
+                privileges = "USE SCHEMA, CREATE TABLE" if schema == schemas[0] else "USE SCHEMA, SELECT"
+                quoted_schema = f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}"
+                statement = f"GRANT {privileges} ON SCHEMA {quoted_schema} TO `account users`"
+                try:
+                    self._sql.execute_no_schema(statement)
+                except Exception:
+                    return SetupStep(
+                        id=SetupStepId.SCHEMAS,
+                        state=StepState.ACTION_REQUIRED,
+                        code="sibling_schema_user_permissions_missing",
+                        summary="Users need access to the temporary or Genie schema.",
+                        instructions=(f"{statement};",),
+                        actions=(SetupActionId.VERIFY_AGAIN,),
+                    )
         return _passed(SetupStepId.SCHEMAS, "Required application schemas are available.")
 
     def check_lakebase(self) -> SetupStep:

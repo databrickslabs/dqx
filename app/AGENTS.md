@@ -499,7 +499,7 @@ See `DEVELOPMENT.md` for local `.env` and Lakebase notes.
 ## Important Notes
 
 - **SQL safety:** all interpolated identifiers must pass `validate_fqn` and be wrapped with `quote_fqn` from `sql_utils.py`. All string literals must be escaped with `escape_sql_string` (ANSI doubled quotes — never backslash). User-supplied SQL bodies must pass `is_sql_query_safe()` from the DQX library and raise `UnsafeSqlQueryError` on rejection.
-- **Migration startup:** SP authentication and `MigrationRunner.run_all()` are *required* — failure aborts the lifespan and the app refuses to start. Best-effort startup steps (tmp-schema creation, USE CATALOG grant, wheel sync) log warnings and continue.
+- **Setup and activation:** Lakebase and Delta migrations, sibling-schema capabilities, score views, and the entitlement view are required before the app reports ready. Schema grants for `account users` are reconciled during setup; failed grants require administrator action. Metadata refresh and Genie space provisioning remain best effort.
 - **Scheduler:** runs in-process as an asyncio task, gated by an exclusive file lock (`/tmp/.dqx_scheduler.lock`) so only one uvicorn worker drives it. Disable with `DQX_SCHEDULER_DISABLED=1`.
 - **Caches:** `app_cache` (`cache.py`) is per-process in-memory with TTL. SP `WorkspaceClient`, OBO `WorkspaceClient`, and per-user catalog list are all cached. Use the `MISS` sentinel — never `is None` — to detect cache absence.
 - **SPA static files:** `spa_static.py` falls through to `index.html` only for non-asset paths (positive allowlist of asset extensions), so SPA routes containing dots still work.

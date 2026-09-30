@@ -214,6 +214,7 @@ async def test_post_migration_startup_does_not_grant_catalog_privileges(
 
     statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
     assert not any("GRANT USE CATALOG" in statement for statement in statements)
+    assert not any("GRANT SELECT ON TABLE" in statement for statement in statements)
 
 
 @pytest.mark.asyncio
@@ -252,7 +253,6 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     monkeypatch.setattr(startup, "MetadataDimService", lambda **_kwargs: startup_metadata_dims)
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
@@ -270,8 +270,9 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
 
 
 @pytest.mark.asyncio
-async def test_startup_does_not_activate_when_score_views_fail(
-    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failing_view", ["score", "entitlement"])
+async def test_startup_does_not_activate_when_required_view_fails(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, failing_view: str
 ) -> None:
     """A failed view DDL must keep setup from reporting the app as ready."""
     from databricks_labs_dqx_app.backend import startup
@@ -300,8 +301,10 @@ async def test_startup_does_not_activate_when_score_views_fail(
     monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
     monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    if failing_view == "score":
+        monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
+    else:
+        monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
@@ -352,7 +355,6 @@ async def test_startup_reconciles_studio_resource_tags(
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
     monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())

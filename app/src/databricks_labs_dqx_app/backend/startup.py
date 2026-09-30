@@ -43,7 +43,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
-from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
+from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -55,13 +55,7 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
-from databricks_labs_dqx_app.backend.services.score_view_service import (
-    ASOF_VIEW_NAME,
-    ATTRIBUTION_VIEW_NAME,
-    METRIC_VIEW_NAME,
-    SHAPING_VIEW_NAME,
-    ScoreViewService,
-)
+from databricks_labs_dqx_app.backend.services.score_view_service import ScoreViewService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
@@ -434,7 +428,6 @@ async def _run_post_migration_startup(
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
     _ensure_entitlement_objects(delta_sql, resources)
-    _grant_user_view_access(delta_sql, resources)
     _grant_task_runner_run_config_access(oltp)
     targets = startup_tag_targets(
         resources,
@@ -483,19 +476,7 @@ async def _ensure_metadata_dims(
 
 
 def _ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
-    try:
-        EntitlementService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_objects()
-    except Exception:
-        logger.warning("Could not create the entitlement objects")
-
-
-_USER_READABLE_VIEWS = (
-    METRIC_VIEW_NAME,
-    SHAPING_VIEW_NAME,
-    ASOF_VIEW_NAME,
-    ATTRIBUTION_VIEW_NAME,
-    FAILING_ROWS_VIEW_NAME,
-)
+    EntitlementService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_objects()
 
 
 def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
@@ -528,20 +509,6 @@ def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
             # Name the failing statement so a later opaque runner permission
             # error can be traced back to the specific grant that did not apply.
             logger.warning("Task-runner grant failed: %s", statement, exc_info=True)
-
-
-def _grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
-    catalog = delta_sql.q(resources.volume.catalog)
-    schema = delta_sql.q(resources.genie_schema)
-    statements = [
-        f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `account users`",
-        *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{name} TO `account users`" for name in _USER_READABLE_VIEWS),
-    ]
-    for statement in statements:
-        try:
-            delta_sql.execute_no_schema(statement)
-        except Exception:
-            logger.warning("Could not grant account users access to a Studio view", exc_info=True)
 
 
 def _ensure_genie_space(

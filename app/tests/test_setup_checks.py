@@ -217,7 +217,11 @@ def test_catalog_and_schema_with_all_privileges_passes(checkers: ResourceChecker
 def test_catalog_and_schema_owners_pass_without_explicit_privileges(
     checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
-    workspace.grants.get_effective.side_effect = [_effective_permissions(), _effective_permissions()]
+    workspace.grants.get_effective.side_effect = [
+        _effective_permissions(),
+        _effective_permissions(),
+        _effective_permissions(Privilege.USE_CATALOG),
+    ]
     workspace.catalogs.get.return_value = SimpleNamespace(owner="app-sp-id")
     workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
 
@@ -255,12 +259,27 @@ def test_catalog_and_main_schema_capabilities_pass(checkers: ResourceCheckers, w
     workspace.grants.get_effective.side_effect = [
         _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA),
         _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
+        _effective_permissions(Privilege.USE_CATALOG),
     ]
 
     result = checkers.check_unity_catalog()
 
     assert result.state == StepState.PASSED
     assert result.code == ""
+
+
+def test_catalog_requires_user_access_for_obo_queries(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.grants.get_effective.side_effect = [
+        _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA),
+        _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
+        _effective_permissions(),
+    ]
+
+    result = checkers.check_unity_catalog()
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "catalog_user_permissions_missing"
+    assert result.instructions == ("GRANT USE CATALOG ON CATALOG `main` TO `account users`;",)
 
 
 def test_sibling_schema_creation_is_idempotent(
@@ -296,12 +315,54 @@ def test_existing_genie_schema_without_create_privilege_blocks_setup(
 def test_app_owned_sibling_schemas_pass_without_explicit_grants(
     checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
-    workspace.grants.get_effective.side_effect = [_effective_permissions(), _effective_permissions()]
+    workspace.grants.get_effective.side_effect = [
+        _effective_permissions(),
+        _effective_permissions(),
+        _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
+        _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT),
+    ]
     workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
 
     result = checkers.ensure_sibling_schemas()
 
     assert result.state == StepState.PASSED
+
+
+def test_sibling_schemas_grant_users_access_for_preview_and_genie(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = [
+        _effective_permissions(Privilege.ALL_PRIVILEGES),
+        _effective_permissions(Privilege.ALL_PRIVILEGES),
+        _effective_permissions(),
+        _effective_permissions(),
+    ]
+
+    result = checkers.ensure_sibling_schemas()
+
+    assert result.state == StepState.PASSED
+    statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
+    assert "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `account users`" in statements
+    assert "GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`genie` TO `account users`" in statements
+
+
+def test_existing_sibling_schema_without_grant_authority_blocks_setup(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = [
+        _effective_permissions(Privilege.ALL_PRIVILEGES),
+        _effective_permissions(Privilege.ALL_PRIVILEGES),
+        _effective_permissions(),
+    ]
+    sql.execute_no_schema.side_effect = [None, None, RuntimeError("permission denied")]
+
+    result = checkers.ensure_sibling_schemas()
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "sibling_schema_user_permissions_missing"
+    assert result.instructions == (
+        "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `account users`;",
+    )
 
 
 def test_lakebase_connectivity_failure_is_sanitized(checkers: ResourceCheckers, pg: MagicMock) -> None:

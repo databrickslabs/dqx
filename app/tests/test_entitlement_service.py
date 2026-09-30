@@ -416,7 +416,7 @@ class TestVerifyAndRecord:
 
 
 class TestStartupWiring:
-    """``_ensure_entitlement_objects`` + ``_grant_user_view_access``."""
+    """Required entitlement objects created during activation."""
 
     def test_ensure_creates_table_then_view(self, sql_executor_mock, startup_resources):
         from databricks_labs_dqx_app.backend.startup import _ensure_entitlement_objects
@@ -428,44 +428,10 @@ class TestStartupWiring:
         assert ENTITLEMENTS_TABLE_NAME in executed[0]
         assert FAILING_ROWS_VIEW_NAME in executed[1]
 
-    def test_ensure_is_best_effort_and_never_raises(self, sql_executor_mock, startup_resources):
+    def test_ensure_failure_prevents_activation(self, sql_executor_mock, startup_resources):
         from databricks_labs_dqx_app.backend.startup import _ensure_entitlement_objects
 
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
         sql_executor_mock.execute.side_effect = RuntimeError("no CREATE TABLE privilege")
-        _ensure_entitlement_objects(sql_executor_mock, startup_resources)  # must not propagate
-
-    def test_grants_use_genie_schema_plus_select_on_the_five_views(self, sql_executor_mock, startup_resources):
-        # The 5 readable views live in the genie schema (default "genie"), not the
-        # main app schema. USE SCHEMA and SELECT must reference genie_schema_name.
-        from databricks_labs_dqx_app.backend.startup import _grant_user_view_access
-
-        _grant_user_view_access(sql_executor_mock, startup_resources)
-        executed = [call.args[0] for call in sql_executor_mock.execute_no_schema.call_args_list]
-        assert executed[0] == "GRANT USE SCHEMA ON SCHEMA `dqx_test`.`genie` TO `account users`"
-        select_grants = executed[1:]
-        assert [
-            f"GRANT SELECT ON TABLE `dqx_test`.`genie`.{name} TO `account users`"
-            for name in (
-                "mv_dq_scores",
-                "v_dq_check_results",
-                "v_dq_check_results_asof",
-                "v_dq_check_attribution",
-                "v_dq_failing_rows",
-            )
-        ] == select_grants
-
-    def test_the_entitlement_table_gets_no_grant(self, sql_executor_mock, startup_resources):
-        from databricks_labs_dqx_app.backend.startup import _grant_user_view_access
-
-        _grant_user_view_access(sql_executor_mock, startup_resources)
-        for call in sql_executor_mock.execute_no_schema.call_args_list:
-            assert ENTITLEMENTS_TABLE_NAME not in call.args[0]
-
-    def test_grants_are_individually_best_effort(self, sql_executor_mock, startup_resources):
-        from databricks_labs_dqx_app.backend.startup import _grant_user_view_access
-
-        # First statement fails — the remaining grants must still be issued.
-        sql_executor_mock.execute_no_schema.side_effect = [RuntimeError("denied")] + [None] * 5
-        _grant_user_view_access(sql_executor_mock, startup_resources)  # must not propagate
-        assert sql_executor_mock.execute_no_schema.call_count == 6
+        with pytest.raises(RuntimeError, match="no CREATE TABLE privilege"):
+            _ensure_entitlement_objects(sql_executor_mock, startup_resources)
