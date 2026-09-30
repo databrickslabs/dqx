@@ -112,6 +112,8 @@ def wire_crud_builder_methods(mock: MagicMock, *, dialect: str = "delta") -> Mag
     :class:`SqlExecutor`.
     """
     from databricks_labs_dqx_app.backend.sql_executor import (
+        JsonValue,
+        SqlExecutor,
         _build_count,
         _build_delete,
         _build_insert,
@@ -134,12 +136,28 @@ def wire_crud_builder_methods(mock: MagicMock, *, dialect: str = "delta") -> Mag
         mock.q.side_effect = quote
 
     def _insert(table, *, values, timeout_seconds=120):
+        if any(isinstance(value, JsonValue) for value in values.values()):
+            if dialect == "postgres":
+                from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
+
+                PgExecutor.insert(mock, table, values=values, timeout_seconds=timeout_seconds)
+            else:
+                SqlExecutor.insert(mock, table, values=values, timeout_seconds=timeout_seconds)
+            return
         mock.execute(
             _build_insert(table, values, mock.q, _render_value),
             timeout_seconds=timeout_seconds,
         )
 
     def _update(table, *, updates, where, timeout_seconds=120):
+        if any(isinstance(value, JsonValue) for value in updates.values()):
+            if dialect == "postgres":
+                from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
+
+                PgExecutor.update(mock, table, updates=updates, where=where, timeout_seconds=timeout_seconds)
+            else:
+                SqlExecutor.update(mock, table, updates=updates, where=where, timeout_seconds=timeout_seconds)
+            return
         mock.execute(
             _build_update(table, updates, where, mock.q, _render_value),
             timeout_seconds=timeout_seconds,
@@ -191,6 +209,7 @@ def sql_executor_mock() -> MagicMock:
     mock.schema = "dqx_app_test"
     mock.warehouse_id = "test-warehouse"
     mock.dialect = "delta"
+    mock.fqn.side_effect = lambda table: f"dqx_test.dqx_app_test.{table}"
     mock.param.side_effect = lambda name: f":{name}"
     wire_crud_builder_methods(mock)
     return mock

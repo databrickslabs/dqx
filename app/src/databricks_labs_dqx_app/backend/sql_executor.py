@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, LiteralString, Protocol, cast, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import Disposition, Format, StatementParameterListItem, StatementState
@@ -442,6 +442,15 @@ class TimestampValue:
         self.value = value
 
 
+class JsonValue:
+    """JSON text converted by the dialect from a bound parameter."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
 class WhereIn:
     """Marker for ``WHERE <col> IN (<v1>, <v2>, ...)`` predicates.
 
@@ -489,14 +498,24 @@ def _bound_read_renderer(
     *,
     prefix: str = "where",
     raw_renderer: Callable[[RawSql], str] | None = None,
+    json_renderer: Callable[[str], str] | None = None,
+    table: str | None = None,
 ) -> tuple[Callable[[Any], str], dict[str, SqlParameterValue]]:
     """Render runtime values as named markers while preserving explicit SQL expressions."""
-    parameters: dict[str, SqlParameterValue] = {}
+    parameters: dict[str, SqlParameterValue] = {} if table is None else {"table_name": table}
+    value_index = 0
 
     def render(value: Any) -> str:
+        nonlocal value_index
         if isinstance(value, RawSql):
             return raw_renderer(value) if raw_renderer is not None else value.expr
-        name = f"{prefix}_{len(parameters)}"
+        name = f"{prefix}_{value_index}"
+        value_index += 1
+        if isinstance(value, JsonValue):
+            if json_renderer is None:
+                raise ValueError("JSON values require a dialect JSON renderer")
+            parameters[name] = value.value
+            return json_renderer(name)
         if isinstance(value, TimestampValue):
             parameters[name] = value.value
             return f"CAST({marker(name)} AS TIMESTAMP)"
@@ -504,6 +523,28 @@ def _bound_read_renderer(
         return marker(name)
 
     return render, parameters
+
+
+def _compose_sql(template: LiteralString, **fragments: str | Sequence[str]) -> str:
+    """Compose trusted SQL fragments and structured PostgreSQL identifiers.
+
+    Strings must already be quoted identifiers, bound markers, or explicit
+    trusted expressions. Sequences represent identifier components and are
+    quoted by psycopg. Import lazily so merely importing the Delta executor
+    or migration protocol does not load the PostgreSQL driver.
+    """
+    from psycopg import sql
+
+    return (
+        sql.SQL(template)
+        .format(
+            **{
+                name: sql.SQL(cast(LiteralString, fragment)) if isinstance(fragment, str) else sql.Identifier(*fragment)
+                for name, fragment in fragments.items()
+            }
+        )
+        .as_string()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +624,7 @@ def _build_where(
 
 
 def _build_insert(
-    table: str,
+    table: str | Sequence[str],
     values: dict[str, Any],
     quote: Callable[[str], str],
     render: Callable[[Any], str],
@@ -593,11 +634,11 @@ def _build_insert(
         raise ValueError("insert requires at least one column")
     cols = ", ".join(quote(c) for c in values)
     vals = ", ".join(render(v) for v in values.values())
-    return f"INSERT INTO {table} ({cols}) VALUES ({vals})"
+    return _compose_sql("INSERT INTO {table} ({cols}) VALUES ({vals})", table=table, cols=cols, vals=vals)
 
 
 def _build_update(
-    table: str,
+    table: str | Sequence[str],
     updates: dict[str, Any],
     where: dict[str, Any],
     quote: Callable[[str], str],
@@ -612,11 +653,13 @@ def _build_update(
         raise ValueError("update requires at least one column in `updates`")
     set_clause = ", ".join(f"{quote(col)} = {render(v)}" for col, v in updates.items())
     where_clause = _build_where(where, quote, render)
-    return f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
+    return _compose_sql(
+        "UPDATE {table} SET {updates} WHERE {where}", table=table, updates=set_clause, where=where_clause
+    )
 
 
 def _build_delete(
-    table: str,
+    table: str | Sequence[str],
     where: dict[str, Any],
     quote: Callable[[str], str],
     render: Callable[[Any], str],
@@ -627,23 +670,25 @@ def _build_delete(
     table wipe must go through :meth:`OltpExecutorProtocol.execute`.
     """
     where_clause = _build_where(where, quote, render)
-    return f"DELETE FROM {table} WHERE {where_clause}"
+    return _compose_sql("DELETE FROM {table} WHERE {where}", table=table, where=where_clause)
 
 
 def _build_count(
-    table: str,
+    table: str | Sequence[str],
     where: dict[str, Any] | None,
     quote: Callable[[str], str],
     render: Callable[[Any], str],
 ) -> str:
     """Render ``SELECT COUNT(*) FROM <table> [WHERE <where>]``."""
     if where:
-        return f"SELECT COUNT(*) FROM {table} WHERE {_build_where(where, quote, render)}"
-    return f"SELECT COUNT(*) FROM {table}"
+        return _compose_sql(
+            "SELECT COUNT(*) FROM {table} WHERE {where}", table=table, where=_build_where(where, quote, render)
+        )
+    return _compose_sql("SELECT COUNT(*) FROM {table}", table=table)
 
 
 def _build_select(
-    table: str,
+    table: str | Sequence[str],
     columns: Sequence[str],
     where: dict[str, Any] | None,
     quote: Callable[[str], str],
@@ -659,8 +704,13 @@ def _build_select(
         raise ValueError("select requires at least one column")
     projection = ", ".join(quote(c) for c in columns)
     if where:
-        return f"SELECT {projection} FROM {table} WHERE {_build_where(where, quote, render)}"
-    return f"SELECT {projection} FROM {table}"
+        return _compose_sql(
+            "SELECT {projection} FROM {table} WHERE {where}",
+            table=table,
+            projection=projection,
+            where=_build_where(where, quote, render),
+        )
+    return _compose_sql("SELECT {projection} FROM {table}", table=table, projection=projection)
 
 
 class SqlExecutor:
@@ -946,9 +996,13 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.insert` for the contract.
         """
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_render_value, json_renderer=self.json_parameter_expr, table=table
+        )
         self.execute(
-            _build_insert(table, values, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
+            _build_insert("IDENTIFIER(:table_name)", values, self.q, render),
+            parameters=parameters,
+            timeout_seconds=timeout_seconds,
         )
 
     def update(
@@ -963,9 +1017,11 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.update` for the contract.
         """
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_render_value, json_renderer=self.json_parameter_expr, table=table
+        )
         self.execute(
-            _build_update(table, updates, where, self.q, render),
+            _build_update("IDENTIFIER(:table_name)", updates, where, self.q, render),
             parameters=parameters,
             timeout_seconds=timeout_seconds,
         )
@@ -981,9 +1037,13 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.delete` for the contract.
         """
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_render_value, json_renderer=self.json_parameter_expr, table=table
+        )
         self.execute(
-            _build_delete(table, where, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
+            _build_delete("IDENTIFIER(:table_name)", where, self.q, render),
+            parameters=parameters,
+            timeout_seconds=timeout_seconds,
         )
 
     def count(
@@ -997,8 +1057,8 @@ class SqlExecutor:
 
         See :meth:`OltpExecutorProtocol.count` for the contract.
         """
-        render, parameters = _bound_read_renderer(self.param)
-        statement = _build_count(table, where, self.q, render)
+        render, parameters = _bound_read_renderer(self.param, table=table)
+        statement = _build_count("IDENTIFIER(:table_name)", where, self.q, render)
         rows = (
             self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
             if parameters
@@ -1017,8 +1077,8 @@ class SqlExecutor:
         timeout_seconds: int = 120,
     ) -> list[list[str]]:
         """Delta simple SELECT — see :meth:`OltpExecutorProtocol.select_rows`."""
-        render, parameters = _bound_read_renderer(self.param)
-        statement = _build_select(table, columns, where, self.q, render)
+        render, parameters = _bound_read_renderer(self.param, table=table)
+        statement = _build_select("IDENTIFIER(:table_name)", columns, where, self.q, render)
         return (
             self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
             if parameters
@@ -1034,8 +1094,8 @@ class SqlExecutor:
         timeout_seconds: int = 120,
     ) -> list[dict[str, str | None]]:
         """Delta simple SELECT — see :meth:`OltpExecutorProtocol.select_dicts`."""
-        render, parameters = _bound_read_renderer(self.param)
-        statement = _build_select(table, columns, where, self.q, render)
+        render, parameters = _bound_read_renderer(self.param, table=table)
+        statement = _build_select("IDENTIFIER(:table_name)", columns, where, self.q, render)
         return (
             self.query_dicts(statement, parameters=parameters, timeout_seconds=timeout_seconds)
             if parameters
@@ -1078,7 +1138,9 @@ class SqlExecutor:
         # side so the two backends stay symmetric — without this the
         # Postgres path accepts a reserved-word column and Delta
         # raises a parse error.
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_render_value, json_renderer=self.json_parameter_expr, table=table
+        )
         on_clause = " AND ".join(f"target.{self.q(k)} = source.{self.q(k)}" for k in key_cols)
         source_select = ", ".join(f"{render(v)} AS {self.q(k)}" for k, v in key_cols.items())
         update_set = ", ".join(f"{self.q(k)} = {render(v)}" for k, v in value_cols.items())
@@ -1087,11 +1149,16 @@ class SqlExecutor:
         insert_cols = ", ".join(self.q(c) for c in all_cols)
         insert_vals = ", ".join(all_vals)
 
-        sql = (
-            f"MERGE INTO {table} AS target "
-            f"USING (SELECT {source_select}) AS source ON {on_clause} "
-            f"WHEN MATCHED THEN UPDATE SET {update_set} "
-            f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"
+        sql = _compose_sql(
+            "MERGE INTO IDENTIFIER(:table_name) AS target "
+            "USING (SELECT {source_select}) AS source ON {on_clause} "
+            "WHEN MATCHED THEN UPDATE SET {update_set} "
+            "WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})",
+            source_select=source_select,
+            on_clause=on_clause,
+            update_set=update_set,
+            insert_cols=insert_cols,
+            insert_vals=insert_vals,
         )
         self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 
@@ -1127,7 +1194,9 @@ class SqlExecutor:
         # Postgres side so the two backends stay symmetric — without
         # this the Postgres path accepts a reserved-word audit column
         # and Delta raises a parse error.
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_render_value, json_renderer=self.json_parameter_expr, table=table
+        )
         on_clause = " AND ".join(f"target.{self.q(k)} = source.{self.q(k)}" for k in key_cols)
         source_select = ", ".join(f"{render(v)} AS {self.q(k)}" for k, v in key_cols.items())
 
@@ -1152,11 +1221,16 @@ class SqlExecutor:
         insert_cols = ", ".join(self.q(c) for c in all_cols)
         insert_vals = ", ".join(all_vals)
 
-        sql = (
-            f"MERGE INTO {table} AS target "
-            f"USING (SELECT {source_select}) AS source ON {on_clause} "
-            f"WHEN MATCHED THEN UPDATE SET {update_set} "
-            f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"
+        sql = _compose_sql(
+            "MERGE INTO IDENTIFIER(:table_name) AS target "
+            "USING (SELECT {source_select}) AS source ON {on_clause} "
+            "WHEN MATCHED THEN UPDATE SET {update_set} "
+            "WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})",
+            source_select=source_select,
+            on_clause=on_clause,
+            update_set=update_set,
+            insert_cols=insert_cols,
+            insert_vals=insert_vals,
         )
         self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 

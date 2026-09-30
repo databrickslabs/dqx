@@ -34,16 +34,17 @@ def test_get_setting_binds_runtime_key(
     assert service.get_setting(key) == "stored"
     if executor.dialect == "delta":
         statement = execute.call_args.kwargs["statement"]
-        assert statement == (
-            "SELECT `setting_value` FROM `test-catalog`.`test-schema`.dq_app_settings WHERE `setting_key` = :where_0"
-        )
+        assert statement == ("SELECT `setting_value` FROM IDENTIFIER(:table_name) WHERE `setting_key` = :where_0")
         assert execute.call_args.kwargs["parameters"] == [
-            StatementParameterListItem(name="where_0", type="STRING", value=key)
+            StatementParameterListItem(
+                name="table_name", type="STRING", value="`test-catalog`.`test-schema`.dq_app_settings"
+            ),
+            StatementParameterListItem(name="where_0", type="STRING", value=key),
         ]
     else:
         statement = execute.call_args.args[0]
         assert statement == (
-            'SELECT "setting_value" FROM "test-schema".dq_app_settings WHERE "setting_key" = %(where_0)s'
+            'SELECT "setting_value" FROM "test-schema"."dq_app_settings" WHERE "setting_key" = %(where_0)s'
         )
         assert execute.call_args.args[1] == {"where_0": key}
     assert key not in statement
@@ -61,7 +62,10 @@ def test_get_config_binds_config_key(
     if executor.dialect == "delta":
         assert "workspace_config" not in execute.call_args.kwargs["statement"]
         assert execute.call_args.kwargs["parameters"] == [
-            StatementParameterListItem(name="where_0", type="STRING", value="workspace_config")
+            StatementParameterListItem(
+                name="table_name", type="STRING", value="`test-catalog`.`test-schema`.dq_app_settings"
+            ),
+            StatementParameterListItem(name="where_0", type="STRING", value="workspace_config"),
         ]
     else:
         assert "workspace_config" not in execute.call_args.args[0]

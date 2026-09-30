@@ -17,7 +17,7 @@ payload by re-rendering those references through the ``Materializer``.
 """
 
 import json
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -116,8 +116,17 @@ def _dispatch(sql, mapping: dict[str, list]):
 
 
 def _inserted_snapshot(sql) -> dict:
-    insert = next(call for call in sql.execute.call_args_list if call.args[0].startswith(f"INSERT INTO {_VERSIONS}"))
-    return json.loads(insert.kwargs["parameters"]["state_json"])
+    insert = next(call for call in sql.execute.call_args_list if call.args[0].startswith("INSERT INTO IDENTIFIER"))
+    assert insert.kwargs["parameters"]["table_name"] == _VERSIONS
+    return json.loads(insert.kwargs["parameters"]["value_3"])
+
+
+def _snapshot_sql(sql: MagicMock) -> list[str]:
+    return [
+        call.args[0]
+        for call in sql.execute.call_args_list
+        if call.kwargs.get("parameters", {}).get("table_name") == _VERSIONS
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +145,11 @@ class TestFreezeNewVersion:
 
         service.freeze_new_version("b1", "alice@x")
 
-        insert = next(
-            call for call in sql.execute.call_args_list if call.args[0].startswith(f"INSERT INTO {_VERSIONS}")
-        )
-        assert "parse_json(:state_json)" in insert.args[0]
+        insert = next(call for call in sql.execute.call_args_list if call.args[0].startswith("INSERT INTO IDENTIFIER"))
+        assert insert.kwargs["parameters"]["table_name"] == _VERSIONS
+        assert "parse_json(:value_3)" in insert.args[0]
         assert payload not in insert.args[0]
-        state = json.loads(insert.kwargs["parameters"]["state_json"])
+        state = json.loads(insert.kwargs["parameters"]["value_3"])
         assert state["applied_rules"][0]["column_mapping"] == [{"column": payload}]
 
     def test_bumps_version_and_freezes_scoped_refs(self, service, sql, monitored_tables, rules_catalog):
@@ -164,7 +172,7 @@ class TestFreezeNewVersion:
         assert new_version == 2
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
         assert any(f"UPDATE {_TABLES} SET" in s and "= 2" in s and "`version`" in s for s in exec_sqls)
-        assert any(f"INSERT INTO {_VERSIONS}" in s and "checks_json" not in s for s in exec_sqls)
+        assert any(s.startswith("INSERT INTO IDENTIFIER") and "checks_json" not in s for s in _snapshot_sql(sql))
         # frozen state carries references to ONLY the binding's own applied rules
         state = _inserted_snapshot(sql)
         ref_ids = {r["applied_rule_id"] for r in state["rule_refs"]}
@@ -233,10 +241,11 @@ class TestRefreezeCurrent:
 
         service.refreeze_current("b1")
 
-        update = next(call for call in sql.execute.call_args_list if call.args[0].startswith(f"UPDATE {_VERSIONS}"))
-        assert "parse_json(:state_json)" in update.args[0]
+        update = next(call for call in sql.execute.call_args_list if call.args[0].startswith("UPDATE IDENTIFIER"))
+        assert update.kwargs["parameters"]["table_name"] == _VERSIONS
+        assert "parse_json(:value_0)" in update.args[0]
         assert payload not in update.args[0]
-        state = json.loads(update.kwargs["parameters"]["state_json"])
+        state = json.loads(update.kwargs["parameters"]["value_0"])
         assert state["applied_rules"][0]["column_mapping"] == [{"column": payload}]
 
     def test_rewrites_in_place_and_stamps_refrozen_at(self, service, sql, monitored_tables, rules_catalog):
@@ -250,12 +259,12 @@ class TestRefreezeCurrent:
         # version stays 3, refrozen_at stamped, no INSERT / no version bump on the table.
         # Version remains bound while refrozen_at is stamped in the database.
         assert any(
-            f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s and "`version` = :version" in s
-            for s in exec_sqls
+            "UPDATE IDENTIFIER(:table_name) SET" in s and "`refrozen_at` = now()" in s and "`version` = :value_2" in s
+            for s in _snapshot_sql(sql)
         )
-        update = next(call for call in sql.execute.call_args_list if call.args[0].startswith(f"UPDATE {_VERSIONS}"))
-        assert update.kwargs["parameters"]["version"] == 3
-        assert not any(f"INSERT INTO {_VERSIONS}" in s for s in exec_sqls)
+        update = next(call for call in sql.execute.call_args_list if call.args[0].startswith("UPDATE IDENTIFIER"))
+        assert update.kwargs["parameters"]["value_2"] == 3
+        assert not any(s.startswith("INSERT INTO") for s in _snapshot_sql(sql))
         assert not any(f"UPDATE {_TABLES} SET" in s and "`version`" in s for s in exec_sqls)
 
     def test_version_zero_is_a_noop(self, service, sql, monitored_tables):
@@ -282,8 +291,7 @@ class TestRefreezeCurrent:
 
         service.refreeze_current("b1")
 
-        exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        assert not any(f"UPDATE {_VERSIONS} SET" in s for s in exec_sqls)
+        assert not any(s.startswith("UPDATE") for s in _snapshot_sql(sql))
 
     def test_overwrites_when_previous_snapshot_also_empty(self, service, sql, monitored_tables, rules_catalog):
         # The guard is narrow: an empty->empty re-freeze is harmless and must
@@ -300,8 +308,7 @@ class TestRefreezeCurrent:
 
         service.refreeze_current("b1")
 
-        exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s for s in exec_sqls)
+        assert any(s.startswith("UPDATE") and "`refrozen_at` = now()" in s for s in _snapshot_sql(sql))
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +330,7 @@ class TestRefreezeForQualityRule:
         )
 
         assert service.refreeze_for_quality_rule("ar1-0") == "b1"
-        exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any(f"UPDATE {_VERSIONS} SET" in s and "`refrozen_at` = now()" in s for s in exec_sqls)
+        assert any(s.startswith("UPDATE") and "`refrozen_at` = now()" in s for s in _snapshot_sql(sql))
 
     def test_direct_rule_without_applied_id_is_skipped(self, service, sql):
         _dispatch(sql, {f"FROM {_QUALITY}": [[None]]})

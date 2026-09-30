@@ -40,6 +40,7 @@ from typing import Any, Protocol
 from databricks.sdk import WorkspaceClient
 from pydantic import SecretStr
 from psycopg import Connection, Cursor
+from psycopg.sql import Identifier
 from psycopg_pool import ConnectionPool
 
 # ``run_trusted_sql`` / ``run_parameterized_sql`` live in the
@@ -63,6 +64,7 @@ from databricks_labs_dqx_app.backend.sql_executor import (
     _build_select,
     _build_update,
     _bound_read_renderer,
+    _compose_sql,
     _render_value,
     validate_parameter_name,
 )
@@ -70,6 +72,20 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 from databricks_labs_dqx_app.backend.setup.resources import LakebaseConnection
 
 logger = logging.getLogger(__name__)
+
+
+def _table_identifier_parts(table: str) -> tuple[str, ...]:
+    """Parse one or two PostgreSQL name components without accepting SQL."""
+    token = r'"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*'
+    if "\x00" in table or not re.fullmatch(rf"(?:{token})(?:\.(?:{token}))?", table):
+        raise ValueError("Invalid table identifier")
+    parts = tuple(
+        part[1:-1].replace('""', '"') if part.startswith('"') else part.lower() for part in re.findall(token, table)
+    )
+    if not all(parts):
+        raise ValueError("Invalid table identifier")
+    return parts
+
 
 # Re-exports so ``from backend.pg_executor import run_trusted_sql`` keeps
 # working after the helpers moved to ``backend.pg_cursor_helpers``.
@@ -458,7 +474,7 @@ class PgExecutor:
 
     def q(self, identifier: str) -> str:
         """Quote a Postgres identifier (ANSI double quotes, doubled internal ``"``)."""
-        return '"' + identifier.replace('"', '""') + '"'
+        return Identifier(identifier).as_string()
 
     def param(self, name: str) -> str:
         """Return a psycopg named parameter marker."""
@@ -646,9 +662,13 @@ class PgExecutor:
         ``RawSql("current_timestamp()")`` is translated to Postgres'
         ``CURRENT_TIMESTAMP``.
         """
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_pg_render_value, json_renderer=self.json_parameter_expr
+        )
         self.execute(
-            _build_insert(table, values, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
+            _build_insert(_table_identifier_parts(table), values, self.q, render),
+            parameters=parameters,
+            timeout_seconds=timeout_seconds,
         )
 
     def update(
@@ -663,9 +683,11 @@ class PgExecutor:
 
         See :meth:`OltpExecutorProtocol.update` for the contract.
         """
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_pg_render_value, json_renderer=self.json_parameter_expr
+        )
         self.execute(
-            _build_update(table, updates, where, self.q, render),
+            _build_update(_table_identifier_parts(table), updates, where, self.q, render),
             parameters=parameters,
             timeout_seconds=timeout_seconds,
         )
@@ -681,9 +703,13 @@ class PgExecutor:
 
         See :meth:`OltpExecutorProtocol.delete` for the contract.
         """
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_pg_render_value, json_renderer=self.json_parameter_expr
+        )
         self.execute(
-            _build_delete(table, where, self.q, render), parameters=parameters, timeout_seconds=timeout_seconds
+            _build_delete(_table_identifier_parts(table), where, self.q, render),
+            parameters=parameters,
+            timeout_seconds=timeout_seconds,
         )
 
     def count(
@@ -698,7 +724,7 @@ class PgExecutor:
         See :meth:`OltpExecutorProtocol.count` for the contract.
         """
         render, parameters = _bound_read_renderer(self.param)
-        statement = _build_count(table, where, self.q, render)
+        statement = _build_count(_table_identifier_parts(table), where, self.q, render)
         rows = (
             self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
             if parameters
@@ -718,7 +744,7 @@ class PgExecutor:
     ) -> list[list[str]]:
         """Postgres simple SELECT — see :meth:`OltpExecutorProtocol.select_rows`."""
         render, parameters = _bound_read_renderer(self.param)
-        statement = _build_select(table, columns, where, self.q, render)
+        statement = _build_select(_table_identifier_parts(table), columns, where, self.q, render)
         return (
             self.query(statement, parameters=parameters, timeout_seconds=timeout_seconds)
             if parameters
@@ -735,7 +761,7 @@ class PgExecutor:
     ) -> list[dict[str, str | None]]:
         """Postgres simple SELECT — see :meth:`OltpExecutorProtocol.select_dicts`."""
         render, parameters = _bound_read_renderer(self.param)
-        statement = _build_select(table, columns, where, self.q, render)
+        statement = _build_select(_table_identifier_parts(table), columns, where, self.q, render)
         return (
             self.query_dicts(statement, parameters=parameters, timeout_seconds=timeout_seconds)
             if parameters
@@ -760,7 +786,9 @@ class PgExecutor:
         if not key_cols:
             raise ValueError("upsert requires at least one key column")
 
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_pg_render_value, json_renderer=self.json_parameter_expr
+        )
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
         all_vals = [render(v) for v in list(key_cols.values()) + list(value_cols.values())]
 
@@ -777,7 +805,13 @@ class PgExecutor:
             # Pure existence check — keys-only row, no update payload.
             conflict_clause = f"ON CONFLICT ({', '.join(quoted_keys)}) DO NOTHING"
 
-        sql = f"INSERT INTO {table} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
+        sql = _compose_sql(
+            "INSERT INTO {table} ({cols}) VALUES ({vals}) {conflict}",
+            table=_table_identifier_parts(table),
+            cols=", ".join(quoted_cols),
+            vals=", ".join(all_vals),
+            conflict=conflict_clause,
+        )
         self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 
     def upsert_with_audit(
@@ -815,7 +849,9 @@ class PgExecutor:
                 "with its initial INSERT value (e.g. {'version': 1})"
             )
 
-        render, parameters = _bound_read_renderer(self.param, prefix="value", raw_renderer=_pg_render_value)
+        render, parameters = _bound_read_renderer(
+            self.param, prefix="value", raw_renderer=_pg_render_value, json_renderer=self.json_parameter_expr
+        )
         all_cols = list(key_cols.keys()) + list(value_cols.keys())
         all_vals = [render(v) for v in list(key_cols.values()) + list(value_cols.values())]
         quoted_cols = [self.q(c) for c in all_cols]
@@ -852,9 +888,13 @@ class PgExecutor:
 
         # Only alias the target when a self-reference needs it, so the
         # non-increment path keeps its existing rendered shape.
-        target = f"{table} AS {alias}" if needs_alias else table
-        sql = (
-            f"INSERT INTO {target} ({', '.join(quoted_cols)}) " f"VALUES ({', '.join(all_vals)}) " f"{conflict_clause}"
+        sql = _compose_sql(
+            "INSERT INTO {table}{alias} ({cols}) VALUES ({vals}) {conflict}",
+            table=_table_identifier_parts(table),
+            alias=f" AS {alias}" if needs_alias else "",
+            cols=", ".join(quoted_cols),
+            vals=", ".join(all_vals),
+            conflict=conflict_clause,
         )
         self.execute(sql, parameters=parameters, timeout_seconds=timeout_seconds)
 

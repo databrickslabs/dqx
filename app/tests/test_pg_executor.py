@@ -51,6 +51,70 @@ from databricks_labs_dqx_app.backend.pg_executor import (
 from databricks_labs_dqx_app.backend.setup.resources import LakebaseConnection
 from databricks_labs_dqx_app.backend.sql_executor import RawSql, WhereIn
 
+
+@pytest.mark.parametrize(
+    "operation", ["insert", "update", "delete", "count", "select_rows", "select_dicts", "upsert", "upsert_with_audit"]
+)
+def test_builders_compose_postgres_table_identifier(operation: str) -> None:
+    executor = _make_pg_executor(schema='odd."schema%')
+    table = executor.fqn('events."name%; DROP TABLE other')
+    executor.execute = MagicMock()
+    executor.query = MagicMock(return_value=[["1"]])
+    executor.query_dicts = MagicMock(return_value=[])
+
+    if operation == "insert":
+        executor.insert(table, values={"id": "r1"})
+    elif operation == "update":
+        executor.update(table, updates={"status": "done"}, where={"id": "r1"})
+    elif operation == "delete":
+        executor.delete(table, where={"id": "r1"})
+    elif operation == "count":
+        assert executor.count(table) == 1
+    elif operation == "select_rows":
+        executor.select_rows(table, ["id"])
+    elif operation == "select_dicts":
+        executor.select_dicts(table, ["id"])
+    elif operation == "upsert":
+        executor.upsert(table, {"id": "r1"}, {"status": "done"})
+    else:
+        executor.upsert_with_audit(table, {"id": "r1"}, {"version": 1}, increment_on_update="version")
+
+    call = (
+        executor.query_dicts.call_args
+        if operation == "select_dicts"
+        else (executor.query.call_args if operation in {"count", "select_rows"} else executor.execute.call_args)
+    )
+    assert '"odd.""schema%"."events.""name%; DROP TABLE other"' in call.args[0]
+
+
+@pytest.mark.parametrize(
+    "table", ["public.events; DROP TABLE other", "public.events --", 'public."unterminated', "public..events"]
+)
+def test_builders_refuse_postgres_table_sql_fragments(table: str) -> None:
+    executor = _make_pg_executor()
+    executor.execute = MagicMock()
+
+    with pytest.raises(ValueError, match="Invalid table identifier"):
+        executor.insert(table, values={"id": "r1"})
+
+    executor.execute.assert_not_called()
+
+
+def test_insert_binds_postgres_typed_json_value() -> None:
+    from databricks_labs_dqx_app.backend import sql_executor
+
+    executor = _make_pg_executor()
+    executor.execute = MagicMock()
+    payload = '{"column": "quote\' backslash\\\\ OR 1=1 --"}'
+
+    executor.insert(executor.fqn("events"), values={"state": sql_executor.JsonValue(payload)})
+
+    call = executor.execute.call_args
+    assert "%(value_0)s::jsonb" in call.args[0]
+    assert payload not in call.args[0]
+    assert call.kwargs["parameters"] == {"value_0": payload}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -804,7 +868,7 @@ class TestUpsertWithAuditSqlShape:
         # Increment must use quoted identifier on the LHS and the
         # alias-qualified form on the RHS so EXCLUDED.<col> can't
         # shadow the existing row. The bare ``t`` target is aliased.
-        assert 'INSERT INTO t AS "dqx_upsert_target"' in sql
+        assert 'INSERT INTO "t" AS "dqx_upsert_target"' in sql
         assert '"order" = "dqx_upsert_target"."order" + 1' in sql
 
 

@@ -8,19 +8,27 @@ in the call. The command below is the reproducible alert inventory:
 app/.venv/bin/ruff check app/src/databricks_labs_dqx_app/backend --select S608 --output-format json
 ```
 
-Reviewed on 2026-09-30: **182 unsuppressed alerts in 40 files**. The branch
-started this pass with 180. Four new alerts are the pending-application and
-monitored-version writes: their JSON data is now bound, while their app-owned
-table names still require SQL construction. Converting the two settings
-SELECTs to the existing executor builder removed two alerts from the interim
-184 total. The final count is still two above the original 180. Alert count
-is not a count of exploitable paths.
+Reviewed on 2026-09-30: **167 unsuppressed alerts in 36 files**. The branch
+started the earlier pass with 180, rose to 184 after binding JSON in four
+hand-built writes, and fell to 182 after migrating two settings SELECTs.
+This batch removed another 15 diagnostics: nine shared/Delta builder sites,
+two PostgreSQL upsert sites, and four JSON writes migrated to those builders.
+Alert count is not a count of exploitable paths.
 
 ## Boundaries used by the code
 
 - Scalar values in app queries and writes go through Databricks
   `StatementParameterListItem` or psycopg parameters. JSON writes use the
   dialect's `json_parameter_expr(name)` around a bound JSON string.
+- Delta CRUD and MERGE builders bind the complete table name through
+  `IDENTIFIER(:table_name)`. This requires Databricks SQL or Runtime 13.3 LTS
+  and above. PostgreSQL builders parse one or two identifier components,
+  reject SQL fragments, and compose the table with `psycopg.sql.Identifier`.
+  Static statement templates use `psycopg.sql.SQL` composition; column names
+  remain dialect-quoted and scalar values remain bound.
+- `JsonValue` keeps JSON text bound when services use INSERT/UPDATE/upsert
+  builders. Pending-application and monitored-version writes now use that
+  marker with the dialect's JSON conversion.
 - Settings reads use `select_rows()` with bound keys, including the fixed
   workspace-config key. Regression tests exercise both real executors with
   mocked database boundaries and verify dialect quoting and parameter values.
@@ -55,7 +63,6 @@ can contain more than one construction pattern.
 | `lowcode_compile.py` | 3 | Generated SELECT bodies from validated AST operators, slots, grouping, and strict literal escaping; consumers apply the SQL safety gate. |
 | `migrations/__init__.py` | 2 | App migration metadata table; version and description values are bound. |
 | `migrations/postgres.py` | 3 | Shipped DDL template with executor-quoted schema and metadata table; migration record values are bound. |
-| `pg_executor.py` | 2 | Generic upsert builder: identifiers use `q()`/`fqn()`, ordinary values are bound, and only explicit `RawSql` expressions remain inline. |
 | `routes/v1/dq_results.py` | 6 | Quoted app views/tables, fixed SELECT fragments and bound filters, limits, and offsets. |
 | `routes/v1/dq_score.py` | 1 | Quoted metric view and bound table filter. |
 | `routes/v1/metrics.py` | 2 | App metric/run tables with bound table filter and limit; joins are fixed. |
@@ -74,8 +81,6 @@ can contain more than one construction pattern.
 | `services/materializer.py` | 4 | App rule tables with bound write values; the substituted authored filter is validated again before materialization. |
 | `services/metadata_dim_service.py` | 1 | App metadata table and bounded batched INSERT templates; row values are bound. |
 | `services/monitored_table_service.py` | 9 | App tables, fixed joins/projections, and bound binding, owner, schedule, and status values. |
-| `services/monitored_table_versions.py` | 2 | App version table; state JSON and row keys are bound, with JSON converted by the dialect helper. |
-| `services/pending_application_service.py` | 2 | App pending table; mapping JSON and row keys are bound, with JSON converted by the dialect helper. |
 | `services/permissions_service.py` | 4 | App grants/history tables, fixed column choices and projections, and bound object/principal values. |
 | `services/registry_service.py` | 13 | App registry tables and fixed projections; rule/write values are bound. One diagnostic covers a validation-only wrapper around an authored filter. |
 | `services/review_status_service.py` | 4 | App status/history tables, fixed projections, bound run IDs/status values, and a fixed history limit. |
@@ -88,7 +93,6 @@ can contain more than one construction pattern.
 | `services/score_view_service.py` | 1 | Generated view DDL from quoted app view names and fixed run mode. |
 | `services/table_data_service.py` | 1 | AI-generated SELECT, checked for one read-only statement with `is_sql_query_safe()` before OBO execution; outer limit is fixed. |
 | `services/view_service.py` | 5 | Source table quoted before entering the sample builder; row counts, percentages, and seeds are integer-coerced. |
-| `sql_executor.py` | 9 | Generic SELECT/DML/upsert builders: identifiers use `q()`/`fqn()`, values are bound, and explicit `RawSql` remains for fixed functions. |
 
 ## Remaining limitations
 
@@ -97,6 +101,6 @@ statement. `is_sql_query_safe()` is the project's policy for authored SQL;
 its accuracy is a separate review concern. The generic executors still allow
 callers to supply an explicit `RawSql` expression, so new callers must reserve
 it for fixed SQL functions and use parameters for runtime data. No S608
-suppression was added, and the 182 structural diagnostics remain visible.
+suppression was added, and the 167 structural diagnostics remain visible.
 Live Databricks SQL validation has not run: the configured test profile had
 no running warehouse during this pass.

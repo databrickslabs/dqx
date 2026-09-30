@@ -132,6 +132,62 @@ def test_json_parameter_expression_uses_bound_marker() -> None:
     assert executor.json_parameter_expr("definition_json") == "parse_json(:definition_json)"
 
 
+@pytest.mark.parametrize(
+    "operation", ["insert", "update", "delete", "count", "select_rows", "select_dicts", "upsert", "upsert_with_audit"]
+)
+def test_builders_bind_delta_table_identifier(operation: str) -> None:
+    workspace = MagicMock()
+    executor = SqlExecutor(workspace, "test-wh", "prod-east", "odd`schema")
+    response = workspace.statement_execution.execute_statement.return_value
+    response.status.state = StatementState.SUCCEEDED
+    response.result.data_array = [["1"]]
+    response.manifest.schema.columns = []
+    table = executor.fqn("events; DROP TABLE other")
+
+    if operation == "insert":
+        executor.insert(table, values={"id": "r1"})
+    elif operation == "update":
+        executor.update(table, updates={"status": "done"}, where={"id": "r1"})
+    elif operation == "delete":
+        executor.delete(table, where={"id": "r1"})
+    elif operation == "count":
+        assert executor.count(table) == 1
+    elif operation == "select_rows":
+        executor.select_rows(table, ["id"])
+    elif operation == "select_dicts":
+        executor.select_dicts(table, ["id"])
+    elif operation == "upsert":
+        executor.upsert(table, {"id": "r1"}, {"status": "done"})
+    else:
+        executor.upsert_with_audit(table, {"id": "r1"}, {"version": 1}, increment_on_update="version")
+
+    request = workspace.statement_execution.execute_statement.call_args.kwargs
+    assert "IDENTIFIER(:table_name)" in request["statement"]
+    assert table not in request["statement"]
+    assert (
+        StatementParameterListItem(
+            name="table_name", type="STRING", value="`prod-east`.`odd``schema`.`events; DROP TABLE other`"
+        )
+        in request["parameters"]
+    )
+
+
+def test_insert_binds_typed_json_value() -> None:
+    from databricks_labs_dqx_app.backend import sql_executor
+
+    workspace = MagicMock()
+    workspace.statement_execution.execute_statement.return_value.status.state = StatementState.SUCCEEDED
+    executor = SqlExecutor(workspace, "test-wh", "dqx", "public")
+    payload = '{"column": "quote\' backslash\\\\ OR 1=1 --"}'
+
+    executor.insert(executor.fqn("events"), values={"state": sql_executor.JsonValue(payload)})
+
+    request = workspace.statement_execution.execute_statement.call_args.kwargs
+    assert "parse_json(:value_0)" in request["statement"]
+    assert payload not in request["statement"]
+    assert StatementParameterListItem(name="value_0", type="STRING", value=payload) in request["parameters"]
+
+
 # ===========================================================================
 # _build_where
 # ===========================================================================
@@ -472,7 +528,7 @@ class TestSqlExecutorCrudDelegation:
         executor = _make_sql_executor()
         captured = self._capture_execute(executor)
         executor.insert("dq.t", values={"id": "abc", "count": 3})
-        assert captured == ["INSERT INTO dq.t (`id`, `count`) VALUES (:value_0, :value_1)"]
+        assert captured == ["INSERT INTO IDENTIFIER(:table_name) (`id`, `count`) VALUES (:value_0, :value_1)"]
 
     def test_insert_binds_untrusted_text(self) -> None:
         executor = _make_sql_executor()
@@ -483,7 +539,7 @@ class TestSqlExecutorCrudDelegation:
 
         statement = executor.execute.call_args.args[0]
         assert value not in statement
-        assert executor.execute.call_args.kwargs["parameters"] == {"value_0": value}
+        assert executor.execute.call_args.kwargs["parameters"] == {"table_name": "dq.t", "value_0": value}
 
     def test_insert_binds_timestamp_with_cast(self) -> None:
         from databricks_labs_dqx_app.backend import sql_executor
@@ -497,19 +553,19 @@ class TestSqlExecutorCrudDelegation:
         call = executor.execute.call_args
         assert "CAST(:value_0 AS TIMESTAMP)" in call.args[0]
         assert value not in call.args[0]
-        assert call.kwargs["parameters"] == {"value_0": value}
+        assert call.kwargs["parameters"] == {"table_name": "dq.t", "value_0": value}
 
     def test_update_delegates_with_delta_quoting(self) -> None:
         executor = _make_sql_executor()
         captured = self._capture_execute(executor)
         executor.update("dq.t", updates={"status": "done"}, where={"id": "r1"})
-        assert captured == ["UPDATE dq.t SET `status` = :value_0 WHERE `id` = :value_1"]
+        assert captured == ["UPDATE IDENTIFIER(:table_name) SET `status` = :value_0 WHERE `id` = :value_1"]
 
     def test_delete_delegates_with_delta_quoting(self) -> None:
         executor = _make_sql_executor()
         captured = self._capture_execute(executor)
         executor.delete("dq.t", where={"id": "r1"})
-        assert captured == ["DELETE FROM dq.t WHERE `id` = :value_0"]
+        assert captured == ["DELETE FROM IDENTIFIER(:table_name) WHERE `id` = :value_0"]
 
     def test_update_and_delete_bind_untrusted_text(self) -> None:
         executor = _make_sql_executor()
@@ -519,12 +575,12 @@ class TestSqlExecutorCrudDelegation:
         executor.update("dq.t", updates={"status": value}, where={"id": value})
         update_call = executor.execute.call_args
         assert value not in update_call.args[0]
-        assert update_call.kwargs["parameters"] == {"value_0": value, "value_1": value}
+        assert update_call.kwargs["parameters"] == {"table_name": "dq.t", "value_0": value, "value_1": value}
 
         executor.delete("dq.t", where={"id": value})
         delete_call = executor.execute.call_args
         assert value not in delete_call.args[0]
-        assert delete_call.kwargs["parameters"] == {"value_0": value}
+        assert delete_call.kwargs["parameters"] == {"table_name": "dq.t", "value_0": value}
 
     def test_upsert_binds_untrusted_text(self) -> None:
         executor = _make_sql_executor()
@@ -554,8 +610,10 @@ class TestSqlExecutorCrudDelegation:
         # ships (list-of-list of stringified cells).
         executor.query = MagicMock(return_value=[["42"]])  # type: ignore[method-assign]
         assert executor.count("dq.t", where={"status": "active"}) == 42
-        assert executor.query.call_args.args[0] == "SELECT COUNT(*) FROM dq.t WHERE `status` = :where_0"
-        assert executor.query.call_args.kwargs["parameters"] == {"where_0": "active"}
+        assert (
+            executor.query.call_args.args[0] == "SELECT COUNT(*) FROM IDENTIFIER(:table_name) WHERE `status` = :where_0"
+        )
+        assert executor.query.call_args.kwargs["parameters"] == {"table_name": "dq.t", "where_0": "active"}
 
     def test_count_returns_zero_on_empty_result(self) -> None:
         """Defensive: COUNT should always return a row, but shield the caller if it doesn't."""
@@ -568,8 +626,11 @@ class TestSqlExecutorCrudDelegation:
         executor.query = MagicMock(return_value=[["r1", "one"], ["r2", "two"]])  # type: ignore[method-assign]
         rows = executor.select_rows("dq.t", ["id", "name"], where={"status": "active"})
         assert rows == [["r1", "one"], ["r2", "two"]]
-        assert executor.query.call_args.args[0] == "SELECT `id`, `name` FROM dq.t WHERE `status` = :where_0"
-        assert executor.query.call_args.kwargs["parameters"] == {"where_0": "active"}
+        assert (
+            executor.query.call_args.args[0]
+            == "SELECT `id`, `name` FROM IDENTIFIER(:table_name) WHERE `status` = :where_0"
+        )
+        assert executor.query.call_args.kwargs["parameters"] == {"table_name": "dq.t", "where_0": "active"}
 
     def test_select_rows_binds_untrusted_where_value(self) -> None:
         executor = _make_sql_executor()
@@ -577,14 +638,14 @@ class TestSqlExecutorCrudDelegation:
         value = "x\\' OR 1=1 --"
         executor.select_rows("dq.t", ["id"], where={"name": value})
         assert value not in executor.query.call_args.args[0]
-        assert executor.query.call_args.kwargs["parameters"] == {"where_0": value}
+        assert executor.query.call_args.kwargs["parameters"] == {"table_name": "dq.t", "where_0": value}
 
     def test_select_dicts_delegates_to_query_dicts(self) -> None:
         executor = _make_sql_executor()
         executor.query_dicts = MagicMock(return_value=[{"id": "r1"}])  # type: ignore[method-assign]
         rows = executor.select_dicts("dq.t", ["id"])
         assert rows == [{"id": "r1"}]
-        assert executor.query_dicts.call_args.args[0] == "SELECT `id` FROM dq.t"
+        assert executor.query_dicts.call_args.args[0] == "SELECT `id` FROM IDENTIFIER(:table_name)"
 
     def test_count_returns_zero_on_null_cell(self) -> None:
         executor = _make_sql_executor()
