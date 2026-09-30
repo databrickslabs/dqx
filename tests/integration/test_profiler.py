@@ -2665,7 +2665,9 @@ def test_profiler_geospatial_geography_uses_geodesic_area(skip_if_runtime_not_ge
     options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
     _, profiles = profiler.profile(geog_df, options=options)
 
-    geo_profile_names = {profile.name for profile in profiles if profile.column == "geog"}
+    geo_profile_names = {
+        profile.name for profile in profiles if profile.column == "geog" and profile.name in GEOSPATIAL_PROFILE_NAMES
+    }
     # st_xmin/xmax/ymin/ymax, st_isvalid and st_x/st_y accept GEOMETRY only
     assert geo_profile_names == {
         "geometry_type",

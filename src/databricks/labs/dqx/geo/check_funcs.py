@@ -189,7 +189,7 @@ def is_point(column: str | Column, convert_column: bool = True) -> Column:
     condition_str = f"` in column `{col_expr_str}` is not a point geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_point",
     )
 
@@ -221,7 +221,7 @@ def is_linestring(column: str | Column, convert_column: bool = True) -> Column:
     condition_str = f"` in column `{col_expr_str}` is not a linestring geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_linestring",
     )
 
@@ -253,7 +253,7 @@ def is_polygon(column: str | Column, convert_column: bool = True) -> Column:
     condition_str = f"` in column `{col_expr_str}` is not a polygon geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_polygon",
     )
 
@@ -285,7 +285,7 @@ def is_multipoint(column: str | Column, convert_column: bool = True) -> Column:
     condition_str = f"` in column `{col_expr_str}` is not a multipoint geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_multipoint",
     )
 
@@ -317,7 +317,7 @@ def is_multilinestring(column: str | Column, convert_column: bool = True) -> Col
     condition_str = f"` in column `{col_expr_str}` is not a multilinestring geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_multilinestring",
     )
 
@@ -349,7 +349,7 @@ def is_multipolygon(column: str | Column, convert_column: bool = True) -> Column
     condition_str = f"` in column `{col_expr_str}` is not a multipolygon geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_multipolygon",
     )
 
@@ -381,7 +381,7 @@ def is_geometrycollection(column: str | Column, convert_column: bool = True) -> 
     condition_str = f"` in column `{col_expr_str}` is not a geometrycollection geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_geometrycollection",
     )
 
@@ -414,7 +414,7 @@ def is_ogc_valid(column: str | Column, convert_column: bool = True) -> Column:
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_valid_geometry",
     )
 
@@ -447,7 +447,7 @@ def is_non_empty_geometry(column: str | Column, convert_column: bool = True) -> 
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_empty_geometry",
     )
 
@@ -521,7 +521,7 @@ def has_dimension(column: str | Column, dimension: int, convert_column: bool = T
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_does_not_have_required_geo_dimension",
     )
 
@@ -558,7 +558,7 @@ def has_x_coordinate_between(
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_has_x_coordinates_outside_range",
     )
 
@@ -595,7 +595,7 @@ def has_y_coordinate_between(
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_has_y_coordinates_outside_range",
     )
 
@@ -981,14 +981,14 @@ def _compare_spatial_sql_function_result(
     is_valid_message = F.concat_ws(
         "",
         F.lit("value `"),
-        col_expr.cast("string"),
+        _geometry_value_sql(col_str_norm, col_expr, convert_column=convert_column),
         F.lit(f"` in column `{col_expr_str}` is not a valid {spatial_data_type}"),
     )
     compare_cond = compare_op(F.expr(f"{spatial_function}({spatial_conversion_expr})"), value_expr)
     compare_message = F.concat_ws(
         "",
         F.lit("value `"),
-        col_expr.cast("string"),
+        _geometry_value_sql(col_str_norm, col_expr, convert_column=convert_column),
         F.lit(f"` in column `{col_expr_str}` has {spatial_quantity_label} {compare_op_label} value: "),
         value_expr.cast("string"),
     )
@@ -1705,3 +1705,36 @@ def _geometry_operand_sql(col_str_norm: str, *, convert_column: bool) -> str:
         The SQL expression, as a string, to embed wherever the check needs the column's geometry value.
     """
     return f"try_to_geometry({col_str_norm})" if convert_column else col_str_norm
+
+
+def _geometry_value_sql(col_str_norm: str, col_expr: Column, *, convert_column: bool) -> Column:
+    """Returns a string rendering of a geometry value for use in a violation message.
+
+    A native GEOMETRY/GEOGRAPHY value (*convert_column* False) cannot be cast to STRING, so it is
+    rendered as WKT with *st_astext*. Otherwise the raw string/binary input is cast to string.
+
+    Args:
+        col_str_norm: Normalized column reference produced by *get_normalized_column_and_expr*.
+        col_expr: Column expression for the raw input value.
+        convert_column: When False, render the native geometry as WKT; when True, cast the raw value.
+
+    Returns:
+        A Column producing a string representation of the value.
+    """
+    return col_expr.cast("string") if convert_column else F.expr(f"st_astext({col_str_norm})")
+
+
+def _geometry_value_message(col_str_norm: str, col_expr: Column, condition_str: str, *, convert_column: bool) -> Column:
+    """Builds the ``value `<geom>` <condition_str>`` violation message shared by the single-column geo checks.
+
+    Args:
+        col_str_norm: Normalized column reference produced by *get_normalized_column_and_expr*.
+        col_expr: Column expression for the raw input value.
+        condition_str: Trailing message text describing the violated condition.
+        convert_column: When False, render the native geometry as WKT; when True, cast the raw value.
+
+    Returns:
+        A Column producing the full violation message.
+    """
+    value_str = _geometry_value_sql(col_str_norm, col_expr, convert_column=convert_column)
+    return F.concat_ws("", F.lit("value `"), value_str, F.lit(condition_str))

@@ -270,5 +270,37 @@ def test_geo_check_with_conversion_parses_column(column):
     assert "try_to_geometry" in _column_expression_clean(column)
 
 
+@pytest.mark.parametrize(
+    "column",
+    [
+        is_point("geom", convert_column=False),
+        has_x_coordinate_between("geom", -1.0, 1.0, convert_column=False),
+        is_area_not_greater_than("geom", 100, convert_column=False),
+        is_num_points_not_greater_than("geom", 5, convert_column=False),
+        is_non_empty_geometry("geom", convert_column=False),
+    ],
+)
+def test_geo_check_without_conversion_renders_value_as_wkt(column):
+    expression = _column_expression_clean(column)
+    assert "st_astext(geom)" in expression
+    assert "CAST(geom AS STRING)" not in expression
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        is_point("geom", convert_column=True),
+        has_x_coordinate_between("geom", -1.0, 1.0, convert_column=True),
+        is_area_not_greater_than("geom", 100, convert_column=True),
+        is_num_points_not_greater_than("geom", 5, convert_column=True),
+        is_non_empty_geometry("geom", convert_column=True),
+    ],
+)
+def test_geo_check_with_conversion_renders_value_as_string(column):
+    expression = _column_expression_clean(column)
+    assert "CAST(geom AS STRING)" in expression
+    assert "st_astext(geom)" not in expression
+
+
 def _column_expression_clean(column) -> str:
     return str(column).removeprefix("Column<'").removesuffix("'>")
