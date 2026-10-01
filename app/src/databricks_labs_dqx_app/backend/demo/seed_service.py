@@ -519,7 +519,8 @@ class DemoSeedService:
                 job_run_id=job_run_id,
             )
             status = self._wait_for_profile(run_id, job_service, job_run_id)
-            if status == "SUCCESS":
+            # ``JOB_SUCCESS``: the Job succeeded but its result row isn't visible yet.
+            if status in ("SUCCESS", "JOB_SUCCESS"):
                 logger.info("Demo profiling of %s completed (run_id=%s)", table_fqn, self._sanitize(run_id))
             else:
                 logger.warning(

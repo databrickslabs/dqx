@@ -307,9 +307,9 @@ def test_build_source_data_assigns_governed_tags_via_set_tag_ddl():
     assert len(ddls) == len(manifest.COLUMN_TAGS)
     for tag in manifest.COLUMN_TAGS:
         # the governed key appears backtick-quoted with its dot intact
-        assert any(
-            f"`{tag.tag}`" in d and f"`{tag.column}`" in d and tag.table in d for d in ddls
-        ), f"no SET TAG DDL for {tag.tag} on {tag.table}.{tag.column}; got {ddls!r}"
+        assert any(f"`{tag.tag}`" in d and f"`{tag.column}`" in d and tag.table in d for d in ddls), (
+            f"no SET TAG DDL for {tag.tag} on {tag.table}.{tag.column}; got {ddls!r}"
+        )
     # the SP entity-tag API is no longer used for tagging
     assert not deps["sp_ws"].entity_tag_assignments.create.called
 
@@ -671,9 +671,9 @@ def test_orphan_sweep_runs_before_final_cache_refresh():
     # refresh_all_for_tables is only called once (the final truthful refresh), so
     # a simple index compare proves the sweep runs first — the refresh then never
     # sees the deleted gate run
-    assert events.index("orphan_sweep") < events.index(
-        "final_refresh"
-    ), f"orphan sweep must precede the final cache refresh; got {events!r}"
+    assert events.index("orphan_sweep") < events.index("final_refresh"), (
+        f"orphan sweep must precede the final cache refresh; got {events!r}"
+    )
 
 
 def test_history_cleanup_cutoff_is_final_week_instant_not_now():
@@ -721,9 +721,9 @@ def test_history_cleanup_cutoff_is_final_week_instant_not_now():
     executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
     cleanup = [s for s in executed if s.startswith("DELETE FROM") and "dq_score_history" in s and "computed_at >" in s]
     assert cleanup, "expected a dq_score_history post-cutoff cleanup DELETE"
-    assert any(
-        expected_cutoff in s for s in cleanup
-    ), f"cleanup cutoff must be the final-week instant {expected_cutoff!r}; got {cleanup!r}"
+    assert any(expected_cutoff in s for s in cleanup), (
+        f"cleanup cutoff must be the final-week instant {expected_cutoff!r}; got {cleanup!r}"
+    )
 
 
 def test_tighten_card_rule_bumps_version_via_edit_submit_approve():
@@ -971,9 +971,9 @@ def test_weekly_trend_sweeps_orphans_before_each_weeks_score_refresh():
     # every refresh is preceded by the sweep of its week: between consecutive
     # sweeps there is at least one sweep before any refresh in that block
     first_refresh = events.index("refresh")
-    assert (
-        events.index("sweep") < first_refresh
-    ), f"each week's orphan sweep must precede its score refresh; got {events!r}"
+    assert events.index("sweep") < first_refresh, (
+        f"each week's orphan sweep must precede its score refresh; got {events!r}"
+    )
     # the expected interleave for 2 weeks x 2 tables: sweep,refresh,refresh per
     # week, then a trailing final sweep
     assert events == [
@@ -1510,6 +1510,27 @@ def test_run_profiling_failure_does_not_fail_the_whole_seed():
     assert last.state == "succeeded"
 
 
+def test_run_profiling_counts_a_succeeded_job_with_a_lagging_row_as_success(caplog):
+    # The Job finished SUCCESS but its result row isn't visible yet: that is a
+    # successful profile, not a failure.
+    from databricks_labs_dqx_app.backend.services.job_service import RunStatus
+
+    job_service = MagicMock()
+    job_service.submit_run.return_value = 42
+    job_service.get_run_status.return_value = RunStatus(state="TERMINATED", result_state="SUCCESS")
+    profiler_view = MagicMock()
+    profiler_view.create_view.return_value = "dqx.dqx_studio_tmp.tmp_view_s"
+    svc, deps = _svc(job_service=job_service, profiler_view=profiler_view)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.return_value = []
+
+    with caplog.at_level("INFO", logger="databricks_labs_dqx_app.backend.demo.seed_service"):
+        svc._run_profiling("admin@example.com")
+
+    assert "did not succeed" not in caplog.text
+    assert "completed" in caplog.text
+
+
 def test_wait_for_profile_stops_when_job_ends_without_a_result_row(monkeypatch):
     # A profiler Job whose own result write failed never produces a row; the seed
     # must move on as soon as the Job has ended, not wait out the 15-minute deadline.
@@ -1594,9 +1615,9 @@ def test_view_service_names_views_from_its_sql_executor_schema():
     try:
         svc = ViewService(sql=sql, sp_sql=sp)
         view_name = svc.create_view("dqx.sales.orders")
-        assert (
-            ".dqx_studio_tmp.tmp_view_" in view_name
-        ), f"Expected view to be created in dqx_studio_tmp, got: {view_name}"
+        assert ".dqx_studio_tmp.tmp_view_" in view_name, (
+            f"Expected view to be created in dqx_studio_tmp, got: {view_name}"
+        )
     finally:
         reset_tmp_schema_ready()
 
