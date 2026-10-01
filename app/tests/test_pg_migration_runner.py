@@ -159,17 +159,41 @@ class TestPgMigrationsCatalogue:
             assert m.description.strip(), f"v{m.version} migration has an empty description"
 
 
-class TestBaselineOnlyCatalogue:
-    """The catalogue is one baseline and the schema is expressed as CREATE TABLE.
+_ADD_COLUMN_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*) (.+)"
+)
 
-    There are no external installs to upgrade yet, so a shape change is
-    edited into v1 rather than appended as an ALTER. These tests pin that
-    decision — an ``ALTER TABLE`` or backfill ``UPDATE`` creeping back in
-    would mean the schema is once again split across a replay chain.
+
+class TestBaselineCatalogue:
+    """v1 is the full schema as CREATE TABLE; later migrations only add columns.
+
+    The baseline stays the single description of the schema, so it holds no
+    ``ALTER TABLE`` or backfill ``UPDATE``. Later migrations exist only to
+    upgrade deployments that already applied v1, and each column they add must
+    already be in the baseline so a fresh install and an upgraded one end up
+    with the same shape.
     """
 
-    def test_catalogue_is_exactly_the_baseline(self):
-        assert [m.version for m in PG_MIGRATIONS] == [1]
+    def test_baseline_is_version_one(self):
+        assert PG_MIGRATIONS[0].version == 1
+
+    def test_later_migrations_only_add_columns(self):
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                assert _ADD_COLUMN_RE.fullmatch(stmt), f"v{m.version}: not an ADD COLUMN IF NOT EXISTS: {stmt[:120]}"
+
+    def test_added_columns_match_the_baseline(self):
+        baseline = _baseline()
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                match = _ADD_COLUMN_RE.fullmatch(stmt)
+                assert match is not None
+                table, column, definition = match.groups()
+                create = re.search(rf"CREATE TABLE IF NOT EXISTS \{{schema\}}\.{table} \((.*?)\);", baseline + ";")
+                assert create is not None, f"v{m.version}: {table} is not created by the baseline"
+                assert f" {column} {definition}," in f" {create.group(1)},", (
+                    f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
+                )
 
     def test_every_statement_creates_a_table_index_or_view(self):
         # The baseline is CREATE TABLE / CREATE INDEX plus the single
