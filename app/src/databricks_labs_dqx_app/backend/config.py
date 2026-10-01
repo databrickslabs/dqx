@@ -1,12 +1,17 @@
 import os
 from importlib import resources
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks_labs_dqx_app.backend.volume import parse_volume_path
 
 from .._metadata import app_name, app_slug
+
+logger = logging.getLogger(__name__)
 
 # project root is the parent of the src folder
 project_root = Path(__file__).parent.parent.parent.parent
@@ -28,10 +33,26 @@ class AppConfig(BaseSettings):
     api_prefix: str = Field(default="/api")
     catalog: str = Field(default="dqx")
     schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
-    tmp_schema_name: str = Field(default="dqx_studio_tmp", validation_alias="DQX_TMP_SCHEMA")
-    genie_schema_name: str = Field(default="genie", validation_alias="DQX_GENIE_SCHEMA")
+    tmp_schema_name: str = Field(default="", validation_alias="DQX_TMP_SCHEMA")
+    genie_schema_name: str = Field(default="", validation_alias="DQX_GENIE_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
+
+    @model_validator(mode="after")
+    def derive_sibling_schema_names(self) -> "AppConfig":
+        """Name app-owned sibling schemas after the bound volume's schema."""
+        try:
+            schema = parse_volume_path(self.wheels_volume).schema
+        except InvalidParameterError:
+            schema = self.schema_name
+        if "schema_name" in self.model_fields_set and self.schema_name != schema:
+            logger.warning(
+                "DQX_SCHEMA differs from the bound volume schema; the bound volume determines application storage."
+            )
+        self.tmp_schema_name = self.tmp_schema_name or f"{schema}_tmp"
+        self.genie_schema_name = self.genie_schema_name or f"{schema}_genie"
+        return self
+
     tag_bundle_owned_resources: bool = Field(
         default=False,
         validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",

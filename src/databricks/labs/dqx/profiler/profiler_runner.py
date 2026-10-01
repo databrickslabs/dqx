@@ -18,10 +18,12 @@ from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_FILTER,
+    PROFILE_OPTION_GEOSPATIAL_SRID,
     PROFILE_OPTION_LIMIT,
     PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION,
     PROFILE_OPTION_MAX_EMPTY_RATIO,
     PROFILE_OPTION_MAX_NULL_RATIO,
+    PROFILE_OPTION_PROFILE_GEOSPATIAL,
     PROFILE_OPTION_SAMPLE_BY_COLUMN,
     PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT,
     PROFILE_OPTION_SAMPLE_FRACTION,
@@ -84,6 +86,8 @@ class ProfilerRunner:
             PROFILE_OPTION_LIMIT: run_config.profiler_config.limit,
             PROFILE_OPTION_FILTER: run_config.profiler_config.filter,
             PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION: run_config.profiler_config.llm_primary_key_detection,
+            PROFILE_OPTION_PROFILE_GEOSPATIAL: run_config.profiler_config.profile_geospatial,
+            PROFILE_OPTION_GEOSPATIAL_SRID: run_config.profiler_config.geospatial_srid,
         }
         if run_config.profiler_config.max_null_ratio is not None:
             options[PROFILE_OPTION_MAX_NULL_RATIO] = run_config.profiler_config.max_null_ratio
@@ -139,6 +143,8 @@ class ProfilerRunner:
             PROFILE_OPTION_SAMPLE_FRACTION: run_config.profiler_config.sample_fraction,
             PROFILE_OPTION_SAMPLE_SEED: run_config.profiler_config.sample_seed,
             PROFILE_OPTION_LIMIT: run_config.profiler_config.limit,
+            PROFILE_OPTION_PROFILE_GEOSPATIAL: run_config.profiler_config.profile_geospatial,
+            PROFILE_OPTION_GEOSPATIAL_SRID: run_config.profiler_config.geospatial_srid,
         }
         if run_config.profiler_config.max_null_ratio is not None:
             pattern_options[PROFILE_OPTION_MAX_NULL_RATIO] = run_config.profiler_config.max_null_ratio

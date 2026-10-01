@@ -200,8 +200,6 @@ def test_app_yaml_has_single_worker_and_resource_bindings() -> None:
     assert env == {
         "DATABRICKS_WAREHOUSE_ID": {"valueFrom": "dqx-sql-warehouse"},
         "DQX_WHEELS_VOLUME": {"valueFrom": "dqx-wheels-volume"},
-        "DQX_TMP_SCHEMA": {"value": "dqx_studio_tmp"},
-        "DQX_GENIE_SCHEMA": {"value": "genie"},
         "DQX_LAKEBASE_SCHEMA": {"value": "dqx_studio"},
         "DQX_ADMIN_GROUP": {"value": "admins"},
     }
