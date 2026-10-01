@@ -2,8 +2,10 @@
 
 from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
 from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
+    canonical_slot_names,
     generalize,
     generic_name,
+    has_generalized_slots,
     shape_key,
     slot_renames_between,
 )
@@ -78,6 +80,40 @@ class TestGeneralize:
         definition, renames = generalize("low_code", original)
         assert renames == {}
         assert definition is original
+
+    def test_three_or_more_slots_generalize_and_are_recognized(self):
+        # Regression: generalize numbers every slot (column_1…column_N), and the
+        # recognizer must accept all of them — a 3+ slot rule used to be excluded
+        # from cross-import reuse, minting a duplicate per import.
+        definition, renames = generalize("sql", _native("custom", ["a", "b", "c"]))
+        assert renames == {"a": "column_1", "b": "column_2", "c": "column_3"}
+        assert has_generalized_slots(definition)
+
+
+class TestHasGeneralizedSlots:
+    def test_canonical_slot_names_scheme(self):
+        assert canonical_slot_names(1) == ["column"]
+        assert canonical_slot_names(2) == ["column_1", "column_2"]
+        assert canonical_slot_names(3) == ["column_1", "column_2", "column_3"]
+
+    def test_accepts_the_canonical_forms(self):
+        assert has_generalized_slots(_native("is_not_null", ["column"]))
+        assert has_generalized_slots(_native("is_unique", ["column_1", "column_2"]))
+        assert has_generalized_slots(_native("custom", ["column_1", "column_2", "column_3"]))
+
+    def test_rejects_column_specific_or_dropped_alias_names(self):
+        assert not has_generalized_slots(_native("is_not_null", ["customer_id"]))
+        # Legacy neutral-sounding aliases are no longer special-cased: a slot is
+        # neutral only when it is exactly what generalize() would assign.
+        assert not has_generalized_slots(_native("is_in_list", ["value"]))
+        assert not has_generalized_slots(_native("is_not_null", ["col"]))
+
+    def test_whatever_generalize_emits_is_recognized(self):
+        # The core invariant: generalize's output always round-trips to True,
+        # for any slot count — producer and recognizer share canonical_slot_names.
+        for slots in (["a"], ["a", "b"], ["a", "b", "c"], ["a", "b", "c", "d", "e"]):
+            definition, _ = generalize("sql", _native("custom", slots))
+            assert has_generalized_slots(definition), slots
 
 
 class TestNamesAndRenames:

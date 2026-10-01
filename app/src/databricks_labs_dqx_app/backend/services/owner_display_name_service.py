@@ -65,8 +65,14 @@ _MISS_CACHE_TTL_SECS = 3600.0
 _resolve_cache: dict[str, tuple[float, ResolvedOwner | None]] = {}
 
 # Owners whose SCIM resolution is already queued, so concurrent reads don't
-# schedule duplicate lookups for the same owner.
-_inflight: set[str] = set()
+# schedule duplicate lookups for the same owner. Keyed by lower-cased owner ->
+# claim-expiry timestamp: a claim is normally cleared by release_owner_resolution
+# in the deferred task's finally, but if that task never runs (process recycled
+# mid-request, a BackgroundTasks early-exit) the claim would otherwise pin the
+# owner forever and it would never be re-resolved. The TTL lets a stale claim
+# expire so a later read re-queues it. Comfortably longer than a SCIM resolve.
+_INFLIGHT_CLAIM_TTL_SECS = 120.0
+_inflight: dict[str, float] = {}
 _inflight_lock = threading.Lock()
 
 
@@ -182,16 +188,25 @@ def peek_owners(owners: list[str]) -> tuple[dict[str, ResolvedOwner | None], lis
 
 
 def claim_owner_resolution(owners: list[str]) -> list[str]:
-    """Mark *owners* as queued for resolution; returns only those not already queued."""
+    """Mark *owners* as queued for resolution; returns only those not already queued.
+
+    A claim whose TTL has lapsed (a deferred task that never released it) counts
+    as unclaimed and is re-queued, so a dropped resolution self-heals on a later
+    read rather than pinning the owner's display name as unresolved forever.
+    """
+    now = time.time()
+    deadline = now + _INFLIGHT_CLAIM_TTL_SECS
     with _inflight_lock:
-        claimed = [o for o in owners if _key(o) not in _inflight]
-        _inflight.update(_key(o) for o in claimed)
+        claimed = [o for o in owners if _inflight.get(_key(o), 0.0) <= now]
+        for owner in claimed:
+            _inflight[_key(owner)] = deadline
     return claimed
 
 
 def release_owner_resolution(owners: list[str]) -> None:
     with _inflight_lock:
-        _inflight.difference_update(_key(o) for o in owners)
+        for owner in owners:
+            _inflight.pop(_key(owner), None)
 
 
 def canonicalize_owner(owner: str | None, sp_ws: WorkspaceClient | None) -> tuple[str | None, str | None]:

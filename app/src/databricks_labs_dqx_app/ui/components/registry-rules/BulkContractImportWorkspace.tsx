@@ -519,6 +519,12 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
       }
 
       for (const target of targets.values()) {
+        // One (table, rule) target is a single apply even though its multiple
+        // column mappings pushed the same outcome once per column. Count the
+        // operation once per distinct outcome so the summary tallies agree with
+        // the (already de-duped) error messages — otherwise a 3-column apply
+        // reports applied/failed/pending=3 against a single operation.
+        const affectedOutcomes = new Set(target.outcomes);
         if (!target.approved) {
           // Rule is awaiting approval — pre-stage the application so it
           // activates automatically when the rule is approved.
@@ -527,7 +533,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             rule_id: target.ruleId,
             column_mapping: target.groups,
           });
-          for (const o of target.outcomes) o.pending += 1;
+          for (const o of affectedOutcomes) o.pending += 1;
           continue;
         }
         try {
@@ -535,13 +541,13 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             rule_id: target.ruleId,
             column_mapping: target.groups,
           });
-          for (const o of target.outcomes) o.applied += 1;
+          for (const o of affectedOutcomes) o.applied += 1;
           anyApplied = true;
         } catch {
-          for (const o of new Set(target.outcomes)) {
+          for (const o of affectedOutcomes) {
             o.errors.push(t("rulesBulkImport.errors.applyFailed", { fqn: target.tableFqn }));
+            o.failed += 1;
           }
-          for (const o of target.outcomes) o.failed += 1;
         }
       }
 

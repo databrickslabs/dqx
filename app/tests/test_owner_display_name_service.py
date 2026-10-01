@@ -364,6 +364,37 @@ class TestFillOwnerDisplayNamesFromCache:
         assert self.deferred == []
 
 
+class TestInflightClaimTtl:
+    """claim/release_owner_resolution de-dupe queued lookups but must self-heal a lost claim."""
+
+    def setup_method(self) -> None:
+        owner_display_name_service._inflight.clear()
+
+    def teardown_method(self) -> None:
+        owner_display_name_service._inflight.clear()
+
+    def test_live_claim_is_not_requeued(self) -> None:
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == []
+
+    def test_release_allows_reclaim(self) -> None:
+        owner_display_name_service.claim_owner_resolution(["a@example.com"])
+        owner_display_name_service.release_owner_resolution(["a@example.com"])
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+
+    def test_stale_claim_expires_and_is_requeued(self, monkeypatch) -> None:
+        ttl = owner_display_name_service._INFLIGHT_CLAIM_TTL_SECS
+        # Claim at t=1000 and never release (the deferred task never ran).
+        monkeypatch.setattr(owner_display_name_service.time, "time", lambda: 1000.0)
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+        # Within the TTL window a concurrent read still sees it claimed.
+        monkeypatch.setattr(owner_display_name_service.time, "time", lambda: 1000.0 + ttl - 1)
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == []
+        # Once the TTL lapses the stale claim is reclaimable, so the owner self-heals.
+        monkeypatch.setattr(owner_display_name_service.time, "time", lambda: 1000.0 + ttl + 1)
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+
+
 class TestEmailFilterFallback:
     def setup_method(self) -> None:
         owner_display_name_service._resolve_cache.clear()

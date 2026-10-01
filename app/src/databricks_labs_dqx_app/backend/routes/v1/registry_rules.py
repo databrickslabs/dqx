@@ -59,6 +59,7 @@ from databricks_labs_dqx_app.backend.services.registry_service import (
 from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
     generalize,
     generic_name,
+    has_generalized_slots,
     shape_key,
     slot_renames_between,
 )
@@ -234,11 +235,14 @@ def create_registry_rule(
 
 
 _ACTIVE_STATUS_RANK = {"approved": 0, "pending_approval": 1, "draft": 2}
-_NEUTRAL_SLOT_NAMES = frozenset({"column", "col", "value", "field", "column_1", "column_2"})
 
 
 def _has_neutral_slots(rule: RegistryRule | RegistryRuleOut) -> bool:
-    return all(s.name.lower() in _NEUTRAL_SLOT_NAMES for s in rule.definition.slots)
+    # A generalized import rule is reusable across re-imports only if its slots are
+    # still in the canonical generalized form. Delegated to generic_rule_shape so the
+    # recognizer stays in lock-step with the names generalize() assigns (``column``
+    # for one slot, ``column_1``…``column_N`` for N slots — any N).
+    return has_generalized_slots(rule.definition)
 
 
 def _active_rules_by_shape(svc: RegistryService) -> dict[str, RegistryRuleOut]:

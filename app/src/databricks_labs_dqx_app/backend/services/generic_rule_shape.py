@@ -73,6 +73,21 @@ def slot_renames_between(source: RuleDefinition, target: RuleDefinition) -> dict
     return {s.name: t.name for s, t in zip(_ordered_slots(source.slots), _ordered_slots(target.slots))}
 
 
+def canonical_slot_names(count: int) -> list[str]:
+    """The position-neutral slot names *generalize* assigns to a rule with *count* slots.
+
+    A single slot is simply ``column``; multiple slots are ``column_1`` …
+    ``column_N``. This is the single source of truth for the generalized naming
+    scheme: both *generalize* (which assigns them) and *has_generalized_slots*
+    (which recognizes them) derive from it, so the producer and recognizer can
+    never drift — a mismatch previously excluded generalized rules with 3+ slots
+    from cross-import reuse.
+    """
+    if count == 1:
+        return ["column"]
+    return [f"column_{i + 1}" for i in range(count)]
+
+
 def generalize(mode: str, definition: RuleDefinition) -> tuple[RuleDefinition, dict[str, str]]:
     """Rename column-specific slots to neutral ones (``column`` / ``column_1``…).
 
@@ -82,11 +97,21 @@ def generalize(mode: str, definition: RuleDefinition) -> tuple[RuleDefinition, d
     if mode not in _RENAMEABLE_MODES or not definition.slots:
         return definition, {}
     ordered = _ordered_slots(definition.slots)
-    if len(ordered) == 1:
-        renames = {ordered[0].name: "column"}
-    else:
-        renames = {s.name: f"column_{i + 1}" for i, s in enumerate(ordered)}
+    renames = {slot.name: name for slot, name in zip(ordered, canonical_slot_names(len(ordered)))}
     return rename_slots(definition, renames), renames
+
+
+def has_generalized_slots(definition: RuleDefinition) -> bool:
+    """True if *definition*'s slots are already in the exact form *generalize* would produce.
+
+    A generalized import rule is reusable across re-imports — any column maps
+    onto its ``column`` / ``column_N`` slots — whereas a rule still carrying
+    column-specific slot names is not. Compared positionally against
+    *canonical_slot_names*, so the recognizer can never fall out of step with the
+    names *generalize* assigns.
+    """
+    ordered = _ordered_slots(definition.slots)
+    return [slot.name for slot in ordered] == canonical_slot_names(len(ordered))
 
 
 def generic_name(mode: str, definition: RuleDefinition) -> str | None:
