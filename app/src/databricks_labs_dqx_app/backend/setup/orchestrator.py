@@ -290,7 +290,11 @@ class SetupOrchestrator:
             await asyncio.to_thread(self.delta_migrations.run_all)
             return _passed(SetupStepId.MIGRATIONS, "Postgres and Delta migrations are current.")
         except Exception as error:
-            logger.error(f"Delta migration failed ({type(error).__name__})")
+            sqlstate = getattr(error, "sqlstate", None)
+            diagnostic = (
+                f", SQLSTATE {sqlstate}" if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else ""
+            )
+            logger.error(f"Delta migration failed ({type(error).__name__}{diagnostic})")
             return _failed(
                 SetupStepId.MIGRATIONS,
                 "delta_migration_failed",

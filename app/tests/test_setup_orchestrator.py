@@ -336,9 +336,14 @@ async def test_lakebase_migration_failure_reports_stage_without_secret(
 
 
 @pytest.mark.asyncio
-async def test_delta_migration_failure_reports_stage(resources: ActiveResources) -> None:
+async def test_delta_migration_failure_reports_stage(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture
+) -> None:
+    class PrivilegeError(RuntimeError):
+        sqlstate = "42501"
+
     fixture = _make_orchestrator(resources)
-    fixture.orchestrator.delta_migrations.failure = RuntimeError("SQL: sensitive statement")
+    fixture.orchestrator.delta_migrations.failure = PrivilegeError("SQL: sensitive statement")
 
     report = await fixture.orchestrator.reconcile()
 
@@ -347,6 +352,27 @@ async def test_delta_migration_failure_reports_stage(resources: ActiveResources)
     assert "pg_migrations" in fixture.events
     assert "delta_migrations" in fixture.events
     assert "activate" not in fixture.events
+    assert "SQLSTATE 42501" in caplog.text
+    assert "sensitive statement" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["pg_migrations", "delta_migrations"])
+async def test_migration_log_rejects_untrusted_sqlstate(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture, stage: str
+) -> None:
+    class InvalidDiagnosticError(RuntimeError):
+        sqlstate = "42501\nforged diagnostic"
+
+    fixture = _make_orchestrator(resources)
+    getattr(fixture.orchestrator, stage).failure = InvalidDiagnosticError("sensitive statement")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    assert "SQLSTATE" not in caplog.text
+    assert "forged diagnostic" not in caplog.text
+    assert "sensitive statement" not in caplog.text
 
 
 @pytest.mark.asyncio

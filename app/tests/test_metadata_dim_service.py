@@ -294,3 +294,36 @@ def test_refresh_propagates_execute_failures(service, sql_executor_mock, registr
     sql_executor_mock.execute.side_effect = RuntimeError("warehouse down")
     with pytest.raises(RuntimeError, match="warehouse down"):
         service.refresh()
+
+
+def test_refresh_restores_dimension_grants_after_creation_failure(
+    service: MetadataDimService, sql_executor_mock, registry, monitored_tables
+) -> None:
+    registry.list_rules.return_value = []
+    monitored_tables.list_monitored_tables.return_value = []
+    sql_executor_mock.execute.side_effect = RuntimeError("warehouse unavailable")
+    with pytest.raises(RuntimeError, match="warehouse unavailable"):
+        service.refresh()
+    sql_executor_mock.execute.side_effect = None
+
+    service.refresh()
+
+    grants = [call.args[0] for call in sql_executor_mock.execute_no_schema.call_args_list]
+    assert grants == [
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_rules TO `account users`",
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_monitored_tables TO `account users`",
+    ]
+
+
+def test_dimension_grant_failure_does_not_stop_refresh(
+    service: MetadataDimService, sql_executor_mock, registry, monitored_tables, caplog: pytest.LogCaptureFixture
+) -> None:
+    registry.list_rules.return_value = []
+    monitored_tables.list_monitored_tables.return_value = [_summary()]
+    sql_executor_mock.execute_no_schema.side_effect = RuntimeError("sensitive grant error")
+
+    service.refresh()
+
+    assert any(statement.startswith(f"INSERT INTO {DIM_TABLES_FQN}") for statement in _executed(sql_executor_mock))
+    assert "Could not grant access to Genie metadata" in caplog.text
+    assert "sensitive grant error" not in caplog.text

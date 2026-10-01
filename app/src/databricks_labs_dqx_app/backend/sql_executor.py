@@ -7,16 +7,31 @@ makes services testable via ``create_autospec(SqlExecutor)``.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+from databricks.sdk.service.sql import Disposition, Format, StatementState, StatementStatus
 
 from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+class SqlStatementError(RuntimeError):
+    """SQL execution failure carrying a validated SQLSTATE diagnostic."""
+
+    def __init__(self, message: str, sqlstate: str | None) -> None:
+        """Preserve the existing error message and a safe structured diagnostic.
+
+        Args:
+            message: Existing SQL execution error message.
+            sqlstate: SQLSTATE from the SDK statement status.
+        """
+        super().__init__(message)
+        self.sqlstate = sqlstate if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else None
 
 
 # ---------------------------------------------------------------------------
@@ -672,17 +687,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL statement returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, timeout_seconds)
+            status = self._wait_for_completion(sid, timeout_seconds)
+            state = status.state
 
         if state == StatementState.SUCCEEDED:
             return
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", status.sql_state)
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
     def execute_no_schema(self, sql: str) -> None:
@@ -702,17 +719,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL statement returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, 120)
+            status = self._wait_for_completion(sid, 120)
+            state = status.state
 
         if state == StatementState.SUCCEEDED:
             return
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", status.sql_state)
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
@@ -732,17 +751,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, timeout_seconds)
+            status = self._wait_for_completion(sid, timeout_seconds)
+            state = status.state
             if state == StatementState.SUCCEEDED and sid:
                 resp = self._ws.statement_execution.get_statement(sid)
 
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status and resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL query failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", status.sql_state)
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
 
@@ -767,17 +788,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, timeout_seconds)
+            status = self._wait_for_completion(sid, timeout_seconds)
+            state = status.state
             if state == StatementState.SUCCEEDED and sid:
                 resp = self._ws.statement_execution.get_statement(sid)
 
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status and resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL query failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", status.sql_state)
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
 
@@ -1014,14 +1037,14 @@ class SqlExecutor:
         """Delta interval literal — bare integer, uppercase ``DAY`` (singular)."""
         return f"INTERVAL {int(days)} DAY"
 
-    def _wait_for_completion(self, statement_id: str, timeout_seconds: int) -> StatementState:
+    def _wait_for_completion(self, statement_id: str, timeout_seconds: int) -> StatementStatus:
         """Poll statement status until it reaches a terminal state."""
         start = time.time()
         poll_interval = 2.0
         while time.time() - start < timeout_seconds:
             status = self._ws.statement_execution.get_statement(statement_id)
             state = status.status.state if status.status else None
-            if state in _TERMINAL_STATES:
-                return state  # type: ignore[return-value]
+            if status.status is not None and state in _TERMINAL_STATES:
+                return status.status
             time.sleep(poll_interval)
         raise RuntimeError(f"SQL statement {statement_id} timed out after {timeout_seconds}s")
