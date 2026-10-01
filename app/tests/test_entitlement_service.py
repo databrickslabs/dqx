@@ -419,19 +419,19 @@ class TestStartupWiring:
     """Required entitlement objects created during activation."""
 
     def test_ensure_creates_table_then_view(self, sql_executor_mock, startup_resources):
-        from databricks_labs_dqx_app.backend.startup import _ensure_entitlement_objects
+        from databricks_labs_dqx_app.backend.startup import ensure_entitlement_objects
 
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
-        _ensure_entitlement_objects(sql_executor_mock, startup_resources)
+        ensure_entitlement_objects(sql_executor_mock, startup_resources)
         executed = [call.args[0] for call in sql_executor_mock.execute.call_args_list]
         assert len(executed) == 2
         assert ENTITLEMENTS_TABLE_NAME in executed[0]
         assert FAILING_ROWS_VIEW_NAME in executed[1]
 
     def test_ensure_failure_prevents_activation(self, sql_executor_mock, startup_resources):
-        from databricks_labs_dqx_app.backend.startup import _ensure_entitlement_objects
+        from databricks_labs_dqx_app.backend.startup import ensure_entitlement_objects
 
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
         sql_executor_mock.execute.side_effect = RuntimeError("no CREATE TABLE privilege")
-        with pytest.raises(RuntimeError, match="no CREATE TABLE privilege"):
-            _ensure_entitlement_objects(sql_executor_mock, startup_resources)
+        with pytest.raises(RuntimeError, match="Could not create required Studio views"):
+            ensure_entitlement_objects(sql_executor_mock, startup_resources)

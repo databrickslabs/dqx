@@ -10,6 +10,7 @@ from typing import Protocol
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
+from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
     SetupReport,
@@ -193,11 +194,24 @@ class SetupOrchestrator:
 
             try:
                 await self.activation.activate()
+            except RequiredViewSetupError:
+                activation_step = SetupStep(
+                    id=SetupStepId.ACTIVATION,
+                    state=StepState.FAILED,
+                    code="required_views_creation_failed",
+                    summary="Could not create the required score or entitlement objects in the main and Genie schemas.",
+                    instructions=(
+                        "Verify the app service principal has USE CATALOG, USE SCHEMA, and CREATE TABLE "
+                        "on the application and Genie schemas, and can replace existing Studio views.",
+                    ),
+                    actions=(SetupActionId.RECONCILE,),
+                )
+                return self._publish_stopped([*steps, activation_step], SetupStepId.ACTIVATION)
             except Exception:
                 activation_step = _failed(
                     SetupStepId.ACTIVATION,
                     "studio_activation_failed",
-                    "Could not activate Studio background services.",
+                    "Could not initialize required Studio application objects.",
                 )
                 return self._publish_stopped([*steps, activation_step], SetupStepId.ACTIVATION)
 

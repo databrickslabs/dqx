@@ -43,9 +43,13 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
-from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
+from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
 from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
-from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
+    DIM_MONITORED_TABLES_TABLE_NAME,
+    DIM_RULES_TABLE_NAME,
+    MetadataDimService,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
@@ -55,10 +59,17 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
-from databricks_labs_dqx_app.backend.services.score_view_service import ScoreViewService
+from databricks_labs_dqx_app.backend.services.score_view_service import (
+    ASOF_VIEW_NAME,
+    ATTRIBUTION_VIEW_NAME,
+    METRIC_VIEW_NAME,
+    SHAPING_VIEW_NAME,
+    ScoreViewService,
+)
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
@@ -427,7 +438,8 @@ async def _run_post_migration_startup(
 ) -> None:
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
-    _ensure_entitlement_objects(delta_sql, resources)
+    ensure_entitlement_objects(delta_sql, resources)
+    grant_user_view_access(delta_sql, resources)
     _grant_task_runner_run_config_access(oltp)
     targets = startup_tag_targets(
         resources,
@@ -454,7 +466,10 @@ async def _run_post_migration_startup(
 
 
 def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
-    ScoreViewService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_views()
+    try:
+        ScoreViewService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_views()
+    except Exception:
+        raise RequiredViewSetupError() from None
 
 
 async def _ensure_metadata_dims(
@@ -475,8 +490,49 @@ async def _ensure_metadata_dims(
         logger.warning("Could not refresh the DQ metadata dimensions")
 
 
-def _ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
-    EntitlementService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_objects()
+def ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
+    """Create required entitlement objects or raise a sanitized setup failure.
+
+    Args:
+        delta_sql: App service principal's SQL executor.
+        resources: Resolved installation resources.
+
+    Raises:
+        RequiredViewSetupError: If the entitlement table or view cannot be created.
+    """
+    try:
+        EntitlementService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_objects()
+    except Exception:
+        raise RequiredViewSetupError() from None
+
+
+def grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
+    """Best-effort user access to approved Genie views and metadata tables.
+
+    Args:
+        delta_sql: App service principal's SQL executor.
+        resources: Resolved installation resources.
+    """
+    catalog = delta_sql.q(resources.volume.catalog)
+    schema = delta_sql.q(resources.genie_schema)
+    genie_objects = (
+        METRIC_VIEW_NAME,
+        SHAPING_VIEW_NAME,
+        ASOF_VIEW_NAME,
+        ATTRIBUTION_VIEW_NAME,
+        FAILING_ROWS_VIEW_NAME,
+        DIM_RULES_TABLE_NAME,
+        DIM_MONITORED_TABLES_TABLE_NAME,
+    )
+    statements = [
+        f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `account users`",
+        *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{delta_sql.q(name)} TO `account users`" for name in genie_objects),
+    ]
+    for statement in statements:
+        try:
+            delta_sql.execute_no_schema(statement)
+        except Exception:
+            logger.warning("Could not grant account users access to a Genie object; setup can continue.")
 
 
 def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:

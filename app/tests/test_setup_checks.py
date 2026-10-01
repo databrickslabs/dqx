@@ -268,18 +268,21 @@ def test_catalog_and_main_schema_capabilities_pass(checkers: ResourceCheckers, w
     assert result.code == ""
 
 
-def test_catalog_requires_user_access_for_obo_queries(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+@pytest.mark.parametrize("user_permissions", [_effective_permissions(), RuntimeError("permission denied")])
+def test_catalog_readiness_does_not_require_account_users_access(
+    checkers: ResourceCheckers, workspace: MagicMock, user_permissions: EffectivePermissionsList | Exception
+) -> None:
     workspace.grants.get_effective.side_effect = [
         _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA),
         _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
-        _effective_permissions(),
+        user_permissions,
     ]
 
     result = checkers.check_unity_catalog()
 
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "catalog_user_permissions_missing"
-    assert result.instructions == ("GRANT USE CATALOG ON CATALOG `main` TO `account users`;",)
+    assert result.state == StepState.PASSED
+    assert result.instructions == ()
+    assert all(call.kwargs["principal"] == "app-sp-id" for call in workspace.grants.get_effective.call_args_list)
 
 
 def test_sibling_schema_creation_is_idempotent(
@@ -328,7 +331,7 @@ def test_app_owned_sibling_schemas_pass_without_explicit_grants(
     assert result.state == StepState.PASSED
 
 
-def test_sibling_schemas_grant_users_access_for_preview_and_genie(
+def test_sibling_schemas_do_not_grant_schema_wide_genie_select(
     checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
 ) -> None:
     workspace.grants.get_effective.side_effect = [
@@ -343,26 +346,27 @@ def test_sibling_schemas_grant_users_access_for_preview_and_genie(
     assert result.state == StepState.PASSED
     statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
     assert "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `account users`" in statements
-    assert "GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`genie` TO `account users`" in statements
+    assert not any("SELECT ON SCHEMA" in statement for statement in statements)
 
 
-def test_existing_sibling_schema_without_grant_authority_blocks_setup(
-    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+@pytest.mark.parametrize("user_permissions", [_effective_permissions(), RuntimeError("permission denied")])
+def test_existing_sibling_schema_without_user_grant_authority_still_passes(
+    checkers: ResourceCheckers,
+    sql: MagicMock,
+    workspace: MagicMock,
+    user_permissions: EffectivePermissionsList | Exception,
 ) -> None:
     workspace.grants.get_effective.side_effect = [
         _effective_permissions(Privilege.ALL_PRIVILEGES),
         _effective_permissions(Privilege.ALL_PRIVILEGES),
-        _effective_permissions(),
+        user_permissions,
     ]
     sql.execute_no_schema.side_effect = [None, None, RuntimeError("permission denied")]
 
     result = checkers.ensure_sibling_schemas()
 
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "sibling_schema_user_permissions_missing"
-    assert result.instructions == (
-        "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `account users`;",
-    )
+    assert result.state == StepState.PASSED
+    assert result.instructions == ()
 
 
 def test_lakebase_connectivity_failure_is_sanitized(checkers: ResourceCheckers, pg: MagicMock) -> None:

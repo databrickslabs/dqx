@@ -69,3 +69,20 @@ def test_sibling_schema_names_follow_bound_volume_schema(monkeypatch):
     configured = AppConfig(_env_file=None, wheels_volume="/Volumes/main/dqx/wheels")
     assert configured.genie_schema_name == "custom_genie"
     assert configured.tmp_schema_name == "custom_tmp"
+
+
+@pytest.mark.parametrize(
+    "volume_path",
+    ["/Volumes/main/../wheels", "/Volumes/main/bad\nschema/wheels", "/Volumes/main/studio/wheels/"],
+)
+def test_invalid_volume_does_not_determine_sibling_schema_names(
+    monkeypatch: pytest.MonkeyPatch, volume_path: str
+) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
+    monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
+    config = AppConfig(_env_file=None, schema_name="configured", wheels_volume=volume_path)
+
+    assert config.tmp_schema_name == "configured_tmp"
+    assert config.genie_schema_name == "configured_genie"

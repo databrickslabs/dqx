@@ -5,6 +5,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks_labs_dqx_app.backend.volume import parse_volume_path
 
 from .._metadata import app_name, app_slug
 
@@ -36,12 +38,10 @@ class AppConfig(BaseSettings):
     @model_validator(mode="after")
     def derive_sibling_schema_names(self) -> "AppConfig":
         """Name app-owned sibling schemas after the bound volume's schema."""
-        volume_parts = self.wheels_volume.split("/")
-        schema = (
-            volume_parts[3]
-            if len(volume_parts) == 5 and volume_parts[:2] == ["", "Volumes"] and all(volume_parts[2:])
-            else self.schema_name
-        )
+        try:
+            schema = parse_volume_path(self.wheels_volume).schema
+        except InvalidParameterError:
+            schema = self.schema_name
         self.tmp_schema_name = self.tmp_schema_name or f"{schema}_tmp"
         self.genie_schema_name = self.genie_schema_name or f"{schema}_genie"
         return self
