@@ -191,9 +191,9 @@ class TestBaselineCatalogue:
                 table, column, definition = match.groups()
                 create = re.search(rf"CREATE TABLE IF NOT EXISTS \{{schema\}}\.{table} \((.*?)\);", baseline + ";")
                 assert create is not None, f"v{m.version}: {table} is not created by the baseline"
-                assert f" {column} {definition}," in f" {create.group(1)},", (
-                    f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
-                )
+                assert (
+                    f" {column} {definition}," in f" {create.group(1)},"
+                ), f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
 
     def test_every_statement_creates_a_table_index_or_view(self):
         # The baseline is CREATE TABLE / CREATE INDEX plus the single
