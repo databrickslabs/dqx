@@ -325,12 +325,10 @@ resources:
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
             - ALL_PRIVILEGES
-        # The Genie space + end users read these derived views/dims. Schema-level
-        # SELECT covers current + future objects.
+        # Startup grants SELECT only on five Genie views and two metadata tables.
         - principal: "account users"
           privileges:
             - USE_SCHEMA
-            - SELECT
       lifecycle:
         prevent_destroy: true
     demo_schema:
