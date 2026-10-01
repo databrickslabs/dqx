@@ -3,7 +3,6 @@
 import pytest
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly.training_service import AnomalyTrainingService
 from databricks.labs.dqx.anomaly.validation import validate_training_params
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
@@ -15,65 +14,51 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from tests.unit.anomaly_test_constants import STANDARD_REGION_PRODUCT_FEATURES
 
 # ============================================================================
-# Expected anomaly rate / contamination (service helpers)
+# Contamination default (the parameter that replaced expected_anomaly_rate)
 # ============================================================================
 
 
-def test_apply_expected_anomaly_rate_with_none_params_uses_default_params():
-    """When params is None, method uses AnomalyParams() and applies expected_anomaly_rate."""
-    updated = AnomalyTrainingService.apply_expected_anomaly_rate_if_default_contamination(None, 0.02)
-    assert updated.algorithm_config.contamination == 0.02
+def test_contamination_defaults_to_the_rate_the_removed_parameter_used_to_supply():
+    """`expected_anomaly_rate` is removed; the effective default must not have moved with it.
+
+    It existed only to fill `contamination` when unset, defaulting to 0.02. That value is now the field's
+    own default, so a caller who passed nothing gets exactly what they got before.
+    """
+    assert AnomalyParams().algorithm_config.contamination == 0.02
 
 
-def test_expected_anomaly_rate_applies_when_contamination_unset():
-    """expected_anomaly_rate should set contamination when unset (None)."""
-    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=None))
-    updated = AnomalyTrainingService.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
-
-    assert updated.algorithm_config.contamination == 0.02
-    # Ensure caller params were not mutated
-    assert params.algorithm_config.contamination is None
-
-
-def test_expected_anomaly_rate_does_not_override_explicit_contamination():
-    """expected_anomaly_rate should not override explicit contamination."""
+def test_contamination_can_still_be_set_explicitly():
+    """The escape hatch for anyone who was setting the removed parameter. It reaches only the estimator's
+    own `predict`/`offset_`, never DQX's scoring, which is why the user-facing name went away."""
     params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.15))
-    updated = AnomalyTrainingService.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
 
-    assert updated.algorithm_config.contamination == 0.15
-    # Ensure caller params were not mutated
     assert params.algorithm_config.contamination == 0.15
 
 
 @pytest.mark.parametrize(
-    ("params", "expected_rate", "error_match"),
+    ("params", "error_match"),
     [
-        (AnomalyParams(sample_fraction=0.0), 0.02, "params.sample_fraction must be > 0.0"),
-        (AnomalyParams(train_ratio=1.1), 0.02, "params.train_ratio must be <= 1.0"),
-        (AnomalyParams(max_rows=0), 0.02, "params.max_rows must be >= 1"),
-        (AnomalyParams(ensemble_size=0), 0.02, "params.ensemble_size must be >= 1"),
+        (AnomalyParams(sample_fraction=0.0), "params.sample_fraction must be > 0.0"),
+        (AnomalyParams(train_ratio=1.1), "params.train_ratio must be <= 1.0"),
+        (AnomalyParams(max_rows=0), "params.max_rows must be >= 1"),
+        (AnomalyParams(ensemble_size=0), "params.ensemble_size must be >= 1"),
         (
             AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.9)),
-            0.02,
             "params.algorithm_config.contamination must be <= 0.5",
         ),
         (
             AnomalyParams(algorithm_config=IsolationForestConfig(num_trees=0)),
-            0.02,
             "params.algorithm_config.num_trees must be >= 1",
         ),
         (
             AnomalyParams(algorithm_config=IsolationForestConfig(subsampling_rate=0.0)),
-            0.02,
             "params.algorithm_config.subsampling_rate must be > 0.0",
         ),
-        (AnomalyParams(), 0.0, "expected_anomaly_rate must be > 0.0"),
-        (AnomalyParams(), 0.8, "expected_anomaly_rate must be <= 0.5"),
     ],
 )
-def test_validate_training_params_rejects_invalid_ranges(params: AnomalyParams, expected_rate: float, error_match: str):
+def test_validate_training_params_rejects_invalid_ranges(params: AnomalyParams, error_match: str):
     with pytest.raises(InvalidParameterError, match=error_match):
-        validate_training_params(params, expected_rate)
+        validate_training_params(params)
 
 
 # ============================================================================

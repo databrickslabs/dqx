@@ -74,8 +74,23 @@ datacontract = [
     "datacontract-cli>=0.11.1,<1.0",
 ]
 anomaly = [
-    "mlflow[databricks]>=2.19.1,<3.0",  # Unity Catalog support + azure-cli auth type support
+    # Floor is the release carrying mlflow/mlflow#20599, which fixes Databricks unified auth when
+    # MLFLOW_ENABLE_DB_SDK=true; the fix is in no 2.x release, so this crosses the 2->3 boundary.
+    # Capped below 4.0 rather than pinned exactly, so the resolver takes the latest 3.x.
+    "mlflow[databricks]>=3.13.0,<4.0",  # Unity Catalog support + azure-cli auth type support
     "scikit-learn>=1.0,<2.0",
+    # scikit-learn's own hard requirement, floored here on purpose. Databricks runtimes ship
+    # threadpoolctl 2.2.0, and scikit-learn only asks for >=2.0.0, so nothing in this extra used to pull
+    # a newer one -- leaving the runtime's copy in charge. 2.x looks up only the unsuffixed
+    # `openblas_get_config`, and the runtime's numpy ships an ILP64 OpenBLAS
+    # (libopenblas64_p-*.so, USE64BITINT) that exposes only `openblas_get_config64_`. The lookup then
+    # returns NULL, 2.x calls .split() on it, and every import of this module prints an "Exception
+    # ignored ... AttributeError: 'NoneType' object has no attribute 'split'" traceback from inside a
+    # ctypes callback -- unreachable by try/except, warnings filters or log levels, because CPython
+    # writes it straight to stderr. 3.0.0 added the suffixed lookup (joblib/threadpoolctl#101) and a
+    # maintainer confirms that traceback is fixed in >=3 (joblib/threadpoolctl#131); 3.3.0 additionally
+    # identifies libraries by symbol rather than filename prefix. Nothing in DQX imports threadpoolctl.
+    "threadpoolctl>=3.3.0",
     "cloudpickle>=3.0,<4.0",  # For serializing sklearn models in pandas UDFs
     "shap>=0.42.0,<0.50",  # For TreeSHAP-based feature contributions
 ]
@@ -207,7 +222,7 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*', 'mcp-server/*']
 
 [[tool.mypy.overrides]]
 # External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
-module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*", "websockets", "websockets.*"]
+module = ["google", "google.*", "pandas", "sklearn.*", "scipy", "scipy.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*", "openpyxl", "openpyxl.*", "websockets", "websockets.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -453,7 +468,8 @@ good-names = [
     "_",            # use for ignores
     "a",            # use for databricks.sdk.AccountClient
     "w", "ws",      # use for databricks.sdk.WorkspaceClient
-    "me"            # use for current user
+    "me",           # use for current user
+    "X", "y"        # required by the scikit-learn estimator contract (fit/predict/score_samples)
 ]
 
 # Good variable names regexes, separated by a comma. If names match any regex,

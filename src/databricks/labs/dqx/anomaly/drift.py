@@ -16,7 +16,6 @@ from databricks.labs.dqx.anomaly.feature_prep import (
     prepare_feature_metadata,
 )
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
-from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 
 # Minimum sample size for reliable drift detection
 # Small batches have high variance and lead to false positives
@@ -200,7 +199,16 @@ def prepare_drift_df(
     columns: list[str],
     record: AnomalyModelRecord,
 ) -> tuple[DataFrame, list[str]]:
-    """Prepare drift DataFrame and columns aligned to training baseline stats."""
+    """Prepare drift DataFrame and columns aligned to training baseline stats.
+
+    Drift is measured over the *engineered* feature list, which for a grouped model includes the
+    ``_rel_baseline`` features. Those are each already a deviation from the group baseline, so a
+    shift in the baseline itself moves the raw metric and its baseline together and leaves the
+    relative feature unchanged. Consequence, by design: drift on a grouped metric reports a change
+    in how far rows sit *from their group norm*, not a change in the norm. A wholesale shift of a
+    group's level is absorbed into the baseline and is not flagged here — that is the point of
+    conditioning, not a gap in drift detection.
+    """
     feature_metadata_json = record.features.feature_metadata
     if not feature_metadata_json:
         return df.select(*columns), columns
@@ -214,37 +222,6 @@ def prepare_drift_df(
         feature_metadata=feature_metadata,
     )
     return engineered_df, feature_metadata.engineered_feature_names
-
-
-def check_segment_drift(
-    segment_df: DataFrame,
-    columns: list[str],
-    segment_model: AnomalyModelRecord,
-    drift_threshold: float | None,
-    drift_threshold_value: float,
-) -> DriftResult | None:
-    """Check and warn about data drift in a segment. Returns the DriftResult when computed."""
-    if drift_threshold is not None and segment_model.training.baseline_stats:
-        drift_df, drift_columns = prepare_drift_df(segment_df, columns, segment_model)
-        drift_result = compute_drift_score(
-            drift_df,
-            drift_columns,
-            segment_model.training.baseline_stats,
-            drift_threshold_value,
-        )
-
-        if drift_result.drift_detected:
-            drifted_cols_str = ", ".join(drift_result.drifted_columns)
-            segment_name = build_segment_name(segment_model.segmentation.segment_values) or "unknown"
-            warnings.warn(
-                f"Data drift detected in segment '{segment_name}', columns: {drifted_cols_str} "
-                f"(drift score: {drift_result.drift_score:.2f}). "
-                f"Consider retraining the segmented anomaly model.",
-                UserWarning,
-                stacklevel=5,
-            )
-        return drift_result
-    return None
 
 
 def check_and_warn_drift(

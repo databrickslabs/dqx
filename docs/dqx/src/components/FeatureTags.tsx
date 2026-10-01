@@ -34,10 +34,13 @@ const RELEASE_NOTES_BASE = 'https://github.com/databrickslabs/dqx/releases/tag/'
 // `dqx-badge` geometry class so they render identically in size.
 // GA is intentionally not a taggable stage: a generally available feature carries no badge (an
 // unbadged page is GA by default), so there is no dqx-badge--ga. See the Feature lifecycle reference.
-type Stage = 'experimental' | 'beta' | 'deprecated';
+// Ordered as a feature matures: experimental -> alpha -> beta -> GA, with deprecated as the exit.
+// That is also the order the reference page lists them in.
+type Stage = 'experimental' | 'alpha' | 'beta' | 'deprecated';
 
 const STAGE_META: Record<Stage, { label: string; badgeClass: string; anchor: string }> = {
   experimental: { label: 'Experimental', badgeClass: 'dqx-badge--experimental', anchor: 'experimental' },
+  alpha: { label: 'Alpha', badgeClass: 'dqx-badge--alpha', anchor: 'alpha' },
   beta: { label: 'Beta', badgeClass: 'dqx-badge--beta', anchor: 'beta' },
   deprecated: { label: 'Deprecated', badgeClass: 'dqx-badge--deprecated', anchor: 'deprecated' },
 };

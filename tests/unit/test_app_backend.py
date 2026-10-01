@@ -1050,7 +1050,7 @@ class TestRulesRoutesWrite:
 
 
 # ============================================================================
-# Helper for building tabular SQL responses (with named columns)
+# Helper for building distribution SQL responses (with named columns)
 # ============================================================================
 
 

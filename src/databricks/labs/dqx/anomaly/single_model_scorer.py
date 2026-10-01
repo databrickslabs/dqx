@@ -23,6 +23,7 @@ from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.scoring_utils import create_udf_schema
 from databricks.labs.dqx.anomaly.explainability import compute_gated_shap_contributions
+from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
 
 
 def create_scoring_udf(
@@ -49,6 +50,7 @@ def create_scoring_udf_with_contributions(
     schema: StructType,
     quantile_points: list[tuple[float, float]] | None = None,
     threshold: float | None = None,
+    keys: AttributionKeys | None = None,
 ):
     """Create pandas UDF for distributed scoring with SHAP contributions.
 
@@ -64,16 +66,17 @@ def create_scoring_udf_with_contributions(
         feature_matrix.columns = engineered_feature_cols
         scores = -model_local.score_samples(feature_matrix)
 
-        contributions_list = compute_gated_shap_contributions(
-            model_local,
+        contributions = compute_gated_shap_contributions(
+            [model_local],
             feature_matrix,
             engineered_feature_cols,
             scores,
             quantile_points,
             threshold,
+            keys,
         )
 
-        return pd.DataFrame({"anomaly_score": scores, "anomaly_contributions": contributions_list})
+        return pd.DataFrame({"anomaly_score": scores, **contributions.as_columns()})
 
     return predict_with_shap_udf
 
@@ -107,8 +110,15 @@ def score_with_sklearn_model(
 
     schema = create_udf_schema(enable_contributions)
     if enable_contributions:
+        # Blocks are a pure function of the persisted metadata, so they are built once here and closed
+        # over rather than rebuilt per partition.
         predict_udf = create_scoring_udf_with_contributions(
-            model_bytes, engineered_feature_cols, schema, quantile_points, threshold
+            model_bytes,
+            engineered_feature_cols,
+            schema,
+            quantile_points,
+            threshold,
+            AttributionKeys.from_metadata(feature_metadata),
         )
     else:
         predict_udf = create_scoring_udf(model_bytes, engineered_feature_cols, schema)
@@ -118,6 +128,7 @@ def score_with_sklearn_model(
     cols_to_select = [f"{original_row_col}.*", "_scores.anomaly_score"]
     if enable_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
+        cols_to_select.append("_scores.anomaly_basis_contributions")
 
     return scored_df.select(*cols_to_select)
 
@@ -151,14 +162,16 @@ def score_with_sklearn_model_local(
     result["anomaly_score"] = scores
 
     if enable_contributions:
-        result["anomaly_contributions"] = compute_gated_shap_contributions(
-            sklearn_model,
+        contributions = compute_gated_shap_contributions(
+            [sklearn_model],
             feature_matrix,
             engineered_feature_cols,
             scores,
             quantile_points,
             threshold,
+            AttributionKeys.from_metadata(feature_metadata),
         )
+        result.update(contributions.as_columns())
 
     result_pdf = pd.DataFrame(result)
     result_schema = StructType(
@@ -166,7 +179,10 @@ def score_with_sklearn_model_local(
             *[df.schema[c] for c in merge_columns],
             StructField("anomaly_score", DoubleType(), True),
             *(
-                [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
+                [
+                    StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True),
+                    StructField("anomaly_basis_contributions", MapType(StringType(), DoubleType()), True),
+                ]
                 if enable_contributions
                 else []
             ),

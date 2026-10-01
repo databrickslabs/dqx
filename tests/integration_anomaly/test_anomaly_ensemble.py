@@ -125,7 +125,14 @@ def test_ensemble_with_feature_contributions(
     anomaly_scorer,
     anomaly_registry_prefix,
 ):
-    """Test that ensemble works with feature contributions."""
+    """The ensemble's contributions describe the aggregate it scored with, and honour the public contract.
+
+    Previously this asserted only that the map was not null, which passed while the map came from one
+    arbitrary member -- the member that happened to train first. The contract is asserted here instead:
+    keys are the columns the caller passed, values are non-negative, and they total 100. That has to hold
+    after the mean across members has survived cloudpickle, the pandas UDF and the Spark map round-trip,
+    which is the part no unit test can reach.
+    """
     unique_id = make_random(8).lower()
     model_name = f"{anomaly_registry_prefix}.test_ensemble_contributions_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
@@ -157,4 +164,16 @@ def test_ensemble_with_feature_contributions(
     rows_by_id = {row["transaction_id"]: row for row in result_df.collect()}
     row = rows_by_id[2]
     assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
-    assert row["_dq_info"][0]["anomaly"]["contributions"] is not None
+
+    contributions = row["_dq_info"][0]["anomaly"]["contributions"]
+    assert contributions is not None
+
+    # Keyed by the caller's own columns, not by engineered feature names: one column reports once
+    # however many features were derived from it.
+    unknown = sorted(set(contributions) - {"amount", "quantity", "discount"})
+    assert not unknown, f"contribution keys {unknown} are not columns the caller passed"
+
+    values = [v for v in contributions.values() if v is not None]
+    assert values, "the flagged row's contributions map held only nulls"
+    assert min(values) >= 0.0, f"contributions must be non-negative, got {min(values)}"
+    assert abs(sum(values) - 100.0) < 0.5, f"contributions should be normalised to 100, summed to {sum(values)}"

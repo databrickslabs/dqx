@@ -1,5 +1,6 @@
 """Unit tests for feature engineering data structures and metadata."""
 
+import dataclasses
 import json
 
 from pyspark.sql import types as T
@@ -343,3 +344,144 @@ def test_spark_feature_metadata_preserves_order():
     restored = SparkFeatureMetadata.from_json(metadata.to_json())
     assert restored.column_infos[0]["name"] == "z_col"
     assert restored.engineered_feature_names[0] == "z_col_scaled"
+
+
+# ============================================================================
+# Group conditioning metadata (databrickslabs/dqx#1484)
+# ============================================================================
+
+# A feature_metadata payload exactly as DQX wrote it before group conditioning existed.
+# Held verbatim rather than generated: the point is to prove that a model trained by the
+# previous release still deserializes and still produces an identical feature list.
+PRE_GROUPING_FEATURE_METADATA_JSON = (
+    '{"column_infos": [{"name": "amount", "category": "numeric", "cardinality": null, "null_count": 0}, '
+    '{"name": "region", "category": "categorical", "cardinality": 3, "null_count": 0}], '
+    '"categorical_frequency_maps": {}, '
+    '"onehot_categories": {"region": ["APAC", "EU", "US"]}, '
+    '"engineered_feature_names": ["region_APAC", "region_EU", "region_US", "amount"], '
+    '"categorical_cardinality_threshold": 20}'
+)
+
+
+def test_pre_grouping_metadata_deserializes_with_empty_grouping():
+    """A model trained before grouping existed must load, with grouping simply absent."""
+    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
+
+    assert not restored.baseline_by
+    assert not restored.baseline_medians
+    assert not restored.global_medians
+
+
+def test_pre_grouping_metadata_keeps_its_feature_list_unchanged():
+    """The feature list is positional, so it must survive byte-for-byte.
+
+    An empty ``baseline_by`` makes the relative transform a no-op, which is what guarantees an
+    already-trained model is handed its features in exactly the order it was fitted on.
+    """
+    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
+
+    assert restored.engineered_feature_names == ["region_APAC", "region_EU", "region_US", "amount"]
+
+
+def test_from_json_ignores_unknown_keys():
+    """A record written by a newer DQX must not break an older reader.
+
+    ``from_json`` used to do ``cls(**data)``, so an unrecognised key raised TypeError and the
+    model could not be loaded at all.
+    """
+    payload = json.loads(PRE_GROUPING_FEATURE_METADATA_JSON)
+    payload["some_field_from_the_future"] = {"a": 1}
+
+    restored = SparkFeatureMetadata.from_json(json.dumps(payload))
+
+    assert restored.engineered_feature_names == ["region_APAC", "region_EU", "region_US", "amount"]
+    assert not hasattr(restored, "some_field_from_the_future")
+
+
+def test_to_json_persists_every_dataclass_field():
+    """``to_json`` is the single writer of features.feature_metadata.
+
+    It previously named its keys literally, so a field added to the dataclass was dropped at
+    persistence and the model scored with a different feature set than it trained on. Iterating
+    the fields is what makes that failure impossible; this test pins it.
+    """
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "amount", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["amount", "amount_rel_baseline"],
+        baseline_by=["country"],
+        baseline_medians={"amount": {"DE": 100.0}},
+        global_medians={"amount": 90.0},
+    )
+
+    payload = json.loads(metadata.to_json())
+
+    assert set(payload) == {f.name for f in dataclasses.fields(SparkFeatureMetadata)}
+
+
+def test_group_metadata_survives_a_json_roundtrip():
+    """Baselines are looked up by group key at scoring time, so they must round-trip exactly."""
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "amount", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["amount", "amount_rel_baseline"],
+        baseline_by=["country", "product"],
+        baseline_medians={"amount": {"DE\x1fcasino": 3284.0, "IT\x1flive": 657.0}},
+        global_medians={"amount": 1200.5},
+    )
+
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+
+    assert restored.baseline_by == ["country", "product"]
+    assert restored.baseline_medians == {"amount": {"DE\x1fcasino": 3284.0, "IT\x1flive": 657.0}}
+    assert restored.global_medians == {"amount": 1200.5}
+
+
+def test_temporal_metadata_survives_a_json_roundtrip():
+    """The expected level is rebuilt at scoring time from the basis plus the coefficients.
+
+    Both have to survive exactly. A basis that comes back with a different column count, or coefficients
+    that lose their order, produce an expectation for a different design than the one that was fitted, and
+    the residual is then quietly wrong rather than loudly broken.
+    """
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "revenue", "category": "numeric"}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["revenue", "revenue_rel_time"],
+        baseline_over_time="event_ts",
+        temporal_basis={
+            "trend": True,
+            "periods": [86400.0, 604800.0],
+            "harmonics": 2,
+            "changepoints": [0.27, 0.53],
+            "span": 2592000.0,
+        },
+        temporal_coefficients={"revenue": [100.5, 12.25, -3.0, 0.5, -0.25, 0.125, 0.0625, 1.5, -1.25, 0.75, -0.5]},
+        temporal_window={"t_min": 1735689600.0, "t_max": 1738281600.0},
+    )
+
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+
+    assert restored.baseline_over_time == "event_ts"
+    assert restored.temporal_basis["periods"] == [86400.0, 604800.0]
+    assert restored.temporal_basis["changepoints"] == [0.27, 0.53]
+    assert restored.temporal_coefficients["revenue"] == metadata.temporal_coefficients["revenue"]
+    assert restored.temporal_window == {"t_min": 1735689600.0, "t_max": 1738281600.0}
+
+
+def test_a_payload_written_before_the_temporal_fields_deserializes_inert():
+    """The inertness contract, at the persistence layer.
+
+    A model trained before this release carries none of the temporal keys. It must come back with an empty
+    time column, which is what makes the transform return immediately and leaves
+    ``engineered_feature_names`` byte-identical to what it was.
+    """
+    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
+
+    assert restored.baseline_over_time == ""
+    assert not restored.temporal_basis
+    assert not restored.temporal_coefficients
+    assert not restored.temporal_window
