@@ -1,6 +1,7 @@
 """SQL execution diagnostics at the SDK boundary."""
 
 from unittest.mock import MagicMock, create_autospec
+from types import SimpleNamespace
 
 import pytest
 from databricks.sdk import WorkspaceClient
@@ -74,3 +75,24 @@ def test_successful_polling_preserves_query_results(workspace: MagicMock, method
     executor = SqlExecutor(workspace, "warehouse", "main", "studio")
 
     assert getattr(executor, method)("SELECT 1 AS value") == expected
+
+
+@pytest.mark.parametrize("method", ["execute", "execute_no_schema", "query", "query_dicts"])
+@pytest.mark.parametrize("pending", [False, True])
+def test_sql_failure_supports_sdk_status_without_sqlstate(workspace: MagicMock, method: str, pending: bool) -> None:
+    failed = SimpleNamespace(
+        statement_id="statement-id",
+        status=SimpleNamespace(state=StatementState.FAILED, error=ServiceError(message="syntax error")),
+    )
+    workspace.statement_execution.execute_statement.return_value = (
+        StatementResponse(statement_id="statement-id", status=StatementStatus(state=StatementState.PENDING))
+        if pending
+        else failed
+    )
+    workspace.statement_execution.get_statement.return_value = failed
+    executor = SqlExecutor(workspace, "warehouse", "main", "studio")
+
+    with pytest.raises(RuntimeError, match="syntax error") as caught:
+        getattr(executor, method)("SELECT 1")
+
+    assert getattr(caught.value, "sqlstate", "missing") is None

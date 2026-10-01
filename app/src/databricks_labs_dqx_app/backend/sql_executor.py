@@ -699,7 +699,7 @@ class SqlExecutor:
             return
         if state == StatementState.FAILED:
             msg = status.error.message if status.error else "Unknown error"
-            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", status.sql_state)
+            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
     def execute_no_schema(self, sql: str) -> None:
@@ -731,7 +731,7 @@ class SqlExecutor:
             return
         if state == StatementState.FAILED:
             msg = status.error.message if status.error else "Unknown error"
-            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", status.sql_state)
+            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
@@ -763,7 +763,7 @@ class SqlExecutor:
 
         if state == StatementState.FAILED:
             msg = status.error.message if status.error else "Unknown error"
-            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", status.sql_state)
+            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
 
@@ -800,7 +800,7 @@ class SqlExecutor:
 
         if state == StatementState.FAILED:
             msg = status.error.message if status.error else "Unknown error"
-            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", status.sql_state)
+            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
 
