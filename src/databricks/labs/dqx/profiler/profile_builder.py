@@ -983,11 +983,11 @@ def _compute_geospatial_stats(
     ]
     if not is_geography(column_type):
         null_island = (
-            f"st_geometrytype({geom}) = '{POINT_TYPE}' "
-            f"AND st_xmin({geom}) = 0.0 AND st_xmax({geom}) = 0.0 "
-            f"AND st_ymin({geom}) = 0.0 AND st_ymax({geom}) = 0.0 "
-            f"AND (st_zmin({geom}) IS NULL OR st_zmin({geom}) = 0.0) "
-            f"AND (st_mmin({geom}) IS NULL OR st_mmin({geom}) = 0.0)"
+            f"CASE WHEN st_geometrytype({geom}) = '{POINT_TYPE}' THEN "
+            f"st_x({geom}) = 0.0 AND st_y({geom}) = 0.0 "
+            f"AND (st_z({geom}) IS NULL OR st_z({geom}) = 0.0) "
+            f"AND (st_m({geom}) IS NULL OR st_m({geom}) = 0.0) "
+            f"ELSE false END"
         )
         aggregations += [
             F.expr(f"min(st_xmin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_X),
