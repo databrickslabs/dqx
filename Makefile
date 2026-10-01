@@ -403,7 +403,7 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 # overwrites the remote copy with the bundle's local definition. This DROPS
 # any in-UI edits, so only set it once you've confirmed the local version is
 # the one you want to ship.
-app-deploy: app-check-cli app-build ## Build, deploy bundle, and start app (FORCE=1 to overwrite remote edits)
+app-deploy: app-check-cli $(if $(filter release,$(TARGET)),,app-build) ## Deploy and start app; release target uses prebuilt tag (FORCE=1 to overwrite remote edits)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
