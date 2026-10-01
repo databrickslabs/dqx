@@ -8,14 +8,18 @@ from pyspark.sql import functions as F
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 from databricks.labs.dqx.profiler.profiler_column_metrics import (
     PROFILE_COLUMN_METRIC_REGISTRY,
     RESERVED_PROFILE_COLUMN_METRIC_KEYS,
     register_profile_column_metric,
 )
+from databricks.labs.dqx.profiler.common import is_geospatial
 from databricks.labs.dqx.profiler.profile_builder import (
+    GEOSPATIAL_PROFILE_NAMES,
     PROFILE_BUILDER_REGISTRY,
     register_profile_builder,
 )
@@ -2614,6 +2618,191 @@ def test_profiler_no_has_no_outliers_when_outliers_exceed_threshold(spark, ws):
     assert len(has_no_outliers_profiles) == 0
 
 
+def test_profiler_geospatial_generates_profiles_and_checks(skip_if_runtime_not_geo_compatible, spark, ws):
+    geom_df = _geometry_dataframe(spark)
+    assert is_geospatial(geom_df.schema["geom"].dataType)
+
+    profiler = DQProfiler(ws)
+    options = {
+        "profile_geospatial": True,
+        "sample_fraction": None,
+        "limit": None,
+        "llm_primary_key_detection": False,
+    }
+    stats, profiles = profiler.profile(geom_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Polygons do not support null island checks
+    assert geo_profile_names == set(GEOSPATIAL_PROFILE_NAMES) - {"is_not_null_island"}
+
+    geometry_type_profile = next(p for p in profiles if p.name == "geometry_type")
+    assert geometry_type_profile.parameters == {"type": "ST_Polygon"}
+
+    # Area profiles carry a concrete SRID so the profiled bound and the generated check use the same units.
+    area_profiles = [p for p in profiles if p.name in {"is_area_not_less_than", "is_area_not_greater_than"}]
+    assert area_profiles and all(p.parameters["srid"] == 3857 for p in area_profiles)
+
+    geom_stats = stats["geom"]
+    for key in ("min_x_coordinate", "max_x_coordinate", "min_area", "max_area", "min_num_points", "max_num_points"):
+        assert key in geom_stats
+    assert geom_stats["geometry_types"] == ["ST_Polygon"]
+    assert geom_stats["min_x_coordinate"] <= 0 <= geom_stats["max_x_coordinate"]
+
+    checks = DQGenerator(ws).generate_dq_rules(profiles)
+    checked_df = DQEngine(ws).apply_checks_by_metadata(geom_df, checks)
+    assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
+    assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
+
+
+def test_profiler_geospatial_geography_uses_geodesic_area(skip_if_runtime_not_geo_compatible, spark, ws):
+    geog_df = spark.createDataFrame(
+        [["POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))"], ["POLYGON((0 0, 0 2, 2 2, 2 0, 0 0))"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geography(wkt) AS geog")
+    assert is_geospatial(geog_df.schema["geog"].dataType)
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(geog_df, options=options)
+
+    geo_profile_names = {
+        profile.name for profile in profiles if profile.column == "geog" and profile.name in GEOSPATIAL_PROFILE_NAMES
+    }
+    # st_xmin/xmax/ymin/ymax, st_isvalid and st_x/st_y accept GEOMETRY only
+    assert geo_profile_names == {
+        "geometry_type",
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+        "is_non_empty_geometry",
+    }
+
+    area_profiles = [p for p in profiles if p.name in {"is_area_not_less_than", "is_area_not_greater_than"}]
+    assert area_profiles
+    assert all(p.parameters.get("geodesic") is True and "srid" not in p.parameters for p in area_profiles)
+
+    checks = DQGenerator(ws).generate_dq_rules(profiles)
+    checked_df = DQEngine(ws).apply_checks_by_metadata(geog_df, checks)
+    assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
+    assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
+
+
+def test_profiler_geospatial_disabled_by_default(skip_if_runtime_not_geo_compatible, spark, ws):
+    geom_df = _geometry_dataframe(spark)
+    profiler = DQProfiler(ws)
+    stats, profiles = profiler.profile(
+        geom_df, options={"sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    )
+
+    assert not any(p.name in GEOSPATIAL_PROFILE_NAMES for p in profiles)
+
+    assert stats["geom"]["count"] == 3
+    assert stats["geom"]["count_null"] == 1
+    assert "min_x_coordinate" not in stats["geom"]
+
+
+def test_profiler_geospatial_skips_all_null_column(skip_if_runtime_not_geo_compatible, spark, ws):
+    null_geom_df = spark.createDataFrame(
+        [[None], [None]], schema=T.StructType([T.StructField("wkt", T.StringType())])
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {
+        "profile_geospatial": True,
+        "sample_fraction": None,
+        "limit": None,
+        "llm_primary_key_detection": False,
+    }
+    stats, profiles = profiler.profile(null_geom_df, options=options)
+
+    assert not any(p.name in GEOSPATIAL_PROFILE_NAMES for p in profiles)
+    assert stats["geom"]["count_non_null"] == 0
+    assert "min_x_coordinate" not in stats["geom"]
+
+
+def test_profiler_geospatial_point_column_skips_area_and_num_points(skip_if_runtime_not_geo_compatible, spark, ws):
+    point_df = spark.createDataFrame(
+        [["POINT(1 2)"], ["POINT(3 4)"]], schema=T.StructType([T.StructField("wkt", T.StringType())])
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(point_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Points have zero area and always exactly one coordinate, so neither range profile is emitted.
+    assert not geo_profile_names & {
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+    }
+    # Points are the only geometry type that supports the null-island check
+    assert {
+        "geometry_type",
+        "has_x_coordinate_between",
+        "has_y_coordinate_between",
+        "is_not_null_island",
+    } <= geo_profile_names
+
+
+def test_profiler_geospatial_linestring_column_keeps_num_points_skips_area(
+    skip_if_runtime_not_geo_compatible, spark, ws
+):
+    line_df = spark.createDataFrame(
+        [["LINESTRING(0 0, 1 1)"], ["LINESTRING(0 0, 1 1, 2 2)"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(line_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Linestrings have a meaningful coordinate count but do not support area or null island checks
+    assert {"is_num_points_not_less_than", "is_num_points_not_greater_than"} <= geo_profile_names
+    assert not geo_profile_names & {"is_area_not_less_than", "is_area_not_greater_than", "is_not_null_island"}
+
+
+def test_profiler_geospatial_excludes_empty_geometries_from_bounds(skip_if_runtime_not_geo_compatible, spark, ws):
+    geom_df = spark.createDataFrame(
+        [["POLYGON((0 0, 0 2, 2 2, 2 0, 0 0))"], ["POLYGON((0 0, 0 3, 3 3, 3 0, 0 0))"], ["POLYGON EMPTY"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    stats, profiles = profiler.profile(geom_df, options=options)
+
+    geom_stats = stats["geom"]
+    assert geom_stats["min_area"] > 0
+    assert geom_stats["min_num_points"] > 0
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    assert {"is_area_not_less_than", "is_num_points_not_less_than"} <= geo_profile_names
+
+
+def test_profiler_geospatial_null_island_respects_z_coordinate(skip_if_runtime_not_geo_compatible, spark, ws):
+    point_df = spark.createDataFrame(
+        [["POINTZ(0 0 5)"], ["POINTZ(0 0 7)"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(point_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Points at (0, 0) with a non-zero Z are not null islands.
+    assert "is_not_null_island" in geo_profile_names
+
+    checks = DQGenerator(ws).generate_dq_rules(profiles)
+    checked_df = DQEngine(ws).apply_checks_by_metadata(point_df, checks)
+    assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
+    assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
+
+
 def _round_stats(
     stats: dict[str, dict[str, int | float | None]], precision: int = 10
 ) -> dict[str, dict[str, int | float | None]]:
@@ -2625,3 +2814,13 @@ def _round_stats(
         }
         for column_name, column_stats in stats.items()
     }
+
+
+def _geometry_dataframe(spark):
+    wkts = [
+        ["POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))"],
+        ["POLYGON((0 0, 0 2, 2 2, 2 0, 0 0))"],
+        [None],
+    ]
+    string_df = spark.createDataFrame(wkts, schema=T.StructType([T.StructField("wkt", T.StringType())]))
+    return string_df.selectExpr("try_to_geometry(wkt) AS geom")
