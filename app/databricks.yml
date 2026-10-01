@@ -35,6 +35,12 @@ variables:
   wheels_volume_name:
     description: "UC volume for DQX wheel files"
     default: "wheels"
+  app_source_path:
+    description: "App source directory: local build or prebuilt Studio release"
+    default: ".build"
+  task_runner_wheel_path:
+    description: "Task-runner wheel in the selected app build"
+    default: "./.build/tasks/databricks_labs_dqx_task_runner-*.whl"
   # DQX (databricks-labs-dqx) version — single source of truth for the task-runner
   # job's dqx dependency, kept in lockstep with src/databricks/labs/dqx/__about__.py
   # by docs/dqx/sync_versions.py (make fmt). The pin and the wheel filename below
@@ -80,8 +86,8 @@ variables:
       Lakebase endpoint resource path the app connects to (DQX_LAKEBASE_ENDPOINT).
       Derived from the project + branch; drives BOTH host resolution
       (``postgres.get_endpoint``) and OAuth credential issuance
-      (``postgres.generate_database_credential``). Set to a sentinel (``-``) and
-      drop the postgres_projects/postgres_roles blocks to run OLTP on Delta instead.
+      (``postgres.generate_database_credential``). Required for Studio's
+      transactional state.
     default: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}/endpoints/primary"
   lakebase_database_name:
     description: "Postgres database the app connects to inside the Lakebase project."
@@ -163,7 +169,7 @@ variables:
 
 sync:
   include:
-    - .build
+    - ${var.app_source_path}
 
 artifacts:
   default:
@@ -190,7 +196,7 @@ resources:
     dqx-studio:
       name: ${var.app_name}
       description: "Databricks DQX Studio for Data Quality Monitoring"
-      source_code_path: ".build"
+      source_code_path: "${var.app_source_path}"
       config: ${var.app_config}
 
       user_api_scopes:
@@ -319,12 +325,10 @@ resources:
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
             - ALL_PRIVILEGES
-        # The Genie space + end users read these derived views/dims. Schema-level
-        # SELECT covers current + future objects.
+        # Startup grants SELECT only on five Genie views and two metadata tables.
         - principal: "account users"
           privileges:
             - USE_SCHEMA
-            - SELECT
       lifecycle:
         prevent_destroy: true
     demo_schema:
@@ -375,9 +379,7 @@ resources:
   # auto-provisions its default branch + a 'primary' read/write endpoint, so no
   # branch/endpoint resource is declared here. Scale-to-zero is controlled by
   # ``suspend_timeout_duration`` (see the app's pre-ping wakeup handling in
-  # backend/pg_executor.py). To run without Lakebase, remove this block and the
-  # postgres_roles block below, then set ``lakebase_endpoint: "-"`` (OLTP falls
-  # back to Delta via the MigrationRunner path).
+  # backend/pg_executor.py).
   postgres_projects:
     dqx_studio:
       project_id: ${var.lakebase_project_id}
@@ -491,7 +493,7 @@ resources:
               # entry is ${var.dqx_task_dependency}: the pinned published release from the
               # registry in production, or the locally-built wheel on the wheels volume for
               # a dev deploy (overridden in target.*.yml). See the variable definition.
-              - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
+              - ${var.task_runner_wheel_path}
               - ${var.dqx_task_dependency}
       parameters:
         - name: "task_type"
@@ -525,5 +527,19 @@ resources:
         - name: "lakebase_username"
           default: "${var.dqx_service_principal_application_id}"
 
-# Deploy targets are defined in the untracked ``target.dev.yml`` (see the
-# ``include`` above and ``target.dev.yml.example``).
+# Deploy a signed Studio release tag using its prebuilt Marketplace artifact.
+# The target overrides the source and wheel paths and skips the source build.
+# Workspace-specific source-build targets remain in untracked target.*.yml files.
+targets:
+  release:
+    # sync.include adds marketplace to the default sync set; keep a local .build
+    # out even if its .gitignore rule changes.
+    sync:
+      exclude:
+        - .build/**
+    variables:
+      app_source_path: "marketplace"
+      task_runner_wheel_path: "./marketplace/tasks/databricks_labs_dqx_task_runner-*.whl"
+    artifacts:
+      default:
+        build: "echo Using prebuilt DQX Studio release"

@@ -1087,11 +1087,11 @@ class TestHyphenatedAppCatalog:
     hyphenated (``prod-east``). Every read-path FQN must backtick-quote its
     parts — consistently with the DDL side — or the statements won't parse."""
 
-    # Genie-derived objects live in `genie` (the default genie_schema_name);
+    # Genie-derived objects live in the configured Genie schema;
     # base tables stay in the main schema (`dqx-studio` here).
     QUOTED_CAT = "`prod-east`"
     QUOTED_MAIN = "`prod-east`.`dqx-studio`"
-    QUOTED_GENIE = "`prod-east`.`genie`"
+    QUOTED_GENIE = "`prod-east`.`dqx_app_test_genie`"
 
     @pytest.fixture(autouse=True)
     def _hyphenated_resources(self, client, sql_mock, app_config):

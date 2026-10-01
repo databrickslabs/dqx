@@ -6,7 +6,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.profiler.common import is_text
+from databricks.labs.dqx.profiler.common import is_geospatial, is_text
 
 
 DQProfileColumnMetricFunc = Callable[[T.StructField, str], Column | None]
@@ -118,8 +118,11 @@ def empty_count(field: T.StructField, column_label: str) -> Column:
 
 
 @register_profile_column_metric("count_distinct")
-def count_distinct(_field: T.StructField, column_label: str) -> Column:
+def count_distinct(field: T.StructField, column_label: str) -> Column | None:
     """
-    Profiling column metric for count distinct. Applicable for all columns.
+    Profiling column metric for count distinct. Applicable for all columns except native
+    GEOMETRY/GEOGRAPHY columns, which do not support a meaningful SQL distinct count.
     """
+    if is_geospatial(field.dataType):
+        return None
     return F.countDistinct(column_label)

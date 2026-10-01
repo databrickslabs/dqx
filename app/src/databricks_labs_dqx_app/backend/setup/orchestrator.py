@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Protocol
@@ -9,6 +10,7 @@ from typing import Protocol
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
+from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
     SetupReport,
@@ -192,11 +194,24 @@ class SetupOrchestrator:
 
             try:
                 await self.activation.activate()
+            except RequiredViewSetupError:
+                activation_step = SetupStep(
+                    id=SetupStepId.ACTIVATION,
+                    state=StepState.FAILED,
+                    code="required_views_creation_failed",
+                    summary="Could not create the required score or entitlement objects in the main and Genie schemas.",
+                    instructions=(
+                        "Verify the app service principal has USE CATALOG, USE SCHEMA, and CREATE TABLE "
+                        "on the application and Genie schemas, and can replace existing Studio views.",
+                    ),
+                    actions=(SetupActionId.RECONCILE,),
+                )
+                return self._publish_stopped([*steps, activation_step], SetupStepId.ACTIVATION)
             except Exception:
                 activation_step = _failed(
                     SetupStepId.ACTIVATION,
                     "studio_activation_failed",
-                    "Could not activate Studio background services.",
+                    "Could not initialize required Studio application objects.",
                 )
                 return self._publish_stopped([*steps, activation_step], SetupStepId.ACTIVATION)
 
@@ -260,13 +275,30 @@ class SetupOrchestrator:
     async def _run_migrations(self) -> SetupStep:
         try:
             await asyncio.to_thread(self.pg_migrations.run_all)
-            await asyncio.to_thread(self.delta_migrations.run_all)
-            return _passed(SetupStepId.MIGRATIONS, "Postgres and Delta migrations are current.")
-        except Exception:
+        except Exception as error:
+            sqlstate = getattr(error, "sqlstate", None)
+            diagnostic = (
+                f", SQLSTATE {sqlstate}" if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else ""
+            )
+            logger.error(f"Lakebase migration failed ({type(error).__name__}{diagnostic})")
             return _failed(
                 SetupStepId.MIGRATIONS,
-                "database_migration_failed",
-                "Could not apply required database migrations.",
+                "lakebase_migration_failed",
+                "Could not apply the required Lakebase database migrations.",
+            )
+        try:
+            await asyncio.to_thread(self.delta_migrations.run_all)
+            return _passed(SetupStepId.MIGRATIONS, "Postgres and Delta migrations are current.")
+        except Exception as error:
+            sqlstate = getattr(error, "sqlstate", None)
+            diagnostic = (
+                f", SQLSTATE {sqlstate}" if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else ""
+            )
+            logger.error(f"Delta migration failed ({type(error).__name__}{diagnostic})")
+            return _failed(
+                SetupStepId.MIGRATIONS,
+                "delta_migration_failed",
+                "Could not apply the required Delta database migrations.",
             )
 
     def _append_and_stop(self, steps: list[SetupStep], step: SetupStep) -> SetupReport | None:

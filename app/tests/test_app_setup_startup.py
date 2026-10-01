@@ -3,12 +3,13 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from fastapi import FastAPI
 
 from databricks_labs_dqx_app.backend.runtime import Runtime
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupState, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -184,36 +185,48 @@ async def test_fastapi_lifespan_yields_restricted_app_and_always_cleans_up(
     assert events == ["start", "served", "stop"]
 
 
-@pytest.mark.asyncio
-async def test_post_migration_startup_does_not_grant_catalog_privileges(
-    resources: ActiveResources, monkeypatch
-) -> None:
+def test_user_view_grants_are_limited_to_approved_genie_objects(resources: ActiveResources) -> None:
     from databricks_labs_dqx_app.backend import startup
 
-    app = MagicMock()
-    workspace = MagicMock()
-    delta_sql = MagicMock()
+    delta_sql = create_autospec(SqlExecutor, instance=True)
     delta_sql.q.side_effect = lambda value: f"`{value}`"
-    oltp = MagicMock()
-    settings = MagicMock()
 
-    monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
-    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
-    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: settings)
-    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
-
-    async def start_scheduler(*_args) -> None:
-        return None
-
-    monkeypatch.setattr(startup, "_start_scheduler", start_scheduler)
-    monkeypatch.setattr(startup, "_maybe_start_ai_bootstrap", lambda *_args: None)
-
-    await startup._run_post_migration_startup(app, workspace, delta_sql, oltp, resources, resource_tagger=MagicMock())
+    startup.grant_user_view_access(delta_sql, resources)
 
     statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
-    assert not any("GRANT USE CATALOG" in statement for statement in statements)
+    assert statements == [
+        "GRANT USE SCHEMA ON SCHEMA `main`.`genie` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`mv_dq_scores` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results_asof` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_attribution` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_rules` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `account users`",
+    ]
+
+
+def test_user_view_grant_failure_does_not_block_other_grants(resources: ActiveResources) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    delta_sql.execute_no_schema.side_effect = [
+        RuntimeError("permission denied"),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+
+    startup.grant_user_view_access(delta_sql, resources)
+
+    assert delta_sql.execute_no_schema.call_args_list[-1].args == (
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `account users`",
+    )
 
 
 @pytest.mark.asyncio
@@ -226,6 +239,7 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     app = FastAPI()
     workspace = MagicMock()
     delta_sql = MagicMock()
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
     pg_executor = MagicMock()
     startup_metadata_dims = MagicMock()
     request_metadata_dims = MagicMock()
@@ -251,8 +265,7 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
     monkeypatch.setattr(startup, "MetadataDimService", lambda **_kwargs: startup_metadata_dims)
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
@@ -267,6 +280,57 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
 
     startup_metadata_dims.refresh.assert_called_once_with()
     request_metadata_dims.refresh.assert_not_called()
+    grant_statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
+    assert "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `account users`" in grant_statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_view", ["score", "entitlement"])
+async def test_startup_does_not_activate_when_required_view_fails(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, failing_view: str
+) -> None:
+    """A failed view DDL must keep setup from reporting the app as ready."""
+    from databricks_labs_dqx_app.backend import startup
+
+    workspace = MagicMock()
+    delta_sql = MagicMock()
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    delta_sql.execute.side_effect = RuntimeError("SQLSTATE 42501")
+    orchestrator = MagicMock()
+    orchestrator.reconcile = AsyncMock()
+    compute = MagicMock()
+    compute.sp_application_id.return_value = "app-sp"
+
+    async def get_workspace() -> MagicMock:
+        return workspace
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: resources)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: delta_sql)
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
+    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
+    if failing_view == "score":
+        monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
+    else:
+        monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+
+    context = await startup.start_studio(FastAPI())
+    assert context is not None
+    try:
+        with pytest.raises(RuntimeError, match="Could not create required Studio views"):
+            await activate_studio(context)
+    finally:
+        await deactivate_studio(context)
 
 
 @pytest.mark.asyncio
@@ -305,8 +369,7 @@ async def test_startup_reconciles_studio_resource_tags(
     monkeypatch.setattr(startup, "ResourceTaggingService", lambda _workspace: tagger)
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())

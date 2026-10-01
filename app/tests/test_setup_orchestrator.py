@@ -8,6 +8,7 @@ import pytest
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
+from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
     SetupState,
@@ -122,9 +123,12 @@ class FakeActivation:
     wait_until: asyncio.Event | None = None
     runtime: SetupRuntime | None = None
     background_failure: Exception | None = None
+    activation_failure: Exception | None = None
 
     async def activate(self) -> None:
         self.events.append("activate")
+        if self.activation_failure is not None:
+            raise self.activation_failure
         if self.wait_until is not None:
             await self.wait_until.wait()
 
@@ -309,17 +313,66 @@ async def test_wheel_publication_failure_blocks_migrations(resources: ActiveReso
 
 
 @pytest.mark.asyncio
-async def test_migration_failure_blocks_completion_and_activation(resources: ActiveResources) -> None:
+async def test_lakebase_migration_failure_reports_stage_without_secret(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture
+) -> None:
+    class PrivilegeError(RuntimeError):
+        sqlstate = "42501"
+
     fixture = _make_orchestrator(resources)
-    fixture.orchestrator.pg_migrations.failure = RuntimeError("credential=secret")
+    fixture.orchestrator.pg_migrations.failure = PrivilegeError("credential=secret")
 
     report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
 
     assert report.current_step == SetupStepId.MIGRATIONS
     assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    assert report.step(SetupStepId.MIGRATIONS).code == "lakebase_migration_failed"
     assert "credential=secret" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert "Lakebase migration failed" in caplog.text
+    assert "SQLSTATE 42501" in caplog.text
+    assert "credential=secret" not in caplog.text
     assert not any(event.startswith("persist:") for event in fixture.events)
     assert "activate" not in fixture.events
+
+
+@pytest.mark.asyncio
+async def test_delta_migration_failure_reports_stage(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture
+) -> None:
+    class PrivilegeError(RuntimeError):
+        sqlstate = "42501"
+
+    fixture = _make_orchestrator(resources)
+    fixture.orchestrator.delta_migrations.failure = PrivilegeError("SQL: sensitive statement")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.MIGRATIONS).code == "delta_migration_failed"
+    assert "SQL: sensitive statement" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert "pg_migrations" in fixture.events
+    assert "delta_migrations" in fixture.events
+    assert "activate" not in fixture.events
+    assert "SQLSTATE 42501" in caplog.text
+    assert "sensitive statement" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["pg_migrations", "delta_migrations"])
+async def test_migration_log_rejects_untrusted_sqlstate(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture, stage: str
+) -> None:
+    class InvalidDiagnosticError(RuntimeError):
+        sqlstate = "42501\nforged diagnostic"
+
+    fixture = _make_orchestrator(resources)
+    getattr(fixture.orchestrator, stage).failure = InvalidDiagnosticError("sensitive statement")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    assert "SQLSTATE" not in caplog.text
+    assert "forged diagnostic" not in caplog.text
+    assert "sensitive statement" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -366,6 +419,25 @@ async def test_background_start_failure_keeps_activated_app_ready(resources: Act
 
     assert report.state == SetupState.READY
     assert fixture.runtime.report() is report
+
+
+@pytest.mark.asyncio
+async def test_required_view_failure_reports_uc_setup_instead_of_background_services(
+    resources: ActiveResources,
+) -> None:
+    activation = FakeActivation([], activation_failure=RequiredViewSetupError())
+    fixture = _make_orchestrator(resources, activation=activation)
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.ACTIVATION
+    step = report.step(SetupStepId.ACTIVATION)
+    assert step.state == StepState.FAILED
+    assert step.code == "required_views_creation_failed"
+    assert "CREATE TABLE" in " ".join(step.instructions)
+    assert "Genie schema" in step.summary
+    assert not any(event.startswith("start_background:") for event in fixture.events)
 
 
 @pytest.mark.asyncio
