@@ -36,7 +36,11 @@
       "noHolders": "No se encontraron usuarios ni grupos con el permiso necesario. Contacta con el administrador de tu área de trabajo o con el propietario de la tabla.",
       "typeUser": "usuario",
       "typeGroup": "grupo",
-      "typeServicePrincipal": "principal de servicio"
+      "typeServicePrincipal": "principal de servicio",
+      "unverifiedTitle": "No se pudo comprobar el acceso a la tabla",
+      "unverifiedDescriptionTable": "El SQL warehouse no respondió a tiempo, así que no pudimos comprobar si las ejecuciones programadas pueden leer esta tabla. Puede que aún se esté iniciando.",
+      "unverifiedDescriptionCollection": "El SQL warehouse no respondió a tiempo, así que no pudimos comprobar si las ejecuciones programadas pueden leer estas tablas. Puede que aún se esté iniciando.",
+      "retry": "Reintentar"
     }
   },
   "lifecycle": {

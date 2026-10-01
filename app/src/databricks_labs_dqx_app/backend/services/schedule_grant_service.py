@@ -116,6 +116,7 @@ class TablePreflight:
     fqn: str
     can_manage: bool
     manage_holders: list[dict[str, str]]
+    access_unverified: bool = False
 
 
 def _is_real_three_part_fqn(fqn: str) -> bool:
@@ -159,6 +160,9 @@ class ScheduleGrantService:
         self._app_sp_id_cached: bool = False
         self._task_runner_sp_id_cache: str | None = None
         self._task_runner_sp_id_cached: bool = False
+        # First inconclusive warehouse answer this request. Later probes fail
+        # fast with it instead of each waiting out their own deadline.
+        self._warehouse_unavailable: WarehouseUnavailableError | None = None
 
     # ------------------------------------------------------------------
     # SP identity resolution
@@ -411,21 +415,29 @@ class ScheduleGrantService:
         A rejected statement (or a permission/not-found API error) means "not
         readable". Anything else — cold start, timeout, network error — raises
         :class:`WarehouseUnavailableError` uncached, so a transient hiccup is
-        never reported to the user as a missing grant.
+        never reported to the user as a missing grant. After the first such
+        error, the remaining probes in this request re-raise it straight away
+        rather than each waiting out the warehouse deadline again.
         """
         if fqn not in cache:
             readable = False
             if self._warehouse_id and _is_real_three_part_fqn(fqn):
+                if self._warehouse_unavailable is not None:
+                    raise self._warehouse_unavailable
                 try:
                     validate_fqn(fqn)
                     self._run_sql(ws, f"SELECT 1 FROM {quote_fqn(fqn)} LIMIT 0")
                     readable = True
                 except (StatementFailedError, PermissionDenied, NotFound, ValueError):
                     logger.debug("Read probe denied for %s", fqn, exc_info=True)
-                except WarehouseUnavailableError:
+                except WarehouseUnavailableError as e:
+                    self._warehouse_unavailable = e
                     raise
                 except Exception as e:
-                    raise WarehouseUnavailableError(f"Could not verify read access to '{fqn}': {e}") from e
+                    self._warehouse_unavailable = WarehouseUnavailableError(
+                        f"Could not verify read access to '{fqn}': {e}"
+                    )
+                    raise self._warehouse_unavailable from e
             cache[fqn] = readable
         return cache[fqn]
 
@@ -446,8 +458,8 @@ class ScheduleGrantService:
         if len(jobs) < 2:
             return
         with ThreadPoolExecutor(max_workers=min(_PROBE_CONCURRENCY, len(jobs))) as pool:
-            # Transient failures are re-raised by the per-table checks, which
-            # re-probe because nothing was cached for them.
+            # Transient failures are re-raised by the per-table checks: nothing
+            # was cached for them, and the request is marked unavailable.
             list(pool.map(lambda job: self._probe_read_or_none(*job), jobs))
 
     def _probe_read_or_none(self, ws: WorkspaceClient, fqn: str, cache: dict[str, bool]) -> bool | None:
@@ -531,7 +543,13 @@ class ScheduleGrantService:
                 # Synthetic cross-table checks need no source-table grant — never block.
                 out.append(TablePreflight(fqn=fqn, can_manage=True, manage_holders=[]))
                 continue
-            can_manage = self.can_schedule(fqn)
+            try:
+                can_manage = self.can_schedule(fqn)
+            except WarehouseUnavailableError:
+                # Report this table as unverified rather than failing the whole
+                # preflight, so the other tables still show their grantability.
+                out.append(TablePreflight(fqn=fqn, can_manage=False, manage_holders=[], access_unverified=True))
+                continue
             holders = [] if can_manage else self.manage_holders(fqn)
             out.append(TablePreflight(fqn=fqn, can_manage=can_manage, manage_holders=holders))
         return out

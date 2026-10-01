@@ -434,10 +434,48 @@ class TestWarehouseBackedGrants:
 
         with pytest.raises(WarehouseUnavailableError):
             wh_service.can_schedule(FQN)
-        # Nothing cached: once the warehouse is up, the probe runs again.
+        # Nothing cached across requests: once the warehouse is up, the next
+        # request (a fresh service) probes again.
         sp.statement_execution.execute_statement.side_effect = None
         sp.statement_execution.execute_statement.return_value = _stmt()
-        assert wh_service.can_schedule(FQN) is True
+        next_request = ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="wh-1")
+        assert next_request.can_schedule(FQN) is True
+
+    @pytest.mark.usefixtures("single_sp")
+    def test_preflight_marks_only_the_unverifiable_table(self, wh_service, obo, sp):
+        # t1 is managed by the caller, so it passes without the warehouse; t2
+        # can't be verified. The preflight reports both instead of failing.
+        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
+        obo.tables.get.side_effect = lambda name: SimpleNamespace(
+            owner="alice@example.com" if name == "cat.sch.t1" else None
+        )
+
+        result = wh_service.preflight(["cat.sch.t1", "cat.sch.t2"])
+
+        assert [(r.fqn, r.can_manage, r.access_unverified) for r in result] == [
+            ("cat.sch.t1", True, False),
+            ("cat.sch.t2", False, True),
+        ]
+        assert result[1].manage_holders == []
+
+    @pytest.mark.usefixtures("single_sp")
+    def test_unavailable_warehouse_is_waited_on_once_per_request(self, wh_service, obo, sp):
+        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
+        obo.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
+        fqns = [f"cat.sch.t{i}" for i in range(5)]
+
+        result = wh_service.preflight(fqns)
+
+        assert all(r.access_unverified for r in result)
+        probes = (
+            sp.statement_execution.execute_statement.call_count + obo.statement_execution.execute_statement.call_count
+        )
+        # Only the concurrent priming wave reaches the warehouse; the per-table
+        # checks after it fail fast instead of each waiting out the deadline.
+        assert probes <= 2 * len(fqns)
+        sp.statement_execution.execute_statement.reset_mock()
+        wh_service.preflight(["cat.sch.other"])
+        sp.statement_execution.execute_statement.assert_not_called()
 
     @pytest.mark.usefixtures("single_sp")
     def test_warehouse_timeout_still_allows_a_manage_holder(self, wh_service, obo, sp):

@@ -36,7 +36,11 @@
       "noHolders": "No users or groups with the required permission were found. Contact your workspace administrator or the table's owner.",
       "typeUser": "user",
       "typeGroup": "group",
-      "typeServicePrincipal": "service principal"
+      "typeServicePrincipal": "service principal",
+      "unverifiedTitle": "Couldn't check table access",
+      "unverifiedDescriptionTable": "The SQL warehouse didn't respond in time, so we couldn't check whether scheduled runs can read this table. It may still be starting up.",
+      "unverifiedDescriptionCollection": "The SQL warehouse didn't respond in time, so we couldn't check whether scheduled runs can read these tables. It may still be starting up.",
+      "retry": "Try again"
     }
   },
   "lifecycle": {

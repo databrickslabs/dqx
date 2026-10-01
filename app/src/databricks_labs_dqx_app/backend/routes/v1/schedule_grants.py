@@ -61,6 +61,7 @@ async def preflight_schedule_grants(
                 fqn=r.fqn,
                 can_manage=r.can_manage,
                 manage_holders=[ManageHolderOut(principal=h["principal"], type=h["type"]) for h in r.manage_holders],
+                access_unverified=r.access_unverified,
             )
             for r in results
         ]

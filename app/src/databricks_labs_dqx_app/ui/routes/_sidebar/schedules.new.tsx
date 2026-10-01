@@ -80,7 +80,7 @@ function NewScheduleForm() {
   );
 
   const preflight = useScheduleGrantPreflight(target?.tableFqns ?? [], target !== null);
-  const blockForSchedule = preflight.blockedTables.length > 0;
+  const blockForSchedule = preflight.hasGrantIssue;
   const canSave = target !== null && !cronInvalid && !blockForSchedule && !preflight.isFetching && !saving;
 
   const chooseTarget = (next: ScheduleTarget) => {
@@ -216,7 +216,7 @@ function NewScheduleForm() {
             onValidityChange={(valid) => setCronInvalid(!valid)}
             banner={
               target && blockForSchedule ? (
-                <ScheduleGrantWarning entity={target.kind} blockedTables={preflight.blockedTables} />
+                <ScheduleGrantWarning entity={target.kind} preflight={preflight} />
               ) : undefined
             }
             footerNote={t("monitoredTables.scheduleFooterNote")}

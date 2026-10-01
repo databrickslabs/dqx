@@ -67,7 +67,7 @@ export function MonitoredTableSchedulingTab({
   const preflight = useScheduleGrantPreflight(tableFqns, canEdit && cron !== null);
   // Only block when a schedule is actually being set/kept — clearing it (null
   // cron) needs no grant, matching the backend gate.
-  const blockForSchedule = preflight.blockedTables.length > 0 && cron !== null;
+  const blockForSchedule = preflight.hasGrantIssue && cron !== null;
 
   // While the preflight for a newly-set cron is still in flight we do not yet
   // know whether to block, so hold the save rather than let it through to a
@@ -141,7 +141,7 @@ export function MonitoredTableSchedulingTab({
           // showing it on an unscheduled table alarms people about something
           // they are not doing.
           blockForSchedule ? (
-            <ScheduleGrantWarning entity="table" blockedTables={preflight.blockedTables} />
+            <ScheduleGrantWarning entity="table" preflight={preflight} />
           ) : undefined
         }
         footerNote={t("monitoredTables.scheduleFooterNote")}

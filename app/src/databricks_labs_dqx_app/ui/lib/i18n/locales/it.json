@@ -36,7 +36,11 @@
       "noHolders": "Nessun utente o gruppo con l'autorizzazione necessaria è stato trovato. Contatta l'amministratore dell'area di lavoro o il proprietario della tabella.",
       "typeUser": "utente",
       "typeGroup": "gruppo",
-      "typeServicePrincipal": "service principal"
+      "typeServicePrincipal": "service principal",
+      "unverifiedTitle": "Impossibile verificare l'accesso alla tabella",
+      "unverifiedDescriptionTable": "Il SQL warehouse non ha risposto in tempo, quindi non è stato possibile verificare se le esecuzioni pianificate possono leggere questa tabella. Potrebbe essere ancora in fase di avvio.",
+      "unverifiedDescriptionCollection": "Il SQL warehouse non ha risposto in tempo, quindi non è stato possibile verificare se le esecuzioni pianificate possono leggere queste tabelle. Potrebbe essere ancora in fase di avvio.",
+      "retry": "Riprova"
     }
   },
   "lifecycle": {

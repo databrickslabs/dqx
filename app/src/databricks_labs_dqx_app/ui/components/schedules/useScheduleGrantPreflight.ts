@@ -4,8 +4,24 @@ import { preflightScheduleGrants, type SchedulePreflightTableOut } from "@/lib/a
 export interface ScheduleGrantPreflight {
   /** Tables the caller can't grant the scheduler service principals SELECT on. */
   blockedTables: SchedulePreflightTableOut[];
+  /** Tables whose access couldn't be checked because the SQL warehouse didn't answer. */
+  unverifiedTables: SchedulePreflightTableOut[];
+  /** True when either list is non-empty — the backend would reject the save. */
+  hasGrantIssue: boolean;
   /** True while the preflight is in flight — callers hold the save until it settles. */
   isFetching: boolean;
+  /** Re-run the preflight (e.g. once the warehouse has started). */
+  retry: () => void;
+}
+
+/** Split preflight rows into denied (needs a MANAGE holder) and unverified
+ *  (warehouse gave no answer). Either kind blocks the save. */
+export function splitPreflightTables(
+  tables: readonly SchedulePreflightTableOut[],
+): Pick<ScheduleGrantPreflight, "blockedTables" | "unverifiedTables" | "hasGrantIssue"> {
+  const blockedTables = tables.filter((table) => !table.can_manage && !table.access_unverified);
+  const unverifiedTables = tables.filter((table) => table.access_unverified);
+  return { blockedTables, unverifiedTables, hasGrantIssue: blockedTables.length > 0 || unverifiedTables.length > 0 };
 }
 
 /**
@@ -26,7 +42,8 @@ export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled:
     staleTime: 60_000,
   });
   return {
-    blockedTables: (query.data?.tables ?? []).filter((table) => !table.can_manage),
+    ...splitPreflightTables(query.data?.tables ?? []),
     isFetching: query.isFetching,
+    retry: () => void query.refetch(),
   };
 }

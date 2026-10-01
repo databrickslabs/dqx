@@ -49,8 +49,7 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
   // Gated on scheduling intent too — for a large collection this is per-member
   // ownership reads plus paginated grants.get_effective on every tab open.
   const preflight = useScheduleGrantPreflight(memberFqns, canEdit && scheduleCron !== null);
-  const blockedTables = preflight.blockedTables;
-  const cannotManage = blockedTables.length > 0;
+  const cannotManage = preflight.hasGrantIssue;
   // Only block when a schedule is actually set/being set — clearing it (null
   // cron) needs no grant, matching the backend gate. Unrelated edits (name,
   // members) stay saveable.
@@ -77,7 +76,7 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
       onRemove={() => setSchedule(null)}
       onValidityChange={setCronValid}
       // Gated on blockForSchedule, not cannotManage: see MonitoredTableSchedulingTab.
-      banner={blockForSchedule ? <ScheduleGrantWarning entity="collection" blockedTables={blockedTables} /> : undefined}
+      banner={blockForSchedule ? <ScheduleGrantWarning entity="collection" preflight={preflight} /> : undefined}
       footerNote={t("dataProducts.scheduleFooterNote")}
       emptyText={t("dataProducts.scheduleEmptyText")}
     />

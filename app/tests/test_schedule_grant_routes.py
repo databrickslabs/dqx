@@ -15,11 +15,13 @@ from fastapi import HTTPException
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
     ScheduleConfigIn,
+    SchedulePreflightIn,
     UpdateDataProductIn,
     UpdateMonitoredTableScheduleIn,
 )
 from databricks_labs_dqx_app.backend.routes.v1.data_products import update_data_product
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import update_monitored_table_schedule
+from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import preflight_schedule_grants
 from databricks_labs_dqx_app.backend.routes.v1.schedules import save_schedule
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -28,6 +30,7 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import Sch
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     ScheduleGrantService,
+    TablePreflight,
     WarehouseUnavailableError,
 )
 
@@ -360,3 +363,18 @@ class TestScopeConfigScheduleGate:
         svc.resolve_scope_table_fqns.assert_not_called()
         obo.grants.update.assert_not_called()
         svc.save.assert_called_once()
+
+
+class TestSchedulePreflightRoute:
+    async def test_unverified_table_is_reported_per_table_not_as_a_503(self, grant_svc):
+        grant_svc.preflight_async.return_value = [
+            TablePreflight(fqn="cat.sch.t1", can_manage=True, manage_holders=[]),
+            TablePreflight(fqn="cat.sch.t2", can_manage=False, manage_holders=[], access_unverified=True),
+        ]
+
+        out = await preflight_schedule_grants(SchedulePreflightIn(table_fqns=["cat.sch.t1", "cat.sch.t2"]), grant_svc)
+
+        assert [(t.fqn, t.can_manage, t.access_unverified) for t in out.tables] == [
+            ("cat.sch.t1", True, False),
+            ("cat.sch.t2", False, True),
+        ]

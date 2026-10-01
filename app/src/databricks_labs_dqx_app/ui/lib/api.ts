@@ -4319,11 +4319,17 @@ export interface SchedulePreflightOut {
 service principals (they own the table/schema/catalog or hold MANAGE,
 directly or via a group). When ``False`` the schedule save is hard-blocked
 and ``manage_holders`` names who to ask instead.
+
+``access_unverified`` is ``True`` when the SQL warehouse gave no answer
+(e.g. still starting) and the caller lacks MANAGE, so grantability is
+unknown rather than denied. ``can_manage`` is ``False`` and the UI asks
+the user to retry.
  */
 export interface SchedulePreflightTableOut {
   fqn: string;
   can_manage: boolean;
   manage_holders?: ManageHolderOut[];
+  access_unverified?: boolean;
 }
 
 export type SchemaOutComment = string | null;
