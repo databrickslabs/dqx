@@ -2765,6 +2765,44 @@ def test_profiler_geospatial_linestring_column_keeps_num_points_skips_area(
     assert not geo_profile_names & {"is_area_not_less_than", "is_area_not_greater_than", "is_not_null_island"}
 
 
+def test_profiler_geospatial_excludes_empty_geometries_from_bounds(skip_if_runtime_not_geo_compatible, spark, ws):
+    geom_df = spark.createDataFrame(
+        [["POLYGON((0 0, 0 2, 2 2, 2 0, 0 0))"], ["POLYGON((0 0, 0 3, 3 3, 3 0, 0 0))"], ["POLYGON EMPTY"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    stats, profiles = profiler.profile(geom_df, options=options)
+
+    geom_stats = stats["geom"]
+    assert geom_stats["min_area"] > 0
+    assert geom_stats["min_num_points"] > 0
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    assert {"is_area_not_less_than", "is_num_points_not_less_than"} <= geo_profile_names
+
+
+def test_profiler_geospatial_null_island_respects_z_coordinate(skip_if_runtime_not_geo_compatible, spark, ws):
+    point_df = spark.createDataFrame(
+        [["POINTZ(0 0 5)"], ["POINTZ(0 0 7)"]],
+        schema=T.StructType([T.StructField("wkt", T.StringType())]),
+    ).selectExpr("try_to_geometry(wkt) AS geom")
+
+    profiler = DQProfiler(ws)
+    options = {"profile_geospatial": True, "sample_fraction": None, "limit": None, "llm_primary_key_detection": False}
+    _, profiles = profiler.profile(point_df, options=options)
+
+    geo_profile_names = {profile.name for profile in profiles if profile.column == "geom"}
+    # Points at (0, 0) with a non-zero Z are not null islands.
+    assert "is_not_null_island" in geo_profile_names
+
+    checks = DQGenerator(ws).generate_dq_rules(profiles)
+    checked_df = DQEngine(ws).apply_checks_by_metadata(point_df, checks)
+    assert checked_df.filter(F.col("_errors").isNotNull()).count() == 0
+    assert checked_df.filter(F.col("_warnings").isNotNull()).count() == 0
+
+
 def _round_stats(
     stats: dict[str, dict[str, int | float | None]], precision: int = 10
 ) -> dict[str, dict[str, int | float | None]]:

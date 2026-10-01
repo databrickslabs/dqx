@@ -564,7 +564,7 @@ class DQGenerator(DQEngineBase):
         function_name = _GEOMETRY_TYPE_CHECK_FUNCTIONS.get(str(params.get("type")))
         if not function_name:
             return None
-        return DQGenerator._get_geo_no_arg_chck(function_name, column, criticality)
+        return DQGenerator._get_geo_no_arg_check(function_name, column, criticality)
 
     @staticmethod
     def dq_generate_has_x_coordinate_between(column: str, criticality: str = "error", **params: object) -> dict:
@@ -730,7 +730,7 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         params = params or {}
-        return DQGenerator._get_geo_no_arg_chck("is_non_empty_geometry", column, criticality)
+        return DQGenerator._get_geo_no_arg_check("is_non_empty_geometry", column, criticality)
 
     @staticmethod
     def dq_generate_is_ogc_valid(column: str, criticality: str = "error", **params: object) -> dict:
@@ -746,7 +746,7 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         params = params or {}
-        return DQGenerator._get_geo_no_arg_chck("is_ogc_valid", column, criticality)
+        return DQGenerator._get_geo_no_arg_check("is_ogc_valid", column, criticality)
 
     @staticmethod
     def dq_generate_is_not_null_island(column: str, criticality: str = "error", **params: object) -> dict:
@@ -762,10 +762,10 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         params = params or {}
-        return DQGenerator._get_geo_no_arg_chck("is_not_null_island", column, criticality)
+        return DQGenerator._get_geo_no_arg_check("is_not_null_island", column, criticality)
 
     @staticmethod
-    def _get_geo_no_arg_chck(function_name: str, column: str, criticality: str) -> dict:
+    def _get_geo_no_arg_check(function_name: str, column: str, criticality: str) -> dict:
         """
         Builds a check dict for a geospatial check that takes only a column argument.
 
@@ -774,7 +774,7 @@ class DQGenerator(DQEngineBase):
         *try_to_geometry* (which accepts only STRING/BINARY and would fail on a native column).
 
         Args:
-            function_name: The name of the geospatil check function.
+            function_name: The name of the geospatial check function.
             column: The name of the column to check.
             criticality: The criticality of the rule as "warn" or "error" (default is "error").
 

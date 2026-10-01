@@ -971,25 +971,29 @@ def _compute_geospatial_stats(
     geom = quote_column_name(column_label)
     area = _geospatial_area_expr(geom, column_type, profiler_options)
     # st_area, st_npoints, st_geometrytype and st_isempty accept both GEOMETRY and GEOGRAPHY.
+    empty_or_null = f"{geom} IS NULL OR st_isempty({geom})"
+    non_empty = f"NOT ({empty_or_null})"
     aggregations = [
-        F.expr(f"min({area})").alias(_GEO_STAT_MIN_AREA),
-        F.expr(f"max({area})").alias(_GEO_STAT_MAX_AREA),
-        F.expr(f"min(st_npoints({geom}))").alias(_GEO_STAT_MIN_NUM_POINTS),
-        F.expr(f"max(st_npoints({geom}))").alias(_GEO_STAT_MAX_NUM_POINTS),
+        F.expr(f"min({area}) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_AREA),
+        F.expr(f"max({area}) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_AREA),
+        F.expr(f"min(st_npoints({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_NUM_POINTS),
+        F.expr(f"max(st_npoints({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_NUM_POINTS),
         F.expr(f"array_sort(collect_set(st_geometrytype({geom})))").alias(_GEO_STAT_TYPES),
-        F.expr(f"count_if({geom} IS NULL OR st_isempty({geom}))").alias(_GEO_STAT_EMPTY_COUNT),
+        F.expr(f"count_if({empty_or_null})").alias(_GEO_STAT_EMPTY_COUNT),
     ]
     if not is_geography(column_type):
         null_island = (
             f"st_geometrytype({geom}) = '{POINT_TYPE}' "
             f"AND st_xmin({geom}) = 0.0 AND st_xmax({geom}) = 0.0 "
-            f"AND st_ymin({geom}) = 0.0 AND st_ymax({geom}) = 0.0"
+            f"AND st_ymin({geom}) = 0.0 AND st_ymax({geom}) = 0.0 "
+            f"AND (st_zmin({geom}) IS NULL OR st_zmin({geom}) = 0.0) "
+            f"AND (st_mmin({geom}) IS NULL OR st_mmin({geom}) = 0.0)"
         )
         aggregations += [
-            F.expr(f"min(st_xmin({geom}))").alias(_GEO_STAT_MIN_X),
-            F.expr(f"max(st_xmax({geom}))").alias(_GEO_STAT_MAX_X),
-            F.expr(f"min(st_ymin({geom}))").alias(_GEO_STAT_MIN_Y),
-            F.expr(f"max(st_ymax({geom}))").alias(_GEO_STAT_MAX_Y),
+            F.expr(f"min(st_xmin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_X),
+            F.expr(f"max(st_xmax({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_X),
+            F.expr(f"min(st_ymin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_Y),
+            F.expr(f"max(st_ymax({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_Y),
             F.expr(f"count_if({geom} IS NULL OR NOT st_isvalid({geom}))").alias(_GEO_STAT_INVALID_COUNT),
             F.expr(f"count_if({null_island})").alias(_GEO_STAT_NULL_ISLAND_COUNT),
         ]
