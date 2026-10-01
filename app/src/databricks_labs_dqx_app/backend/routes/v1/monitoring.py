@@ -137,7 +137,7 @@ def get_validation_status_by_run(
     400 for a malformed run id.
     """
     require_valid(validate_run_id, run_id)
-    row = job_svc.get_run_result_row(sql.fqn(_RUNS_TABLE), run_id)
+    row = job_svc.get_run_status_row(sql.fqn(_RUNS_TABLE), run_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     return _raise_for_status(row)

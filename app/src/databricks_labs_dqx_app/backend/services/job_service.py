@@ -397,10 +397,28 @@ class JobService:
     def get_run_result_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
         """Read a result row from a Delta table by run_id.
 
-        Excludes in-progress (``RUNNING``) and ad-hoc ``preview`` runs — a
-        throwaway preview never stands in for a run's health, matching the
-        by-table reader. Orders by ``updated_at DESC`` so the result is
-        deterministic if a run_id ever has more than one terminal row.
+        Shared by the dry-run and profiler result readers, which must still see
+        ``preview`` runs and whose tables (e.g. ``dq_profiling_results``) have no
+        ``run_type`` column — so this stays a plain, column-agnostic lookup. The
+        monitoring health endpoint uses :meth:`get_run_status_row` instead.
+
+        Uses the SP WorkspaceClient and SQL Statement Execution API.
+        Returns a dict keyed by column name, or None if no row found.
+        """
+        er = escape_sql_string(run_id)
+        sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
+        rows = self._sql.query_dicts(sql)
+        return rows[0] if rows else None
+
+    def get_run_status_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
+        """Read a run's health row by run_id for the external monitoring endpoint.
+
+        Unlike the shared :meth:`get_run_result_row`, this excludes ad-hoc
+        ``preview`` runs — a throwaway preview never stands in for a run's health,
+        matching the by-table reader — and orders by ``updated_at DESC`` so the
+        result is deterministic if a run_id ever has more than one terminal row.
+        Only ever queries ``dq_validation_runs``, which carries ``run_type`` and
+        ``updated_at``.
 
         Uses the SP WorkspaceClient and SQL Statement Execution API.
         Returns a dict keyed by column name, or None if no row found.

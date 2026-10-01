@@ -63,7 +63,7 @@ def test_warnings_without_errors_return_200(job_svc: MagicMock, sql_executor_moc
 
 
 def test_null_error_rows_on_success_is_clean(job_svc: MagicMock, sql_executor_mock: MagicMock) -> None:
-    job_svc.get_run_result_row.return_value = _row(error_rows=None)
+    job_svc.get_run_status_row.return_value = _row(error_rows=None)
 
     out = get_validation_status_by_run("run-1", job_svc, sql_executor_mock)
 
@@ -80,7 +80,7 @@ def test_run_with_error_rows_returns_503(job_svc: MagicMock, sql_executor_mock: 
 
 
 def test_failed_run_returns_503(job_svc: MagicMock, sql_executor_mock: MagicMock) -> None:
-    job_svc.get_run_result_row.return_value = _row(status="FAILED")
+    job_svc.get_run_status_row.return_value = _row(status="FAILED")
 
     with pytest.raises(HTTPException) as exc:
         get_validation_status_by_run("run-1", job_svc, sql_executor_mock)
@@ -112,11 +112,11 @@ def test_malformed_run_id_returns_400(job_svc: MagicMock, sql_executor_mock: Mag
         get_validation_status_by_run(run_id, job_svc, sql_executor_mock)
 
     assert exc.value.status_code == 400
-    job_svc.get_run_result_row.assert_not_called()
+    job_svc.get_run_status_row.assert_not_called()
 
 
 def test_canceled_run_is_reported_when_asked_for_by_id(job_svc: MagicMock, sql_executor_mock: MagicMock) -> None:
-    job_svc.get_run_result_row.return_value = _row(status="CANCELED")
+    job_svc.get_run_status_row.return_value = _row(status="CANCELED")
 
     with pytest.raises(HTTPException) as exc:
         get_validation_status_by_run("run-1", job_svc, sql_executor_mock)
@@ -126,7 +126,7 @@ def test_canceled_run_is_reported_when_asked_for_by_id(job_svc: MagicMock, sql_e
 
 @pytest.mark.parametrize("run_id", ["3f2b9c1e-7d4a-4c2e-9b1a-2f6e8d0c5a71", "nightly:2026-09-30.1"])
 def test_observer_style_run_ids_are_accepted(job_svc: MagicMock, sql_executor_mock: MagicMock, run_id: str) -> None:
-    job_svc.get_run_result_row.return_value = _row()
+    job_svc.get_run_status_row.return_value = _row()
 
     out = get_validation_status_by_run(run_id, job_svc, sql_executor_mock)
 
