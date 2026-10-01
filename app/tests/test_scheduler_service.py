@@ -435,10 +435,62 @@ class TestSweepStaleTmpViews:
         now = datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc)
         svc._next_tmp_view_sweep_at = now - timedelta(minutes=1)
         mocks.sql.query.return_value = []
+        mocks.oltp.select_rows.return_value = []
 
         await svc._maybe_sweep_stale_tmp_views(now)
 
         assert svc._next_tmp_view_sweep_at == now + timedelta(hours=_TMP_VIEW_SWEEP_INTERVAL_HOURS)
+
+
+class TestSweepStagedRunConfigs:
+    """The runner no longer deletes its staged ``dq_run_configs`` row (no psycopg
+    on serverless), so this sweep removes rows whose run has finished.
+    """
+
+    def test_deletes_staged_config_for_finished_run(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.oltp.select_rows.return_value = [["run_done"], ["run_live"]]
+        # has_terminal_result queries dq_validation_runs then dq_profiling_results.
+        # run_done: terminal on first lookup (short-circuits). run_live: neither.
+        mocks.sql.query.side_effect = [
+            [("SUCCESS",)],  # run_done / dq_validation_runs
+            [],  # run_live / dq_validation_runs
+            [],  # run_live / dq_profiling_results
+        ]
+
+        svc._sweep_staged_run_configs()
+
+        mocks.oltp.delete.assert_called_once()
+        args, kwargs = mocks.oltp.delete.call_args
+        assert args[0] == "main.dqx.dq_run_configs"
+        assert kwargs["where"] == {"run_id": "run_done"}
+
+    def test_noop_when_no_staged_configs(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.oltp.select_rows.return_value = []
+
+        svc._sweep_staged_run_configs()
+
+        mocks.oltp.delete.assert_not_called()
+        mocks.sql.query.assert_not_called()
+
+    def test_keeps_staged_config_while_run_is_in_flight(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.oltp.select_rows.return_value = [["run_live"]]
+        mocks.sql.query.side_effect = [[], []]  # no terminal row in either table
+
+        svc._sweep_staged_run_configs()
+
+        mocks.oltp.delete.assert_not_called()
+
+    def test_delete_failure_does_not_propagate(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.oltp.select_rows.return_value = [["run_done"]]
+        mocks.sql.query.side_effect = [[("FAILED",)]]
+        mocks.oltp.delete.side_effect = RuntimeError("lakebase down")
+
+        # Best-effort — a failed delete must not raise out of the sweep.
+        svc._sweep_staged_run_configs()
 
 
 # ---------------------------------------------------------------------------
@@ -1392,7 +1444,7 @@ def _stub_idle_sources(svc, *, configs=None, products=0, tables=0):
     depends only on what we inject. Trackers return a far-future next_run so
     active configs never actually fire during the assertion."""
     far_future = (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()
-    svc._load_schedule_configs = lambda: (configs or {})  # type: ignore[method-assign]
+    svc._load_schedule_configs = lambda: configs or {}  # type: ignore[method-assign]
     svc._get_tracker = lambda name: {"next_run_at": far_future}  # type: ignore[method-assign]
     svc._tick_products = lambda now: products  # type: ignore[method-assign]
     svc._tick_monitored_tables = lambda now: tables  # type: ignore[method-assign]

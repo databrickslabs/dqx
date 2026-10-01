@@ -583,50 +583,41 @@ class TestIsPermissionDenied:
 # ---------------------------------------------------------------------------
 
 
-class _FakeCursor:
-    """Minimal psycopg-cursor stand-in used as a context manager."""
+class _FakeDataFrame:
+    """Stand-in for the DataFrame returned by ``spark.read.jdbc``."""
 
-    def __init__(self, fetch=None, execute_error=None):
-        self._fetch = fetch
-        self._execute_error = execute_error
-        self.executed: list[tuple] = []
+    def __init__(self, rows):
+        self._rows = rows
 
-    def execute(self, query, params=None):
-        # The runner passes a psycopg ``sql.Composable``; render it to text the
-        # way the real driver would so assertions can inspect the statement.
-        rendered = query if isinstance(query, str) else query.as_string(None)
-        self.executed.append((rendered, params))
-        if self._execute_error is not None:
-            raise self._execute_error
-
-    def fetchone(self):
-        return self._fetch
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+    def collect(self):
+        return self._rows
 
 
-class _FakeConn:
-    """Minimal psycopg-connection stand-in used as a context manager."""
+class _FakeReader:
+    """Captures ``spark.read.jdbc`` calls and replays queued results in order.
 
-    def __init__(self, cursor: _FakeCursor):
-        self._cursor = cursor
-        self.committed = False
+    Each queued item is either a list of result rows (dicts keyed like a Spark
+    ``Row``) or an exception to raise on that attempt.
+    """
 
-    def cursor(self):
-        return self._cursor
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls: list[dict] = []
 
-    def commit(self):
-        self.committed = True
+    def jdbc(self, url, table, properties):
+        self.calls.append({"url": url, "table": table, "properties": properties})
+        idx = len(self.calls) - 1
+        item = self._results[idx] if idx < len(self._results) else (self._results[-1] if self._results else [])
+        if isinstance(item, Exception):
+            raise item
+        return _FakeDataFrame(item)
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, *exc):
-        return False
+class _FakeSpark:
+    """Minimal SparkSession stand-in exposing ``read`` for JDBC."""
+
+    def __init__(self, read_results=None):
+        self.read = _FakeReader(read_results or [])
 
 
 def _conn(runner_module, schema="sch"):
@@ -634,112 +625,79 @@ def _conn(runner_module, schema="sch"):
     return runner_module._LakebaseConn(endpoint="ep", host="h", port=5432, username="u", database="db", schema=schema)
 
 
-def _patch_connect(runner_module, monkeypatch, conns):
-    """Patch ``_lakebase_connect`` to return the given fake connections in order.
-
-    Each entry is either a ``_FakeConn`` or an exception to raise on that attempt.
-    """
-    calls = {"n": 0}
-
-    def fake_connect(ws, conn):
-        i = calls["n"]
-        calls["n"] += 1
-        item = conns[i] if i < len(conns) else conns[-1]
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-    monkeypatch.setattr(runner_module, "_lakebase_connect", fake_connect)
-    return calls
-
-
 class TestResolveRunConfig:
     """The runner loads its config three ways: inlined in ``config_json``, from
-    the ``dq_run_configs`` Lakebase table (oversized configs), or (for backwards
-    compatibility) from a legacy volume file stub.
+    the ``dq_run_configs`` Lakebase table over JDBC (oversized configs), or (for
+    backwards compatibility) from a legacy volume file stub.
     """
 
-    def test_inline_config_passes_through_untouched(self, runner_module, monkeypatch):
+    def test_inline_config_passes_through_untouched(self, runner_module):
         ws = MagicMock(name="ws")
-        connected = _patch_connect(runner_module, monkeypatch, [])
+        spark = _FakeSpark()
         raw = {"checks": [{"name": "c1"}], "sample_size": 100}
-        config, cleanup = runner_module._resolve_run_config(ws, raw, _conn(runner_module), "run1")
+        config, cleanup = runner_module._resolve_run_config(spark, ws, raw, _conn(runner_module), "run1")
         assert config == raw
         assert cleanup is None
         # Inline config never touches Lakebase or the volume.
-        assert connected["n"] == 0
+        assert spark.read.calls == []
         ws.files.download.assert_not_called()
 
-    def test_manifest_stub_reads_from_lakebase(self, runner_module, monkeypatch):
+    def test_manifest_stub_reads_from_lakebase(self, runner_module):
         ws = MagicMock(name="ws")
         full = {"checks": [{"name": "c1"}], "sample_size": 50}
-        cur = _FakeCursor(fetch=(json.dumps(full),))
-        _patch_connect(runner_module, monkeypatch, [_FakeConn(cur)])
-        config, cleanup = runner_module._resolve_run_config(ws, {"__manifest__": True}, _conn(runner_module), "run1")
+        spark = _FakeSpark(read_results=[[{"config": json.dumps(full)}]])
+        config, cleanup = runner_module._resolve_run_config(
+            spark, ws, {"__manifest__": True}, _conn(runner_module), "run1"
+        )
         assert config == full
-        assert cleanup == ("manifest", None)
-        # run_id is bound, not interpolated, and the table is schema-qualified.
-        sql, params = cur.executed[0]
-        assert "dq_run_configs" in sql
-        assert params == ("run1",)
+        # The manifest row is deleted app-side, so the runner reports no cleanup.
+        assert cleanup is None
+        # The validated run_id is interpolated and the table is schema-qualified.
+        table = spark.read.calls[0]["table"]
+        assert '"sch"."dq_run_configs"' in table
+        assert "run1" in table
 
-    def test_legacy_volume_stub_reads_from_file(self, runner_module, monkeypatch):
+    def test_legacy_volume_stub_reads_from_file(self, runner_module):
         ws = MagicMock(name="ws")
-        connected = _patch_connect(runner_module, monkeypatch, [])
+        spark = _FakeSpark()
         full = {"checks": [], "sample_size": 5}
         ws.files.download.return_value.contents.read.return_value = json.dumps(full).encode()
         path = "/Volumes/c/s/w/run-configs/run1.json"
-        config, cleanup = runner_module._resolve_run_config(ws, {"__staged__": path}, _conn(runner_module), "run1")
+        config, cleanup = runner_module._resolve_run_config(
+            spark, ws, {"__staged__": path}, _conn(runner_module), "run1"
+        )
         assert config == full
         assert cleanup == ("volume", path)
-        assert connected["n"] == 0
+        assert spark.read.calls == []
 
-    def test_run_configs_table_is_quoted(self, runner_module):
-        assert runner_module._pg_run_configs_table("dqx_studio").as_string(None) == '"dqx_studio"."dq_run_configs"'
+    def test_run_configs_identifier_is_quoted(self, runner_module):
+        assert runner_module._pg_run_configs_identifier("dqx_studio") == '"dqx_studio"."dq_run_configs"'
 
-    def test_run_configs_table_escapes_bad_schema(self, runner_module):
-        # sql.Identifier escapes rather than rejects: a schema with an embedded
-        # quote is doubled and stays inside the quoted identifier, so it can't
-        # break out of the statement.
-        rendered = runner_module._pg_run_configs_table('sch"; DROP').as_string(None)
-        assert rendered == '"sch""; DROP"."dq_run_configs"'
+    def test_run_configs_identifier_rejects_bad_schema(self, runner_module):
+        # No psycopg sql.Identifier on serverless, so the schema is validated and
+        # a value that isn't a plain identifier is rejected rather than quoted.
+        with pytest.raises(ValueError):
+            runner_module._pg_run_configs_identifier('sch"; DROP')
 
 
 class TestCleanupRunConfig:
-    def test_manifest_cleanup_deletes_the_row(self, runner_module, monkeypatch):
+    def test_volume_cleanup_deletes_the_file(self, runner_module):
         ws = MagicMock(name="ws")
-        cur = _FakeCursor()
-        conn = _FakeConn(cur)
-        _patch_connect(runner_module, monkeypatch, [conn])
-        runner_module._cleanup_run_config(ws, ("manifest", None), _conn(runner_module), "run1")
-        sql, params = cur.executed[0]
-        assert sql.startswith("DELETE FROM")
-        assert "dq_run_configs" in sql
-        assert params == ("run1",)
-        assert conn.committed is True
-        ws.files.delete.assert_not_called()
-
-    def test_volume_cleanup_deletes_the_file(self, runner_module, monkeypatch):
-        ws = MagicMock(name="ws")
-        connected = _patch_connect(runner_module, monkeypatch, [])
         path = "/Volumes/c/s/w/run-configs/run1.json"
-        runner_module._cleanup_run_config(ws, ("volume", path), _conn(runner_module), "run1")
+        runner_module._cleanup_run_config(ws, ("volume", path))
         ws.files.delete.assert_called_once_with(path)
-        assert connected["n"] == 0
 
-    def test_none_cleanup_is_a_noop(self, runner_module, monkeypatch):
+    def test_none_cleanup_is_a_noop(self, runner_module):
         ws = MagicMock(name="ws")
-        connected = _patch_connect(runner_module, monkeypatch, [])
-        runner_module._cleanup_run_config(ws, None, _conn(runner_module), "run1")
+        runner_module._cleanup_run_config(ws, None)
         ws.files.delete.assert_not_called()
-        assert connected["n"] == 0
 
-    def test_manifest_delete_failure_is_swallowed(self, runner_module, monkeypatch):
-        # Cleanup is best-effort — the retention sweep is the backstop. Any
-        # delete failure must not propagate out of the runner's finally block.
+    def test_volume_delete_failure_is_swallowed(self, runner_module):
+        # Cleanup is best-effort; a delete failure must not propagate out of the
+        # runner's finally block.
         ws = MagicMock(name="ws")
-        _patch_connect(runner_module, monkeypatch, [RuntimeError("connection refused")])
-        runner_module._cleanup_run_config(ws, ("manifest", None), _conn(runner_module), "run1")
+        ws.files.delete.side_effect = RuntimeError("permission denied")
+        runner_module._cleanup_run_config(ws, ("volume", "/Volumes/c/s/w/run-configs/run1.json"))
 
 
 # ---------------------------------------------------------------------------
@@ -772,39 +730,36 @@ class TestReadManifestConfigRetry:
 
     def test_malformed_row_fails_fast_without_retry(self, runner_module, monkeypatch):
         ws = MagicMock(name="ws")
-        cur = _FakeCursor(fetch=("{not json}",))
-        connected = _patch_connect(runner_module, monkeypatch, [_FakeConn(cur)])
+        spark = _FakeSpark(read_results=[[{"config": "{not json}"}]])
         slept: list[float] = []
         monkeypatch.setattr(runner_module.time, "sleep", lambda s: slept.append(s))
 
         with pytest.raises(Exception):
-            runner_module._read_manifest_config(ws, _conn(runner_module), "run1")
+            runner_module._read_manifest_config(spark, ws, _conn(runner_module), "run1")
 
-        # One connection, no backoff sleeps — the parse failure short-circuits.
-        assert connected["n"] == 1
+        # One JDBC read, no backoff sleeps — the parse failure short-circuits.
+        assert len(spark.read.calls) == 1
         assert slept == []
 
     def test_missing_row_is_retried_then_raises(self, runner_module, monkeypatch):
         ws = MagicMock(name="ws")
-        # A fresh cursor each attempt, always empty.
-        conns = [_FakeConn(_FakeCursor(fetch=None)) for _ in range(3)]
-        connected = _patch_connect(runner_module, monkeypatch, conns)
+        # Empty result set on every attempt.
+        spark = _FakeSpark(read_results=[[], [], []])
         monkeypatch.setattr(runner_module.time, "sleep", lambda s: None)
 
         with pytest.raises(RuntimeError, match="No manifest run config row"):
-            runner_module._read_manifest_config(ws, _conn(runner_module), "run1", max_retries=3)
+            runner_module._read_manifest_config(spark, ws, _conn(runner_module), "run1", max_retries=3)
 
-        assert connected["n"] == 3
+        assert len(spark.read.calls) == 3
 
     def test_connection_error_is_retried_then_succeeds(self, runner_module, monkeypatch):
-        # A transient connection error (endpoint cold-start) is retried; once the
-        # connection succeeds the config parses and returns.
+        # A transient read error (endpoint cold-start) is retried; once the read
+        # succeeds the config parses and returns.
         ws = MagicMock(name="ws")
         cfg = {"checks": []}
-        conns = [RuntimeError("endpoint waking"), _FakeConn(_FakeCursor(fetch=(json.dumps(cfg),)))]
-        connected = _patch_connect(runner_module, monkeypatch, conns)
+        spark = _FakeSpark(read_results=[RuntimeError("endpoint waking"), [{"config": json.dumps(cfg)}]])
         monkeypatch.setattr(runner_module.time, "sleep", lambda s: None)
 
-        result = runner_module._read_manifest_config(ws, _conn(runner_module), "run1", max_retries=3)
+        result = runner_module._read_manifest_config(spark, ws, _conn(runner_module), "run1", max_retries=3)
         assert result == cfg
-        assert connected["n"] == 2
+        assert len(spark.read.calls) == 2
