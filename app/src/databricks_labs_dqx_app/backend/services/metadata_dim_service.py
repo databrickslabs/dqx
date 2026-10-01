@@ -30,11 +30,10 @@ from escaped literals. Table FQNs are backtick-quoted per part via
 :func:`quote_object_fqn` so a hyphenated catalog stays parseable. Both
 writes go through the SP ``SqlExecutor`` (``sp_sql``).
 
-Not best-effort internally: :meth:`refresh` lets exceptions propagate to
-the cached startup and Genie-message refresh coordinator, whose callers are
-best-effort — mirroring how
-:class:`ScoreViewService.ensure_views` raises and ``_ensure_score_views``
-catches.
+Materialization failures propagate to the cached startup and Genie-message
+refresh coordinator, whose callers are best-effort. After each successful
+dimension refresh, its explicit user SELECT grant is retried best-effort
+without exposing other Genie objects or blocking the remaining refresh.
 """
 
 import logging
@@ -98,7 +97,16 @@ class MetadataDimService:
         start of a Genie conversation).
         """
         self._refresh_rules()
+        self._grant_user_access(DIM_RULES_TABLE_NAME)
         self._refresh_monitored_tables()
+        self._grant_user_access(DIM_MONITORED_TABLES_TABLE_NAME)
+
+    def _grant_user_access(self, table_name: str) -> None:
+        fqn = quote_object_fqn(self._catalog, self._genie_schema, table_name)
+        try:
+            self._sql.execute_no_schema(f"GRANT SELECT ON TABLE {fqn} TO `account users`")
+        except Exception:
+            logger.warning("Could not grant access to Genie metadata; refresh can continue.")
 
     def _refresh_rules(self) -> None:
         fqn = quote_object_fqn(self._catalog, self._genie_schema, DIM_RULES_TABLE_NAME)
