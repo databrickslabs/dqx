@@ -1,20 +1,23 @@
 """Tests for oversized run-config staging (Databricks 10k job-parameter limit)."""
 
-import io
 import json
-from unittest.mock import MagicMock
+from unittest.mock import create_autospec
 
 import pytest
 
 from databricks_labs_dqx_app.backend.run_config_store import (
     JOB_PARAMETERS_CHAR_LIMIT,
-    STAGED_CONFIG_KEY,
+    MANIFEST_CONFIG_KEY,
+    RunConfigError,
+    RunConfigStagingError,
+    RunConfigStagingUnavailableError,
     RunConfigTooLargeError,
+    delete_staged_config,
     job_parameters_size,
     prepare_config_json,
-    resolve_config,
-    staged_config_path,
+    stage_config_to_table,
 )
+from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
 
 
 def _base_params() -> dict[str, str]:
@@ -29,6 +32,25 @@ def _base_params() -> dict[str, str]:
     }
 
 
+def _oltp_mock():
+    """OLTP executor mock — run_config_store only calls ``fqn`` and ``upsert``.
+
+    Defaults to the Postgres dialect: staging only happens when Lakebase is
+    enabled, so that is the case the staging tests exercise.
+    """
+    sql = create_autospec(SqlExecutor, instance=True)
+    sql.fqn.side_effect = lambda t: f"dqx_studio.{t}"
+    sql.dialect = "postgres"
+    return sql
+
+
+def _big_config() -> dict:
+    checks = [
+        {"name": f"rule_{i}", "check": {"function": "is_not_null", "arguments": {"col": "x"}}} for i in range(200)
+    ]
+    return {"checks": checks, "sample_size": 1000}
+
+
 class TestJobParametersSize:
     def test_counts_json_representation(self) -> None:
         params = {**_base_params(), "config_json": '{"checks":[]}'}
@@ -37,70 +59,140 @@ class TestJobParametersSize:
 
 class TestPrepareConfigJson:
     def test_inline_when_under_limit(self) -> None:
-        ws = MagicMock()
+        sql = _oltp_mock()
         config = {"checks": [{"name": "c1"}]}
         result = prepare_config_json(
-            ws,
-            wheels_volume="/Volumes/cat/sch/wheels",
+            sql,
             run_id="run123",
             config=config,
             job_parameters_without_config=_base_params(),
         )
-        assert STAGED_CONFIG_KEY not in json.loads(result)
-        ws.files.upload.assert_not_called()
+        assert MANIFEST_CONFIG_KEY not in json.loads(result)
+        assert json.loads(result) == config
+        sql.upsert.assert_not_called()
 
     def test_stages_when_over_limit(self) -> None:
-        ws = MagicMock()
-        big_checks = [
-            {"name": f"rule_{i}", "check": {"function": "is_not_null", "arguments": {"col": "x"}}} for i in range(200)
-        ]
-        config = {"checks": big_checks, "sample_size": 1000}
+        sql = _oltp_mock()
+        config = _big_config()
         base = _base_params()
         inline = json.dumps(config, separators=(",", ":"))
         assert job_parameters_size({**base, "config_json": inline}) > JOB_PARAMETERS_CHAR_LIMIT
 
         result = prepare_config_json(
-            ws,
-            wheels_volume="/Volumes/cat/sch/wheels",
+            sql,
             run_id="run123",
             config=config,
             job_parameters_without_config=base,
         )
-        stub = json.loads(result)
-        assert STAGED_CONFIG_KEY in stub
-        assert stub[STAGED_CONFIG_KEY] == staged_config_path("/Volumes/cat/sch/wheels", "run123")
-        ws.files.upload.assert_called_once()
-        upload_path = ws.files.upload.call_args.args[0]
-        assert upload_path.endswith("/run-configs/run123.json")
-        uploaded = ws.files.upload.call_args.args[1].read().decode()
-        assert json.loads(uploaded)["checks"][0]["name"] == "rule_0"
+        # The job carries only the tiny stub, not the checks.
+        assert json.loads(result) == {MANIFEST_CONFIG_KEY: True}
+        # The full config was upserted keyed by run_id.
+        sql.upsert.assert_called_once()
+        kwargs = sql.upsert.call_args.kwargs
+        assert kwargs["key_cols"] == {"run_id": "run123"}
+        assert json.loads(kwargs["value_cols"]["config"]) == config
 
-    def test_raises_when_over_limit_and_no_volume(self) -> None:
-        ws = MagicMock()
-        big_checks = [{"name": f"rule_{i}", "payload": "x" * 80} for i in range(200)]
-        config = {"checks": big_checks}
-        with pytest.raises(RunConfigTooLargeError):
+    def test_stub_stays_within_the_job_parameter_limit(self) -> None:
+        # Regression guard: the stub plus base params must always fit, so a
+        # staged config never re-trips the limit it was meant to dodge.
+        sql = _oltp_mock()
+        config = {"checks": [{"name": f"rule_{i}"} for i in range(500)]}
+        result = prepare_config_json(
+            sql,
+            run_id="run123",
+            config=config,
+            job_parameters_without_config=_base_params(),
+        )
+        assert job_parameters_size({**_base_params(), "config_json": result}) <= JOB_PARAMETERS_CHAR_LIMIT
+
+    def test_staging_failure_raises_actionable_error(self) -> None:
+        # A missing table / unreachable Lakebase surfaces as an actionable
+        # RunConfigStagingError, not a raw SQL exception.
+        sql = _oltp_mock()
+        sql.upsert.side_effect = RuntimeError('relation "dq_run_configs" does not exist')
+        with pytest.raises(RunConfigStagingError) as excinfo:
             prepare_config_json(
-                ws,
-                wheels_volume="",
+                sql,
                 run_id="run123",
-                config=config,
+                config=_big_config(),
                 job_parameters_without_config=_base_params(),
             )
+        msg = str(excinfo.value)
+        assert "run123" in msg
+        assert "migrations" in msg  # tells the operator what to check
+        assert isinstance(excinfo.value, RunConfigError)
+
+    def test_fails_fast_when_lakebase_disabled(self) -> None:
+        # With the Delta OLTP fallback (Lakebase disabled) the runner has no
+        # Postgres connection to read a staged config, so an oversized config
+        # must fail fast with actionable guidance instead of staging to a table
+        # the runner can never read.
+        sql = _oltp_mock()
+        sql.dialect = "delta"
+        with pytest.raises(RunConfigStagingUnavailableError) as excinfo:
+            prepare_config_json(
+                sql,
+                run_id="run123",
+                config=_big_config(),
+                job_parameters_without_config=_base_params(),
+            )
+        # Nothing is staged when Lakebase is unavailable.
+        sql.upsert.assert_not_called()
+        msg = str(excinfo.value)
+        assert "Lakebase" in msg  # points the operator at the real cause
+        assert "delta" in msg  # reports the active OLTP backend
+        assert isinstance(excinfo.value, RunConfigError)
 
 
-class TestResolveConfig:
-    def test_passthrough_inline_config(self) -> None:
-        ws = MagicMock()
-        config = {"checks": [], "sample_size": 100}
-        resolved, path = resolve_config(ws, config)
-        assert resolved == config
-        assert path is None
+class TestStageConfigToTable:
+    def test_upserts_config_payload_verbatim(self) -> None:
+        # A regex check body carries backslashes and quotes; the portable upsert
+        # binds the JSON as a literal, so it must round-trip without hand-escaping.
+        sql = _oltp_mock()
+        config = {"checks": [{"name": "it's", "pattern": "\\d+"}]}
+        stage_config_to_table(sql, "run123", config)
+        kwargs = sql.upsert.call_args.kwargs
+        assert kwargs["key_cols"] == {"run_id": "run123"}
+        assert json.loads(kwargs["value_cols"]["config"]) == config
+        # created_at is a portable RawSql the executor rewrites per dialect.
+        assert isinstance(kwargs["value_cols"]["created_at"], RawSql)
 
-    def test_loads_staged_config(self) -> None:
-        ws = MagicMock()
-        full = {"checks": [{"name": "c1"}], "sample_size": 50}
-        ws.files.download.return_value.contents = io.BytesIO(json.dumps(full).encode())
-        resolved, path = resolve_config(ws, {STAGED_CONFIG_KEY: "/Volumes/c/s/w/run-configs/r1.json"})
-        assert resolved == full
-        assert path == "/Volumes/c/s/w/run-configs/r1.json"
+    def test_rejects_malformed_run_id(self) -> None:
+        # run_id is validated before use, so a value that isn't an app-minted id
+        # is rejected rather than reaching the executor.
+        sql = _oltp_mock()
+        with pytest.raises(ValueError):
+            stage_config_to_table(sql, "run\\", {"checks": []})
+        sql.upsert.assert_not_called()
+
+
+class TestDeleteStagedConfig:
+    def test_deletes_row_by_run_id(self) -> None:
+        # Called when submission fails after staging, so an orphaned row is
+        # removed rather than left for the retention sweep.
+        sql = _oltp_mock()
+        delete_staged_config(sql, "run123")
+        sql.delete.assert_called_once()
+        args, kwargs = sql.delete.call_args
+        assert args[0] == "dqx_studio.dq_run_configs"
+        assert kwargs["where"] == {"run_id": "run123"}
+
+    def test_rejects_malformed_run_id(self) -> None:
+        sql = _oltp_mock()
+        delete_staged_config(sql, "run\\")
+        sql.delete.assert_not_called()
+
+    def test_swallows_delete_failure(self) -> None:
+        # The caller is already handling a submit error, so a failed cleanup
+        # must not mask it with a second exception.
+        sql = _oltp_mock()
+        sql.delete.side_effect = RuntimeError("connection reset")
+        delete_staged_config(sql, "run123")  # does not raise
+
+
+class TestRunConfigTooLargeError:
+    def test_message_reports_size_and_limit(self) -> None:
+        err = RunConfigTooLargeError(12345)
+        assert "12345" in str(err)
+        assert str(JOB_PARAMETERS_CHAR_LIMIT) in str(err)
+        assert isinstance(err, RunConfigError)
