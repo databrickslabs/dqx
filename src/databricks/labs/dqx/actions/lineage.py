@@ -497,11 +497,15 @@ def _empty_lineage_df(spark: SparkSession) -> DataFrame:
 def _sql_str_literal(value: str) -> str:
     """Escape a Python string for safe inclusion as a single-quoted SQL string literal.
 
-    Doubles any embedded single quotes (the SQL escape for a literal quote inside a string
-    literal). Used by the lineage queries where parameter markers cannot be applied — e.g.
-    inside ``INTERVAL n DAYS`` — and the table name has to be inlined as a literal.
+    Escapes both characters Spark's default string-literal parser treats specially
+    (``spark.sql.parser.escapedStringLiterals=false``): a backslash is doubled, and a single
+    quote is doubled. The backslash is escaped **first** so that the quote-doubling it introduces
+    is not itself re-escaped. Without the backslash handling a value ending in a backslash (e.g. a
+    path-style *input_location*) would escape the closing quote and produce a malformed — and
+    potentially injectable — literal. Used by the lineage queries where parameter markers cannot be
+    applied — e.g. inside ``INTERVAL n DAYS`` — and the table name has to be inlined as a literal.
     """
-    return "'" + value.replace("'", "''") + "'"
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 def _fully_qualified_identifier(name: str) -> str:

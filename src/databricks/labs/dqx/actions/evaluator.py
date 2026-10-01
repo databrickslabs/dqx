@@ -218,11 +218,15 @@ class ActionEvaluator:
         """
         if not result.extras:
             return accumulated_extras
-        if accumulated_extras is None:
-            accumulated_extras = {}
-        accumulated_extras[dq_action.name] = dict(result.extras)
+        # Build a *new* accumulator rather than mutating in place. The dict handed to the action we
+        # just executed is the same object its ActionContext still references (see the
+        # dataclasses.replace in the evaluate loop), so an in-place insert would retroactively add
+        # this action's own payload to its own context. Returning a fresh dict keeps each action's
+        # context an immutable snapshot of the extras accumulated *before* it ran.
+        merged: dict[str, dict[str, str]] = dict(accumulated_extras) if accumulated_extras else {}
+        merged[dq_action.name] = dict(result.extras)
         logger.debug(f"Recorded extras from action '{_sanitize(dq_action.name)}' for downstream propagation.")
-        return accumulated_extras
+        return merged
 
     @staticmethod
     def _log_fired(safe_name: str, result: ActionResult) -> None:

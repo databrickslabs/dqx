@@ -105,6 +105,23 @@ class _NoExtrasAction:
         return ActionResult(action_name=self.name, fired=True, status=ActionStatus.UNHEALTHY, extras=None)
 
 
+class _ReferenceCapturingProducer:
+    """Captures the *live* ``context.extras`` object (no defensive copy) and emits its own payload.
+
+    Holding the raw reference lets a test assert the evaluator never mutates that object after this
+    action has executed — i.e. that the accumulator handed to each action is a true snapshot.
+    """
+
+    def __init__(self, name: str, extras: dict[str, str]) -> None:
+        self.name = name
+        self._extras = extras
+        self.captured_extras_obj: dict[str, dict[str, str]] | None = None
+
+    def execute(self, context: ActionContext, _services: ActionServices) -> ActionResult:
+        self.captured_extras_obj = context.extras
+        return ActionResult(action_name=self.name, fired=True, status=ActionStatus.UNHEALTHY, extras=self._extras)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -156,6 +173,36 @@ def test_producer_mutation_after_execute_does_not_leak_downstream() -> None:
 
     assert final.observed is not None
     assert final.observed["producer"] == {"seen": "true"}
+
+
+def test_producer_context_not_mutated_with_its_own_payload_after_execute() -> None:
+    """The accumulator handed to an action is never mutated after it runs.
+
+    A producer's own payload is recorded into a *fresh* accumulator, not the dict its context still
+    references — so an already-dispatched action can never observe its own (or a later producer's)
+    extras appear retroactively. Guards the "fresh accumulator" / immutable-snapshot contract.
+    """
+    first = _ProducerAction("first", {"a": "1"})
+    second = _ReferenceCapturingProducer("second", {"b": "2"})
+    consumer = _RecordingConsumer("consumer")
+
+    evaluator = ActionEvaluator(
+        actions=[
+            _make_dq_action(first, "first"),
+            _make_dq_action(second, "second"),
+            _make_dq_action(consumer, "consumer"),
+        ],
+        state_store=ActionStateStore(),
+        services=_make_services(),
+    )
+    evaluator.evaluate(_make_context())
+
+    # 'second' saw the accumulator as it was *before* it ran: only 'first'.
+    assert second.captured_extras_obj == {"first": {"a": "1"}}
+    # And that exact object was never retro-mutated to include 'second' once it had executed.
+    assert "second" not in (second.captured_extras_obj or {})
+    # Downstream still accumulates everything.
+    assert consumer.observed == {"first": {"a": "1"}, "second": {"b": "2"}}
 
 
 def test_none_extras_keeps_context_extras_none_for_next_action() -> None:
