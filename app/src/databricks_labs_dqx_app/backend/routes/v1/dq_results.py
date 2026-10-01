@@ -33,6 +33,7 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.common.validation import require_valid
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
@@ -131,10 +132,7 @@ def _validate_run_id(run_id: str | None) -> None:
     """
     if run_id is None:
         return
-    try:
-        validate_run_id(run_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    require_valid(validate_run_id, run_id)
 
 
 # ---------------------------------------------------------------------------

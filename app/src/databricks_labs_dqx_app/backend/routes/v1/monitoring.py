@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.validation import require_valid
 from databricks_labs_dqx_app.backend.dependencies import (
     get_job_service,
     get_sp_sql_executor,
@@ -40,23 +41,23 @@ def _status_out(row: dict) -> ValidationStatusOut:
     )
 
 
-def _completed_before(updated_at: str | None, cutoff: datetime) -> bool:
-    """True when *updated_at* (the run's completion instant) is older than *cutoff*.
+def _completed_before(updated_at_epoch: str | None, cutoff: datetime) -> bool:
+    """True when the run's completion instant is older than *cutoff*.
 
-    The Statement Execution API returns timestamps as ISO-8601 strings in the
-    session time zone (UTC by default); a value without an offset is read as
-    UTC. A missing or unreadable timestamp counts as stale, so a monitor that
-    asked for a freshness bound is never told a run of unknown age is fresh.
+    *updated_at_epoch* is ``unix_timestamp(updated_at)`` from the query — the
+    completion instant as epoch seconds, which is time-zone independent. Reading
+    the epoch avoids parsing the session-local timestamp string (the Statement
+    Execution API does not pin the session zone to UTC) and comparing it as if
+    it were UTC. A missing or unreadable value counts as stale, so a monitor
+    that asked for a freshness bound is never told a run of unknown age is fresh.
     """
-    if not updated_at:
+    if not updated_at_epoch:
         return True
     try:
-        completed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-    except ValueError:
+        completed_epoch = float(updated_at_epoch)
+    except (TypeError, ValueError):
         return True
-    if completed.tzinfo is None:
-        completed = completed.replace(tzinfo=UTC)
-    return completed < cutoff
+    return completed_epoch < cutoff.timestamp()
 
 
 def _raise_for_status(row: dict, stale: bool = False) -> ValidationStatusOut:
@@ -105,15 +106,15 @@ def get_validation_status_by_table(
     ``stale: true``) instead of returning its last result indefinitely.
     400 for a malformed table name.
     """
-    try:
-        validate_fqn(table_fqn)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    require_valid(validate_fqn, table_fqn)
     row = job_svc.get_latest_completed_run_result_row(sql.fqn(_RUNS_TABLE), table_fqn)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"No validation run recorded for '{table_fqn}'")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No completed validation run for '{table_fqn}' (in-progress and canceled runs are not reported)",
+        )
     stale = max_age_minutes is not None and _completed_before(
-        row.get("updated_at"), datetime.now(UTC) - timedelta(minutes=max_age_minutes)
+        row.get("updated_at_epoch"), datetime.now(UTC) - timedelta(minutes=max_age_minutes)
     )
     return _raise_for_status(row, stale)
 
@@ -135,10 +136,7 @@ def get_validation_status_by_run(
     ``run_id`` instead of table name; a canceled run is reported as such (503).
     400 for a malformed run id.
     """
-    try:
-        validate_run_id(run_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    require_valid(validate_run_id, run_id)
     row = job_svc.get_run_result_row(sql.fqn(_RUNS_TABLE), run_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")

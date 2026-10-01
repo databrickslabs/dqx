@@ -23,6 +23,7 @@ def _row(
     error_rows: str | None = "0",
     warning_rows: str | None = "0",
     updated_at: str | None = "2026-09-25T00:00:00Z",
+    updated_at_epoch: str | None = None,
 ) -> dict[str, str | None]:
     return {
         "status": status,
@@ -31,6 +32,9 @@ def _row(
         "error_rows": error_rows,
         "warning_rows": warning_rows,
         "updated_at": updated_at,
+        # Staleness reads the time-zone-independent epoch (unix_timestamp(updated_at)),
+        # which the Statement Execution API also returns as a string.
+        "updated_at_epoch": updated_at_epoch,
     }
 
 
@@ -130,19 +134,20 @@ def test_observer_style_run_ids_are_accepted(job_svc: MagicMock, sql_executor_mo
 
 
 def test_recent_clean_run_within_max_age_returns_200(job_svc: MagicMock, sql_executor_mock: MagicMock) -> None:
-    completed = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-    job_svc.get_latest_completed_run_result_row.return_value = _row(updated_at=completed)
+    completed_epoch = str(int((datetime.now(UTC) - timedelta(minutes=5)).timestamp()))
+    job_svc.get_latest_completed_run_result_row.return_value = _row(updated_at_epoch=completed_epoch)
 
     out = get_validation_status_by_table("main.sales.orders", job_svc, sql_executor_mock, max_age_minutes=60)
 
     assert out.stale is False
 
 
-@pytest.mark.parametrize("updated_at", ["2020-01-01T00:00:00Z", "2020-01-01 00:00:00", None, "not a timestamp"])
+# An old epoch (2020-01-01 UTC), a missing value, and an unparseable value all count as stale.
+@pytest.mark.parametrize("updated_at_epoch", ["1577836800", None, "not a number"])
 def test_clean_run_older_than_max_age_returns_503_stale(
-    job_svc: MagicMock, sql_executor_mock: MagicMock, updated_at: str | None
+    job_svc: MagicMock, sql_executor_mock: MagicMock, updated_at_epoch: str | None
 ) -> None:
-    job_svc.get_latest_completed_run_result_row.return_value = _row(updated_at=updated_at)
+    job_svc.get_latest_completed_run_result_row.return_value = _row(updated_at_epoch=updated_at_epoch)
 
     with pytest.raises(HTTPException) as exc:
         get_validation_status_by_table("main.sales.orders", job_svc, sql_executor_mock, max_age_minutes=60)

@@ -16,6 +16,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     prepare_config_json,
 )
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +183,6 @@ class JobService:
         warehouse stamps the value with its own clock and zone-mapping
         works correctly on the cluster key.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         er = escape_sql_string(run_id)
         eu = escape_sql_string(requesting_user)
         ef = escape_sql_string(source_table_fqn)
@@ -297,8 +296,6 @@ class JobService:
         returned (server-side filter), so callers scoped to a single table
         don't have to pull the full history and filter client-side.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         where = ""
         if source_table_fqn:
             where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
@@ -400,13 +397,20 @@ class JobService:
     def get_run_result_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
         """Read a result row from a Delta table by run_id.
 
+        Excludes in-progress (``RUNNING``) and ad-hoc ``preview`` runs — a
+        throwaway preview never stands in for a run's health, matching the
+        by-table reader. Orders by ``updated_at DESC`` so the result is
+        deterministic if a run_id ever has more than one terminal row.
+
         Uses the SP WorkspaceClient and SQL Statement Execution API.
         Returns a dict keyed by column name, or None if no row found.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         er = escape_sql_string(run_id)
-        sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
+        sql = (
+            f"SELECT * FROM {table} WHERE run_id = '{er}' "  # noqa: S608
+            f"AND status != 'RUNNING' AND COALESCE(run_type, 'dryrun') != 'preview' "
+            f"ORDER BY updated_at DESC LIMIT 1"
+        )
         rows = self._sql.query_dicts(sql)
         return rows[0] if rows else None
 
@@ -429,11 +433,10 @@ class JobService:
         Returns a dict keyed by column name, or None if no run was ever
         recorded for this table.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         ef = escape_sql_string(source_table_fqn)
         sql = (
-            f"SELECT * FROM {table} WHERE lower(source_table_fqn) = lower('{ef}') "  # noqa: S608
+            f"SELECT *, unix_timestamp(updated_at) AS updated_at_epoch "  # noqa: S608
+            f"FROM {table} WHERE lower(source_table_fqn) = lower('{ef}') "
             f"AND status NOT IN ('RUNNING', 'CANCELED') AND COALESCE(run_type, 'dryrun') != 'preview' "
             f"ORDER BY updated_at DESC LIMIT 1"
         )
