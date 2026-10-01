@@ -22,7 +22,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.routes.v1.data_products import update_data_product
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import update_monitored_table_schedule
 from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import preflight_schedule_grants
-from databricks_labs_dqx_app.backend.routes.v1.schedules import save_schedule
+from databricks_labs_dqx_app.backend.routes.v1.schedules import list_schedule_overview, save_schedule
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
@@ -35,6 +35,8 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
 )
 
 FQN = "cat.sch.tbl"
+# An SDK/SQL error message that embeds internal names; it must never reach the client.
+_LEAKY = "PERMISSION_DENIED on `secret_cat`.`hr`.`salaries` for 0123-warehouse"
 
 
 @pytest.fixture
@@ -88,6 +90,18 @@ class TestMonitoredTableScheduleGate:
         assert exc.value.status_code == 503
         assert "Try again" in exc.value.detail
         svc.update_schedule.assert_not_called()
+
+    def test_grant_failure_returns_a_fixed_message(self, obo_ws, perms, grant_svc):
+        svc = create_autospec(MonitoredTableService, instance=True)
+        svc.get.return_value = self._detail()
+        grant_svc.grant_select_to_schedulers.side_effect = RuntimeError(_LEAKY)
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 0 * * *", schedule_tz="UTC")
+
+        with pytest.raises(HTTPException) as exc:
+            update_monitored_table_schedule("b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 502
+        assert exc.value.detail == "Could not grant the scheduler read access to this table."
 
     def test_grants_then_saves_when_manageable(self, obo_ws, perms, grant_svc):
         svc = create_autospec(MonitoredTableService, instance=True)
@@ -216,6 +230,20 @@ class TestDataProductScheduleGate:
 
         grant_svc.grant_select_precleared.assert_not_called()
 
+    def test_grant_failure_returns_a_fixed_message(self, obo_ws, perms, grant_svc):
+        svc = create_autospec(DataProductService, instance=True)
+        svc.member_table_fqns.return_value = ["cat.sch.t1"]
+        grant_svc.can_schedule.return_value = True
+        grant_svc.grant_select_precleared.side_effect = RuntimeError(_LEAKY)
+        body = UpdateDataProductIn(schedule_cron="0 0 * * *")
+
+        with pytest.raises(HTTPException) as exc:
+            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 502
+        assert exc.value.detail == "Could not grant the scheduler read access to the collection's tables."
+        svc.update.assert_not_called()
+
     def test_skips_gate_when_no_schedule_field(self, obo_ws, perms, grant_svc):
         svc = create_autospec(DataProductService, instance=True)
         svc.get.return_value = MagicMock()
@@ -343,6 +371,19 @@ class TestScopeConfigScheduleGate:
         obo.grants.update.assert_not_called()
         svc.save.assert_not_called()
 
+    async def test_grant_failure_returns_a_fixed_message(self, obo, sp, grant_svc):
+        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
+        obo.grants.update.side_effect = RuntimeError(_LEAKY)
+        svc = self._config_svc(["cat.sch.t0"])
+        body = ScheduleConfigIn(schedule_name="nightly", config={"scope_mode": "all"})
+
+        with pytest.raises(HTTPException) as exc:
+            await save_schedule(body, obo, svc, grant_svc)
+
+        assert exc.value.status_code == 502
+        assert exc.value.detail == "Could not grant the scheduler read access to the scheduled tables."
+        svc.save.assert_not_called()
+
     async def test_noop_when_scope_resolves_to_no_tables(self, obo, grant_svc):
         svc = self._config_svc([])
         body = ScheduleConfigIn(schedule_name="nightly", config={"scope_mode": "all"})
@@ -378,3 +419,22 @@ class TestSchedulePreflightRoute:
             ("cat.sch.t1", True, False),
             ("cat.sch.t2", False, True),
         ]
+
+
+class TestScheduleOverviewRoute:
+    def test_failure_returns_a_fixed_message(self):
+        svc = create_autospec(ScheduleConfigService, instance=True)
+        # e.g. an existing deployment whose schema predates the ``paused`` column.
+        svc.list_trackers.side_effect = RuntimeError(
+            'column "paused" does not exist in "dqx_internal"."dq_schedule_runs"'
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            list_schedule_overview(
+                svc,
+                create_autospec(MonitoredTableService, instance=True),
+                create_autospec(DataProductService, instance=True),
+            )
+
+        assert exc.value.status_code == 500
+        assert exc.value.detail == "Failed to list schedule overview."

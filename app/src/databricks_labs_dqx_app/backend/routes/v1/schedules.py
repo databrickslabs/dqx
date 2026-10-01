@@ -132,7 +132,7 @@ async def _enforce_scheduler_grants(
         logger.error("Failed to grant scheduler access for schedule scope: %s", e, exc_info=True)
         raise HTTPException(
             status_code=502,
-            detail=f"Could not grant the scheduler read access to the scheduled tables: {e}",
+            detail="Could not grant the scheduler read access to the scheduled tables.",
         )
 
 
@@ -279,7 +279,7 @@ def list_schedule_overview(
         return sorted(rows, key=lambda row: ((row.next_run_at or "9999"), row.name.lower()))
     except Exception as e:
         logger.error("Failed to list schedule overview: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list schedule overview: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list schedule overview.")
 
 
 @router.patch(

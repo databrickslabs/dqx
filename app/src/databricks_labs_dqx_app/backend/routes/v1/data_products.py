@@ -285,7 +285,7 @@ def update_data_product(
             logger.error(f"Failed to grant scheduler access for product {product_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail=f"Could not grant the scheduler read access to the collection's tables: {e}",
+                detail="Could not grant the scheduler read access to the collection's tables.",
             )
 
     try:

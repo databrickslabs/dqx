@@ -625,7 +625,7 @@ def update_monitored_table_schedule(
             logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail=f"Could not grant the scheduler read access to this table: {e}",
+                detail="Could not grant the scheduler read access to this table.",
             )
 
     try:
