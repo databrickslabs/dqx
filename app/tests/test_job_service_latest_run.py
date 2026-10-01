@@ -2,10 +2,10 @@
 
 A throwaway preview run must never stand in for a table's real health, so the
 lookup has to exclude ``run_type = 'preview'`` like every other run reader; and
-in-progress or canceled runs carry no results, so they are skipped too.
+in-progress or canceled runs carry no results, so they are skipped too. The
+latest run is the one that finished last, and table names match regardless of
+case, as Unity Catalog identifiers do.
 """
-
-from __future__ import annotations
 
 from unittest.mock import MagicMock
 
@@ -22,6 +22,8 @@ def test_latest_run_lookup_excludes_preview_running_and_canceled_runs(sql_execut
     sql = sql_executor_mock.query_dicts.call_args.args[0]
     assert "COALESCE(run_type, 'dryrun') != 'preview'" in sql
     assert "status NOT IN ('RUNNING', 'CANCELED')" in sql
+    assert "lower(source_table_fqn) = lower('main.sales.orders')" in sql
+    assert "ORDER BY updated_at DESC" in sql
 
 
 def test_latest_run_lookup_returns_none_when_no_runs(sql_executor_mock: MagicMock) -> None:

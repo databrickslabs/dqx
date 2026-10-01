@@ -6,9 +6,10 @@ that can authenticate with a Databricks OAuth token — can poll DQX Studio
 as a health check: 200 on a clean run, 503 on a failed or dirty one.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -25,6 +26,7 @@ router = APIRouter()
 
 _RUNS_TABLE = "dq_validation_runs"
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
+_MAX_AGE_LIMIT_MINUTES = 60 * 24 * 90  # matches the default run-history retention
 
 
 def _status_out(row: dict) -> ValidationStatusOut:
@@ -38,17 +40,37 @@ def _status_out(row: dict) -> ValidationStatusOut:
     )
 
 
-def _raise_for_status(row: dict) -> ValidationStatusOut:
+def _completed_before(updated_at: str | None, cutoff: datetime) -> bool:
+    """True when *updated_at* (the run's completion instant) is older than *cutoff*.
+
+    The Statement Execution API returns timestamps as ISO-8601 strings in the
+    session time zone (UTC by default); a value without an offset is read as
+    UTC. A missing or unreadable timestamp counts as stale, so a monitor that
+    asked for a freshness bound is never told a run of unknown age is fresh.
+    """
+    if not updated_at:
+        return True
+    try:
+        completed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if completed.tzinfo is None:
+        completed = completed.replace(tzinfo=UTC)
+    return completed < cutoff
+
+
+def _raise_for_status(row: dict, stale: bool = False) -> ValidationStatusOut:
     """Return the status body on pass, or raise 503 on fail.
 
-    Pass = a completed run with no error rows. Anything else (FAILED,
-    CANCELED, or SUCCESS with error_rows > 0) is reported as a failure so
-    an uptime monitor sees it as "down".
+    Pass = a completed run with no error rows that is not stale. Anything
+    else (FAILED, CANCELED, SUCCESS with error_rows > 0, or a run older than
+    the caller's freshness bound) is reported as a failure so an uptime
+    monitor sees it as "down".
     """
-    out = _status_out(row)
+    out = _status_out(row).model_copy(update={"stale": stale})
     # Compare the Pydantic-coerced int: the raw row comes from the Statement
     # Execution API, where every value is a string ("0" != 0).
-    if out.status == "SUCCESS" and (out.error_rows or 0) == 0:
+    if out.status == "SUCCESS" and (out.error_rows or 0) == 0 and not stale:
         return out
     raise HTTPException(status_code=503, detail=out.model_dump())
 
@@ -63,12 +85,24 @@ def get_validation_status_by_table(
     table_fqn: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    max_age_minutes: Annotated[
+        int | None,
+        Query(
+            ge=1,
+            le=_MAX_AGE_LIMIT_MINUTES,
+            description="Report 503 when the latest completed run finished longer ago than this",
+        ),
+    ] = None,
 ) -> ValidationStatusOut:
     """Return the latest completed run's pass/fail status for a table.
 
     Meant for external polling (e.g. a Site24x7 REST monitor authenticating
     with a Databricks OAuth token) — 200 on a clean run, 503 on a failed one.
     In-progress and canceled runs are skipped: they say nothing about the data.
+
+    Set *max_age_minutes* to a little more than the table's schedule interval
+    so a validation job that stops running is reported as down (503 with
+    ``stale: true``) instead of returning its last result indefinitely.
     400 for a malformed table name.
     """
     try:
@@ -78,7 +112,10 @@ def get_validation_status_by_table(
     row = job_svc.get_latest_completed_run_result_row(sql.fqn(_RUNS_TABLE), table_fqn)
     if row is None:
         raise HTTPException(status_code=404, detail=f"No validation run recorded for '{table_fqn}'")
-    return _raise_for_status(row)
+    stale = max_age_minutes is not None and _completed_before(
+        row.get("updated_at"), datetime.now(UTC) - timedelta(minutes=max_age_minutes)
+    )
+    return _raise_for_status(row, stale)
 
 
 @router.get(

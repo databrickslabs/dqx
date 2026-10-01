@@ -26,7 +26,6 @@ Permission model (unchanged from Phase 1):
 """
 
 import logging
-import re
 from collections.abc import Iterable
 from typing import Annotated
 
@@ -105,6 +104,7 @@ from databricks_labs_dqx_app.backend.sql_utils import (
     quote_object_fqn,
     sql_string_in_list,
     validate_fqn,
+    validate_run_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,25 +122,19 @@ _FAILED_ROWS_MAX = 100000
 # the UI's muted gray).
 _DEFAULT_LABEL_COLOR = "#6B7280"
 
-# Conservative allowlist for the user-supplied run_id filter. Observer run
-# ids are uuid4 strings (metrics_observer.DQMetricsObserver — hex plus
-# hyphens); the slightly wider charset tolerates prefixed/timestamped
-# overrides without admitting quotes, backslashes, whitespace, or control
-# characters. This validation is LOAD-BEARING: *escape_sql_string*
-# deliberately does not escape backslashes (it relies on upstream
-# validation, normally *validate_fqn* — which run_id never passes
-# through), so run_id must be charset-validated before it is interpolated
-# into any SQL string literal.
-_RUN_ID_SAFE = re.compile(r"^[A-Za-z0-9_\-.:]+$")
-
 
 def _validate_run_id(run_id: str | None) -> None:
-    """Reject a run_id unsafe to embed in a SQL string literal (400)."""
-    if run_id is not None and not _RUN_ID_SAFE.fullmatch(run_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid run_id: only letters, digits, '_', '-', '.' and ':' are allowed",
-        )
+    """Reject a run_id unsafe to embed in a SQL string literal (400).
+
+    Observer run ids are uuid4 strings (metrics_observer.DQMetricsObserver);
+    see *validate_run_id* for the shared allowlist.
+    """
+    if run_id is None:
+        return
+    try:
+        validate_run_id(run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ---------------------------------------------------------------------------

@@ -380,7 +380,13 @@ class JobService:
         return rows[0] if rows else None
 
     def get_latest_completed_run_result_row(self, table: str, source_table_fqn: str) -> dict[str, str | None] | None:
-        """Read the most recent completed, non-preview run row for a table.
+        """Read the most recently completed, non-preview run row for a table.
+
+        "Most recent" is by completion time (``updated_at``), not ``created_at``:
+        the runner back-dates ``created_at`` to the run's start, so with
+        overlapping runs a long run that finished later would otherwise lose
+        to a short run that finished earlier. The table name is compared
+        case-insensitively, as Unity Catalog identifiers are.
 
         Completed means the run finished (``SUCCESS`` or ``FAILED``): in-progress
         and canceled runs carry no results about the table's data, so they are
@@ -396,9 +402,9 @@ class JobService:
 
         ef = escape_sql_string(source_table_fqn)
         sql = (
-            f"SELECT * FROM {table} WHERE source_table_fqn = '{ef}' "  # noqa: S608
+            f"SELECT * FROM {table} WHERE lower(source_table_fqn) = lower('{ef}') "  # noqa: S608
             f"AND status NOT IN ('RUNNING', 'CANCELED') AND COALESCE(run_type, 'dryrun') != 'preview' "
-            f"ORDER BY created_at DESC LIMIT 1"
+            f"ORDER BY updated_at DESC LIMIT 1"
         )
         rows = self._sql.query_dicts(sql)
         return rows[0] if rows else None

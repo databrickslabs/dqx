@@ -308,30 +308,28 @@ def validate_schedule_name(name: str) -> str:
     return name
 
 
-# \A/\Z (not ^/$) so a trailing newline can't sneak past the end anchor.
-# Same character rule as the task runner's run-id check
-# (``dqx_task_runner.runner._validate_run_id``); the runner ships as its own
-# wheel without the app backend, so it keeps its own copy — keep them in step.
-_RUN_ID_RE = re.compile(r"\A[a-zA-Z0-9_-]{1,64}\Z")
+# Run ids come in two shapes: app-minted ids (letters, digits, ``_``, ``-``)
+# and observer run ids from external pipelines (uuid4, possibly with a
+# prefixed/timestamped override, hence ``.`` and ``:``). One allowlist covers
+# both so every endpoint accepts the same ids. None of these characters can
+# end a SQL string literal, which is what makes the check load-bearing:
+# ``escape_sql_string`` deliberately does not escape backslashes.
+_RUN_ID_RE = re.compile(r"\A[A-Za-z0-9_.:-]{1,256}\Z")
 
 
 def validate_run_id(run_id: str) -> str:
-    """Validate an app-minted run id (letters, digits, ``_``, ``-``; 1-64 chars).
+    """Validate a run id before it is embedded in a SQL string literal.
 
-    Run ids reach SQL as single-quoted literals via ``escape_sql_string``,
-    which deliberately does not escape backslashes, so ids arriving from a
-    request (e.g. a path parameter) must be checked against this allowlist
-    first.
+    Allows letters, digits, ``_``, ``-``, ``.`` and ``:`` (1-256 chars).
 
     Raises ValueError for anything else. Returns the id unchanged.
     """
-    if not run_id or not _RUN_ID_RE.match(run_id):
-        raise ValueError(
-            f"Invalid run_id: '{run_id}'. Must be 1-64 characters using only letters, digits, underscores, or hyphens."
-        )
+    if not _RUN_ID_RE.match(run_id):
+        raise ValueError("Invalid run_id: must be 1-256 characters using only letters, digits, '_', '-', '.' or ':'.")
     return run_id
 
 
+# \A/\Z (not ^/$) so a trailing newline can't sneak past the end anchor.
 _OBJECT_ID_RE = re.compile(r"\A[a-zA-Z0-9_-]{1,128}\Z")
 
 

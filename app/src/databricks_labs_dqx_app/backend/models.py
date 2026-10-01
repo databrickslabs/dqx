@@ -1680,6 +1680,10 @@ class ValidationStatusOut(BaseModel):
     error_rows: int | None = None
     warning_rows: int | None = None
     updated_at: str | None = None
+    stale: bool = Field(
+        default=False,
+        description="True when the run completed longer ago than the caller's max_age_minutes",
+    )
 
 
 # ---------------------------------------------------------------------------
