@@ -2,6 +2,7 @@ import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
+  CalendarClock,
   ClipboardCheck,
   LineChart,
   History,
@@ -34,7 +35,7 @@ function Layout() {
   // When approvals are disabled app-wide there is no review queue, so the
   // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
   const { mode: approvalsMode } = useApprovalsMode();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, canRunRules } = usePermissions();
   const approvalsEnabled = approvalsMode !== "disabled";
 
   // App-wide run-failure watcher (item 58). Mounted once here so a FAILED
@@ -168,6 +169,23 @@ function Layout() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+
+            {/* Schedules — every table, collection, and named-scope
+                schedule in one place, for users who can run rules. */}
+            {canRunRules && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname.startsWith("/schedules")}
+                  tooltip={t("sidebar.schedules")}
+                >
+                  <Link to="/schedules">
+                    <CalendarClock />
+                    <span>{t("sidebar.schedules")}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>

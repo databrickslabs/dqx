@@ -37,7 +37,9 @@ from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunne
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, build_pg_executor_from_connection
 from databricks_labs_dqx_app.backend.runtime import Runtime
 from databricks_labs_dqx_app.backend.runtime import rt as application_runtime
+from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.reset_status import ResetStatusStore
 from databricks_labs_dqx_app.backend.services.ai_bootstrap import AiBootstrap
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
@@ -436,6 +438,7 @@ async def _run_post_migration_startup(
     resources: ActiveResources,
     resource_tagger: ResourceTaggingService,
 ) -> None:
+    _mark_interrupted_admin_jobs(oltp)
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
     ensure_entitlement_objects(delta_sql, resources)
@@ -463,6 +466,22 @@ async def _run_post_migration_startup(
         logger.warning("Could not seed reserved label definitions")
 
     mark_tmp_schema_ready()
+
+
+def _mark_interrupted_admin_jobs(oltp: OltpExecutorProtocol) -> None:
+    """Fail any demo-seed / database-reset status still ``running`` from the previous process.
+
+    Both jobs run on daemon threads of the app process, so a restart kills them
+    without a terminal status. Runs first in activation, before the admin routes
+    that launch either job can be reached.
+    """
+    settings = AppSettingsService(sql=oltp)
+    for name, store in (("Demo deployment", DemoStatusStore(settings)), ("Database reset", ResetStatusStore(settings))):
+        try:
+            if store.mark_interrupted_if_running():
+                logger.warning("%s was interrupted by an app restart; marked as failed", name)
+        except Exception:
+            logger.warning("Could not check for an interrupted %s", name.lower(), exc_info=True)
 
 
 def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> None:

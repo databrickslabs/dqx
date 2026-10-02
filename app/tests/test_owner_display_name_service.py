@@ -1,14 +1,23 @@
 """Unit tests for owner_display_name_service — SCIM resolver (batch + single)."""
 
-from unittest.mock import create_autospec
+import time
+from dataclasses import dataclass
+from unittest.mock import MagicMock, create_autospec
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.iam import User
+from databricks.sdk.errors import BadRequest
+from databricks.sdk.service.iam import ComplexValue, Group, User
 
 from databricks_labs_dqx_app.backend.services import owner_display_name_service
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    ResolvedOwner,
+    canonicalize_owner,
+    fill_missing_owner_display_names,
+    fill_owner_display_names_from_cache,
+    lookup_owners,
     resolve_emails_to_display_names,
     resolve_owner_display_name,
+    resolve_owners_cached,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,3 +115,313 @@ class TestResolveOwnerDisplayName:
         # Second call must hit the cache, not SCIM again (the iterator is spent).
         assert resolve_owner_display_name("alice@example.com", sp_ws) == "Alice Smith"
         assert sp_ws.users.list.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# resolve_owners_cached (batched read-time enrichment)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveOwnersCached:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_batches_misses_into_one_scim_call(self) -> None:
+        sp_ws = _make_sp_ws(
+            [
+                _make_user("alice@example.com", "Alice Smith"),
+                _make_user("bob@example.com", "Bob Jones"),
+            ]
+        )
+        result = resolve_owners_cached(["alice@example.com", "bob@example.com"], sp_ws)
+        assert result == {"alice@example.com": "Alice Smith", "bob@example.com": "Bob Jones"}
+        # A single batched SCIM call covers both misses.
+        assert sp_ws.users.list.call_count == 1
+
+    def test_dedupes_and_omits_unresolvable(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
+        result = resolve_owners_cached(["alice@example.com", "alice@example.com", "data-stewards"], sp_ws)
+        assert result == {"alice@example.com": "Alice Smith"}
+        assert "data-stewards" not in result
+
+    def test_serves_from_cache_without_rehitting_scim(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
+        assert resolve_owners_cached(["alice@example.com"], sp_ws) == {"alice@example.com": "Alice Smith"}
+        # Second call is served from the TTL cache; the spent iterator is untouched.
+        assert resolve_owners_cached(["alice@example.com"], sp_ws) == {"alice@example.com": "Alice Smith"}
+        assert sp_ws.users.list.call_count == 1
+
+    def test_empty_or_no_client_returns_empty(self) -> None:
+        sp_ws = _make_sp_ws([])
+        assert resolve_owners_cached([], sp_ws) == {}
+        assert resolve_owners_cached(["alice@example.com"], None) == {}
+
+
+# ---------------------------------------------------------------------------
+# lookup_owners / canonicalize_owner (principal matching for imported owners)
+# ---------------------------------------------------------------------------
+
+
+class TestLookupOwners:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_requests_display_name_attribute(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
+        lookup_owners(["alice@example.com"], sp_ws)
+        assert "displayName" in sp_ws.users.list.call_args.kwargs["attributes"]
+
+    def test_matches_mis_cased_email_to_canonical_user(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
+        result = lookup_owners(["Alice@Example.com"], sp_ws)
+        assert result == {"Alice@Example.com": ResolvedOwner("alice@example.com", "Alice Smith", "user")}
+
+    def test_matches_secondary_email(self) -> None:
+        user = _make_user("asmith", "Alice Smith")
+        user.emails = [ComplexValue(value="alice@example.com")]
+        sp_ws = _make_sp_ws([user])
+        result = lookup_owners(["alice@example.com"], sp_ws)
+        assert result["alice@example.com"] == ResolvedOwner("asmith", "Alice Smith", "user")
+
+    def test_confirmed_miss_is_none(self) -> None:
+        sp_ws = _make_sp_ws([])
+        assert lookup_owners(["jhon.doe@example.com"], sp_ws) == {"jhon.doe@example.com": None}
+
+    def test_scim_failure_is_unknown_not_missing(self) -> None:
+        sp_ws = create_autospec(WorkspaceClient, instance=True)
+        sp_ws.users.list.side_effect = RuntimeError("SCIM down")
+        assert lookup_owners(["alice@example.com"], sp_ws) == {}
+        # Failures are not cached, so a later call retries SCIM.
+        lookup_owners(["alice@example.com"], sp_ws)
+        assert sp_ws.users.list.call_count == 2
+
+    def test_group_name_is_verified(self) -> None:
+        sp_ws = _make_sp_ws([])
+        group = Group(display_name="data-stewards")
+        sp_ws.groups.list.return_value = iter([group])
+        result = lookup_owners(["data-stewards"], sp_ws)
+        assert result["data-stewards"] == ResolvedOwner("data-stewards", "data-stewards", "group")
+
+    def test_emails_are_not_looked_up_as_groups(self) -> None:
+        sp_ws = _make_sp_ws([])
+        lookup_owners(["jhon.doe@example.com"], sp_ws)
+        sp_ws.groups.list.assert_not_called()
+
+
+class TestCanonicalizeOwner:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_replaces_owner_with_canonical_user(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("alice@example.com", "Alice Smith")])
+        assert canonicalize_owner(" ALICE@example.com ", sp_ws) == ("alice@example.com", "Alice Smith")
+
+    def test_keeps_unmatched_owner_verbatim(self) -> None:
+        sp_ws = _make_sp_ws([])
+        assert canonicalize_owner("jhon.doe@example.com", sp_ws) == ("jhon.doe@example.com", None)
+
+    def test_group_owner_has_no_display_name(self) -> None:
+        sp_ws = _make_sp_ws([])
+        sp_ws.groups.list.return_value = iter([Group(display_name="data-stewards")])
+        assert canonicalize_owner("data-stewards", sp_ws) == ("data-stewards", None)
+
+
+# ---------------------------------------------------------------------------
+# fill_missing_owner_display_names (read-time backfill for list pages)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Owned:
+    owner: str | None
+    owner_display_name: str | None = None
+
+
+class TestFillMissingOwnerDisplayNames:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_fills_missing_names_and_persists_them(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        rows = [_Owned("tasha@example.com"), _Owned("mina@example.com", "Mina A")]
+        fill_missing_owner_display_names(rows, sp_ws, sql, "cat.sch.dq_data_products")
+        assert [r.owner_display_name for r in rows] == ["Tasha Yang", "Mina A"]
+        [stmt] = [c.args[0] for c in sql.execute.call_args_list]
+        assert "UPDATE cat.sch.dq_data_products SET owner_display_name = CASE owner" in stmt
+        assert "WHEN 'tasha@example.com' THEN 'Tasha Yang'" in stmt
+        assert "WHERE owner IN ('tasha@example.com')" in stmt
+        assert "owner_display_name IS NULL" in stmt
+
+    def test_no_scim_call_when_every_row_has_a_name(self) -> None:
+        sp_ws = _make_sp_ws([])
+        sql = MagicMock()
+        fill_missing_owner_display_names([_Owned("a@example.com", "A"), _Owned(None)], sp_ws, sql, "t")
+        sp_ws.users.list.assert_not_called()
+        sql.execute.assert_not_called()
+
+    def test_unresolved_owner_stays_raw(self) -> None:
+        sp_ws = _make_sp_ws([])
+        sql = MagicMock()
+        row = _Owned("ghost@example.com")
+        fill_missing_owner_display_names([row], sp_ws, sql, "t")
+        assert row.owner_display_name is None
+        sql.execute.assert_not_called()
+
+    def test_write_back_failure_does_not_raise(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        sql.execute.side_effect = RuntimeError("db down")
+        row = _Owned("tasha@example.com")
+        fill_missing_owner_display_names([row], sp_ws, sql, "t")
+        assert row.owner_display_name == "Tasha Yang"
+
+
+class TestFillOwnerDisplayNamesFromCache:
+    """Non-blocking list-read fill: cache only on the request path, SCIM deferred."""
+
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+        self.deferred: list = []
+
+    def teardown_method(self) -> None:
+        # Run anything still queued so its in-flight claim is released.
+        while self.deferred:
+            self.deferred.pop()()
+
+    def _defer(self, task) -> None:
+        self.deferred.append(task)
+
+    def test_read_never_calls_scim_and_defers_resolution(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        row = _Owned("tasha@example.com")
+        fill_owner_display_names_from_cache([row], sp_ws, sql, "t", defer=self._defer)
+        sp_ws.users.list.assert_not_called()
+        sql.execute.assert_not_called()
+        assert row.owner_display_name is None
+        assert len(self.deferred) == 1
+
+    def test_deferred_task_resolves_and_persists_then_next_read_is_filled(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        fill_owner_display_names_from_cache([_Owned("tasha@example.com")], sp_ws, sql, "cat.sch.t", defer=self._defer)
+        self.deferred.pop()()
+        [stmt] = [c.args[0] for c in sql.execute.call_args_list]
+        assert "WHEN 'tasha@example.com' THEN 'Tasha Yang'" in stmt
+
+        row = _Owned("tasha@example.com")
+        fill_owner_display_names_from_cache([row], sp_ws, sql, "cat.sch.t", defer=self._defer)
+        assert row.owner_display_name == "Tasha Yang"
+        assert self.deferred == []
+
+    def test_concurrent_reads_do_not_queue_the_same_owner_twice(self) -> None:
+        sp_ws = _make_sp_ws([])
+        sql = MagicMock()
+        fill_owner_display_names_from_cache([_Owned("a@example.com")], sp_ws, sql, "t", defer=self._defer)
+        fill_owner_display_names_from_cache([_Owned("a@example.com")], sp_ws, sql, "t", defer=self._defer)
+        assert len(self.deferred) == 1
+        self.deferred.pop()()
+        # Released after the lookup, so a later cache expiry can re-queue it.
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+        owner_display_name_service.release_owner_resolution(["a@example.com"])
+
+    def test_deferred_write_failure_is_swallowed(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        sql = MagicMock()
+        sql.execute.side_effect = RuntimeError("db down")
+        fill_owner_display_names_from_cache([_Owned("tasha@example.com")], sp_ws, sql, "t", defer=self._defer)
+        self.deferred.pop()()
+
+    def test_confirmed_miss_is_reported_but_unresolved_owner_is_not(self) -> None:
+        owner_display_name_service._resolve_cache["jhon.doe@example.com"] = (time.time() + 60, None)
+        typo, pending = _Owned("jhon.doe@example.com"), _Owned("new@example.com")
+        flagged: list = []
+        fill_owner_display_names_from_cache(
+            [typo, pending], _make_sp_ws([]), MagicMock(), "t", defer=self._defer, mark_unverified=flagged.append
+        )
+        assert flagged == [typo]
+
+    def test_group_owner_is_neither_named_nor_flagged(self) -> None:
+        owner_display_name_service._resolve_cache["data-eng"] = (
+            time.time() + 60,
+            owner_display_name_service.ResolvedOwner("data-eng", "data-eng", "group"),
+        )
+        row = _Owned("data-eng")
+        flagged: list = []
+        fill_owner_display_names_from_cache(
+            [row], _make_sp_ws([]), MagicMock(), "t", defer=self._defer, mark_unverified=flagged.append
+        )
+        assert row.owner_display_name is None
+        assert flagged == []
+
+    def test_nothing_deferred_without_a_client_or_missing_names(self) -> None:
+        sql = MagicMock()
+        fill_owner_display_names_from_cache([_Owned("a@example.com")], None, sql, "t", defer=self._defer)
+        fill_owner_display_names_from_cache(
+            [_Owned("b@example.com", "B")], _make_sp_ws([]), sql, "t", defer=self._defer
+        )
+        assert self.deferred == []
+
+
+class TestInflightClaimTtl:
+    """claim/release_owner_resolution de-dupe queued lookups but must self-heal a lost claim."""
+
+    def setup_method(self) -> None:
+        owner_display_name_service._inflight.clear()
+
+    def teardown_method(self) -> None:
+        owner_display_name_service._inflight.clear()
+
+    def test_live_claim_is_not_requeued(self) -> None:
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == []
+
+    def test_release_allows_reclaim(self) -> None:
+        owner_display_name_service.claim_owner_resolution(["a@example.com"])
+        owner_display_name_service.release_owner_resolution(["a@example.com"])
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+
+    def test_stale_claim_expires_and_is_requeued(self, monkeypatch) -> None:
+        ttl = owner_display_name_service._INFLIGHT_CLAIM_TTL_SECS
+        # Claim at t=1000 and never release (the deferred task never ran).
+        monkeypatch.setattr(owner_display_name_service.time, "time", lambda: 1000.0)
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+        # Within the TTL window a concurrent read still sees it claimed.
+        monkeypatch.setattr(owner_display_name_service.time, "time", lambda: 1000.0 + ttl - 1)
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == []
+        # Once the TTL lapses the stale claim is reclaimable, so the owner self-heals.
+        monkeypatch.setattr(owner_display_name_service.time, "time", lambda: 1000.0 + ttl + 1)
+        assert owner_display_name_service.claim_owner_resolution(["a@example.com"]) == ["a@example.com"]
+
+
+class TestEmailFilterFallback:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_retries_with_username_only_filter_when_emails_filter_rejected(self) -> None:
+        ws = create_autospec(WorkspaceClient, instance=True)
+        user = _make_user("tasha@example.com", "Tasha Yang")
+
+        def _list(*, filter: str, **_kwargs):  # noqa: A002
+            if "emails.value" in filter:
+                raise BadRequest("Attribute emails.value is not supported")
+            return iter([user])
+
+        ws.users.list.side_effect = _list
+        assert resolve_owners_cached(["tasha@example.com"], ws) == {"tasha@example.com": "Tasha Yang"}
+        assert ws.users.list.call_count == 2
+
+
+class TestMissCacheTtl:
+    def setup_method(self) -> None:
+        owner_display_name_service._resolve_cache.clear()
+
+    def test_confirmed_miss_is_cached_longer_than_a_match(self) -> None:
+        sp_ws = _make_sp_ws([_make_user("tasha@example.com", "Tasha Yang")])
+        lookup_owners(["tasha@example.com", "jhon.doe@example.com"], sp_ws)
+        hit_expiry = owner_display_name_service._resolve_cache["tasha@example.com"][0]
+        miss_expiry = owner_display_name_service._resolve_cache["jhon.doe@example.com"][0]
+        assert miss_expiry - hit_expiry >= (
+            owner_display_name_service._MISS_CACHE_TTL_SECS - owner_display_name_service._RESOLVE_CACHE_TTL_SECS - 1
+        )

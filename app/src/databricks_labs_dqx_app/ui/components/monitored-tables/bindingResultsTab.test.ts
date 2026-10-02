@@ -172,6 +172,7 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
       "table",
       "catalog",
       "schema",
+      "outcome",
     ]);
   });
 

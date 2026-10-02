@@ -49,7 +49,9 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    WAREHOUSE_UNAVAILABLE_DETAIL,
     CannotManageError,
+    WarehouseUnavailableError,
     ScheduleGrantService,
     manage_block_detail,
 )
@@ -228,7 +230,8 @@ def update_data_product(
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
     grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
 ) -> DataProductOut:
-    """Apply a partial update. Any successful update flips the space back to ``draft``.
+    """Apply a partial update. A definition edit flips the space back to ``draft``;
+    a schedule-only update keeps its current status (see ``DataProductService.update``).
 
     Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
     caller is an admin/approver.
@@ -258,14 +261,19 @@ def update_data_product(
         # Resolve the caller identity once so the per-table MANAGE gate below
         # reads it from cache instead of re-issuing current_user.me() each time.
         grant_svc.prime_caller_identity()
+        grant_svc.prime_read_probes(member_fqns)
         blocked: list[tuple[str, list[dict[str, str]]]] = []
-        for fqn in member_fqns:
-            if not grant_svc.user_can_manage(fqn):
-                blocked.append((fqn, grant_svc.manage_holders(fqn)))
+        try:
+            for fqn in member_fqns:
+                if not grant_svc.can_schedule(fqn):
+                    blocked.append((fqn, grant_svc.manage_holders(fqn)))
+        except WarehouseUnavailableError as e:
+            logger.warning("Collection schedule gate inconclusive for %s: %s", product_id, e)
+            raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
         if blocked:
             raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
         try:
-            # Every member is MANAGE-gated above, so grant with the precleared
+            # Every member passed can_schedule above, so grant with the precleared
             # call — grant_select_to_schedulers would re-run the same ownership +
             # effective-privilege round-trips, doubling the UC calls per table.
             grant_svc.prime_scheduler_sp_identities()
@@ -277,7 +285,7 @@ def update_data_product(
             logger.error(f"Failed to grant scheduler access for product {product_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail="Could not grant the scheduler read access to the collection's tables. Please try again.",
+                detail="Could not grant the scheduler read access to the collection's tables.",
             )
 
     try:

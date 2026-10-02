@@ -61,6 +61,9 @@ interface Props {
   onSampleSizeChange: (sampleSize: number) => void;
   /** Called when the schedule is removed (cron cleared to null). */
   onRemove: () => void;
+  /** Shows the "Remove schedule" button. Off for the New schedule page, where
+   *  there is nothing to remove yet. Defaults to true. */
+  removable?: boolean;
   /** Reports whether the displayed cron is one the backend scheduler accepts. */
   onValidityChange: (valid: boolean) => void;
   /** Node rendered ABOVE the first schedule setting (e.g. a permission warning
@@ -85,6 +88,7 @@ export function ScheduleEditor({
   onKindChange,
   onSampleSizeChange,
   onRemove,
+  removable = true,
   onValidityChange,
   banner,
   actions,
@@ -175,7 +179,7 @@ export function ScheduleEditor({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {canEdit && (
+        {canEdit && removable && (
           <Button
             variant="outline"
             size="sm"
