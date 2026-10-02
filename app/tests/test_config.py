@@ -4,6 +4,24 @@ import pytest
 from pydantic import ValidationError
 
 
+def test_audience_groups_are_explicit_and_scoped() -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    assert AppConfig(_env_file=None).user_groups == []
+    assert AppConfig(_env_file=None, user_groups=["studio-authors", "studio-viewers"]).user_groups == [
+        "studio-authors",
+        "studio-viewers",
+    ]
+
+
+@pytest.mark.parametrize("group", ["account users", "users", "`account users`", "`UsErS`", " account users "])
+def test_broad_audience_groups_are_rejected(group: str) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    with pytest.raises(ValidationError):
+        AppConfig(_env_file=None, user_groups=[group])
+
+
 def test_lakebase_pool_min_size_defaults_to_zero(monkeypatch):
     # Scale-to-zero: the pool must be allowed to drain to zero idle
     # connections so a suspended Lakebase endpoint isn't kept warm.

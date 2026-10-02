@@ -1,12 +1,36 @@
-"""Tests for ScheduleGrantService — grantability checks + scheduler grants (Task 12)."""
+"""Schedule authorization regressions through public APIs and SDK boundaries."""
 
-import threading
-from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import create_autospec
 
 import pytest
-from databricks.sdk.service.catalog import Privilege
-from databricks.sdk.service.sql import StatementState
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import PermissionDenied
+from databricks.sdk.service.catalog import (
+    CatalogInfo,
+    CatalogsAPI,
+    EffectivePermissionsList,
+    EffectivePrivilege,
+    EffectivePrivilegeAssignment,
+    GrantsAPI,
+    Privilege,
+    SchemaInfo,
+    SchemasAPI,
+    TableInfo,
+    TablesAPI,
+)
+from databricks.sdk.service.iam import ComplexValue, CurrentUserAPI, ServicePrincipal, ServicePrincipalsAPI, User
+from databricks.sdk.service.jobs import Job, JobSettings, JobsAPI, JobRunAs
+from databricks.sdk.service.sql import (
+    ColumnInfo,
+    ResultData,
+    ResultManifest,
+    ResultSchema,
+    ServiceError,
+    StatementExecutionAPI,
+    StatementResponse,
+    StatementState,
+    StatementStatus,
+)
 
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
@@ -19,529 +43,363 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
 FQN = "cat.sch.tbl"
 
 
-def _me(user_name="alice@example.com", emails=("alice@example.com",), groups=()):
-    return SimpleNamespace(
-        user_name=user_name,
-        emails=[SimpleNamespace(value=e) for e in emails],
-        groups=[SimpleNamespace(display=d, value=v) for (d, v) in groups],
-        id="u-1",
-    )
-
-
-def _assignment(principal, privileges):
-    return SimpleNamespace(principal=principal, privileges=[SimpleNamespace(privilege=p) for p in privileges])
-
-
-def _eff(assignments):
-    return SimpleNamespace(privilege_assignments=list(assignments))
-
-
-@pytest.fixture
-def obo():
-    ws = MagicMock(name="obo_ws")
-    ws.current_user.me.return_value = _me()
-    # No owners / no grants by default → not manageable.
-    ws.tables.get.return_value = SimpleNamespace(owner=None)
-    ws.schemas.get.return_value = SimpleNamespace(owner=None)
-    ws.catalogs.get.return_value = SimpleNamespace(owner=None)
-    ws.grants.get_effective.return_value = _eff([])
-    return ws
-
-
-@pytest.fixture
-def sp():
-    ws = MagicMock(name="sp_ws")
-    # Task-runner SP derived from the bound job's run_as.
-    ws.jobs.get.return_value = SimpleNamespace(
-        settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="task-runner-sp"))
-    )
-    return ws
-
-
-@pytest.fixture
-def service(obo, sp, monkeypatch):
-    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
-    return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123")
-
-
-class TestUserCanManage:
-    def test_true_when_user_owns_table(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-        assert service.user_can_manage(FQN) is True
-
-    def test_true_when_group_owns_table(self, service, obo):
-        obo.current_user.me.return_value = _me(groups=[("data-eng", "g1")])
-        obo.tables.get.return_value = SimpleNamespace(owner="data-eng")
-        assert service.user_can_manage(FQN) is True
-
-    def test_true_when_parent_schema_owner_is_user(self, service, obo):
-        obo.schemas.get.return_value = SimpleNamespace(owner="alice@example.com")
-        assert service.user_can_manage(FQN) is True
-
-    def test_true_via_effective_manage_for_user(self, service, obo):
-        def _ge(_type, _fqn, *, principal=None, page_token=None):
-            if principal == "alice@example.com":
-                return _eff([_assignment("alice@example.com", [Privilege.MANAGE])])
-            return _eff([])
-
-        obo.grants.get_effective.side_effect = _ge
-        assert service.user_can_manage(FQN) is True
-
-    def test_true_via_group_manage(self, service, obo):
-        obo.current_user.me.return_value = _me(groups=[("data-eng", "g1")])
-
-        def _ge(_type, _fqn, *, principal=None, page_token=None):
-            if principal is None:
-                return _eff([_assignment("data-eng", [Privilege.MANAGE])])
-            return _eff([])
-
-        obo.grants.get_effective.side_effect = _ge
-        assert service.user_can_manage(FQN) is True
-
-    def test_false_with_only_all_privileges_or_select(self, service, obo):
-        # ALL PRIVILEGES / SELECT alone does NOT confer re-grant — only MANAGE does.
-        obo.grants.get_effective.return_value = _eff(
-            [_assignment("alice@example.com", [Privilege.ALL_PRIVILEGES, Privilege.SELECT])]
-        )
-        assert service.user_can_manage(FQN) is False
-
-    def test_false_when_no_owner_no_manage(self, service):
-        assert service.user_can_manage(FQN) is False
-
-    def test_false_for_synthetic_fqn(self, service):
-        assert service.user_can_manage("__sql_check__/my_check") is False
-
-    def test_false_safe_default_when_me_raises(self, service, obo):
-        # Identity unresolved (me() raises) → block. Even though another
-        # principal (bob) owns the table and holds MANAGE, the caller must NOT
-        # inherit it, and we must short-circuit before consulting any grant.
-        obo.current_user.me.side_effect = RuntimeError("no identity")
-        obo.tables.get.return_value = SimpleNamespace(owner="bob@example.com")
-        obo.grants.get_effective.return_value = _eff([_assignment("bob@example.com", [Privilege.MANAGE])])
-
-        assert service.user_can_manage(FQN) is False
-        # The safe-default guard short-circuits before any securable/grant read,
-        # so another principal's MANAGE can never be mis-attributed to the caller.
-        obo.grants.get_effective.assert_not_called()
-        obo.tables.get.assert_not_called()
-
-    def test_false_safe_default_when_identity_empty(self, service, obo):
-        # me() returns an empty/None user_name with no groups and no emails →
-        # empty principal set → block, again without consulting any grant.
-        obo.current_user.me.return_value = _me(user_name="", emails=(), groups=())
-        obo.tables.get.return_value = SimpleNamespace(owner="bob@example.com")
-        obo.grants.get_effective.return_value = _eff([_assignment("bob@example.com", [Privilege.MANAGE])])
-
-        assert service.user_can_manage(FQN) is False
-        obo.grants.get_effective.assert_not_called()
-        obo.tables.get.assert_not_called()
-
-    def test_true_via_group_manage_on_later_page(self, service, obo):
-        # A group's MANAGE on a SECOND page of effective grants must still count —
-        # otherwise a legitimate MANAGE-via-group user is falsely hard-blocked.
-        obo.current_user.me.return_value = _me(groups=[("data-eng", "g1")])
-
-        def _ge(_type, _fqn, *, principal=None, page_token=None):
-            if principal is not None:
-                return SimpleNamespace(privilege_assignments=[], next_page_token=None)
-            if page_token is None:
-                return SimpleNamespace(
-                    privilege_assignments=[_assignment("someone@example.com", [Privilege.SELECT])],
-                    next_page_token="p2",
-                )
-            return SimpleNamespace(
-                privilege_assignments=[_assignment("data-eng", [Privilege.MANAGE])],
-                next_page_token=None,
+def sql_response(
+    state: StatementState = StatementState.SUCCEEDED, rows: list[list[str]] | None = None
+) -> StatementResponse:
+    return StatementResponse(
+        statement_id="statement-1",
+        status=StatementStatus(
+            state=state, error=ServiceError(message="rejected") if state == StatementState.FAILED else None
+        ),
+        manifest=ResultManifest(
+            schema=ResultSchema(
+                columns=[ColumnInfo(name=n) for n in ("principal", "actionType", "objectType", "objectKey")]
             )
-
-        obo.grants.get_effective.side_effect = _ge
-        assert service.user_can_manage(FQN) is True
-
-
-class TestManageHolders:
-    def test_enumerates_owners_and_manage_holders(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="owner-group")
-        obo.grants.get_effective.return_value = _eff(
-            [
-                _assignment("bob@example.com", [Privilege.MANAGE]),
-                _assignment("someone@example.com", [Privilege.SELECT]),  # not a manager
-            ]
-        )
-        holders = service.manage_holders(FQN)
-        principals = {h["principal"] for h in holders}
-        assert principals == {"owner-group", "bob@example.com"}
-        by_p = {h["principal"]: h["type"] for h in holders}
-        assert by_p["bob@example.com"] == "user"
-        assert by_p["owner-group"] == "group"
-
-    def test_empty_for_synthetic_fqn(self, service):
-        assert service.manage_holders("__sql_check__/x") == []
-
-    def test_service_principal_holder_is_not_labelled_a_group(self, service, obo):
-        """A service principal holds UC grants under its bare application id.
-
-        Classifying it as a "group" made the warning card tell the blocked user
-        to go ask a group that cannot act on the request.
-        """
-        obo.tables.get.return_value = SimpleNamespace(owner="37f263d6-1794-4873-8347-1f919b834fff")
-        obo.grants.get_effective.return_value = _eff([])
-
-        holders = service.manage_holders(FQN)
-
-        by_p = {h["principal"]: h["type"] for h in holders}
-        assert by_p["37f263d6-1794-4873-8347-1f919b834fff"] == "service_principal"
-
-    def test_mixed_holders_are_each_classified(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="data-engineers")
-        obo.grants.get_effective.return_value = _eff(
-            [
-                _assignment("bob@example.com", [Privilege.MANAGE]),
-                _assignment("37f263d6-1794-4873-8347-1f919b834fff", [Privilege.MANAGE]),
-            ]
-        )
-
-        by_p = {h["principal"]: h["type"] for h in service.manage_holders(FQN)}
-
-        assert by_p == {
-            "data-engineers": "group",
-            "bob@example.com": "user",
-            "37f263d6-1794-4873-8347-1f919b834fff": "service_principal",
-        }
-
-    def test_uuid_shaped_substring_in_a_group_name_stays_a_group(self, service, obo):
-        """Only a principal that IS a UUID counts — not one that merely contains one."""
-        obo.tables.get.return_value = SimpleNamespace(owner="sp-37f263d6-1794-4873-8347-1f919b834fff-admins")
-        obo.grants.get_effective.return_value = _eff([])
-
-        holders = service.manage_holders(FQN)
-
-        assert holders[0]["type"] == "group"
-
-
-class TestGrant:
-    def test_grants_select_to_app_and_task_runner(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")  # manageable
-
-        granted = service.grant_select_to_schedulers(FQN)
-
-        assert granted == ["app-sp-id", "task-runner-sp"]
-        principals = [c.kwargs["changes"][0].principal for c in obo.grants.update.call_args_list]
-        assert principals == ["app-sp-id", "task-runner-sp"]
-        for call in obo.grants.update.call_args_list:
-            change = call.kwargs["changes"][0]
-            assert change.add == [Privilege.SELECT]
-
-    def test_grants_app_sp_only_when_task_runner_underivable(self, service, obo, sp):
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-        sp.jobs.get.side_effect = RuntimeError("no job")
-
-        granted = service.grant_select_to_schedulers(FQN)
-
-        assert granted == ["app-sp-id"]
-        assert obo.grants.update.call_count == 1
-
-    def test_task_runner_grant_best_effort_does_not_fail(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-        # First grant (app SP) succeeds; second (task-runner) raises.
-        obo.grants.update.side_effect = [None, PermissionError("nope")]
-
-        granted = service.grant_select_to_schedulers(FQN)
-
-        assert granted == ["app-sp-id"]  # task-runner failure swallowed
-
-    def test_raises_cannot_manage_when_user_lacks_manage(self, service, obo):
-        # Only bob holds MANAGE — the caller (alice) has nothing on the table.
-        def _ge(_type, _fqn, *, principal=None, page_token=None):
-            if principal is None:
-                return _eff([_assignment("bob@example.com", [Privilege.MANAGE])])
-            return _eff([])  # alice's own effective privileges: none
-
-        obo.grants.get_effective.side_effect = _ge
-        with pytest.raises(CannotManageError) as exc:
-            service.grant_select_to_schedulers(FQN)
-        assert exc.value.fqn == FQN
-        assert {h["principal"] for h in exc.value.manage_holders} == {"bob@example.com"}
-        obo.grants.update.assert_not_called()
-
-    def test_app_sp_grant_failure_propagates(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-        obo.grants.update.side_effect = PermissionError("denied")
-        with pytest.raises(PermissionError):
-            service.grant_select_to_schedulers(FQN)
-
-    def test_synthetic_fqn_is_noop(self, service, obo):
-        assert service.grant_select_to_schedulers("__sql_check__/x") == []
-        obo.grants.update.assert_not_called()
-
-
-class TestTaskRunnerDerivation:
-    def test_derives_from_job_run_as(self, service):
-        assert service.task_runner_sp_id() == "task-runner-sp"
-
-    def test_none_when_no_job_id(self, obo, sp):
-        svc = ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="")
-        assert svc.task_runner_sp_id() is None
-
-
-class TestManageBlockDetail:
-    def test_shape(self):
-        detail = manage_block_detail([(FQN, [{"principal": "bob@example.com", "type": "user"}])])
-        assert detail["code"] == "cannot_manage_schedule_tables"
-        assert detail["tables"] == [{"fqn": FQN, "manage_holders": [{"principal": "bob@example.com", "type": "user"}]}]
-
-
-class TestIdentityMemoization:
-    """Per-request identity round-trips must not scale with the table count."""
-
-    def test_caller_identity_resolved_once_across_many_checks(self, service, obo):
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")  # manageable
-        for i in range(25):
-            assert service.user_can_manage(f"cat.sch.t{i}") is True
-        # current_user.me() (the OBO caller identity) fires exactly once, not per table.
-        assert obo.current_user.me.call_count == 1
-
-    def test_prime_caller_identity_is_single_round_trip(self, service, obo):
-        service.prime_caller_identity()
-        service.prime_caller_identity()
-        for i in range(10):
-            service.user_can_manage(f"cat.sch.t{i}")
-        assert obo.current_user.me.call_count == 1
-
-    async def test_task_runner_derivation_memoized_across_grants(self, service, sp):
-        service.prime_scheduler_sp_identities()
-        for i in range(15):
-            await service.grant_select_precleared_async(f"cat.sch.t{i}")
-        # jobs.get (task-runner SP derivation) fires once, not per table.
-        assert sp.jobs.get.call_count == 1
-
-    def test_app_sp_me_fallback_memoized(self, obo, sp, monkeypatch):
-        # No DATABRICKS_CLIENT_ID → app SP id falls back to the SP's own me().
-        monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
-        sp.current_user.me.return_value = SimpleNamespace(user_name="app-sp", id="app-sp")
-        svc = ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="")
-        assert svc.app_sp_id() == "app-sp"
-        assert svc.app_sp_id() == "app-sp"
-        assert sp.current_user.me.call_count == 1
-
-
-class TestPreclearedGrant:
-    """The pre-gated grant path trusts the caller's MANAGE decision (checked once)."""
-
-    async def test_precleared_grant_does_not_recheck_manage(self, service, obo):
-        # Deliberately *not* manageable: no owner, no MANAGE. The gate is the
-        # caller's responsibility; the pre-gated grant must not re-verify it, so
-        # it grants without ever reading ownership / effective privileges.
-        granted = await service.grant_select_precleared_async(FQN)
-
-        assert granted == ["app-sp-id", "task-runner-sp"]
-        obo.grants.get_effective.assert_not_called()
-        obo.tables.get.assert_not_called()
-        obo.schemas.get.assert_not_called()
-        obo.catalogs.get.assert_not_called()
-
-    async def test_precleared_grant_synthetic_is_noop(self, service, obo):
-        assert await service.grant_select_precleared_async("__sql_check__/x") == []
-        obo.grants.update.assert_not_called()
-
-
-def _stmt(state=StatementState.SUCCEEDED, message=None):
-    return SimpleNamespace(
-        statement_id="s-1",
-        status=SimpleNamespace(state=state, error=SimpleNamespace(message=message) if message else None),
+        ),
+        result=ResultData(data_array=rows or []),
     )
 
 
-class TestWarehouseBackedGrants:
-    """With a warehouse the grant is SQL (the OBO token has no UC write API scope)."""
-
-    @pytest.fixture
-    def wh_service(self, obo, sp, monkeypatch):
-        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
-        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="wh-1")
-
-    @pytest.fixture
-    def single_sp(self, sp):
-        """Scheduled runs execute as the app SP itself (no separate task runner)."""
-        sp.jobs.get.return_value = SimpleNamespace(
-            settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="app-sp-id"))
-        )
-
-    @pytest.mark.usefixtures("single_sp")
-    def test_readable_table_needs_no_manage_and_no_app_grant(self, wh_service, obo, sp):
-        # e.g. samples.*: every principal reads it, nobody can grant on it.
-        sp.statement_execution.execute_statement.return_value = _stmt()
-
-        def _obo_sql(*, statement, warehouse_id, wait_timeout):
-            return _stmt() if statement.startswith("SELECT") else _stmt(StatementState.FAILED, "no MANAGE")
-
-        obo.statement_execution.execute_statement.side_effect = _obo_sql
-
-        assert wh_service.can_schedule(FQN) is True
-        assert wh_service.grant_select_to_schedulers(FQN) == []
-        obo.tables.get.assert_not_called()
-        obo.grants.update.assert_not_called()
-        probe = sp.statement_execution.execute_statement.call_args.kwargs
-        assert probe["statement"] == "SELECT 1 FROM `cat`.`sch`.`tbl` LIMIT 0"
-        assert probe["warehouse_id"] == "wh-1"
-        assert sp.statement_execution.execute_statement.call_count == 1  # memoized
-
-    def test_scheduler_readable_but_caller_cannot_read_still_needs_manage(self, wh_service, obo, sp):
-        # App-level edit rights alone must not schedule runs over a table the
-        # caller can't read in Unity Catalog, even when the app SP can.
-        sp.statement_execution.execute_statement.return_value = _stmt()
-        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "PERMISSION_DENIED")
-
-        assert wh_service.can_schedule(FQN) is False
-        with pytest.raises(CannotManageError):
-            wh_service.grant_select_to_schedulers(FQN)
-
-    def test_unreadable_table_is_granted_via_sql_as_the_caller(self, wh_service, obo, sp):
-        sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
-        obo.statement_execution.execute_statement.return_value = _stmt()
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-
-        assert wh_service.grant_select_to_schedulers(FQN) == ["app-sp-id", "task-runner-sp"]
-        statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
-        assert [st for st in statements if st.startswith("GRANT")] == [
-            "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `app-sp-id`",
-            "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `task-runner-sp`",
+def effective(principal: str, privileges: list[Privilege]) -> EffectivePermissionsList:
+    return EffectivePermissionsList(
+        privilege_assignments=[
+            EffectivePrivilegeAssignment(
+                principal=principal, privileges=[EffectivePrivilege(privilege=p) for p in privileges]
+            )
         ]
-        obo.grants.update.assert_not_called()
+    )
 
-    def test_sql_grant_failure_carries_the_warehouse_message(self, wh_service, obo, sp):
-        sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
-        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "PERMISSION_DENIED")
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
 
-        with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
-            wh_service.grant_select_to_schedulers(FQN)
+@pytest.fixture
+def obo() -> WorkspaceClient:
+    ws = create_autospec(WorkspaceClient, instance=True)
+    ws.current_user = create_autospec(CurrentUserAPI, instance=True)
+    ws.current_user.me.return_value = User(user_name="alice@example.com")
+    ws.tables = create_autospec(TablesAPI, instance=True)
+    ws.schemas = create_autospec(SchemasAPI, instance=True)
+    ws.catalogs = create_autospec(CatalogsAPI, instance=True)
+    ws.tables.get.return_value = TableInfo()
+    ws.schemas.get.return_value = SchemaInfo()
+    ws.catalogs.get.return_value = CatalogInfo()
+    ws.grants = create_autospec(GrantsAPI, instance=True)
+    ws.grants.get_effective.side_effect = PermissionDenied("OBO scope excludes grants REST")
+    ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+    ws.statement_execution.execute_statement.return_value = sql_response()
+    return ws
 
-    def test_separate_task_runner_requires_manage_even_when_readable(self, wh_service, obo, sp):
-        # The task-runner SP's access can't be probed and granting it needs
-        # MANAGE, so the no-grant shortcut must not apply.
-        sp.statement_execution.execute_statement.return_value = _stmt()
-        obo.statement_execution.execute_statement.return_value = _stmt()
 
-        assert wh_service.can_schedule(FQN) is False
-        with pytest.raises(CannotManageError):
-            wh_service.grant_select_to_schedulers(FQN)
-        sp.statement_execution.execute_statement.assert_not_called()
+@pytest.fixture
+def sp() -> WorkspaceClient:
+    ws = create_autospec(WorkspaceClient, instance=True)
+    ws.jobs = create_autospec(JobsAPI, instance=True)
+    ws.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-sp")))
+    ws.current_user = create_autospec(CurrentUserAPI, instance=True)
+    ws.current_user.me.return_value = User(user_name="app-sp")
+    ws.service_principals = create_autospec(ServicePrincipalsAPI, instance=True)
+    ws.service_principals.list.side_effect = lambda *, filter: iter(
+        [ServicePrincipal(application_id=filter.split('"')[1], groups=[])]
+    )
+    ws.grants = create_autospec(GrantsAPI, instance=True)
+    ws.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(
+        principal, [Privilege.USE_CATALOG] if kind == "catalog" else [Privilege.USE_SCHEMA]
+    )
+    ws.tables = create_autospec(TablesAPI, instance=True)
+    ws.schemas = create_autospec(SchemasAPI, instance=True)
+    ws.catalogs = create_autospec(CatalogsAPI, instance=True)
+    ws.tables.get.return_value = TableInfo()
+    ws.schemas.get.return_value = SchemaInfo()
+    ws.catalogs.get.return_value = CatalogInfo()
+    ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+    ws.statement_execution.execute_statement.return_value = sql_response(StatementState.FAILED)
+    return ws
 
-    @pytest.mark.usefixtures("single_sp")
-    def test_warehouse_timeout_is_not_reported_as_a_missing_grant(self, wh_service, obo, sp):
-        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
-        obo.statement_execution.execute_statement.return_value = _stmt()
 
-        with pytest.raises(WarehouseUnavailableError):
-            wh_service.can_schedule(FQN)
-        # Nothing cached across requests: once the warehouse is up, the next
-        # request (a fresh service) probes again.
-        sp.statement_execution.execute_statement.side_effect = None
-        sp.statement_execution.execute_statement.return_value = _stmt()
-        next_request = ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="wh-1")
-        assert next_request.can_schedule(FQN) is True
+@pytest.fixture
+def service(obo: WorkspaceClient, sp: WorkspaceClient, monkeypatch: pytest.MonkeyPatch) -> ScheduleGrantService:
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    return ScheduleGrantService(obo, sp, "123", warehouse_id="warehouse-1")
 
-    @pytest.mark.usefixtures("single_sp")
-    def test_preflight_marks_only_the_unverifiable_table(self, wh_service, obo, sp):
-        # t1 is managed by the caller, so it passes without the warehouse; t2
-        # can't be verified. The preflight reports both instead of failing.
-        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
-        obo.tables.get.side_effect = lambda name: SimpleNamespace(
-            owner="alice@example.com" if name == "cat.sch.t1" else None
-        )
 
-        result = wh_service.preflight(["cat.sch.t1", "cat.sch.t2"])
+@pytest.mark.parametrize("principal", ["alice@example.com", "DATA-ENG", "group-id"])
+def test_manage_via_show_grants(service: ScheduleGrantService, obo: WorkspaceClient, principal: str) -> None:
+    obo.current_user.me.return_value = User(
+        user_name="alice@example.com", groups=[ComplexValue(display="data-eng", value="group-id")]
+    )
+    obo.statement_execution.execute_statement.return_value = sql_response(rows=[[principal, "MANAGE", "TABLE", FQN]])
+    assert service.user_can_manage(FQN)
+    obo.grants.get_effective.assert_not_called()
+    assert any(
+        c.kwargs["statement"] == "SHOW GRANTS ON TABLE `cat`.`sch`.`tbl`" and c.kwargs["warehouse_id"] == "warehouse-1"
+        for c in obo.statement_execution.execute_statement.call_args_list
+    )
 
-        assert [(r.fqn, r.can_manage, r.access_unverified) for r in result] == [
-            ("cat.sch.t1", True, False),
-            ("cat.sch.t2", False, True),
+
+@pytest.mark.parametrize("action", ["SELECT", "ALL PRIVILEGES", "MANAGE"])
+def test_other_principal_or_all_privileges_never_confers_manage(
+    service: ScheduleGrantService, obo: WorkspaceClient, action: str
+) -> None:
+    principal = "bob@example.com" if action == "MANAGE" else "alice@example.com"
+    obo.statement_execution.execute_statement.return_value = sql_response(rows=[[principal, action, "TABLE", FQN]])
+    assert not service.user_can_manage(FQN)
+
+
+@pytest.mark.parametrize("kind", ["tables", "schemas", "catalogs"])
+def test_group_owner_can_manage(service: ScheduleGrantService, obo: WorkspaceClient, kind: str) -> None:
+    obo.current_user.me.return_value = User(user_name="alice@example.com", groups=[ComplexValue(display="data-eng")])
+    api = getattr(obo, kind)
+    info = {"tables": TableInfo, "schemas": SchemaInfo, "catalogs": CatalogInfo}[kind]
+    api.get.return_value = info(owner="data-eng")
+    assert service.user_can_manage(FQN)
+
+
+def test_manage_on_later_sql_chunk(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    response = sql_response(rows=[["bob@example.com", "SELECT", "TABLE", FQN]])
+    response.result.next_chunk_index = 1
+    obo.statement_execution.execute_statement.return_value = response
+    obo.statement_execution.get_statement_result_chunk_n.return_value = ResultData(
+        data_array=[["alice@example.com", "MANAGE", "TABLE", FQN]]
+    )
+    assert service.user_can_manage(FQN)
+
+
+@pytest.mark.parametrize("failure", [PermissionDenied("no metadata"), TimeoutError("unavailable")])
+def test_inspection_failure_is_unknown_not_missing(
+    service: ScheduleGrantService, obo: WorkspaceClient, failure: Exception
+) -> None:
+    obo.statement_execution.execute_statement.side_effect = failure
+    with pytest.raises(WarehouseUnavailableError):
+        service.user_can_manage(FQN)
+    result = service.preflight([FQN])
+    assert result[0].access_unverified
+    assert not result[0].can_manage
+
+
+def test_unresolved_caller_is_unknown(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    obo.current_user.me.side_effect = PermissionDenied("no identity")
+    with pytest.raises(WarehouseUnavailableError):
+        service.user_can_manage(FQN)
+
+
+@pytest.mark.parametrize("missing_principal", ["app-sp", "runner-sp"])
+@pytest.mark.parametrize("kind,privilege", [("catalog", "USE CATALOG"), ("schema", "USE SCHEMA")])
+def test_missing_source_parent_blocks_even_table_owner(
+    service: ScheduleGrantService,
+    obo: WorkspaceClient,
+    sp: WorkspaceClient,
+    missing_principal: str,
+    kind: str,
+    privilege: str,
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+
+    def grants(securable: str, name: str, *, principal: str, page_token: str | None = None) -> EffectivePermissionsList:
+        if securable == kind and principal == missing_principal:
+            return EffectivePermissionsList(privilege_assignments=[])
+        return effective(principal, [Privilege.ALL_PRIVILEGES])
+
+    sp.grants.get_effective.side_effect = grants
+    assert not service.can_schedule(FQN)
+    preflight = service.preflight([FQN])[0]
+    assert not preflight.can_manage
+    assert not preflight.access_unverified
+    detail = manage_block_detail([(FQN, service.manage_holders(FQN))])
+    assert f"GRANT {privilege}" in str(detail)
+    assert f"TO `{missing_principal}`" in str(detail)
+    with pytest.raises(CannotManageError):
+        service.grant_select_precleared(FQN)
+    assert not any(
+        c.kwargs["statement"].startswith("GRANT") for c in obo.statement_execution.execute_statement.call_args_list
+    )
+
+
+def test_parent_inspection_unknown_blocks_owner(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    sp.grants.get_effective.side_effect = PermissionDenied("not visible")
+    obo.statement_execution.execute_statement.return_value = sql_response(StatementState.FAILED)
+    assert service.preflight([FQN])[0].access_unverified
+    with pytest.raises(WarehouseUnavailableError):
+        service.grant_select_precleared(FQN)
+
+
+def test_parent_sql_fallback_is_caller_scoped(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.grants.get_effective.side_effect = PermissionDenied("not visible")
+
+    def sql(*, statement: str, **kwargs: object) -> StatementResponse:
+        if statement.startswith("SHOW GRANTS"):
+            principal = "runner-sp" if "`runner-sp`" in statement else "app-sp"
+            action = "USE CATALOG" if "ON CATALOG" in statement else "USE SCHEMA"
+            return sql_response(rows=[[principal, action, "SCHEMA", "cat.sch"]])
+        return sql_response()
+
+    obo.statement_execution.execute_statement.side_effect = sql
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    assert service.can_schedule(FQN)
+    assert service.grant_select_precleared(FQN) == ["app-sp", "runner-sp"]
+    obo.grants.get_effective.assert_not_called()
+
+
+def test_parent_owner_and_all_privileges_satisfy_usage(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: (
+        EffectivePermissionsList(privilege_assignments=[])
+        if principal == "runner-sp"
+        else effective(principal, [Privilege.ALL_PRIVILEGES])
+    )
+    sp.catalogs.get.return_value = CatalogInfo(owner="runner-sp")
+    sp.schemas.get.return_value = SchemaInfo(owner="runner-sp")
+    assert service.can_schedule(FQN)
+
+
+def test_failed_effective_pagination_is_unknown(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    first = EffectivePermissionsList(privilege_assignments=[], next_page_token="page-2")
+    sp.grants.get_effective.side_effect = [first, PermissionDenied("page failed")]
+    obo.statement_execution.execute_statement.return_value = sql_response(StatementState.FAILED)
+    assert service.preflight([FQN])[0].access_unverified
+
+
+@pytest.mark.parametrize("run_as", [None, JobRunAs(user_name="someone@example.com"), JobRunAs()])
+def test_missing_runner_identity_fails_closed(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, run_as: JobRunAs | None
+) -> None:
+    sp.jobs.get.return_value = Job(settings=JobSettings(run_as=run_as))
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    with pytest.raises(WarehouseUnavailableError):
+        service.grant_select_precleared(FQN)
+    assert service.preflight([FQN])[0].access_unverified
+
+
+def test_failed_runner_select_propagates(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+
+    def sql(*, statement: str, **kwargs: object) -> StatementResponse:
+        return sql_response(StatementState.FAILED if statement.endswith("TO `runner-sp`") else StatementState.SUCCEEDED)
+
+    obo.statement_execution.execute_statement.side_effect = sql
+    with pytest.raises(StatementFailedError):
+        service.grant_select_precleared(FQN)
+
+
+async def test_grants_only_select_to_resolved_principals(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    assert await service.grant_select_precleared_async(FQN) == ["app-sp", "runner-sp"]
+    assert [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list] == [
+        "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `app-sp`",
+        "GRANT SELECT ON TABLE `cat`.`sch`.`tbl` TO `runner-sp`",
+    ]
+    assert sp.jobs.get.call_count == 1
+
+
+def test_same_runner_readable_shortcut(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="app-sp")))
+    sp.statement_execution.execute_statement.return_value = sql_response()
+    assert service.can_schedule(FQN)
+    assert service.grant_select_to_schedulers(FQN) == []
+
+
+def test_polling_via_public_read_probe(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    obo.statement_execution.execute_statement.return_value = StatementResponse(statement_id="statement-1")
+    obo.statement_execution.get_statement.return_value = sql_response()
+    assert service.user_can_read(FQN)
+
+
+def test_preflight_deduplicates_and_skips_synthetic(service: ScheduleGrantService) -> None:
+    result = service.preflight(["", "__sql_check__/x", "__sql_check__/x", "invalid"])
+    assert [(r.fqn, r.can_manage) for r in result] == [("__sql_check__/x", True), ("invalid", False)]
+    assert service.grant_select_precleared("__sql_check__/x") == []
+
+
+def test_manage_holders_are_owners_and_managers(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    obo.tables.get.return_value = TableInfo(owner="data-eng")
+    obo.statement_execution.execute_statement.return_value = sql_response(
+        rows=[
+            ["bob@example.com", "MANAGE", "TABLE", FQN],
+            ["reader@example.com", "SELECT", "TABLE", FQN],
+            ["37f263d6-1794-4873-8347-1f919b834fff", "MANAGE", "TABLE", FQN],
         ]
-        assert result[1].manage_holders == []
-
-    @pytest.mark.usefixtures("single_sp")
-    def test_unavailable_warehouse_is_waited_on_once_per_request(self, wh_service, obo, sp):
-        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
-        obo.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
-        fqns = [f"cat.sch.t{i}" for i in range(5)]
-
-        result = wh_service.preflight(fqns)
-
-        assert all(r.access_unverified for r in result)
-        probes = (
-            sp.statement_execution.execute_statement.call_count + obo.statement_execution.execute_statement.call_count
-        )
-        # Only the concurrent priming wave reaches the warehouse; the per-table
-        # checks after it fail fast instead of each waiting out the deadline.
-        assert probes <= 2 * len(fqns)
-        sp.statement_execution.execute_statement.reset_mock()
-        wh_service.preflight(["cat.sch.other"])
-        sp.statement_execution.execute_statement.assert_not_called()
-
-    @pytest.mark.usefixtures("single_sp")
-    def test_warehouse_timeout_still_allows_a_manage_holder(self, wh_service, obo, sp):
-        sp.statement_execution.execute_statement.side_effect = TimeoutError("warehouse starting")
-        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-
-        assert wh_service.can_schedule(FQN) is True
-
-    @pytest.mark.usefixtures("single_sp")
-    def test_preflight_runs_every_read_probe_concurrently(self, wh_service, obo, sp):
-        fqns = ["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]
-        # Six probes (scheduler + caller per table) must all be in flight at once
-        # to pass the barrier; sequential probes would time out and read as False.
-        barrier = threading.Barrier(2 * len(fqns), timeout=5)
-
-        def _probe(**_kwargs):
-            barrier.wait()
-            return _stmt()
-
-        sp.statement_execution.execute_statement.side_effect = _probe
-        obo.statement_execution.execute_statement.side_effect = _probe
-
-        result = wh_service.preflight(fqns)
-
-        assert [r.can_manage for r in result] == [True, True, True]
-        assert sp.statement_execution.execute_statement.call_count == 3
-        assert obo.statement_execution.execute_statement.call_count == 3
-
-    def test_unreadable_and_unmanageable_still_blocks(self, wh_service, obo, sp):
-        sp.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "denied")
-
-        assert wh_service.can_schedule(FQN) is False
-        with pytest.raises(CannotManageError):
-            wh_service.grant_select_to_schedulers(FQN)
-        statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
-        assert not [st for st in statements if st.startswith("GRANT")]
+    )
+    assert {h["principal"]: h["type"] for h in service.manage_holders(FQN)} == {
+        "data-eng": "group",
+        "bob@example.com": "user",
+        "37f263d6-1794-4873-8347-1f919b834fff": "service_principal",
+    }
 
 
-class TestRunSql:
-    @pytest.fixture
-    def svc(self, obo, sp):
-        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="", warehouse_id="wh-1")
+def test_parent_ownership_proves_usage_when_grants_unavailable(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="app-sp")))
+    sp.grants.get_effective.side_effect = PermissionDenied("not visible")
+    sp.catalogs.get.return_value = CatalogInfo(owner="app-sp")
+    sp.schemas.get.return_value = SchemaInfo(owner="app-sp")
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    obo.statement_execution.execute_statement.return_value = sql_response(StatementState.FAILED)
+    assert service.can_schedule(FQN)
 
-    def test_polls_when_the_initial_response_has_no_status(self, svc, obo, monkeypatch):
-        monkeypatch.setattr("time.sleep", lambda _s: None)
-        obo.statement_execution.execute_statement.return_value = SimpleNamespace(statement_id="s-1", status=None)
-        obo.statement_execution.get_statement.return_value = _stmt()
 
-        svc._run_sql(obo, "SELECT 1")
+def test_group_owned_parents_satisfy_usage_without_impersonation(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(principal, [])
+    sp.service_principals.list.side_effect = lambda *, filter: iter(
+        [ServicePrincipal(application_id=filter.split('"')[1], groups=[ComplexValue(display="scheduler-group")])]
+    )
+    sp.catalogs.get.return_value = CatalogInfo(owner="scheduler-group")
+    sp.schemas.get.return_value = SchemaInfo(owner="scheduler-group")
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    assert service.can_schedule(FQN)
 
-        obo.statement_execution.get_statement.assert_called_once_with("s-1")
 
-    def test_missing_status_and_statement_id_is_a_clear_warehouse_error(self, svc, obo):
-        obo.statement_execution.execute_statement.return_value = SimpleNamespace(statement_id=None, status=None)
+def test_sql_fallback_preserves_group_parent_usage(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.grants.get_effective.side_effect = PermissionDenied("not visible")
+    sp.service_principals.list.side_effect = lambda *, filter: iter(
+        [ServicePrincipal(application_id=filter.split('"')[1], groups=[ComplexValue(display="scheduler-group")])]
+    )
 
-        with pytest.raises(WarehouseUnavailableError, match="no statement status"):
-            svc._run_sql(obo, "SELECT 1")
+    def sql(*, statement: str, **kwargs: object) -> StatementResponse:
+        action = "USE CATALOG" if "ON CATALOG" in statement else "USE SCHEMA"
+        return sql_response(rows=[["scheduler-group", action, "CATALOG", "cat"]])
 
-    def test_failed_statement_carries_the_warehouse_message(self, svc, obo):
-        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.FAILED, "PERMISSION_DENIED")
+    obo.statement_execution.execute_statement.side_effect = sql
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    assert service.can_schedule(FQN)
 
-        with pytest.raises(StatementFailedError, match="PERMISSION_DENIED"):
-            svc._run_sql(obo, "SELECT 1")
 
-    def test_cancelled_statement_is_transient(self, svc, obo):
-        obo.statement_execution.execute_statement.return_value = _stmt(StatementState.CANCELED)
+def test_truncated_sql_grants_are_unknown(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    response = sql_response(rows=[["alice@example.com", "MANAGE", "TABLE", FQN]])
+    response.manifest.truncated = True
+    obo.statement_execution.execute_statement.return_value = response
+    with pytest.raises(WarehouseUnavailableError):
+        service.user_can_manage(FQN)
 
-        with pytest.raises(WarehouseUnavailableError, match="CANCELED"):
-            svc._run_sql(obo, "SELECT 1")
+
+def test_partial_grants_never_authorize(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
+    response = sql_response(rows=[["alice@example.com", "MANAGE", "TABLE", FQN]])
+    response.result.next_chunk_index = 1
+    obo.statement_execution.execute_statement.return_value = response
+    obo.statement_execution.get_statement_result_chunk_n.side_effect = PermissionDenied("chunk unavailable")
+    with pytest.raises(WarehouseUnavailableError):
+        service.user_can_manage(FQN)
+
+
+def test_readable_app_cannot_bypass_missing_parent(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="app-sp")))
+    sp.statement_execution.execute_statement.return_value = sql_response()
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(principal, [])
+    assert not service.can_schedule(FQN)
+    with pytest.raises(CannotManageError):
+        service.grant_select_to_schedulers(FQN)

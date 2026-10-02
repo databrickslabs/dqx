@@ -76,6 +76,9 @@ def sql() -> MagicMock:
 def pg() -> MagicMock:
     executor = create_autospec(PgExecutor, instance=True)
     executor.q.side_effect = lambda identifier: '"' + identifier.replace('"', '""') + '"'
+    executor.query_dicts.return_value = [
+        {"can_login": "true", "can_connect": "true", "can_use": "true", "can_select": "true", "can_delete": "true"}
+    ]
     return executor
 
 
@@ -237,6 +240,81 @@ def test_runner_wheel_read_access_passes_without_write_access(runner_checkers: R
     result = runner_checkers.check_runner_access(42)
 
     assert result.state == StepState.PASSED
+
+
+def test_runner_role_override_must_match_job_identity(
+    resources: ActiveResources,
+    workspace: MagicMock,
+    sql: MagicMock,
+    pg: MagicMock,
+    compute: MagicMock,
+    runner_checkers: ResourceCheckers,
+) -> None:
+    checker = ResourceCheckers(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        pg=pg,
+        compute=compute,
+        runner_postgres_role="different-runner",
+    )
+
+    result = checker.check_runner_access(123, include_outputs=True)
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "task_runner_lakebase_identity_mismatch"
+    pg.query_dicts.assert_not_called()
+
+
+def test_runner_requires_temporary_schema_usage(runner_checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    available = workspace.grants.get_effective.side_effect
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: (
+        _effective_permissions(principal=principal)
+        if (kind, name) == ("SCHEMA", "main.dqx_studio_tmp")
+        else available(kind, name, principal=principal)
+    )
+
+    result = runner_checkers.check_runner_access(42)
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.instructions == ("GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp-id`;",)
+
+
+def test_runner_missing_database_role_blocks_readiness(runner_checkers: ResourceCheckers, pg: MagicMock) -> None:
+    pg.query_dicts.return_value = []
+
+    result = runner_checkers.check_runner_access(42, include_outputs=True)
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "task_runner_lakebase_role_missing"
+    assert any("databricks_create_role" in instruction for instruction in result.instructions)
+
+
+@pytest.mark.parametrize("missing", ["can_connect", "can_use", "can_select", "can_delete"])
+def test_runner_database_grants_must_be_effective(
+    runner_checkers: ResourceCheckers, pg: MagicMock, missing: str
+) -> None:
+    pg.query_dicts.return_value[0][missing] = "false"
+    pg.execute.side_effect = PermissionError("sensitive database error")
+
+    result = runner_checkers.check_runner_access(42, include_outputs=True)
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "task_runner_lakebase_permissions_missing"
+    assert "sensitive" not in str(result)
+    assert any("GRANT" in instruction for instruction in result.instructions)
+
+
+def test_runner_database_inspection_failure_is_not_missing_access(
+    runner_checkers: ResourceCheckers, pg: MagicMock
+) -> None:
+    pg.query_dicts.side_effect = PermissionError("sensitive database error")
+
+    result = runner_checkers.check_runner_access(42, include_outputs=True)
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "task_runner_lakebase_permission_check_failed"
+    assert "sensitive" not in str(result)
 
 
 @pytest.mark.parametrize(
@@ -589,7 +667,7 @@ def test_sibling_schemas_do_not_grant_schema_wide_genie_select(
 
     assert result.state == StepState.PASSED
     statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
-    assert "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `account users`" in statements
+    assert not any("account users" in statement for statement in statements)
     assert not any("SELECT ON SCHEMA" in statement for statement in statements)
 
 

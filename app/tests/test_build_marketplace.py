@@ -37,7 +37,7 @@ EXPECTED_SCOPES = [
     "vectorsearch.vector-search-indexes",
     "serving.serving-endpoints",
     "files.files",
-    "dashboards.genie",
+    "genie",
     "catalog.catalogs:read",
     "catalog.schemas:read",
     "catalog.tables:read",

@@ -67,6 +67,7 @@ DQX_SCHEMA=dqx_studio                       # schema inside the catalog
 DQX_JOB_ID=<task-runner-job-id>             # required for profiler/dry-run
 DQX_WHEELS_VOLUME=/Volumes/dqx/dqx_studio/wheels  # UC volume path; auto-set by DABs in production
 DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access; AppConfig defaults to workspace admins in every path, and this overrides it for a test or deployment group
+DQX_USER_GROUPS='["dqx-studio-users"]'       # existing scoped audience; default [] means administrator-managed access
 
 # Lakebase (required — DQX Studio stores transactional state in Postgres)
 DQX_LAKEBASE_ENDPOINT=projects/<project>/branches/<branch>/endpoints/primary
@@ -85,7 +86,7 @@ DQX_LAKEBASE_TOKEN_REFRESH_MINUTES=50       # OAuth token refresh cadence (token
 | Lakebase OLTP path | `DQX_LAKEBASE_ENDPOINT` (required) |
 | Wheel sync | `DQX_WHEELS_VOLUME` |
 
-> **Lakebase locally:** The same OAuth token-refresh logic that runs in production also runs locally. The app authenticates as your CLI user (via `databricks-sdk` default auth chain), so your CLI principal must have a Postgres role on the project branch. Easiest path: run the bundle once against your dev workspace so the `postgres_roles` block provisions the role, then point `DQX_LAKEBASE_ENDPOINT` at the project's endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`).
+> **Lakebase locally:** The same OAuth token-refresh logic runs in production and locally. Local app operations authenticate as your CLI user, so a Lakebase administrator must provision that user's OAuth role and application-schema migration privileges on the development branch; deploying the bundle's app-SP role does not provision your CLI user's role. The job runner is a separate identity: provision its OAuth `SERVICE_PRINCIPAL` role with `LOGIN`, effective database `CONNECT`, schema `USAGE`, and `SELECT` / `DELETE` on `dq_run_configs`. Follow [Task-runner Lakebase access](DEPLOYMENT.md#task-runner-lakebase-access); never grant superuser membership to the runner.
 
 ### Bring your own SQL warehouse, catalog, and Lakebase
 
@@ -194,13 +195,35 @@ make fmt          # format Python (run before every commit)
 ## Testing
 
 ```bash
-make test          # unit tests
-make integration   # integration tests (requires live workspace)
+make app-test
+make app-test-ui
+make app-integration PROFILE=<setup-admin-profile>
 ```
+
+The opt-in Studio integration suite creates factory-managed workspace and
+Lakebase resources. Use a dedicated development workspace and checkout. Prepare
+the generated Marketplace runner wheel under `app/marketplace/tasks/` first;
+the suite stages it into `.build/tasks/` and refuses to overwrite an existing
+build wheel. Complete-readiness coverage additionally needs a distinct
+`DQX_TEST_APP_PROFILE` authenticated as an app service principal and
+`DQX_TEST_RUNNER_SERVICE_PRINCIPAL` identifying a usable external runner. The
+setup profile needs resource creation and grant authority; fixture-created
+OAuth roles receive scoped privileges, not superuser membership. An optional
+short-lived `DQX_TEST_APPS_OBO_TOKEN` exercises real Apps-scoped administrator
+inspection. Supply tokens securely and never commit them. Without an explicitly
+supplied CLI opt-in, the suite skips before creating resources. The Make target
+passes `--studio-integration` automatically; direct pytest invocations must pass
+it explicitly.
 
 ## Permissions
 
-The profiler creates a temporary view using your OBO token and submits a Databricks Job as the service principal. You need `USE CATALOG` + `USE SCHEMA` + `SELECT` on the tables you want to profile, plus `DQX_JOB_ID` set to a deployed task-runner job. See [README.md](README.md) for the full authentication model.
+The profiler creates a temporary view using your OBO token (your CLI identity locally) and submits a Databricks Job under its configured `run_as` identity. You need source `USE CATALOG` + `USE SCHEMA` + `SELECT`, warehouse `CAN_USE`, and `USE SCHEMA` + `CREATE TABLE` on the temporary schema. `DQX_JOB_ID` must identify a deployed task-runner job. Each view grants `SELECT` directly to the actual runner and per-view `MANAGE` to the app identity for orphan cleanup; failed grants block submission. Do not use broad built-in groups or schema-wide cleanup grants.
+
+`DQX_USER_GROUPS` must be a JSON `list[str]` of existing scoped groups; `users` and `account users` are rejected. Leave it at `[]` for administrator-managed audience access. DAB uses `studio_user_group` (default `dqx-studio-users`, which must exist) for its audience ACLs and JSON config. This audience is separate from `DQX_ADMIN_GROUP` and in-app role mappings.
+
+Every cold startup rechecks the runner's catalog usage, main and temporary schema usage, wheel-volume `READ VOLUME`, `SELECT` / `MODIFY` on the four fixed Delta output tables, and Lakebase `LOGIN` / effective privileges. OAuth identity mapping remains manual and is not verified by that check. Verification is not cached; setup does not automatically apply UC or PostgreSQL runner grants. Runtime derives the Postgres username from Jobs `run_as`; any legacy `DQX_TASK_RUNNER_POSTGRES_ROLE` value must match it.
+
+Schedules inspect grants through OBO SQL, not the grants REST API, and verify source catalog/schema usage and table `SELECT` for both app scheduler and runner. Failed runner grants block scheduling. Genie consumers separately need space `CAN_RUN`, Consumer access or Databricks SQL access entitlement, parent usages, and only the approved five view / two dimension-table grants. Genie uses embedded compute credentials; Studio's OBO SQL workflows also need SQL access entitlement and warehouse `CAN_USE`. Both deployment paths use the `genie` scope and require renewed user consent after scope changes. See [DEPLOYMENT.md](DEPLOYMENT.md#grants-reference) for exact grants and upgrade revocation; existing broad grants are not automatically removed.
 
 If the wheel upload fails locally with a `403`, grant your user write access:
 ```bash

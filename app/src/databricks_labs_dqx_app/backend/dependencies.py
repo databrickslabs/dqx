@@ -314,6 +314,7 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             warehouse_id=warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
+            audience_groups=tuple(conf.user_groups),
         )
 
     return _reprovision
@@ -669,6 +670,7 @@ async def get_profiling_suggestion_service(
 async def get_view_service(
     sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> ViewService:
     """Create a ViewService with split auth.
 
@@ -676,7 +678,20 @@ async def get_view_service(
     enforced.  Schema DDL uses the SP executor so that users don't need
     catalog-level CREATE SCHEMA privileges.
     """
-    return ViewService(sql=sql, sp_sql=sp_sql)
+    runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    return ViewService(sql=sql, sp_sql=sp_sql, runner_principal=runner, cleanup_principal=cleanup)
+
+
+async def get_scheduler_view_service(sp_ws: WorkspaceClient, sp_sql: SqlExecutor) -> ViewService:
+    """Create background views in the temporary schema under the app identity."""
+    resources = rt.require_resources()
+    tmp_sql = SqlExecutor(
+        ws=sp_ws,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
+    )
+    return await get_view_service(sql=tmp_sql, sp_sql=sp_sql, sp_ws=sp_ws)
 
 
 async def get_comments_service(
@@ -705,7 +720,7 @@ async def get_schedule_grant_service(
     """
     resources = rt.require_resources()
     return ScheduleGrantService(
-        obo_ws=obo_ws, sp_ws=sp_ws, job_id=conf.job_id, warehouse_id=resources.warehouse_id or ""
+        obo_ws=obo_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=resources.warehouse_id or ""
     )
 
 
@@ -808,9 +823,7 @@ async def get_job_service(
     resolved_port = getattr(oltp, "port", None) or lakebase.port or 5432
     resolved_database = getattr(oltp, "database", None) or lakebase.database or ""
     resolved_schema = getattr(oltp, "schema", None) or lakebase.schema or ""
-    resolved_username = (
-        conf.task_runner_postgres_role.strip() or getattr(oltp, "username", None) or lakebase.username or ""
-    )
+    resolved_username, _app_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
@@ -835,6 +848,28 @@ def _require_resolved_job_id() -> int:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DQX Studio setup is not ready.",
         ) from None
+
+
+def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
+    """Resolve the actual job runner and app identities without retaining request credentials."""
+    job = workspace.jobs.get(_require_resolved_job_id())
+    runner = getattr(getattr(job.settings, "run_as", None), "service_principal_name", None)
+    identity = workspace.current_user.me()
+    app_principal = identity.user_name or identity.id
+    if (
+        not isinstance(runner, str)
+        or not runner.strip()
+        or sanitize_setup_display(runner) != runner
+        or not isinstance(app_principal, str)
+        or not app_principal.strip()
+        or sanitize_setup_display(app_principal) != app_principal
+        or runner.casefold() == app_principal.casefold()
+    ):
+        raise RuntimeError("A distinct task-runner service principal must be assigned before executing Studio jobs.")
+    configured_role = conf.task_runner_postgres_role.strip()
+    if configured_role and configured_role.casefold() != runner.casefold():
+        raise RuntimeError("DQX_TASK_RUNNER_POSTGRES_ROLE must match the job's run-as service principal.")
+    return runner, app_principal
 
 
 async def get_run_set_service(
@@ -922,6 +957,7 @@ async def get_metadata_dim_service(
         registry=registry,
         monitored_tables=monitored_tables,
         genie_schema=rt.require_resources().genie_schema,
+        audience_groups=tuple(conf.user_groups),
     )
 
 
@@ -1045,6 +1081,7 @@ async def get_demo_seed_service(
 
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
+    runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     demo_sql = SqlExecutor(
         ws=sp_ws,
         warehouse_id=warehouse_id,
@@ -1059,6 +1096,8 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
+        runner_principal=runner_principal,
+        cleanup_principal=cleanup_principal,
     )
     # Profiler temp views for the demo profiling phase are created on the tmp
     # schema (like the request-path ViewService), but as the SP — the seed runs
@@ -1071,6 +1110,8 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
+        runner_principal=runner_principal,
+        cleanup_principal=cleanup_principal,
     )
     binding_run = BindingRunService(
         monitored_tables=monitored_tables,
@@ -1104,7 +1145,7 @@ async def get_demo_seed_service(
         profiler_view=profiler_view,
         schedule_config=schedule_config,
         schedule_grants=ScheduleGrantService(
-            obo_ws=sp_ws, sp_ws=sp_ws, job_id=conf.job_id, warehouse_id=warehouse_id or ""
+            obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
         catalog=resources.volume.catalog,
     )

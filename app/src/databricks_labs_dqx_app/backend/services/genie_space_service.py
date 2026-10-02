@@ -49,7 +49,8 @@ questions with a context preamble — ``(Table: <fqn>)`` or
 instructions route on that preamble.
 
 Idempotency: a config hash of the serialized space is stored alongside the
-space id. Unchanged hash -> no-op; changed hash -> PATCH the space in
+space id. Unchanged content is not replaced; warehouse and audience drift
+are reconciled independently. Changed hash -> PATCH the space in
 place (on PATCH failure the new hash is NOT persisted so the next startup
 retries); missing id -> find-or-create by title prefix (Databricks appends
 a timestamp to the title on create). Best-effort throughout — never raises
@@ -65,8 +66,10 @@ from collections.abc import Callable
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
     DIM_MONITORED_TABLES_TABLE_NAME,
@@ -78,6 +81,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn, validate_identifier
 
 logger = logging.getLogger(__name__)
@@ -834,7 +838,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WHERE `created_at` >= current_timestamp() - INTERVAL 7 DAYS"
     )
 
-    rules_running = "SELECT COUNT(*) AS running_rules\n" f"FROM {dim_rules}\n" "WHERE `status` = 'approved'"
+    rules_running = f"SELECT COUNT(*) AS running_rules\nFROM {dim_rules}\nWHERE `status` = 'approved'"
 
     table_param = [
         {
@@ -1082,7 +1086,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(rule_table_count),
             "parameters": rule_name_param,
             "usage_guidance": [
-                "Distinct published-run tables the rule runs on, from mv_dq_scores scoped by " "rule_name."
+                "Distinct published-run tables the rule runs on, from mv_dq_scores scoped by rule_name."
             ],
         },
         {
@@ -1661,7 +1665,7 @@ def config_hash(catalog: str, schema: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -> str | None:
+def _find_space_by_title(ws: WorkspaceClient, title: str, parent_path: str) -> dict[str, object] | None:
     """Find an existing space to REUSE (so we don't recreate one per boot).
 
     Databricks appends a timestamp to the space title on create — e.g.
@@ -1710,7 +1714,7 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
                 unclassified_match = True
                 continue
             if isinstance(detail, dict) and detail.get("parent_path") == parent_path:
-                return space_id
+                return detail
         if unclassified_match:
             # Some title-matching candidates could not be classified (their
             # detail GET failed — e.g. an ACL denial on another deployment's
@@ -1727,23 +1731,49 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
     return None
 
 
-def _update_serialized_space(ws: WorkspaceClient, space_id: str, catalog: str, schema: str) -> bool:
-    """PATCH the existing space's serialized_space with the freshly-built config.
-
-    The Genie REST API supports updating a space via
-    PATCH /api/2.0/genie/spaces/{space_id} with a {"serialized_space": "..."}
-    body. Returns True on success.
-    """
-    body = {"serialized_space": json.dumps(build_serialized_space(catalog, schema))}
+def _update_space(ws: WorkspaceClient, space_id: str, body: dict[str, str]) -> bool:
+    """Apply only the changed fields, retaining retry-on-failure semantics."""
     try:
         ws.api_client.do("PATCH", f"/api/2.0/genie/spaces/{space_id}", body=body)
         return True
-    except Exception as e:
+    except Exception:
         # Best-effort resilience contract: a failed PATCH must never break
         # startup — the existing space still answers with its old config and
         # the un-persisted hash makes the next startup retry.
-        logger.warning(f"Genie space update skipped: {type(e).__name__}: {e}")
+        logger.warning("Genie space update skipped; will retry on next provision.")
         return False
+
+
+def _reconcile_audience(ws: WorkspaceClient, space_id: str, audience_groups: tuple[str, ...]) -> None:
+    """Add minimum chat access without replacing unrelated or stronger ACLs."""
+    if not audience_groups:
+        logger.info("Genie space ACLs are administrator-managed; no audience groups configured.")
+        return
+    sufficient_levels = {
+        PermissionLevel.CAN_RUN,
+        PermissionLevel.CAN_EDIT,
+        PermissionLevel.CAN_MANAGE,
+        PermissionLevel.IS_OWNER,
+    }
+    try:
+        permissions = ws.permissions.get("genie", space_id)
+        permitted_groups = {
+            entry.group_name
+            for entry in permissions.access_control_list or []
+            if any(permission.permission_level in sufficient_levels for permission in entry.all_permissions or [])
+        }
+        grants = [
+            AccessControlRequest(group_name=group, permission_level=PermissionLevel.CAN_RUN)
+            for group in dict.fromkeys(audience_groups)
+            if group not in permitted_groups
+        ]
+        if grants:
+            ws.permissions.update("genie", space_id, access_control_list=grants)
+    except Exception:
+        logger.warning(
+            "Could not reconcile Genie audience permissions; an administrator must grant CAN_RUN "
+            "to the configured groups. Will retry on next provision."
+        )
 
 
 def ensure_dq_genie_space(
@@ -1753,6 +1783,7 @@ def ensure_dq_genie_space(
     warehouse_id: str,
     catalog: str,
     schema: str,
+    audience_groups: tuple[str, ...] = (),
 ) -> str | None:
     """Idempotent, self-healing provision of the DQ Genie space (SP identity).
 
@@ -1761,7 +1792,7 @@ def ensure_dq_genie_space(
 
     - stored id missing remotely -> find-or-create a replacement
     - no space id              -> find-or-create (POST), store id + hash, status ready
-    - id present, hash same    -> no-op (return id, leave status as-is)
+    - id present, hash same    -> reconcile warehouse and configured audience
     - id present, hash changed -> update the space (PATCH serialized_space);
       on success store the new hash; on failure keep the OLD hash so the
       next startup sees a mismatch and RETRIES the update (persisting the
@@ -1771,6 +1802,12 @@ def ensure_dq_genie_space(
     Best-effort: returns the space_id or None and never raises out of the
     app lifespan. Maintains ``dq_genie_space_status``
     (provisioning|ready|error).
+
+    Warehouse changes require an API-confirmed CAN_USE (or stronger) grant
+    or a successful app-SP SELECT 1 probe with bounded completion polling.
+    Unverified access retains the old warehouse.
+    Audience grants use the Permissions API's *genie* object type and
+    additive UPDATE; empty *audience_groups* leaves ACLs administrator-managed.
     """
     try:
         # Fail fast on a misconfigured catalog/schema before emitting dozens of
@@ -1783,9 +1820,11 @@ def ensure_dq_genie_space(
         stored_hash = settings.get_setting(SETTING_CONFIG_HASH)
         desired_hash = config_hash(catalog, schema)
 
+        detail: dict[str, object] = {}
         if existing:
             try:
-                ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
+                response = ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
+                detail = response if isinstance(response, dict) else {}
             except Exception as error:
                 error_code = getattr(error, "error_code", None)
                 if isinstance(error, NotFound) or error_code == "NOT_FOUND":
@@ -1799,73 +1838,76 @@ def ensure_dq_genie_space(
                     logger.info(f"Genie space verification skipped: {type(error).__name__}")
                     return existing
 
-        # A matching hash needs no update, but only after verifying that the
-        # persisted space has not been deleted or trashed.
-        if existing and stored_hash == desired_hash:
-            return existing
-
-        # Already-provisioned but the config drifted: update in place.
-        if existing:
+        if not existing:
             settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
-            updated = _update_serialized_space(ws, existing, catalog, schema)
-            if updated:
-                settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
-                settings.save_setting(SETTING_STATUS, STATUS_READY)
-            else:
-                # The PATCH failed (usually a transient flap). Do NOT persist
-                # the new hash: leaving stored_hash at its OLD value means the
-                # next provision sees a mismatch and RETRIES the update. The
-                # space still exists and answers, so keep it usable — never
-                # delete a space we can't cleanly recreate.
-                settings.save_setting(SETTING_STATUS, STATUS_READY)
-                logger.warning(
-                    f"Genie space update failed; left existing space {existing} in place — will retry on next provision"
-                )
-            return existing
-
-        # No id stored: find-or-create.
-        settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
-        try:
-            parent_path = space_parent_path()
-        except ValueError as error:
-            # No per-deployment client id: fail closed rather than provision
-            # into the shared root, where a second deployment could adopt this
-            # space (or vice versa). A clean skip, not a crash.
-            logger.warning(f"Genie space provisioning skipped: {error}")
-            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
-            return None
-        try:
-            space_id = _find_space_id_by_title(ws, SPACE_TITLE, parent_path)
-        except _SpaceLookupError:
-            logger.info("Genie space lookup skipped; provisioning will retry on next startup")
-            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
-            return None
-        if space_id is None:
-            ws.workspace.mkdirs(parent_path)
-            payload = build_create_payload(
-                catalog,
-                schema,
-                warehouse_id=warehouse_id,
-                parent_path=parent_path,
-            )
             try:
-                resp = ws.api_client.do("POST", "/api/2.0/genie/spaces", body=payload)
-                space_id = resp.get("space_id") if isinstance(resp, dict) else None
-            except Exception as e:
-                # Best-effort resilience contract: space creation failing
-                # (permissions, API availability) must degrade to "no Genie"
-                # rather than a crash-looping app.
-                logger.warning(f"Genie space create skipped: {type(e).__name__}: {e}")
+                parent_path = space_parent_path()
+            except ValueError:
+                logger.warning("Genie space provisioning skipped: DATABRICKS_CLIENT_ID is required.")
                 settings.save_setting(SETTING_STATUS, STATUS_ERROR)
                 return None
+            try:
+                detail = _find_space_by_title(ws, SPACE_TITLE, parent_path) or {}
+            except _SpaceLookupError:
+                logger.info("Genie space lookup skipped; provisioning will retry on next startup")
+                settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+                return None
+            found_id = detail.get("space_id")
+            existing = found_id if isinstance(found_id, str) and found_id else None
+            if existing:
+                # A discovered space has no verified content hash yet.
+                stored_hash = ""
+                settings.save_setting(SETTING_CONFIG_HASH, stored_hash)
+                settings.save_setting(SETTING_SPACE_ID, existing)
+            else:
+                ws.workspace.mkdirs(parent_path)
+                payload = build_create_payload(catalog, schema, warehouse_id=warehouse_id, parent_path=parent_path)
+                try:
+                    resp = ws.api_client.do("POST", "/api/2.0/genie/spaces", body=payload)
+                    existing = resp.get("space_id") if isinstance(resp, dict) else None
+                except Exception:
+                    logger.warning("Genie space create skipped; will retry on next provision.")
+                    settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+                    return None
+                if not existing:
+                    settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+                    return None
+                settings.save_setting(SETTING_SPACE_ID, existing)
+                settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
+                settings.save_setting(SETTING_STATUS, STATUS_READY)
+                _reconcile_audience(ws, existing, audience_groups)
+                return existing
 
-        if space_id:
-            settings.save_setting(SETTING_SPACE_ID, space_id)
-            settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
+        body: dict[str, str] = {}
+        content_changed = stored_hash != desired_hash
+        if content_changed:
+            body["serialized_space"] = json.dumps(build_serialized_space(catalog, schema))
+        if detail.get("warehouse_id") != warehouse_id:
+            access = ComputeService(ws, settings).warehouse_access_status(warehouse_id, reader_ws=ws)
+            can_use = access == "granted"
+            if not can_use:
+                try:
+                    SqlExecutor(ws, warehouse_id, catalog, schema).execute("SELECT 1", timeout_seconds=30)
+                    can_use = True
+                except Exception:
+                    # Best-effort proof: failed or timed-out probes must retain
+                    # the old binding without exposing raw SQL/API diagnostics.
+                    can_use = False
+            if can_use:
+                body["warehouse_id"] = warehouse_id
+            else:
+                logger.warning(
+                    "Genie warehouse change skipped: app SP access could not be verified. "
+                    "An administrator must verify CAN_USE on the configured warehouse."
+                )
+        if body:
+            settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
+            updated = _update_space(ws, existing, body)
+            if updated and content_changed:
+                settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
             settings.save_setting(SETTING_STATUS, STATUS_READY)
-        else:
-            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
-        return space_id
+        _reconcile_audience(ws, existing, audience_groups)
+        return existing
     except Exception:
         # Best-effort resilience contract: never raise out of the app
         # lifespan — Genie is an optional feature, not a startup dependency.

@@ -7,10 +7,6 @@ import os
 from pathlib import Path
 import shutil
 
-# Preserve explicit opt-in before imports can load dotenv defaults. This
-# temporary test-only key is consumed below without changing the real profile.
-os.environ["_DQX_TEST_PROFILE_BEFORE_DOTENV"] = os.environ.get("DATABRICKS_CONFIG_PROFILE", "").strip()
-
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.lsql.backends import StatementExecutionBackend
@@ -45,21 +41,9 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 from databricks_labs_dqx_app.backend.startup import publish_wheels_to_volume
 
-_EXPLICIT_DATABRICKS_PROFILE = os.environ.pop("_DQX_TEST_PROFILE_BEFORE_DOTENV")
 APP_DIR = Path(__file__).resolve().parents[2]
 _PROJECT_BRANCH = "dqx"
 _PROJECT_ENDPOINT = "primary"
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skip this live suite before any fixture setup unless explicitly opted in."""
-    if _EXPLICIT_DATABRICKS_PROFILE:
-        return
-    skip = pytest.mark.skip(reason="Set DATABRICKS_CONFIG_PROFILE via make app-integration PROFILE=<profile>.")
-    integration_dir = Path(__file__).parent
-    for item in items:
-        if item.path.is_relative_to(integration_dir):
-            item.add_marker(skip)
 
 
 @dataclass(frozen=True)
@@ -124,11 +108,14 @@ class AppLiveSetup:
 
 
 @pytest.fixture(scope="session")
-def databricks_profile() -> str:
-    """Require a profile explicitly supplied before backend dotenv loading."""
-    if not _EXPLICIT_DATABRICKS_PROFILE:
+def databricks_profile(request: pytest.FixtureRequest) -> str:
+    """Require deliberate CLI consent and a profile for this opt-in suite."""
+    if not request.config.getoption("studio_integration"):
+        pytest.skip("Use make app-integration PROFILE=<profile> for live tests.")
+    profile = os.environ.get("DATABRICKS_CONFIG_PROFILE", "").strip()
+    if not profile:
         pytest.skip("Set DATABRICKS_CONFIG_PROFILE via make app-integration PROFILE=<profile>.")
-    return _EXPLICIT_DATABRICKS_PROFILE
+    return profile
 
 
 @pytest.fixture(scope="session")
@@ -347,7 +334,7 @@ def live_resources(
 
 
 @pytest.fixture
-def make_lakebase_runner_role(
+def make_lakebase_oauth_role(
     live_resources: LiveResources,
 ) -> Generator[Callable[..., str], None, None]:
     """Create an isolated OAuth login role without administrative memberships."""
@@ -374,9 +361,8 @@ def make_lakebase_runner_role(
         return principal
 
     def delete(principal: str) -> None:
-        # The runner owns no objects; remove its ACL dependencies before dropping
-        # the role from this factory-managed project's branch.
-        live_resources.pg.execute(f"DROP OWNED BY {live_resources.pg.q(principal)}")
+        # Roles and their objects belong only to this isolated test project.
+        live_resources.pg.execute(f"DROP OWNED BY {live_resources.pg.q(principal)} CASCADE")
         try:
             workspace.postgres.delete_role(f"{branch}/roles/sp-{principal.lower()}").wait(
                 lro.LroOptions(timeout=timedelta(minutes=20))
@@ -384,7 +370,7 @@ def make_lakebase_runner_role(
         except NotFound:
             pass
 
-    yield from factory("Lakebase runner OAuth role", create, delete)
+    yield from factory("Lakebase OAuth role", create, delete)
 
 
 @pytest.fixture
@@ -443,7 +429,7 @@ def app_live_setup(
     live_resources: LiveResources,
     make_preconfigured_job: Callable[..., int],
     make_setup_schema: Callable[..., str],
-    make_lakebase_runner_role: Callable[..., str],
+    make_lakebase_oauth_role: Callable[..., str],
 ) -> Generator[AppLiveSetup, None, None]:
     """Compose production setup collaborators with a real app-SP profile and runner job."""
     runner_principal = os.environ.get("DQX_TEST_RUNNER_SERVICE_PRINCIPAL", "").strip()
@@ -456,8 +442,12 @@ def app_live_setup(
 
     resources = replace(live_resources.resources, job_id=str(job_id))
     make_setup_schema(catalog=resources.volume.catalog, schema=resources.tmp_schema)
-    make_lakebase_runner_role(principal=runner_principal)
     app_identity = _workspace_identity(app_workspace)
+    make_lakebase_oauth_role(principal=app_identity)
+    make_lakebase_oauth_role(principal=runner_principal)
+    database = live_resources.pg.q(resources.lakebase.database)
+    app_role = live_resources.pg.q(app_identity)
+    live_resources.pg.execute(f"GRANT CONNECT, CREATE ON DATABASE {database} TO {app_role}")
     _grant_setup_privileges(
         live_resources.workspace,
         live_resources.volume.catalog,
@@ -516,9 +506,9 @@ def app_live_setup(
     try:
         # Grants on dq_run_configs require the production table to exist first.
         # Reconcile still exercises the idempotent production migration path.
-        PgMigrationRunner(pg).run_all()
-        database = pg.q(resources.lakebase.database)
         schema = pg.q(resources.lakebase.schema)
+        pg.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        PgMigrationRunner(pg).run_all()
         runner_role = pg.q(runner_principal)
         live_resources.pg.execute(f"GRANT CONNECT ON DATABASE {database} TO {runner_role}")
         pg.execute(f"GRANT USAGE ON SCHEMA {schema} TO {runner_role}")

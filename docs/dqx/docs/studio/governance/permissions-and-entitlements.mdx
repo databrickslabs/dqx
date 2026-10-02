@@ -19,6 +19,42 @@ them apart:
 
 Your entitlement follows you everywhere; permissions apply object by object.
 
+## Workspace and data access
+
+In-app roles and object permissions do **not** grant Databricks App access,
+warehouse access, or Unity Catalog privileges. Administrators configure the
+deployment audience with `DQX_USER_GROUPS`, a JSON list of scoped group names.
+Its default `[]` leaves audience access administrator-managed; built-in `users`
+and `account users` audiences are rejected. DAB uses `studio_user_group`
+(default `dqx-studio-users`, which must already exist) for warehouse, app,
+dashboard, and schema audience grants.
+
+Profiling and validation use your data permissions to create a temporary view,
+then grant `SELECT` directly to the job runner and `MANAGE` on that view to the
+app service principal for cleanup. Schedules verify source catalog/schema usage
+and `SELECT` for the app scheduler and runner through OBO SQL; failed runner
+grants block scheduling. Setup rechecks the runner's fixed UC output access and
+scoped Lakebase access on every cold startup, without cached verification or
+automatic UC runner grants.
+
+Ask Genie additionally requires space `CAN_RUN`, Consumer access or Databricks
+SQL access entitlement, parent catalog/schema usage, and `SELECT` on only the five
+approved Genie views and two metadata dimensions. Configured groups receive
+scoped audience grants; with no configured groups, an administrator manages
+these grants. Never grant audience whole-schema `SELECT` or access to
+`dq_user_table_entitlements`. Both deployment paths request the `genie` OAuth
+scope; sign in again to renew consent after an upgrade changes the scope.
+Genie uses embedded compute credentials; Studio's OBO previews and SQL workflows
+additionally require SQL access entitlement and warehouse `CAN_USE`.
+
+<Admonition type="warning" title="Review existing grants on upgrade">
+Existing broad workspace ACLs and UC grants are not automatically revoked.
+Administrators must remove legacy broad audience access and reapply scoped
+grants. Existing temporary views that require orphan cleanup need explicit
+runner SELECT and app-service-principal MANAGE on each view, not schema-wide
+cleanup rights or restored account users access.
+</Admonition>
+
 ## Entitlements (your role)
 
 Every person has one of four roles. **Author and Approver are complementary, not

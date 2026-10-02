@@ -11,7 +11,7 @@ from databricks_labs_dqx_app.backend.services.compute_service import ComputeServ
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_fqn, validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
@@ -30,12 +30,16 @@ class ResourceCheckers:
         sql: SqlExecutor,
         pg: PgExecutor,
         compute: ComputeService,
+        audience_groups: tuple[str, ...] = (),
+        runner_postgres_role: str = "",
     ) -> None:
         self._resources = resources
         self._workspace = workspace
         self._sql = sql
         self._pg = pg
         self._compute = compute
+        self._audience_groups = audience_groups
+        self._runner_postgres_role = runner_postgres_role
         self._app_sp: str | None = None
         self._app_sp_resolved = False
 
@@ -116,7 +120,7 @@ class ResourceCheckers:
         reader_sql: SqlExecutor | None = None,
         include_outputs: bool = False,
     ) -> SetupStep:
-        """Verify wheel access and, after migrations, fixed output-table access.
+        """Verify wheel and schema access, then fixed outputs and Lakebase access.
 
         Missing grants are reported for an administrator to apply; this check
         never grants the runner write or administrative privileges.
@@ -127,8 +131,8 @@ class ResourceCheckers:
                 inspection, or the app client during unattended startup.
             reader_sql: Administrator's SQL executor for SHOW GRANTS using the
                 supported Apps SQL scope instead of the grants REST API.
-            include_outputs: Check output-table SELECT and MODIFY after migrations
-                have created the tables. Source access remains run-specific.
+            include_outputs: Check output-table SELECT/MODIFY and staged-config
+                Lakebase access after migrations. Source access remains run-specific.
         """
         app_sp = self._app_sp_id()
         try:
@@ -150,6 +154,17 @@ class ResourceCheckers:
                 "task_runner_identity_unresolved",
                 "Could not resolve a task-runner service principal distinct from the app identity.",
             )
+        if self._runner_postgres_role and self._runner_postgres_role.casefold() != principal.casefold():
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_lakebase_identity_mismatch",
+                summary="The configured Lakebase runner role does not match the job's run-as identity.",
+                instructions=(
+                    "Remove DQX_TASK_RUNNER_POSTGRES_ROLE or set it to the job's run-as service principal client ID.",
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
 
         volume = self._resources.volume
         catalog = _instruction_identifier(volume.catalog)
@@ -159,6 +174,13 @@ class ResourceCheckers:
         requirements = [
             ("CATALOG", volume.catalog, "USE_CATALOG", "USE CATALOG", catalog),
             ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE SCHEMA", schema),
+            (
+                "SCHEMA",
+                f"{volume.catalog}.{self._resources.tmp_schema}",
+                "USE_SCHEMA",
+                "USE SCHEMA",
+                f"{catalog}.{_instruction_identifier(self._resources.tmp_schema)}",
+            ),
             ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ VOLUME", quoted_volume),
         ]
         if include_outputs:
@@ -208,7 +230,69 @@ class ResourceCheckers:
                 instructions=tuple(instructions),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
+        if include_outputs:
+            database_step = self._check_runner_lakebase(principal)
+            if database_step.state != StepState.PASSED:
+                return database_step
         return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
+
+    def _check_runner_lakebase(self, principal: str) -> SetupStep:
+        role = escape_sql_string(principal)
+        database = self._resources.lakebase.database
+        schema = self._resources.lakebase.schema
+        table = f'{self._pg.q(schema)}."dq_run_configs"'
+        query = (
+            "SELECT rolcanlogin AS can_login, "
+            f"has_database_privilege(oid, '{escape_sql_string(database)}', 'CONNECT') AS can_connect, "
+            f"has_schema_privilege(oid, '{escape_sql_string(schema)}', 'USAGE') AS can_use, "
+            f"has_table_privilege(oid, '{escape_sql_string(table)}', 'SELECT') AS can_select, "
+            f"has_table_privilege(oid, '{escape_sql_string(table)}', 'DELETE') AS can_delete "
+            f"FROM pg_catalog.pg_roles WHERE rolname = '{role}'"
+        )
+        try:
+            rows = self._pg.query_dicts(query)
+        except Exception:
+            return _action_required(
+                SetupStepId.TASK_RUNNER,
+                "task_runner_lakebase_permission_check_failed",
+                "Could not inspect the runner's Lakebase role and effective permissions.",
+            )
+        if not rows or not _pg_boolean(rows[0].get("can_login")):
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_lakebase_role_missing",
+                summary="Create a Lakebase OAuth login role for the task-runner service principal.",
+                instructions=(
+                    "In the bound Lakebase project's branch, use Roles & Databases > Add role > OAuth "
+                    "and select the job's run-as service principal; do not grant superuser membership.",
+                    f"Alternatively, as a Lakebase role administrator: "
+                    f"CREATE EXTENSION IF NOT EXISTS databricks_auth; "
+                    f"SELECT databricks_create_role('{role}', 'SERVICE_PRINCIPAL');",
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+        quoted_role = self._pg.q(principal)
+        grants = {
+            "can_connect": f"GRANT CONNECT ON DATABASE {self._pg.q(database)} TO {quoted_role};",
+            "can_use": f"GRANT USAGE ON SCHEMA {self._pg.q(schema)} TO {quoted_role};",
+            "can_select": f"GRANT SELECT ON TABLE {table} TO {quoted_role};",
+            "can_delete": f"GRANT DELETE ON TABLE {table} TO {quoted_role};",
+        }
+        missing = tuple(statement for key, statement in grants.items() if not _pg_boolean(rows[0].get(key)))
+        if missing:
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_lakebase_permissions_missing",
+                summary="The task-runner service principal needs narrowly scoped Lakebase access.",
+                instructions=(
+                    "Run these statements in the bound Lakebase database as an authorized administrator:",
+                    *missing,
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+        return _passed(SetupStepId.TASK_RUNNER, "The runner can read and delete staged Lakebase configs.")
 
     def _runner_privileges(
         self, kind: str, full_name: str, principal: str, reader_sql: SqlExecutor | None
@@ -273,15 +357,14 @@ class ResourceCheckers:
                     instructions=(f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {principal};",),
                     actions=(SetupActionId.VERIFY_AGAIN,),
                 )
-        response = self._effective_permissions("SCHEMA", f"{catalog}.{schemas[0]}", "account users")
-        if response is None or _missing_privileges(response, _SCHEMA_PRIVILEGES):
+        for group in self._audience_groups:
             quoted_schema = f"{self._sql.q(catalog)}.{self._sql.q(schemas[0])}"
             try:
                 self._sql.execute_no_schema(
-                    f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO `account users`"
+                    f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {_instruction_identifier(group)}"
                 )
             except Exception:
-                logger.warning("Could not grant account users access to the temporary schema; setup can continue.")
+                logger.warning("Could not grant a configured audience group access to the temporary schema.")
         return _passed(SetupStepId.SCHEMAS, "Required application schemas are available.")
 
     def check_lakebase(self) -> SetupStep:
@@ -496,3 +579,7 @@ def _instruction_identifier(value: str) -> str:
 
 def _has_control_characters(value: str) -> bool:
     return replace_control_characters(value) != value
+
+
+def _pg_boolean(value: str | None) -> bool:
+    return isinstance(value, str) and value.casefold() in {"true", "t", "1"}
