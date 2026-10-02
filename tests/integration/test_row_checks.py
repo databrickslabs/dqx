@@ -11,6 +11,7 @@ from databricks.labs.dqx.check_funcs import (
     is_in_range,
     is_not_empty,
     is_not_in_range,
+    has_num_decimal_places,
     is_not_null,
     is_not_null_and_not_empty,
     is_older_than_col2_for_n_days,
@@ -1496,6 +1497,38 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
             [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places(spark):
+    schema = "val: string, i: int"
+    test_df = spark.createDataFrame(
+        [
+            ["-1.25", 7],
+            ["1.250", 7],
+            ["abc", 7],
+            [None, None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("val", 2).alias("val_max2"),
+        has_num_decimal_places("i", 0).alias("i_max0"),
+        has_num_decimal_places("i", 0, allow_nulls=False).alias("i_max0_nonull"),
+    )
+
+    expected_schema = "val_max2: string, i_max0: string, i_max0_nonull: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            ["Value '1.250' in Column 'val' has more than 2 decimal places", None, None],
+            ["Value 'abc' in Column 'val' is not numeric", None, None],
+            [None, None, "Column 'i' value is null"],
+        ],
+        expected_schema,
     )
 
     assertDataFrameEqual(actual, expected)

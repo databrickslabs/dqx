@@ -223,6 +223,14 @@
       column: col3
       limit: col2 + 10
 
+# has_num_decimal_places check
+- criticality: error
+  check:
+    function: has_num_decimal_places
+    arguments:
+      column: col2
+      limit: 2
+
 # is_valid_date check
 - criticality: error
   check:

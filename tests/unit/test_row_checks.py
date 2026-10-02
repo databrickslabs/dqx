@@ -14,6 +14,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_in_range,
     is_not_greater_than,
     is_not_less_than,
+    has_num_decimal_places,
     is_in_list,
     is_not_in_list,
     is_not_null_and_is_in_list,
@@ -73,6 +74,11 @@ def test_col_not_greater_than_missing_limit():
 def test_col_not_less_than_missing_limit():
     with pytest.raises(MissingParameterError, match=LIMIT_VALUE_ERROR):
         is_not_less_than("a", limit=None)
+
+
+def test_has_num_decimal_places_missing_limit():
+    with pytest.raises(MissingParameterError, match=LIMIT_VALUE_ERROR):
+        has_num_decimal_places("a", limit=None)
 
 
 def test_col_is_not_null_and_is_in_list_missing_allowed_list():
@@ -205,6 +211,12 @@ def test_is_not_equal_to_missing_value():
         (is_not_greater_than, {"limit": 1}, "a_greater_than_limit", "a_is_null_or_greater_than_limit"),
         (is_in_range, {"min_limit": 1, "max_limit": 2}, "a_not_in_range", "a_is_null_or_not_in_range"),
         (is_not_in_range, {"min_limit": 1, "max_limit": 2}, "a_in_range", "a_is_null_or_in_range"),
+        (
+            has_num_decimal_places,
+            {"limit": 2},
+            "a_num_decimal_places_greater_than_limit",
+            "a_is_null_or_num_decimal_places_greater_than_limit",
+        ),
     ],
 )
 def test_comparison_checks_allow_nulls_auto_name(check_func, kwargs, default_name, name_with_nulls_failing):
