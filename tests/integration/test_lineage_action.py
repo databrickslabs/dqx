@@ -69,7 +69,6 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-
 from tests.constants import TEST_CATALOG
 
 
@@ -1099,3 +1098,46 @@ def test_end_to_end_streaming_via_dqengine(
         assert (1, input_table, downstream_table) in downstream_edges, downstream_edges
 
     _wait_for_sink()
+
+
+def test_source_table_with_trailing_backslash_is_escaped(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    patched_lineage_constants: _StubLineageLocations,
+    make_lineage_sink,
+) -> None:
+    """A source table / input_location ending in a backslash must be inlined as a *valid* SQL
+    string literal (backslash doubled).
+
+    Without the backslash escape in *_sql_str_literal* the trailing ``\\`` escapes the literal's
+    closing quote, the recursive-CTE query fails to parse, the read is swallowed by the walker's
+    broad except, and the edge is silently dropped. Seeding goes through *createDataFrame* so the
+    backslash is a literal character rather than a SQL escape at insert time; the walk then has to
+    match it against the inlined literal through the real Spark parser.
+    """
+    source = "cat.sch.weird_tbl\\"  # adversarial: trailing backslash
+    target = "cat.sch.plain_target"
+    spark.createDataFrame(
+        [(source, target, None, None, datetime.now(timezone.utc))],
+        schema=(
+            "source_table_full_name string, target_table_full_name string, "
+            "entity_type string, entity_id string, event_time timestamp"
+        ),
+    ).write.mode("append").format("delta").saveAsTable(patched_lineage_constants.table_lineage)
+
+    lineage_location = make_lineage_sink()
+    _, persisted = _run_action(
+        action=_table_only_action(lineage_location, downstream=True, depth=1),
+        context=_make_context(source),
+        services=_make_services(spark, ws),
+        lineage_location=lineage_location,
+        spark=spark,
+    )
+
+    downstream_targets = {
+        row["target_table"]
+        for row in persisted.where(
+            (persisted["edge_type"] == "downstream") & (persisted["source_table"] == source)
+        ).collect()
+    }
+    assert target in downstream_targets, downstream_targets
