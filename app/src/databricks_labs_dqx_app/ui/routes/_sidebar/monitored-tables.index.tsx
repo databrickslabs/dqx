@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useMemo, useState, Suspense } from "react";
+import { useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -40,7 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, FileDown, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, Undo2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileDown, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, Undo2, Upload, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
   useDeleteMonitoredTable,
@@ -65,11 +65,43 @@ import {
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
+import { FilterPills } from "@/components/data-table/FilterToolbar";
+import { GroupBySelect } from "@/components/data-table/GroupBySelect";
+import {
+  sortTablesByGroup,
+  tableGroupOf,
+  type GroupableTable,
+  type TableGroupBy,
+} from "@/components/monitored-tables/table-grouping";
+import {
+  filterLayoutMenuConfig,
+  useFilterLayout,
+  type FilterLayoutDef,
+} from "@/components/data-table/filter-layout";
 import { cn } from "@/lib/utils";
 import { isFqnLikeTableSearch, matchesTableFqnSearch } from "./monitored-tables-search";
 
 const PAGE_SIZE = 25;
 const ALL = "all";
+
+const GROUP_BY_OPTIONS: readonly { value: TableGroupBy; labelKey: string }[] = [
+  { value: "none", labelKey: "monitoredTables.groupByNone" },
+  { value: "dqScore", labelKey: "monitoredTables.groupByDqScore" },
+  { value: "catalog", labelKey: "monitoredTables.groupByCatalog" },
+  { value: "schema", labelKey: "monitoredTables.groupBySchema" },
+];
+
+type TablesFilterKey = "groupBy" | "search" | "catalog" | "schema" | "owner" | "dqScore";
+// Group by is pinned: always first, divided from the other pills, not reorderable.
+const FILTER_ORDER: readonly TablesFilterKey[] = ["groupBy", "search", "catalog", "schema", "owner", "dqScore"];
+const FILTERS: Record<TablesFilterKey, FilterLayoutDef> = {
+  groupBy: { labelKey: "common.groupBy", defaultVisible: false, pinned: true },
+  search: { labelKey: "monitoredTables.filterSearch", defaultVisible: true },
+  catalog: { labelKey: "monitoredTables.colCatalog", defaultVisible: true },
+  schema: { labelKey: "monitoredTables.colSchema", defaultVisible: true },
+  owner: { labelKey: "monitoredTables.colOwner", defaultVisible: true },
+  dqScore: { labelKey: "monitoredTables.colDqScore", defaultVisible: true },
+};
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/")({
   component: () => (
@@ -127,6 +159,10 @@ function splitFqn(fqn: string): { catalog: string; schema: string } {
   return { catalog: parts[0] ?? "", schema: parts[1] ?? "" };
 }
 
+function toGroupableTable(row: MonitoredTableSummaryOut): GroupableTable {
+  return { tableFqn: row.table.table_fqn, score: row.score };
+}
+
 function MonitoredTablesPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
@@ -139,6 +175,7 @@ function MonitoredTablesPage() {
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
+  const [groupBy, setGroupBy] = useState<TableGroupBy>("none");
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
@@ -215,25 +252,35 @@ function MonitoredTablesPage() {
     [sortKey, sortDir],
   );
 
+  // Grouped views sort by group first (a stable sort, so the active column
+  // sort still orders rows within each group).
   const sortedTables = useMemo(() => {
-    if (!sortKey) return visibleTables;
-    const { nullsFirst } = getMonitoredTablesSortConfig(sortKey);
     const copy = [...visibleTables];
-    copy.sort((a, b) =>
-      compareSortValues(
-        getMonitoredTablesSortValue(sortKey, a),
-        getMonitoredTablesSortValue(sortKey, b),
-        sortDir,
-        nullsFirst,
-      ),
-    );
-    return copy;
-  }, [visibleTables, sortKey, sortDir]);
+    if (sortKey) {
+      const { nullsFirst } = getMonitoredTablesSortConfig(sortKey);
+      copy.sort((a, b) =>
+        compareSortValues(
+          getMonitoredTablesSortValue(sortKey, a),
+          getMonitoredTablesSortValue(sortKey, b),
+          sortDir,
+          nullsFirst,
+        ),
+      );
+    }
+    return sortTablesByGroup(copy, groupBy, toGroupableTable);
+  }, [visibleTables, sortKey, sortDir, groupBy]);
+
+  const groupForRow = useCallback(
+    (row: MonitoredTableSummaryOut) => tableGroupOf(toGroupableTable(row), groupBy, (key) => t(key)),
+    [groupBy, t],
+  );
 
   const pagedTables = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return sortedTables.slice(start, start + PAGE_SIZE);
   }, [sortedTables, page]);
+  // Groups collapse to headers, so the grouped view lists every table unpaginated.
+  const visibleRows = groupBy === "none" ? pagedTables : sortedTables;
 
   const hasActiveFilters =
     ownerFilter !== ALL ||
@@ -250,6 +297,33 @@ function MonitoredTablesPage() {
       },
     [],
   );
+
+  // Which filter pills show, and in what order (Edit Columns > Filters).
+  // Hiding a filter clears it so it can't keep narrowing the list unseen.
+  const resetFilter = useCallback((key: TablesFilterKey) => {
+    setPage(1);
+    switch (key) {
+      case "search":
+        return setNameSearch("");
+      case "catalog":
+        setCatalogFilter(ALL);
+        return setSchemaFilter(ALL);
+      case "schema":
+        return setSchemaFilter(ALL);
+      case "owner":
+        return setOwnerFilter(ALL);
+      case "dqScore":
+        return setScoreFilter(DQ_SCORE_FILTER_ALL);
+      case "groupBy":
+        return setGroupBy("none");
+    }
+  }, []);
+  const filterLayout = useFilterLayout<TablesFilterKey>({
+    storageKey: "dqx.monitoredTables.filters",
+    defaultOrder: FILTER_ORDER,
+    filters: FILTERS,
+    onHide: resetFilter,
+  });
 
   const deleteMutation = useDeleteMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
@@ -539,6 +613,80 @@ function MonitoredTablesPage() {
     );
   };
 
+  const filterControls: Record<TablesFilterKey, ReactNode> = {
+    groupBy: (
+      <GroupBySelect
+        value={groupBy}
+        onChange={(value) => {
+          setGroupBy(value);
+          setPage(1);
+        }}
+        options={GROUP_BY_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
+      />
+    ),
+    search: (
+      <div className="relative w-56">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          placeholder={t("monitoredTables.searchTablesPlaceholder")}
+          value={nameSearch}
+          onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
+          className="h-8 text-xs pl-7"
+        />
+      </div>
+    ),
+    catalog: (
+      <SearchableSelect
+        value={catalogFilter}
+        onChange={applyFilter(setCatalogFilter)}
+        options={catalogOptions.map((c) => ({ value: c, label: c }))}
+        allValue={ALL}
+        allLabel={t("monitoredTables.allCatalogs")}
+        searchPlaceholder={t("common.search")}
+        emptyText={t("common.noMatches")}
+        ariaLabel={t("monitoredTables.colCatalog")}
+      />
+    ),
+    schema: (
+      <SearchableSelect
+        value={schemaFilter}
+        onChange={applyFilter(setSchemaFilter)}
+        options={schemaOptions.map((s) => ({ value: s, label: s }))}
+        allValue={ALL}
+        allLabel={t("monitoredTables.allSchemas")}
+        searchPlaceholder={t("common.search")}
+        emptyText={t("common.noMatches")}
+        ariaLabel={t("monitoredTables.colSchema")}
+      />
+    ),
+    owner: (
+      <SearchableSelect
+        value={ownerFilter}
+        onChange={applyFilter(setOwnerFilter)}
+        options={ownerOptions.map((s) => ({ value: s, label: s }))}
+        allValue={ALL}
+        allLabel={t("monitoredTables.allOwners")}
+        searchPlaceholder={t("common.search")}
+        emptyText={t("common.noMatches")}
+        ariaLabel={t("monitoredTables.colOwner")}
+      />
+    ),
+    dqScore: (
+      <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+        <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {DQ_SCORE_BUCKETS.map((b) => (
+            <SelectItem key={b.value} value={b.value} className="text-xs">
+              {t(b.labelKey)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ),
+  };
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -549,14 +697,24 @@ function MonitoredTablesPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{t("monitoredTables.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {/* Export lives in the selection action bar (bulkToolbar) — select
                 rows to export exactly those, mirroring the Rules overview. */}
             {perms.canCreateRules && (
-              <Button onClick={() => setAddOpen(true)} className="gap-2">
-                <Plus className="h-4 w-4" />
-                {t("monitoredTables.monitorTable")}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate({ to: "/monitored-tables/import" })}
+                  className="gap-2"
+                >
+                  <Upload className="h-4 w-4" />
+                  {t("monitoredTables.importButton")}
+                </Button>
+                <Button onClick={() => setAddOpen(true)} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  {t("monitoredTables.monitorTable")}
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -576,7 +734,9 @@ function MonitoredTablesPage() {
         <div className="relative">
           {bulkToolbar}
           <MonitoredTablesTable
-          rows={pagedTables}
+          rows={visibleRows}
+          groupForRow={groupBy === "none" ? undefined : groupForRow}
+          forceGroupsExpanded={nameSearch.trim().length > 0}
           sortKey={sortKey}
           sortDir={sortDir}
           onHeaderClick={handleHeaderClick}
@@ -586,60 +746,13 @@ function MonitoredTablesPage() {
           }
           pendingBindingId={pendingId}
           selection={tableSelection}
+          filterLayout={filterLayoutMenuConfig(filterLayout, (key) => t(FILTERS[key].labelKey))}
           toolbarExtra={
-            <>
-              <div className="relative w-56">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  placeholder={t("monitoredTables.searchTablesPlaceholder")}
-                  value={nameSearch}
-                  onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
-                  className="h-8 text-xs pl-7"
-                />
-              </div>
-              <SearchableSelect
-                value={catalogFilter}
-                onChange={applyFilter(setCatalogFilter)}
-                options={catalogOptions.map((c) => ({ value: c, label: c }))}
-                allValue={ALL}
-                allLabel={t("monitoredTables.allCatalogs")}
-                searchPlaceholder={t("common.search")}
-                emptyText={t("common.noMatches")}
-                ariaLabel={t("monitoredTables.colCatalog")}
-              />
-              <SearchableSelect
-                value={schemaFilter}
-                onChange={applyFilter(setSchemaFilter)}
-                options={schemaOptions.map((s) => ({ value: s, label: s }))}
-                allValue={ALL}
-                allLabel={t("monitoredTables.allSchemas")}
-                searchPlaceholder={t("common.search")}
-                emptyText={t("common.noMatches")}
-                ariaLabel={t("monitoredTables.colSchema")}
-              />
-              <SearchableSelect
-                value={ownerFilter}
-                onChange={applyFilter(setOwnerFilter)}
-                options={ownerOptions.map((s) => ({ value: s, label: s }))}
-                allValue={ALL}
-                allLabel={t("monitoredTables.allOwners")}
-                searchPlaceholder={t("common.search")}
-                emptyText={t("common.noMatches")}
-                ariaLabel={t("monitoredTables.colOwner")}
-              />
-              <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DQ_SCORE_BUCKETS.map((b) => (
-                    <SelectItem key={b.value} value={b.value} className="text-xs">
-                      {t(b.labelKey)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </>
+            <FilterPills
+              keys={filterLayout.visibleKeys}
+              isPinned={filterLayout.isPinned}
+              renderPill={(key) => filterControls[key]}
+            />
           }
           renderActions={
             // Canonical order (mirrors collections): Run → Approve → Reject →
@@ -790,7 +903,7 @@ function MonitoredTablesPage() {
           />
         </div>
 
-        {visibleTables.length > 0 && (
+        {groupBy === "none" && visibleTables.length > 0 && (
           <Pagination page={page} totalItems={visibleTables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>

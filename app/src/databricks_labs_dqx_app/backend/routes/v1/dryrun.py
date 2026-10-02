@@ -582,7 +582,7 @@ def get_dry_run_status(
 
         is_terminal = status.state in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 
-        if is_terminal and resolved_view_fqn:
+        if is_terminal and resolved_view_fqn and "tmp_view_" in resolved_view_fqn:
             try:
                 view_svc.drop_view(resolved_view_fqn)
                 view_cleaned_up = True

@@ -168,6 +168,8 @@ class ResultFacets:
     By-table row set too. *schemas* values are the two-part ``catalog.schema``
     identity (see ``metrics_utils.schema_of``) so a ``sales`` schema in two
     catalogs stays distinct.
+
+    *outcomes* keeps only ``passed`` (no failing rows) or ``failed`` checks.
     """
 
     dimensions: tuple[str, ...] = ()
@@ -177,6 +179,7 @@ class ResultFacets:
     tables: tuple[str, ...] = ()
     catalogs: tuple[str, ...] = ()
     schemas: tuple[str, ...] = ()
+    outcomes: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
         return bool(
@@ -187,6 +190,7 @@ class ResultFacets:
             or self.tables
             or self.catalogs
             or self.schemas
+            or self.outcomes
         )
 
 
@@ -276,6 +280,8 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
     if facets.rules and row.check_name not in facets.rules and (row.rule_id is None or row.rule_id not in facets.rules):
         return False
     if facets.columns and not any(c in facets.columns for c in row.columns):
+        return False
+    if facets.outcomes and ("failed" if row.failed > 0 else "passed") not in facets.outcomes:
         return False
     return True
 
