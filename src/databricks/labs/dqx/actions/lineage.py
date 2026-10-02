@@ -333,11 +333,8 @@ class CollectLineageAction(Action):
             run_id=context.run_id,
         )
         # The failed-columns set is exposed to the recursive column-lineage CTE as a session
-        # temp view (see *_column_direction_df*). The view must outlive *save_dataframe_as_table*
-        # because the returned DataFrame is lazy — the write is the point at which the CTE
-        # actually executes. Scoping the create/drop pair around the write keeps the DataFrame
-        # lazy end-to-end without leaking the view.
-        failed_columns_view = _register_failed_columns_view(failed_columns_df)
+        # temp view (see *_column_direction_df*).
+        failed_columns_view = _register_failed_columns_view(spark, failed_columns_df)
         try:
             df = _collect_lineage_rows(
                 spark=spark,
@@ -473,19 +470,20 @@ def _resolve_failed_columns(
     return result.distinct()
 
 
-def _register_failed_columns_view(failed_columns_df: DataFrame) -> str | None:
-    """Register *failed_columns_df* as a session temp view and return its name; *None* if empty.
+def _register_failed_columns_view(spark: SparkSession, failed_columns_df: DataFrame) -> str | None:
+    """Register the failed-columns set as a *literal* session temp view and return its name.
 
     The view carries a single ``col_name STRING`` column and is referenced by the recursive
     column-lineage CTE via ``IN (SELECT col_name FROM <view>)``. The name is UUID-suffixed to
     avoid collisions when multiple actions share a Spark session; lifecycle (drop) is owned
     by *_execute*.
     """
-    non_null = failed_columns_df.where(F.col(_FAILED_COLUMN_NAME).isNotNull())
-    if non_null.limit(1).count() == 0:
+    rows = failed_columns_df.where(F.col(_FAILED_COLUMN_NAME).isNotNull()).collect()
+    if not rows:
         return None
+    literal = spark.createDataFrame([(row[_FAILED_COLUMN_NAME],) for row in rows], _FAILED_COLUMNS_SCHEMA)
     name = f"_dqx_failed_columns_{uuid.uuid4().hex[:12]}"
-    non_null.createOrReplaceTempView(name)
+    literal.createOrReplaceTempView(name)
     return name
 
 
@@ -615,48 +613,40 @@ def _collect_lineage_rows(
     return _resolve_target_delta_versions(spark, result)
 
 
-def _lookup_target_delta_version(spark: SparkSession, table: str) -> DataFrame | None:
-    """Best-effort per-target Delta log read; returns *None* on failure with a sanitised warning."""
+def _lookup_target_delta_version(spark: SparkSession, table: str) -> tuple[str, int] | None:
+    """Best-effort per-target Delta log read; returns *(table, version)* or *None* on failure."""
     try:
         history = spark.sql(f"DESCRIBE HISTORY {_fully_qualified_identifier(table)} LIMIT 1")
+        rows = history.select(F.col("version").cast(LongType()).alias("version")).collect()
     except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
         logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")
         return None
-    return history.select(
-        F.col("version").cast(LongType()).alias("resolved_delta_version"),
-        F.lit(table).alias("target_table"),
-    )
+    if not rows or rows[0]["version"] is None:
+        return None
+    return table, int(rows[0]["version"])
 
 
 def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -> DataFrame:
-    """Populate *target_delta_version* with the latest Delta version of each *target_table*.
+    """Populate *target_delta_version* with the latest Delta version of each *target_table*."""
+    lineage_rows = lineage_df.collect()
+    if not lineage_rows:
+        return _empty_lineage_df(spark)
 
-    Each lookup runs ``DESCRIBE HISTORY`` on the driver (LIST + latest checkpoint read), so with
-    a wide lineage graph the per-target fan-out (up to ~4×*max_nodes*) is run in parallel via
-    *Threads.gather*; per-target failures stay best-effort and leave *target_delta_version* NULL.
-    """
-    distinct_targets = [
-        row["target_table"]
-        for row in lineage_df.select("target_table").where(F.col("target_table").isNotNull()).distinct().collect()
-    ]
-    if not distinct_targets:
-        return lineage_df
+    distinct_targets = {row["target_table"] for row in lineage_rows if row["target_table"] is not None}
+    versions: dict[str, int] = {}
+    if distinct_targets:
+        tasks = [partial(_lookup_target_delta_version, spark, table) for table in distinct_targets]
+        results, _ = Threads.gather("resolve delta target versions", tasks)
+        versions = dict(pair for pair in results if pair is not None)
 
-    tasks = [partial(_lookup_target_delta_version, spark, table) for table in distinct_targets]
-    results, _ = Threads.gather("resolve delta target versions", tasks)
-    per_target_frames = [frame for frame in results if frame is not None]
-
-    if not per_target_frames:
-        return lineage_df
-
-    lookup = per_target_frames[0]
-    for frame in per_target_frames[1:]:
-        lookup = lookup.unionByName(frame)
-
-    joined = lineage_df.drop("target_delta_version").join(lookup, on="target_table", how="left")
-    return joined.withColumnRenamed("resolved_delta_version", "target_delta_version").select(
-        *[F.col(field.name) for field in LINEAGE_TABLE_SCHEMA.fields]
-    )
+    field_names = [field.name for field in LINEAGE_TABLE_SCHEMA.fields]
+    patched_lineage_rows = []
+    for lineage_row in lineage_rows:
+        values = lineage_row.asDict()
+        target: str | None = values.get("target_table")
+        values["target_delta_version"] = versions.get(target) if target is not None else None
+        patched_lineage_rows.append(tuple(values[name] for name in field_names))
+    return spark.createDataFrame(patched_lineage_rows, LINEAGE_TABLE_SCHEMA)
 
 
 def _collect_upstream_df(
