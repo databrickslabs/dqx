@@ -1710,6 +1710,26 @@ class ValidationRunSummaryOut(BaseModel):
     review_status_updated_at: str | None = None
 
 
+class ValidationStatusOut(BaseModel):
+    """Pass/fail status for a single validation run, for external uptime monitors.
+
+    Deliberately minimal — an uptime monitor (e.g. Site24x7) only needs the
+    status and enough context to identify the run, not the full
+    ``ValidationRunSummaryOut`` shape.
+    """
+
+    status: str = Field(description="Validation run status: SUCCESS | FAILED | CANCELED")
+    source_table_fqn: str
+    run_id: str
+    error_rows: int | None = None
+    warning_rows: int | None = None
+    updated_at: str | None = None
+    stale: bool = Field(
+        default=False,
+        description="True when the run completed longer ago than the caller's max_age_minutes",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Lightweight recent-failures shape used by the app-wide toast watcher.
 # Only carries the fields the hook needs: no counts, no error_message.
